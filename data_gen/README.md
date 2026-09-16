@@ -25,6 +25,11 @@ Defaults (2 fiscal years, 10 stores, 200 products) finish in a few seconds
 and produce roughly 2M rows across all 19 tables, written to `output/`:
 one CSV per table plus `nl2sql_retail.db` (SQLite, foreign keys enforced).
 
+To get this dataset as a running Postgres instead of CSV/SQLite, see the
+Postgres container section in the [repo README](../README.md) --
+`docker compose up -d --build` runs this generator inside the image build and
+ships the loaded database.
+
 Useful flags:
 
 ```bash

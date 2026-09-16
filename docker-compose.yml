@@ -1,0 +1,37 @@
+name: nl2sql
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        GEN_ARGS: ${GEN_ARGS:-}
+        DB_NAME: ${POSTGRES_DB:-nl2sql_retail}
+        DB_USER: ${POSTGRES_USER:-nl2sql}
+        DB_PASSWORD: ${POSTGRES_PASSWORD:-nl2sql}
+    image: ${IMAGE_NAME:-nl2sql-retail-postgres}:${IMAGE_TAG:-latest}
+    container_name: nl2sql-postgres
+    restart: unless-stopped
+    shm_size: 256mb
+    stop_grace_period: 1m
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Matches PGDATA in docker/Dockerfile. The image already ships a
+      # populated cluster at this path; Docker seeds the named volume from it
+      # the first time the volume is created, and the volume keeps any later
+      # writes across stop/start/recreate.
+      - pgdata:/var/lib/pgdata
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${POSTGRES_USER:-nl2sql} -d ${POSTGRES_DB:-nl2sql_retail}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  pgdata:
+    name: nl2sql-pgdata

@@ -111,8 +111,8 @@ build time), `POSTGRES_PORT`, `IMAGE_NAME`, `IMAGE_TAG`.
 ### Pulling the prebuilt image
 
 `./setup.sh` does this for you; this section covers doing it by hand. The
-dataset is published, so pulling it avoids building anything and everyone gets
-byte-identical data:
+dataset is published, so pulling it avoids building anything -- no Python, no
+generator run -- and everyone gets byte-identical data:
 
 ```bash
 docker pull mcfaddja/nl2sql-retail-postgres:v1
@@ -130,7 +130,7 @@ Two tags are published:
 | `v1` | Pinned. Use this for reproducible testing -- it will not change underneath you. |
 | `latest` | Moves to the newest publish. |
 
-To run it without compose:
+#### Run it directly
 
 ```bash
 docker run -d --name nl2sql-postgres \
@@ -141,9 +141,19 @@ docker run -d --name nl2sql-postgres \
 
 The volume must be mounted at `/var/lib/pgdata`, which is where this image puts
 `PGDATA` (see the note above). The data is present on first start; the volume
-only keeps what you write afterwards.
+only keeps what you write afterwards. Connect exactly as with a locally built
+image:
 
-To point compose at it without running `setup.sh`:
+```
+psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail
+```
+
+The credentials are baked into the published cluster, so treat them as public --
+fine for synthetic test data, and not to be reused elsewhere.
+
+#### Use it with compose
+
+To point compose at the published image without running `setup.sh`:
 
 ```bash
 export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1
@@ -151,8 +161,8 @@ docker compose pull postgres
 docker compose up -d --no-build
 ```
 
-The credentials are baked into the published cluster, so treat them as public --
-fine for synthetic test data, and not to be reused elsewhere.
+Everything else in this README still applies -- the volume, the persistence
+table above, and `down -v` to reset to the pristine dataset.
 
 ### Publishing an update
 

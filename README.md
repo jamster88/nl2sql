@@ -79,21 +79,67 @@ docker compose down -v && docker compose up -d
 Other overrides: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (applied at
 build time), `POSTGRES_PORT`, `IMAGE_NAME`, `IMAGE_TAG`.
 
-### Publishing to Docker Hub
+### Pulling the prebuilt image
 
-The image is self-contained, so pushing it shares the exact dataset:
+The dataset is already published, so pulling it is an alternative to building --
+no Python, no generator run, and everyone gets byte-identical data:
 
 ```bash
-docker tag nl2sql-retail-postgres:latest <dockerhub-user>/nl2sql-retail-postgres:v1
-docker push <dockerhub-user>/nl2sql-retail-postgres:v1
+docker pull mcfaddja/nl2sql-retail-postgres:v1
 ```
 
-Building `IMAGE_NAME=<dockerhub-user>/nl2sql-retail-postgres` skips the retag
-step. A couple of things worth knowing before publishing:
+The repository is public, so no `docker login` is needed. It is multi-arch
+(`linux/amd64` and `linux/arm64`), so Docker selects the right variant
+automatically. Expect roughly a 290 MB download that expands to about 1.4 GB on
+disk.
 
-- The image is ~1.4 GB at default scale, and the database credentials are baked
-  into the cluster -- fine for synthetic test data, but treat a public image as
-  public credentials.
-- `docker compose build` produces an image for the machine you build on. For a
-  multi-arch image, use
-  `docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile --push -t <repo>:<tag> .`
+Two tags are published:
+
+| Tag | Use |
+|---|---|
+| `v1` | Pinned. Use this for reproducible testing -- it will not change underneath you. |
+| `latest` | Moves to the newest publish. |
+
+#### Run it directly
+
+```bash
+docker run -d --name nl2sql-postgres \
+  -p 5432:5432 \
+  -v nl2sql-pgdata:/var/lib/pgdata \
+  mcfaddja/nl2sql-retail-postgres:v1
+```
+
+The volume must be mounted at `/var/lib/pgdata`, which is where this image puts
+`PGDATA` (see the note above). The data is present on first start; the volume
+only keeps what you write afterwards. Connect exactly as with a locally built
+image:
+
+```
+psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail
+```
+
+Those credentials are baked into the published cluster, so treat them as public
+-- they are fine for synthetic test data and should not be reused elsewhere.
+
+#### Use it with compose
+
+Point the compose service at the published image and pull instead of building:
+
+```bash
+export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1
+docker compose pull postgres
+docker compose up -d --no-build
+```
+
+Everything else in this README still applies -- the volume, the persistence
+table above, and `down -v` to reset to the pristine dataset.
+
+#### Publishing an update
+
+Rebuilding and pushing replaces the published dataset. Build both architectures
+in one step so the tag stays multi-arch:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/Dockerfile --push -t mcfaddja/nl2sql-retail-postgres:v2 .
+```

@@ -1,0 +1,6 @@
+langchain-core==1.6.3
+pydantic>=2,<3
+langchain-ollama==1.1.0
+langgraph==1.2.11
+SQLAlchemy==2.0.54
+psycopg[binary]==3.3.5

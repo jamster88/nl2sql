@@ -1,5 +1,16 @@
 # nl2sql
 
+## NL2SQL agent
+
+A LangChain/LangGraph agent that answers natural language questions by writing,
+validating, and running SQL against the Postgres container below. It uses any
+model served by Ollama. See [`agent/USAGE.md`](agent/USAGE.md) for how to launch
+it and ask questions, and [`agent/README.md`](agent/README.md) for how it works.
+
+```bash
+docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
+```
+
 ## Synthetic data generator
 
 A synthetic dataset generator for a grocery retail data model, along with the schema it implements, lives in [`data_gen/`](data_gen/README.md) -- see that README for details, setup, and usage.

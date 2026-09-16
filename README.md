@@ -28,6 +28,26 @@ it and ask questions, and [`agent/README.md`](agent/README.md) for how it works.
 docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
 ```
 
+## Knowledge base and RAG pipeline
+
+[`knowledge/`](knowledge/) holds the data dictionary, DDL index and business
+index that describe the retail database, all verified against the live data.
+
+[`rag/`](rag/README.md) turns those documents into a queryable vector store:
+it semantically chunks them into one Postgres table per document, then embeds
+the chunks with BGE-M3 into a separate pgvector instance.
+
+```bash
+cd rag
+./run_all.sh          # chunk + embed everything from scratch
+./run_update.sh       # after editing a document, re-do only what changed
+./start_rag_db.sh     # bring up just the vector store, ready for retrieval
+```
+
+The chunker in [`chunking/semantic_chunker.py`](chunking/semantic_chunker.py)
+is extended rather than replaced -- see the rag README for why markdown
+structure has to be respected before semantic drift is measured.
+
 ## Synthetic data generator
 
 A synthetic dataset generator for a grocery retail data model, along with the schema it implements, lives in [`data_gen/`](data_gen/README.md) -- see that README for details, setup, and usage.

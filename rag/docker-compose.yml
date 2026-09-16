@@ -1,0 +1,63 @@
+name: nl2sql-rag
+
+# Two databases, both deliberately off 5432 so they never collide with the
+# retail testing instance from the repo-root compose file.
+
+services:
+  chunkdb:
+    build:
+      context: .
+      dockerfile: docker/chunkdb.Dockerfile
+    image: ${CHUNKDB_IMAGE:-nl2sql-rag-chunkdb}:${CHUNKDB_TAG:-latest}
+    container_name: nl2sql-rag-chunkdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${RAG_DB_USER:-ragproc}
+      POSTGRES_PASSWORD: ${RAG_DB_PASSWORD:-ragproc}
+      POSTGRES_DB: ${CHUNK_DB_NAME:-nl2sql_chunks}
+    ports:
+      - "${CHUNK_DB_PORT:-5433}:5432"
+    volumes:
+      # Matches PGDATA in the Dockerfile. A published image ships its cluster
+      # at this path and Docker seeds the volume from it on first creation.
+      - chunkdb-data:/var/lib/pgdata
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${RAG_DB_USER:-ragproc} -d ${CHUNK_DB_NAME:-nl2sql_chunks}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  vectordb:
+    build:
+      context: .
+      dockerfile: docker/vectordb.Dockerfile
+    image: ${VECTORDB_IMAGE:-nl2sql-rag-vectordb}:${VECTORDB_TAG:-latest}
+    container_name: nl2sql-rag-vectordb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${RAG_DB_USER:-ragproc}
+      POSTGRES_PASSWORD: ${RAG_DB_PASSWORD:-ragproc}
+      POSTGRES_DB: ${VECTOR_DB_NAME:-nl2sql_vectors}
+    ports:
+      - "${VECTOR_DB_PORT:-5434}:5432"
+    volumes:
+      - vectordb-data:/var/lib/pgdata
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${RAG_DB_USER:-ragproc} -d ${VECTOR_DB_NAME:-nl2sql_vectors}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  chunkdb-data:
+    name: nl2sql-rag-chunkdb-data
+  vectordb-data:
+    name: nl2sql-rag-vectordb-data

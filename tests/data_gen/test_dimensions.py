@@ -4,7 +4,6 @@ categorical value they emit actually comes from reference_data.
 
 from __future__ import annotations
 
-
 from datagen import dimensions
 from datagen import reference_data as ref
 from datagen.config import Config

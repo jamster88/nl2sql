@@ -7,4 +7,4 @@ output/
 .env.bak
 data_gen/data_model_detail.md
 data_gen/old_ddl.sql
-
+basic_agent_steps.md

@@ -4,7 +4,11 @@ ARG PYTHON_IMAGE=python:3.12-slim
 ARG POSTGRES_IMAGE=postgres:18
 
 # --- Stage 1: generate the synthetic dataset as CSVs -------------------------
-FROM ${PYTHON_IMAGE} AS generator
+# Pinned to the build machine's own platform: on a multi-platform build every
+# target architecture then loads these same CSVs, so the data is identical
+# across images instead of being regenerated per architecture (and pandas
+# never runs under emulation).
+FROM --platform=$BUILDPLATFORM ${PYTHON_IMAGE} AS generator
 
 WORKDIR /app/data_gen
 COPY data_gen/requirements.txt ./

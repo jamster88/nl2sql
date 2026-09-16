@@ -16,6 +16,7 @@ We have the following shared dimension tables:
 * item_dim - dimension table for all items carried
 * store_dim - dimension table for all stores in the chain
 * fiscal_cal_dim - dimension table for the fiscal calendar (FYs start April 1 of the year before a given fiscal year, e.g. FY 2030 starts on April 1, 2029)
+* vendor dim - dimension table for all vendors used by the chain
 
 ### Shared Fact
 

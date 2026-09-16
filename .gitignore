@@ -8,3 +8,4 @@ output/
 data_gen/data_model_detail.md
 data_gen/old_ddl.sql
 basic_agent_steps.md
+data_gen/detailed_data_dictionary.md

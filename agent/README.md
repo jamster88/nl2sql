@@ -9,6 +9,10 @@ This file covers how it works and how to extend it.
 
 ## Quick start
 
+Run [`../setup.sh`](../setup.sh) once from the repo root -- it pulls the
+Postgres image with the dataset inside it, builds this agent's image, and starts
+the database. After that:
+
 ```bash
 docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
 docker compose run --rm agent --json "Which 3 promotions had the highest promo quantity sold?"

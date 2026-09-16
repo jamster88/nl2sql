@@ -1,5 +1,22 @@
 # nl2sql
 
+## Quick start
+
+```bash
+./setup.sh
+docker compose run --rm agent "How many stores are there?"
+```
+
+[`setup.sh`](setup.sh) pulls the Postgres image with the test dataset already
+inside it, builds the agent image, starts the database, and writes a `.env` so
+plain `docker compose` commands pick all of that up. It takes a couple of
+minutes, mostly downloading the image, and is safe to re-run.
+
+Useful flags: `--ollama-url URL` and `--model NAME` to point the agent at a
+different Ollama host or model, `--build` to generate the dataset locally
+instead of pulling it, and `--reset` to discard an existing database volume and
+start from the image's data. `./setup.sh --help` lists them all.
+
 ## NL2SQL agent
 
 A LangChain/LangGraph agent that answers natural language questions by writing,
@@ -26,12 +43,13 @@ python data_gen/generate_data.py
 
 ## Postgres container
 
-[`docker-compose.yml`](docker-compose.yml) builds a Postgres image with the
-generated dataset **already loaded into the cluster**, so the data travels with
-the image and is available the moment a container starts.
+The Postgres image has the generated dataset **already loaded into the
+cluster**, so the data travels with the image and is available the moment a
+container starts. `./setup.sh` pulls a prebuilt copy; the sections below cover
+building your own.
 
 ```bash
-docker compose up -d --build     # first time: generates, loads, starts (~3 min)
+docker compose up -d --build     # build it yourself: generates, loads, starts (~3 min)
 docker compose up -d             # afterwards: just starts, nothing regenerated
 ```
 
@@ -90,21 +108,58 @@ docker compose down -v && docker compose up -d
 Other overrides: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (applied at
 build time), `POSTGRES_PORT`, `IMAGE_NAME`, `IMAGE_TAG`.
 
-### Publishing to Docker Hub
+### Pulling the prebuilt image
 
-The image is self-contained, so pushing it shares the exact dataset:
+`./setup.sh` does this for you; this section covers doing it by hand. The
+dataset is published, so pulling it avoids building anything and everyone gets
+byte-identical data:
 
 ```bash
-docker tag nl2sql-retail-postgres:latest <dockerhub-user>/nl2sql-retail-postgres:v1
-docker push <dockerhub-user>/nl2sql-retail-postgres:v1
+docker pull mcfaddja/nl2sql-retail-postgres:v1
 ```
 
-Building `IMAGE_NAME=<dockerhub-user>/nl2sql-retail-postgres` skips the retag
-step. A couple of things worth knowing before publishing:
+The repository is public, so no `docker login` is needed. It is multi-arch
+(`linux/amd64` and `linux/arm64`), so Docker selects the right variant
+automatically. Expect roughly a 290 MB download that expands to about 1.4 GB on
+disk.
 
-- The image is ~1.4 GB at default scale, and the database credentials are baked
-  into the cluster -- fine for synthetic test data, but treat a public image as
-  public credentials.
-- `docker compose build` produces an image for the machine you build on. For a
-  multi-arch image, use
-  `docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile --push -t <repo>:<tag> .`
+Two tags are published:
+
+| Tag | Use |
+|---|---|
+| `v1` | Pinned. Use this for reproducible testing -- it will not change underneath you. |
+| `latest` | Moves to the newest publish. |
+
+To run it without compose:
+
+```bash
+docker run -d --name nl2sql-postgres \
+  -p 5432:5432 \
+  -v nl2sql-pgdata:/var/lib/pgdata \
+  mcfaddja/nl2sql-retail-postgres:v1
+```
+
+The volume must be mounted at `/var/lib/pgdata`, which is where this image puts
+`PGDATA` (see the note above). The data is present on first start; the volume
+only keeps what you write afterwards.
+
+To point compose at it without running `setup.sh`:
+
+```bash
+export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1
+docker compose pull postgres
+docker compose up -d --no-build
+```
+
+The credentials are baked into the published cluster, so treat them as public --
+fine for synthetic test data, and not to be reused elsewhere.
+
+### Publishing an update
+
+Rebuilding and pushing replaces the published dataset. Build both architectures
+in one step so the tag stays multi-arch:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/Dockerfile --push -t mcfaddja/nl2sql-retail-postgres:v2 .
+```

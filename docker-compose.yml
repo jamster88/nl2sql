@@ -36,7 +36,7 @@ services:
     build:
       context: .
       dockerfile: agent/Dockerfile
-    image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${IMAGE_TAG:-latest}
+    image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
     depends_on:
       postgres:
         condition: service_healthy

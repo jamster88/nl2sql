@@ -6,23 +6,30 @@ For how it works internally and how to extend it, see
 
 ## Before you start
 
-You need three things:
+Run the setup script once from the repo root, with Docker running:
 
-1. **Docker running**, with this repo as the working directory.
-2. **The Postgres container**, which compose starts for you automatically.
-3. **A reachable Ollama host.** The default is `http://192.168.44.129:11434`.
-   Check it before debugging anything else:
+```bash
+./setup.sh
+```
 
-   ```bash
-   curl -s http://192.168.44.129:11434/api/tags | head -c 200
-   ```
+It pulls the Postgres image with the test dataset already inside it, builds the
+agent image, starts the database, and checks that the Ollama host has the model
+the agent expects. It takes a couple of minutes -- mostly the download -- and is
+safe to re-run. Point it somewhere else with `./setup.sh --ollama-url URL
+--model NAME`; `./setup.sh --help` lists every flag.
 
-   That should print a JSON list of models. Note it is **http**, not https --
-   port 11434 does not terminate TLS, and an `https://` URL fails with an SSL
-   error.
+Every command below is run from the repo root, and assumes setup has completed.
 
-The first run builds the agent image, which takes a minute or two. Later runs
-start immediately.
+The one thing setup cannot do for you is make the Ollama host reachable. The
+default is `http://192.168.44.129:11434`; check it before debugging anything
+else:
+
+```bash
+curl -s http://192.168.44.129:11434/api/tags | head -c 200
+```
+
+That should print a JSON list of models. Note it is **http**, not https -- port
+11434 does not terminate TLS, and an `https://` URL fails with an SSL error.
 
 ## Launching
 

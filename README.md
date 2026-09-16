@@ -1,5 +1,33 @@
 # nl2sql
 
+## Quick start
+
+```bash
+./setup.sh
+docker compose run --rm agent "How many stores are there?"
+```
+
+[`setup.sh`](setup.sh) pulls the Postgres image with the test dataset already
+inside it, builds the agent image, starts the database, and writes a `.env` so
+plain `docker compose` commands pick all of that up. It takes a couple of
+minutes, mostly downloading the image, and is safe to re-run.
+
+Useful flags: `--ollama-url URL` and `--model NAME` to point the agent at a
+different Ollama host or model, `--build` to generate the dataset locally
+instead of pulling it, and `--reset` to discard an existing database volume and
+start from the image's data. `./setup.sh --help` lists them all.
+
+## NL2SQL agent
+
+A LangChain/LangGraph agent that answers natural language questions by writing,
+validating, and running SQL against the Postgres container below. It uses any
+model served by Ollama. See [`agent/USAGE.md`](agent/USAGE.md) for how to launch
+it and ask questions, and [`agent/README.md`](agent/README.md) for how it works.
+
+```bash
+docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
+```
+
 ## Synthetic data generator
 
 A synthetic dataset generator for a grocery retail data model, along with the schema it implements, lives in [`data_gen/`](data_gen/README.md) -- see that README for details, setup, and usage.
@@ -15,12 +43,13 @@ python data_gen/generate_data.py
 
 ## Postgres container
 
-[`docker-compose.yml`](docker-compose.yml) builds a Postgres image with the
-generated dataset **already loaded into the cluster**, so the data travels with
-the image and is available the moment a container starts.
+The Postgres image has the generated dataset **already loaded into the
+cluster**, so the data travels with the image and is available the moment a
+container starts. `./setup.sh` pulls a prebuilt copy; the sections below cover
+building your own.
 
 ```bash
-docker compose up -d --build     # first time: generates, loads, starts (~3 min)
+docker compose up -d --build     # build it yourself: generates, loads, starts (~3 min)
 docker compose up -d             # afterwards: just starts, nothing regenerated
 ```
 
@@ -81,8 +110,9 @@ build time), `POSTGRES_PORT`, `IMAGE_NAME`, `IMAGE_TAG`.
 
 ### Pulling the prebuilt image
 
-The dataset is already published, so pulling it is an alternative to building --
-no Python, no generator run, and everyone gets byte-identical data:
+`./setup.sh` does this for you; this section covers doing it by hand. The
+dataset is published, so pulling it avoids building anything -- no Python, no
+generator run -- and everyone gets byte-identical data:
 
 ```bash
 docker pull mcfaddja/nl2sql-retail-postgres:v1
@@ -118,12 +148,12 @@ image:
 psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail
 ```
 
-Those credentials are baked into the published cluster, so treat them as public
--- they are fine for synthetic test data and should not be reused elsewhere.
+The credentials are baked into the published cluster, so treat them as public --
+fine for synthetic test data, and not to be reused elsewhere.
 
 #### Use it with compose
 
-Point the compose service at the published image and pull instead of building:
+To point compose at the published image without running `setup.sh`:
 
 ```bash
 export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1
@@ -134,7 +164,7 @@ docker compose up -d --no-build
 Everything else in this README still applies -- the volume, the persistence
 table above, and `down -v` to reset to the pristine dataset.
 
-#### Publishing an update
+### Publishing an update
 
 Rebuilding and pushing replaces the published dataset. Build both architectures
 in one step so the tag stays multi-arch:

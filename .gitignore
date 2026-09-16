@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 output/
 *.db
+.env
+.env.bak
 data_gen/data_model_detail.md
 data_gen/old_ddl.sql
 

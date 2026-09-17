@@ -17,9 +17,9 @@ This file covers how it works and how to extend it.
 
 ## Quick start
 
-Run [`../setup.sh`](../setup.sh) once from the repo root -- it pulls the
-Postgres image with the dataset inside it, builds this agent's image, and starts
-the database. After that:
+Run [`../setup.sh`](../setup.sh) once from the repo root. It pulls all three
+images, starts the retail database and the pgvector knowledge base, and
+verifies the agent container can retrieve from it. After that:
 
 ```bash
 docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
@@ -27,9 +27,9 @@ docker compose run --rm agent --json "Which 3 promotions had the highest promo q
 docker compose run --rm agent            # interactive; Ctrl-D to exit
 ```
 
-`docker compose run` starts the database first and waits for it to pass its
+`docker compose run` starts both databases first and waits for each to pass its
 health check. The agent is behind a compose profile, so a plain
-`docker compose up` still starts only Postgres.
+`docker compose up` starts the two databases and not the agent.
 
 Output goes to two streams: progress lines on stderr, the result table on
 stdout, so `... > answer.txt` captures just the answer.

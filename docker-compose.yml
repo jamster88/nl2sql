@@ -87,6 +87,7 @@ volumes:
   pgdata:
     name: nl2sql-pgdata
   vectordata:
-    # The volume the RAG pipeline already populated, so an existing knowledge
-    # base is reused rather than re-seeded from the image.
-    name: nl2sql-rag-vectordb-data
+    # Project-scoped (nl2sql_vectordata). The image ships the embeddings, so
+    # a fresh volume is seeded from it on first start -- no need to adopt the
+    # volume the RAG pipeline created under a different compose project, which
+    # only earned a warning on every compose command.

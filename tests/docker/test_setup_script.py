@@ -55,7 +55,7 @@ def test_help_exits_zero_and_documents_every_flag(run_setup):
         "--tag", "--image", "--ollama-url", "--model", "--port",
         "--agent-image", "--agent-tag", "--build-agent",
         "--vector-image", "--vector-tag", "--embed-url", "--embed-model",
-        "--no-rag", "--build", "--reset",
+        "--no-rag", "--no-verify", "--build", "--reset",
     ):
         assert flag in result.output, f"{flag} is not documented in --help"
 
@@ -200,14 +200,18 @@ def test_a_failed_agent_pull_falls_back_to_building_from_source(run_setup):
     """
     result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-agent"})
     assert result.returncode == 0
-    assert "building from source instead" in result.output
+    assert "from source instead" in result.output
     assert result.called("compose build agent")
 
 
-def test_a_failed_vector_pull_is_fatal_with_a_pointer_to_no_rag(run_setup):
+def test_a_failed_vector_pull_is_fatal_with_actionable_guidance(run_setup):
+    """The knowledge base image is the one thing v2 cannot synthesize locally,
+    so the failure has to name both ways forward: authenticate, or opt out.
+    """
     result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-rag-vectordb"})
     assert result.returncode != 0
     assert "--no-rag" in result.output
+    assert "docker login" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -337,3 +341,65 @@ def test_final_message_shows_how_to_ask_a_question(run_setup):
 def test_final_message_advertises_a_question_that_needs_the_knowledge_base(run_setup):
     result = run_setup()
     assert "market share" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The end-to-end retrieval check
+#
+# Each earlier step proves one piece is up; this proves the agent container can
+# actually reach the knowledge base, which is what the command setup.sh tells
+# the user to run next depends on.
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_run_verifies_retrieval_from_inside_the_agent_container(run_setup):
+    result = run_setup()
+    assert "Checking the agent can reach the knowledge base" in result.output
+    assert "retrieval works end to end" in result.output
+    assert result.called("compose run --rm --entrypoint python agent")
+
+
+def test_the_check_reports_how_many_collections_were_searched(run_setup):
+    result = run_setup(env={"FAKE_PROBE_COLLECTIONS": "3"})
+    assert "3 collections searched" in result.output
+
+
+def test_no_verify_skips_the_check(run_setup):
+    result = run_setup("--no-verify")
+    assert result.returncode == 0
+    assert "Checking the agent can reach the knowledge base" not in result.output
+    assert not result.called("compose run --rm --entrypoint python agent")
+
+
+def test_no_rag_skips_the_check_too(run_setup):
+    # There is no knowledge base to reach.
+    result = run_setup("--no-rag")
+    assert "Checking the agent can reach the knowledge base" not in result.output
+
+
+def test_a_failed_check_warns_but_leaves_setup_successful(run_setup):
+    """The stack is still usable without retrieval, so this must not undo a
+    successful setup -- but it has to say so loudly.
+    """
+    result = run_setup(env={"FAKE_PROBE_FAILS": "1"})
+    assert result.returncode == 0
+    assert "could not retrieve from the knowledge base" in result.output
+    assert "without knowledge context" in result.output
+    assert "Setup complete" in result.output
+
+
+def test_a_check_that_returns_no_chunks_warns(run_setup):
+    result = run_setup(env={"FAKE_PROBE_CHUNKS": "0"})
+    assert result.returncode == 0
+    assert "returned nothing" in result.output
+
+
+def test_help_documents_the_no_verify_flag(run_setup):
+    assert "--no-verify" in run_setup("--help").output
+
+
+def test_the_closing_message_names_all_three_containers(run_setup):
+    result = run_setup()
+    assert "nl2sql-postgres" in result.output
+    assert "nl2sql-vectordb" in result.output
+    assert 'docker compose run --rm agent "How many stores are there?"' in result.output

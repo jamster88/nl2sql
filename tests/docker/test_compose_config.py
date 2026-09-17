@@ -144,9 +144,16 @@ def test_agent_database_url_points_at_the_compose_postgres_service_and_matches_i
 def test_named_volumes_are_declared_persistent(agent_profile_config: dict):
     volumes = agent_profile_config["volumes"]
     assert volumes["pgdata"]["name"] == "nl2sql-pgdata"
-    # Reuses the volume the RAG pipeline populated, so an existing knowledge
-    # base is picked up instead of being re-seeded from the image.
-    assert volumes["vectordata"]["name"] == "nl2sql-rag-vectordb-data"
+    assert "vectordata" in volumes
+
+
+def test_the_knowledge_base_volume_is_project_scoped(agent_profile_config: dict):
+    """Adopting the RAG pipeline's volume (nl2sql-rag-vectordb-data) made
+    compose warn about a cross-project volume on every command. The image
+    ships the embeddings, so a project-scoped volume seeds from it instead.
+    """
+    name = agent_profile_config["volumes"]["vectordata"].get("name", "")
+    assert name in ("", "nl2sql_vectordata")
 
 
 def test_shell_env_vars_override_compose_defaults(tmp_path_factory):

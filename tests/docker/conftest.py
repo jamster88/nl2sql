@@ -61,6 +61,15 @@ case "$1" in
         case "$1" in
             version) echo "2.99.0"; exit 0 ;;
             build|up|down) exit 0 ;;
+            run)
+                # The end-of-setup retrieval probe, run inside the agent image.
+                if [[ -n "${FAKE_PROBE_FAILS:-}" ]]; then
+                    echo "ModuleNotFoundError: No module named 'nl2sql_agent.retrieval'" >&2
+                    exit 1
+                fi
+                printf 'PROBE {"chunks": %s, "collections": %s}\n' \
+                    "${FAKE_PROBE_CHUNKS-1}" "${FAKE_PROBE_COLLECTIONS-3}"
+                exit 0 ;;
             exec)
                 if [[ "$*" == *vectordb* ]]; then
                     echo "${FAKE_CHUNK_COUNT-53}"

@@ -12,13 +12,30 @@ Run the setup script once from the repo root, with Docker running:
 ./setup.sh
 ```
 
-It pulls the Postgres image with the test dataset already inside it, pulls the
-pgvector image holding the embedded knowledge base, pulls the agent image,
-starts both databases, and checks that the Ollama hosts have the chat model and
-the embedding model the agent expects. It takes a couple of minutes -- mostly
-downloads -- and is safe to re-run. Point it somewhere else with
-`./setup.sh --ollama-url URL --model NAME`; `./setup.sh --help` lists every
-flag.
+One call sets up all three containers:
+
+| Container | Role |
+|---|---|
+| `nl2sql-postgres` | the retail dataset you are querying |
+| `nl2sql-vectordb` | pgvector holding the embedded knowledge base |
+| `agent` | the agent itself, started per question and removed after |
+
+It pulls each image, starts both databases, checks that the Ollama hosts have
+the chat model and the embedding model, and ends by proving the agent container
+can actually reach the knowledge base:
+
+```
+==> Checking the agent can reach the knowledge base
+    retrieval works end to end (3 collections searched)
+```
+
+If that last check warns instead, the stack is still usable -- the agent just
+answers without retrieved context until the vector database or the embedding
+host is reachable.
+
+It takes a couple of minutes -- mostly downloads -- and is safe to re-run.
+Point it somewhere else with `./setup.sh --ollama-url URL --model NAME`;
+`./setup.sh --help` lists every flag.
 
 The agent uses **two** models on **two** possibly different hosts: a chat model
 (default `qwen3.8:latest` on `http://192.168.44.129:11434`) that writes the SQL,
@@ -274,6 +291,10 @@ qwen3-coder-next:latest
 | Results cut off with `... truncated at 50 rows` | row cap | Raise `--max-rows` |
 
 Exit codes: `0` answered, `1` could not answer, `2` Ollama misconfigured.
+
+**`setup.sh` warned that the agent could not retrieve** -- the same causes as
+the next entry; setup still leaves a working stack, so fix the cause and re-run
+`./setup.sh` (or just retry a question) to confirm.
 
 **`[knowledge] skipped: ...`** -- the agent could not reach the vector database
 or the embedding model, and answered from the schema alone. Check that

@@ -7,18 +7,41 @@
 docker compose run --rm agent "How many stores are there?"
 ```
 
-[`setup.sh`](setup.sh) pulls the Postgres image with the test dataset already
-inside it, the pgvector image holding the embedded knowledge base, and the agent
-image; starts both databases; and writes a `.env` so plain `docker compose`
-commands pick all of that up. It takes a couple of minutes, mostly downloading,
-and is safe to re-run.
+That is the whole setup. [`setup.sh`](setup.sh) brings up the three containers
+the agent needs and leaves them ready:
+
+| Container | What it holds |
+|---|---|
+| `nl2sql-postgres` | The retail dataset, baked into the image |
+| `nl2sql-vectordb` | pgvector with the embedded knowledge base |
+| `agent` | The v2 agent, run on demand per question |
+
+It pulls each image, starts both databases, writes a `.env` so plain
+`docker compose` commands pick all of that up, checks that the chat and
+embedding models are reachable, and finishes by proving the agent container can
+actually retrieve from the knowledge base:
+
+```
+==> Checking the agent can reach the knowledge base
+    retrieval works end to end (3 collections searched)
+
+==> Setup complete. Running now:
+
+    nl2sql-postgres    the retail dataset
+    nl2sql-vectordb    the embedded knowledge base
+```
+
+It takes a couple of minutes, mostly downloading, and is safe to re-run.
 
 Useful flags: `--ollama-url URL` and `--model NAME` to point the agent at a
 different Ollama host or model, `--embed-url URL` for the host serving the
-embedding model, `--no-rag` to skip the knowledge base entirely, `--build` to
-generate the dataset locally instead of pulling it, and `--reset` to discard an
-existing database volume and start from the image's data. `./setup.sh --help`
-lists them all.
+embedding model, `--no-rag` to skip the knowledge base entirely, `--build-agent`
+to build the agent from source instead of pulling it, `--build` to generate the
+dataset locally, `--no-verify` to skip the closing check, and `--reset` to
+discard an existing database volume and start from the image's data.
+`./setup.sh --help` lists them all.
+
+Stop everything with `docker compose down`; both databases keep their data.
 
 ## NL2SQL agent (v2, with RAG)
 

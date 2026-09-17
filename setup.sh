@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 #
-# One-time setup for the NL2SQL agent.
+# One-time setup for the NL2SQL RAG agent (v2).
 #
-# Pulls the published Postgres image (dataset already inside it), builds the
-# agent image, starts the database, and writes a .env so plain compose commands
-# pick all of that up. When it finishes you can just run:
+# Brings up the whole stack in one call:
+#
+#   nl2sql-postgres   the retail dataset, already inside the image
+#   nl2sql-vectordb   pgvector holding the embedded knowledge base
+#   agent             the v2 agent image, run on demand
+#
+# It pulls each image, starts both databases, writes a .env so plain compose
+# commands pick all of that up, checks that the chat and embedding models are
+# reachable, and finally proves the agent container can actually retrieve from
+# the knowledge base. When it finishes you can just run:
 #
 #     docker compose run --rm agent "your question"
 #
@@ -26,6 +33,7 @@ POSTGRES_PORT=""
 BUILD_POSTGRES=0
 BUILD_AGENT=0
 WITH_RAG=1
+VERIFY=1
 RESET=0
 
 usage() {
@@ -50,6 +58,7 @@ Usage: ./setup.sh [options]
       --embed-model NAME Embedding model for retrieval (default: bge-m3)
       --no-rag           Skip the knowledge base; the agent answers from the
                          schema alone, like v1
+      --no-verify        Skip the end-of-setup retrieval check
       --build            Build the Postgres image locally instead of pulling
                          it (regenerates the dataset; takes a few minutes)
       --reset            Delete the existing database volume first, so the
@@ -73,6 +82,7 @@ while [[ $# -gt 0 ]]; do
         --embed-url) EMBED_URL="$2"; shift 2 ;;
         --embed-model) EMBED_MODEL_NAME="$2"; shift 2 ;;
         --no-rag) WITH_RAG=0; shift ;;
+        --no-verify) VERIFY=0; shift ;;
         --build) BUILD_POSTGRES=1; shift ;;
         --reset) RESET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -121,8 +131,11 @@ fi
 # --- Knowledge base image --------------------------------------------------
 if [[ $WITH_RAG -eq 1 ]]; then
     step "Pulling $VECTOR_IMAGE:$VECTOR_TAG (pgvector with the embedded knowledge base)"
-    docker pull "$VECTOR_IMAGE:$VECTOR_TAG" ||
-        die "could not pull $VECTOR_IMAGE:$VECTOR_TAG. Re-run with --no-rag to skip retrieval."
+    if ! docker pull "$VECTOR_IMAGE:$VECTOR_TAG"; then
+        die "could not pull $VECTOR_IMAGE:$VECTOR_TAG.
+       If the repository is private, run 'docker login' first, or make it
+       public on Docker Hub. To set up without retrieval, re-run with --no-rag."
+    fi
 
     # The RAG pipeline may have left a standalone container bound to the same
     # port and data volume; compose manages it from here on.
@@ -162,7 +175,8 @@ if [[ $BUILD_AGENT -eq 1 ]]; then
 else
     step "Pulling $AGENT_IMAGE:$AGENT_TAG (the RAG agent)"
     if ! docker pull "$AGENT_IMAGE:$AGENT_TAG"; then
-        warn "could not pull $AGENT_IMAGE:$AGENT_TAG; building from source instead"
+        warn "could not pull $AGENT_IMAGE:$AGENT_TAG (private repo, or not logged in);"
+        warn "building it from source instead, which needs no registry access."
         docker compose build agent
     fi
 fi
@@ -268,10 +282,50 @@ if [[ $WITH_RAG -eq 1 ]]; then
     fi
 fi
 
+# --- End-to-end check ------------------------------------------------------
+# Everything above proves each piece is up; this proves they are wired to each
+# other, which is what the next command the user runs actually depends on:
+# the agent container resolving the vectordb service and reaching the
+# embedding host. Failing here is a warning, not an error -- the agent still
+# answers without retrieval.
+if [[ $VERIFY -eq 1 && $WITH_RAG -eq 1 ]]; then
+    step "Checking the agent can reach the knowledge base"
+    probe='
+import json
+from nl2sql_agent.config import Settings
+from nl2sql_agent.retrieval import KnowledgeBase, build_embedder
+s = Settings.from_env()
+kb = KnowledgeBase(s.vector_db_url, build_embedder(s), top_k=1)
+print("PROBE " + json.dumps({"chunks": len(kb.search("market share")),
+                             "collections": len(kb.collections())}))
+'
+    probe_out=$(docker compose run --rm --entrypoint python agent -c "$probe" 2>&1 || true)
+    probe_line=$(printf '%s' "$probe_out" | grep '^PROBE ' || true)
+    if [[ -n "$probe_line" ]]; then
+        found=$(printf '%s' "$probe_line" | sed 's/.*"chunks": *\([0-9]*\).*/\1/')
+        collections=$(printf '%s' "$probe_line" | sed 's/.*"collections": *\([0-9]*\).*/\1/')
+        if [[ "${found:-0}" -gt 0 ]]; then
+            info "retrieval works end to end ($collections collections searched)"
+        else
+            warn "the agent reached the knowledge base but it returned nothing."
+            warn "Queries will still run, just without retrieved context."
+        fi
+    else
+        warn "the agent container could not retrieve from the knowledge base:"
+        printf '%s\n' "$probe_out" | tail -3 >&2
+        warn "The agent will still answer, but without knowledge context."
+    fi
+fi
+
 # --- Done ------------------------------------------------------------------
 cat <<EOF
 
-==> Setup complete. Ask a question with:
+==> Setup complete. Running now:
+
+    nl2sql-postgres    the retail dataset
+    nl2sql-vectordb    the embedded knowledge base
+
+    The agent runs on demand, as a third container:
 
     docker compose run --rm agent "How many stores are there?"
 

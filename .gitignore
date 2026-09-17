@@ -13,3 +13,5 @@ data_gen/detailed_data_dictionary.md
 data_gen/index_descriptions.md
 .coverage
 .pytest_cache/
+context_questions/RAW/
+context_questions/example_question_table_translation.txt

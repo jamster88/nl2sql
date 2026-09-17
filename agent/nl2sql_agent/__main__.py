@@ -13,6 +13,7 @@ from .llm import LlmUnavailableError
 
 STEP_LABELS = {
     "retrieve_knowledge": "knowledge",
+    "retrieve_examples": "examples",
     "select_tables": "tables",
     "fetch_schema": "schema",
     "generate_sql": "sql",
@@ -50,6 +51,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--embed-model", default=settings.embed_model, help="embedding model for retrieval")
     p.add_argument("--embed-url", default=settings.embed_base_url, help="Ollama host serving the embedding model")
     p.add_argument("--rag-top-k", type=int, default=settings.rag_top_k, help="chunks retrieved per collection")
+    p.add_argument(
+        "--examples",
+        action=argparse.BooleanOptionalAction,
+        default=settings.examples_enabled,
+        help="retrieve worked question/SQL pairs for the question (default: on)",
+    )
+    p.add_argument(
+        "--multi-shot",
+        action=argparse.BooleanOptionalAction,
+        default=settings.multi_shot_enabled,
+        help="show the retrieved examples to the SQL generator (default: off)",
+    )
+    p.add_argument("--context-db-url", default=settings.context_db_url, help="context store URL (golden pairs + BM25)")
+    p.add_argument("--examples-top-k", type=int, default=settings.examples_top_k, help="worked examples handed to the model")
     p.add_argument("--json", action="store_true", help="emit the full result as JSON")
     p.add_argument("--quiet", action="store_true", help="only print the final answer")
     return p.parse_args(argv)
@@ -69,6 +84,10 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     settings.embed_model = args.embed_model
     settings.embed_base_url = args.embed_url
     settings.rag_top_k = args.rag_top_k
+    settings.examples_enabled = args.examples
+    settings.multi_shot_enabled = args.multi_shot
+    settings.context_db_url = args.context_db_url
+    settings.examples_top_k = args.examples_top_k
     return settings
 
 
@@ -97,6 +116,8 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
                     "question": question,
                     "knowledge_chunks": state.get("knowledge_chunks", []),
                     "retrieval_error": state.get("retrieval_error"),
+                    "example_pairs": state.get("example_pairs", []),
+                    "examples_error": state.get("examples_error"),
                     "selected_tables": state.get("selected_tables", []),
                     "sql": state.get("sql"),
                     "error": state.get("error"),
@@ -139,6 +160,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Connected to {settings.ollama_model} at {settings.ollama_base_url}.")
     if settings.rag_enabled:
         print(f"Knowledge base: {settings.embed_model} embeddings against {settings.vector_db_url}")
+    if settings.examples_enabled:
+        shown = "shown to the generator" if settings.multi_shot_enabled else "retrieved but not prompted with"
+        print(
+            f"Worked examples: ensemble over {settings.context_db_url} "
+            f"(question {settings.example_weight_question:g} / "
+            f"keywords {settings.example_weight_keywords:g} / "
+            f"reasoning {settings.example_weight_reasoning:g}), {shown}"
+        )
     print("Ask a question, or Ctrl-D to exit.")
     while True:
         try:

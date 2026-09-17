@@ -1,0 +1,8 @@
+psycopg[binary]>=3.2
+pgvector>=0.3
+requests>=2.32
+numpy>=1.26
+
+# Optional: only needed for --backend sentence-transformers, which downloads
+# model weights locally instead of using Ollama. Pulls in torch (~2 GB).
+# sentence-transformers>=3.0

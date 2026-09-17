@@ -38,7 +38,7 @@ Point it somewhere else with `./setup.sh --ollama-url URL --model NAME`;
 `./setup.sh --help` lists every flag.
 
 The agent uses **two** models on **two** possibly different hosts: a chat model
-(default `qwen3.8:latest` on `http://192.168.44.129:11434`) that writes the SQL,
+(default `qwen3.8:latest` on `http://192.168.10.82:11434`) that writes the SQL,
 and an embedding model (default `bge-m3` on the Ollama running on your own
 machine) that searches the knowledge base. `./setup.sh` warns about either one
 being unreachable. Retrieval is optional -- without it the agent still answers,
@@ -47,11 +47,11 @@ just without the business context that makes hard questions come out right.
 Every command below is run from the repo root, and assumes setup has completed.
 
 The one thing setup cannot do for you is make the Ollama host reachable. The
-default is `http://192.168.44.129:11434`; check it before debugging anything
+default is `http://192.168.10.82:11434`; check it before debugging anything
 else:
 
 ```bash
-curl -s http://192.168.44.129:11434/api/tags | head -c 200
+curl -s http://192.168.10.82:11434/api/tags | head -c 200
 ```
 
 That should print a JSON list of models. Note it is **http**, not https -- port
@@ -78,7 +78,7 @@ docker compose run --rm agent
 ```
 
 ```
-Connected to qwen3.8:latest at http://192.168.44.129:11434.
+Connected to qwen3.8:latest at http://192.168.10.82:11434.
 Ask a question, or Ctrl-D to exit.
 
 > How many vendors are there?
@@ -208,7 +208,7 @@ docker compose run --rm agent --base-url http://other-host:11434 "..."
 ```
 
 List what a host has available with
-`curl -s http://192.168.44.129:11434/api/tags | jq -r '.models[].name'`.
+`curl -s http://192.168.10.82:11434/api/tags | jq -r '.models[].name'`.
 Pick a model with **tool support** -- table selection and validation use
 structured output, which needs it.
 

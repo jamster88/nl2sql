@@ -77,17 +77,19 @@ def test_default_run_succeeds(run_setup):
     assert "Setup complete" in result.output
 
 
-def test_default_run_pulls_all_three_images(run_setup):
+def test_default_run_pulls_all_four_images(run_setup):
     result = run_setup()
     assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
-    assert result.called("pull mcfaddja/nl2sql-rag-vectordb:v1")
-    assert result.called("pull mcfaddja/nl2sql-agent:v2")
+    assert result.called("pull mcfaddja/nl2sql-rag-vectordb:v3")
+    assert result.called("pull mcfaddja/nl2sql-rag-chunkdb:v3")
+    assert result.called("pull mcfaddja/nl2sql-agent:v3")
 
 
-def test_default_run_starts_both_databases(run_setup):
+def test_default_run_starts_every_database(run_setup):
     result = run_setup()
     assert result.called("compose up -d postgres")
     assert result.called("compose up -d vectordb")
+    assert result.called("compose up -d chunkdb")
 
 
 def test_default_run_writes_env_pinning_every_image(run_setup):
@@ -95,9 +97,11 @@ def test_default_run_writes_env_pinning_every_image(run_setup):
     assert env["IMAGE_NAME"] == "mcfaddja/nl2sql-retail-postgres"
     assert env["IMAGE_TAG"] == "v1"
     assert env["AGENT_IMAGE_NAME"] == "mcfaddja/nl2sql-agent"
-    assert env["AGENT_IMAGE_TAG"] == "v2"
+    assert env["AGENT_IMAGE_TAG"] == "v3"
     assert env["VECTOR_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-vectordb"
-    assert env["VECTOR_IMAGE_TAG"] == "v1"
+    assert env["VECTOR_IMAGE_TAG"] == "v3"
+    assert env["CONTEXT_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-chunkdb"
+    assert env["CONTEXT_IMAGE_TAG"] == "v3"
     assert env["RAG_ENABLED"] == "true"
 
 

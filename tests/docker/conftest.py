@@ -81,7 +81,7 @@ case "$1" in
                 # One write, like the real thing: a reader that stops early
                 # must not be able to SIGPIPE us mid-stream.
                 printf '    OLLAMA_BASE_URL: %s\n    OLLAMA_MODEL: %s\n    EMBED_BASE_URL: %s\n    EMBED_MODEL: %s\n' \
-                    "$(read_env OLLAMA_BASE_URL http://192.168.44.129:11434)" \
+                    "$(read_env OLLAMA_BASE_URL http://192.168.10.82:11434)" \
                     "$(read_env OLLAMA_MODEL qwen3.8:latest)" \
                     "$(read_env EMBED_BASE_URL http://host.docker.internal:11434)" \
                     "$(read_env EMBED_MODEL bge-m3)"

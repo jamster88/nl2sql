@@ -58,6 +58,16 @@ def test_image_exposes_the_retrieval_flags(agent_image: str):
         assert flag in result.stdout, f"{flag} missing from the packaged CLI"
 
 
+def test_image_exposes_the_worked_example_flags(agent_image: str):
+    """The packaged CLI is the only interface most users touch; a flag that
+    exists in source but not in the image is invisible to them.
+    """
+    result = _run_agent(agent_image, "--help")
+    assert result.returncode == 0
+    for flag in ("--context-db-url", "--examples-top-k", "--no-examples", "--multi-shot"):
+        assert flag in result.stdout, f"{flag} missing from the packaged CLI"
+
+
 def test_image_declares_its_version(agent_image: str):
     result = subprocess.run(
         ["docker", "image", "inspect", agent_image,
@@ -65,7 +75,11 @@ def test_image_declares_its_version(agent_image: str):
         capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0
-    assert result.stdout.strip().startswith("2."), result.stdout
+    # Derived, not hardcoded: pinning the literal here means every version bump
+    # fails a test that has nothing to say about the change.
+    from nl2sql_agent import __version__
+
+    assert result.stdout.strip() == __version__, result.stdout
 
 
 def test_fails_fast_with_exit_two_when_ollama_is_unreachable(agent_image: str):

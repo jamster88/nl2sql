@@ -53,12 +53,12 @@ def test_build_llm_wraps_connection_error(monkeypatch):
         raise ConnectionError("refused")
 
     monkeypatch.setattr("nl2sql_agent.llm.ChatOllama", fake_chat_ollama)
-    settings = Settings(ollama_base_url="https://192.168.44.129:11434")
+    settings = Settings(ollama_base_url="https://192.168.10.82:11434")
 
     with pytest.raises(LlmUnavailableError) as excinfo:
         build_llm(settings)
     message = str(excinfo.value)
-    assert "https://192.168.44.129:11434" in message
+    assert "https://192.168.10.82:11434" in message
     assert "port 11434 serves http, not https" in message
 
 

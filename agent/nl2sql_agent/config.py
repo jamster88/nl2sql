@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-DEFAULT_OLLAMA_BASE_URL = "http://192.168.44.129:11434"
+DEFAULT_OLLAMA_BASE_URL = "http://192.168.10.82:11434"
 DEFAULT_OLLAMA_MODEL = "qwen3.8:latest"
 DEFAULT_DATABASE_URL = "postgresql+psycopg://nl2sql:nl2sql@postgres:5432/nl2sql_retail"
 
@@ -24,6 +24,11 @@ DEFAULT_VECTOR_DB_URL = "postgresql+psycopg://ragproc:ragproc@vectordb:5432/nl2s
 DEFAULT_EMBED_MODEL = "bge-m3"
 DEFAULT_EMBED_BASE_URL = "http://host.docker.internal:11434"
 
+# The context store: the plain-Postgres half of the RAG pipeline. It holds the
+# golden question/SQL pairs as rows and the BM25 statistics over their keywords.
+# The vectors for those same pairs live in the pgvector store above.
+DEFAULT_CONTEXT_DB_URL = "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2sql_chunks"
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
@@ -35,6 +40,11 @@ def _env_bool(name: str, default: bool) -> bool:
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name)
     return int(raw) if raw else default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    return float(raw) if raw else default
 
 
 @dataclass
@@ -63,6 +73,34 @@ class Settings:
     rag_top_k: int = 4
     rag_max_context_chars: int = 12000
 
+    # --- Worked examples (the golden-pair ensemble) ----------------------
+    # Retrieved from the context store and the pgvector store together; like
+    # knowledge retrieval, an unreachable store costs the examples and nothing
+    # else.
+    examples_enabled: bool = True
+    context_db_url: str = DEFAULT_CONTEXT_DB_URL
+    # Pairs handed to the model. Small on purpose: these are long SQL blocks,
+    # and a wrong example is more expensive than a missing one.
+    examples_top_k: int = 3
+    # Pairs each of the three retrievers proposes before fusion. Wider than
+    # top_k so a pair ranked mid-list by all three can still win overall.
+    examples_candidate_k: int = 10
+    # Ensemble weights, applied to each retriever's rank votes.
+    example_weight_question: float = 0.50
+    example_weight_keywords: float = 0.35
+    example_weight_reasoning: float = 0.15
+    # "score" (min-max normalise, then weighted sum) or "rrf" (weighted
+    # reciprocal rank fusion). Measured on this corpus, score fusion retrieves
+    # every pair from its own question and RRF at its usual k=60 manages 25/45.
+    examples_fusion: str = "score"
+    examples_rrf_k: int = 60
+    examples_max_context_chars: int = 8000
+    # Whether the retrieved examples are actually shown to the SQL generator.
+    # Retrieval and prompting are separated so the examples can be inspected
+    # before they start steering generation; turning this on is the multi-shot
+    # step.
+    multi_shot_enabled: bool = False
+
     sample_rows: int = 3
     max_rows: int = 50
     statement_timeout_ms: int = 30000
@@ -84,6 +122,17 @@ class Settings:
             embed_base_url=os.getenv("EMBED_BASE_URL", DEFAULT_EMBED_BASE_URL),
             rag_top_k=_env_int("RAG_TOP_K", 4),
             rag_max_context_chars=_env_int("RAG_MAX_CONTEXT_CHARS", 12000),
+            examples_enabled=_env_bool("EXAMPLES_ENABLED", True),
+            context_db_url=os.getenv("CONTEXT_DB_URL", DEFAULT_CONTEXT_DB_URL),
+            examples_top_k=_env_int("EXAMPLES_TOP_K", 3),
+            examples_candidate_k=_env_int("EXAMPLES_CANDIDATE_K", 10),
+            example_weight_question=_env_float("EXAMPLE_WEIGHT_QUESTION", 0.50),
+            example_weight_keywords=_env_float("EXAMPLE_WEIGHT_KEYWORDS", 0.35),
+            example_weight_reasoning=_env_float("EXAMPLE_WEIGHT_REASONING", 0.15),
+            examples_fusion=os.getenv("EXAMPLES_FUSION", "score"),
+            examples_rrf_k=_env_int("EXAMPLES_RRF_K", 60),
+            examples_max_context_chars=_env_int("EXAMPLES_MAX_CONTEXT_CHARS", 8000),
+            multi_shot_enabled=_env_bool("MULTI_SHOT_ENABLED", False),
             sample_rows=_env_int("SAMPLE_ROWS", 3),
             max_rows=_env_int("MAX_ROWS", 50),
             statement_timeout_ms=_env_int("STATEMENT_TIMEOUT_MS", 30000),

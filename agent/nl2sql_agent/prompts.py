@@ -52,6 +52,7 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
             "human",
             "Schema and sample data:\n{schema}\n\n"
             "{knowledge}"
+            "{examples}"
             "Question: {question}\n\n"
             "{feedback}"
             "SQL:",
@@ -103,3 +104,22 @@ def knowledge_block(knowledge: str) -> str:
     if not knowledge or not knowledge.strip():
         return ""
     return KNOWLEDGE_BLOCK.format(knowledge=knowledge.strip())
+
+
+EXAMPLES_BLOCK = (
+    "Worked examples (questions of this kind that have been answered correctly "
+    "against this database -- follow the patterns they use, but answer the "
+    "question actually asked):\n{examples}\n\n"
+)
+
+
+def examples_block(examples: str) -> str:
+    """Wrap retrieved golden pairs for a prompt, or render nothing when empty.
+
+    Rendered into `{examples}` in the generation prompt. Every template already
+    renders to the identical string when there is nothing to show, so the
+    with- and without-examples paths share one set of templates.
+    """
+    if not examples or not examples.strip():
+        return ""
+    return EXAMPLES_BLOCK.format(examples=examples.strip())

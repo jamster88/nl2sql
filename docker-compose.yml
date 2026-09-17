@@ -53,6 +53,32 @@ services:
       retries: 5
       start_period: 30s
 
+  # The context store: the golden question/SQL pairs as rows, plus the BM25
+  # statistics over their keywords. The agent's example retriever reads the rows
+  # and runs the keyword half of its ensemble here; the matching vectors live in
+  # vectordb above. Like that one, the image ships its data inside it.
+  chunkdb:
+    image: ${CONTEXT_IMAGE_NAME:-mcfaddja/nl2sql-rag-chunkdb}:${CONTEXT_IMAGE_TAG:-v3}
+    container_name: nl2sql-chunkdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${CONTEXT_DB_USER:-ragproc}
+      POSTGRES_PASSWORD: ${CONTEXT_DB_PASSWORD:-ragproc}
+      POSTGRES_DB: ${CONTEXT_DB_NAME:-nl2sql_chunks}
+    ports:
+      - "${CONTEXT_DB_PORT:-5433}:5432"
+    volumes:
+      - chunkdata:/var/lib/pgdata
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${CONTEXT_DB_USER:-ragproc} -d ${CONTEXT_DB_NAME:-nl2sql_chunks}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   agent:
     build:
       context: .
@@ -63,17 +89,25 @@ services:
         condition: service_healthy
       vectordb:
         condition: service_healthy
+      chunkdb:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nl2sql}:${POSTGRES_PASSWORD:-nl2sql}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.44.129:11434}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.10.82:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:latest}
       VECTOR_DB_URL: postgresql+psycopg://${VECTOR_DB_USER:-ragproc}:${VECTOR_DB_PASSWORD:-ragproc}@vectordb:5432/${VECTOR_DB_NAME:-nl2sql_vectors}
+      CONTEXT_DB_URL: postgresql+psycopg://${CONTEXT_DB_USER:-ragproc}:${CONTEXT_DB_PASSWORD:-ragproc}@chunkdb:5432/${CONTEXT_DB_NAME:-nl2sql_chunks}
       # bge-m3 is usually served by the Ollama on the machine running Docker,
       # which is a different host than the one serving the chat model.
       EMBED_BASE_URL: ${EMBED_BASE_URL:-http://host.docker.internal:11434}
       EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
       RAG_ENABLED: ${RAG_ENABLED:-true}
       RAG_TOP_K: ${RAG_TOP_K:-4}
+      EXAMPLES_ENABLED: ${EXAMPLES_ENABLED:-true}
+      EXAMPLES_TOP_K: ${EXAMPLES_TOP_K:-3}
+      # The next step turns this on: the examples are retrieved either way,
+      # and shown to the SQL generator only when it is true.
+      MULTI_SHOT_ENABLED: ${MULTI_SHOT_ENABLED:-false}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     extra_hosts:
@@ -86,6 +120,9 @@ services:
 volumes:
   pgdata:
     name: nl2sql-pgdata
+  chunkdata:
+    # Project-scoped, seeded from the published image on first start -- the
+    # same arrangement as vectordata below.
   vectordata:
     # Project-scoped (nl2sql_vectordata). The image ships the embeddings, so
     # a fresh volume is seeded from it on first start -- no need to adopt the

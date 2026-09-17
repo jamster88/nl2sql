@@ -34,6 +34,9 @@ INK, MUTED, FAINT = "#1b1b1d", "#65656b", "#8e8e94"
 BG, CARD, LINE = "#fbfaf8", "#ffffff", "#dcd8cf"
 WHY_BG, WHY_RULE = "#f4f1e9", "#bf9b30"
 SLATE, BLUE, PURPLE, TEAL, RED, AMBER = "#43566e", "#2f5d8f", "#6a4c93", "#0f7268", "#a8422f", "#8a6a14"
+# v3's accent, for the golden-pair ensemble. Distinct from TEAL so a v3 diagram
+# still reads which parts arrived with retrieval and which with the examples.
+INDIGO = "#3a4b9c"
 
 SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace"
@@ -367,7 +370,18 @@ def startup(y, steps, fail):
 # Pipeline assembly
 # --------------------------------------------------------------------------
 
-def pipeline(y, rows, knowledge_from=None, knowledge_to=()):
+def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=()):
+    """Draw the node column, the retry rail, and any data-flow rails.
+
+    A rail is {from, to, color, label, x, side}: where the data originates,
+    which nodes consume it, and which vertical track to run it on. v1 has none,
+    v2 has one (knowledge), v3 has two -- so the track position and the side the
+    label sits on are per-rail rather than constants.
+    """
+    if knowledge_from:
+        rails = (*rails, {"from": knowledge_from, "to": knowledge_to, "color": TEAL,
+                          "label": "state.knowledge &#8594; 3 consumers",
+                          "x": KFLOW_X, "side": 1})
     s = [label(MARGIN, y, "the pipeline — a compiled langgraph stategraph")]
     yy = y + 26
     s.append(f'<text x="{MARGIN}" y="{yy:.1f}" font-family="{MONO}" font-size="11.5" fill="{FAINT}">'
@@ -430,22 +444,24 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=()):
                  f'font-weight="700" fill="{RED}" text-anchor="middle" '
                  f'transform="rotate(-90 {RAIL_X-9} {my:.1f})">retry &#183; up to --max-attempts</text>')
 
-    # knowledge rail (data flow), retrieve_knowledge -> its three consumers
-    if knowledge_from:
-        ky, kh = pos[knowledge_from]
-        s.append(path(f"M {STEP_X+STEP_W+4} {ky+kh/2:.1f} L {KFLOW_X} {ky+kh/2:.1f}",
-                      color=TEAL, dash="5 4", wdt=1.7, marker=None))
-        last = max(pos[t][0] + pos[t][1] / 2 for t in knowledge_to)
-        s.append(path(f"M {KFLOW_X} {ky+kh/2:.1f} L {KFLOW_X} {last:.1f}",
-                      color=TEAL, dash="5 4", wdt=1.7, marker=None))
-        for t in knowledge_to:
+    # data-flow rails: a producing node out to each of its consumers
+    for rail in rails:
+        rx, col = rail["x"], rail["color"]
+        ky, kh = pos[rail["from"]]
+        s.append(path(f"M {STEP_X+STEP_W+4} {ky+kh/2:.1f} L {rx} {ky+kh/2:.1f}",
+                      color=col, dash="5 4", wdt=1.7, marker=None))
+        last = max(pos[t][0] + pos[t][1] / 2 for t in rail["to"])
+        s.append(path(f"M {rx} {ky+kh/2:.1f} L {rx} {last:.1f}",
+                      color=col, dash="5 4", wdt=1.7, marker=None))
+        for t in rail["to"]:
             ty, th = pos[t]
-            s.append(arrow(KFLOW_X, ty + th / 2, STEP_X + STEP_W + 6, ty + th / 2,
-                           color=TEAL, dash="5 4", wdt=1.7))
+            s.append(arrow(rx, ty + th / 2, STEP_X + STEP_W + 6, ty + th / 2,
+                           color=col, dash="5 4", wdt=1.7))
         mid = (ky + kh / 2 + last) / 2
-        s.append(f'<text x="{KFLOW_X+15}" y="{mid:.1f}" font-family="{SANS}" font-size="11.5" '
-                 f'font-weight="700" fill="{TEAL}" text-anchor="middle" '
-                 f'transform="rotate(-90 {KFLOW_X+15} {mid:.1f})">state.knowledge &#8594; 3 consumers</text>')
+        lx = rx + 15 * rail.get("side", 1)
+        s.append(f'<text x="{lx}" y="{mid:.1f}" font-family="{SANS}" font-size="11.5" '
+                 f'font-weight="700" fill="{col}" text-anchor="middle" '
+                 f'transform="rotate(-90 {lx} {mid:.1f})">{rail["label"]}</text>')
     return "\n".join(s), yy - y, drawn
 
 
@@ -777,9 +793,176 @@ def build_v2():
                     "\n".join(parts), y + 34, nodes)
 
 
+# --- v3: the golden-pair ensemble -----------------------------------------
+
+CHUNKDB = {"name": "nl2sql-chunkdb", "color": INDIGO,
+           "desc": "Plain Postgres, the context store. golden_pairs holds the 45 question/SQL pairs "
+                   "one row per pair — chunk_id, type, tables, keywords, question, reasoning_target, "
+                   "sql_code, result — beside the BM25 term statistics over the keyword column and the "
+                   "golden_pairs_bm25() function that ranks against them.",
+           "link": "← BM25 ranking + row hydration"}
+
+VECTORDB_V3 = {"name": "nl2sql-vectordb", "color": TEAL,
+               "desc": "pgvector, now holding two stores. The knowledge collections as in v2 (3 "
+                       "collections, 53 chunks), plus golden_pair_question_vectors and "
+                       "golden_pair_reasoning_vectors — 45 rows each, the same pair embedded twice. "
+                       "All HNSW, vector_cosine_ops.",
+               "link": "← cosine search, knowledge + both pair fields"}
+
+ENSEMBLE = ("Three retrievers over the same 45 pairs, each answering a different question about a "
+            "pair. Question similarity (0.50) matches what the user is asking for. BM25 over the "
+            "keyword column (0.35) catches the vocabulary a paraphrase preserves but an embedding "
+            "blurs — \"slotting\", \"fan-out\", \"BOGO\". Reasoning similarity (0.15) matches what the "
+            "query has to get right rather than what it asks, so a question that never says "
+            "\"fan-out\" can still reach the pair that warns about it.")
+
+FUSION = ("Each retriever's scores are min-max normalised across its own candidates, then weighted "
+          "and summed. Normalising first is what makes the weights mean anything: a cosine "
+          "similarity sits in a narrow band near 0.5 and a BM25 score is unbounded, so weighting the "
+          "raw numbers would weight incomparable units. Weighted reciprocal rank fusion — what "
+          "LangChain's EnsembleRetriever does — is implemented too and measured worse here: at "
+          "w/(60+rank), rank 1 and rank 10 differ by 15%, less than a third retriever contributes by "
+          "voting at all, so the weights start counting how many retrievers matched instead of how "
+          "strongly. Self-retrieval over all 45: score fusion 45/45, RRF 25/45.")
+
+RETRIEVE_EX_WHY = ("Prose tells the model the rule; a worked example shows it applied. The knowledge "
+                   "base can say costs are monthly and sales are daily, and the model can still emit "
+                   "the join that matches 24 days a year. A pair that has already reconciled the two "
+                   "grains carries the shape of the answer, not just the warning. These 45 pairs each "
+                   "ran against this database and returned rows, so the pattern being copied is one "
+                   "that works here specifically — not one recalled from training.")
+
+EX_DEGRADE = ("ExamplesUnavailableError → state.examples_error set, examples = \"\", flow proceeds to "
+              "select_tables. The context store, the vector store and the embedding host are three "
+              "separate things that can be down; all three land here. A run without examples is a v2 "
+              "run, and a run without either retrieval is a v1 run.")
+
+TWO_SWITCHES = ("EXAMPLES_ENABLED controls retrieval; MULTI_SHOT_ENABLED controls whether the "
+                "retrieved pairs are shown to the generator. They are separate on purpose: the "
+                "examples can be inspected in --json output, and their ranking tuned, before they "
+                "start steering generation. Turning the second one on is the multi-shot step, and it "
+                "is a prompt change rather than a plumbing change.")
+
+SELECT_WHY_V3 = (SELECT_WHY + " v3 adds a second hint alongside the chunk_meta tables: the tables a "
+                 "closely-matching worked example actually queries. Both are merged into the model's "
+                 "choice rather than replacing it.")
+
+GEN_WHY_V3 = (GEN_WHY + " The knowledge block is authoritative over the model's assumptions; the "
+              "examples block, when multi-shot is on, sits beneath it as pattern rather than rule — "
+              "the prompt says to follow the patterns but answer the question actually asked, because "
+              "the nearest pair is never the question being asked.")
+
+EX_PAYOFF = ("\"how much did we make on fruit and veg after cost last month\"  —  no keyword in that "
+             "sentence appears in the pair's keyword list verbatim, and the phrase \"fiscal month\" "
+             "never occurs. Question similarity ranks the right pair first, BM25 confirms it on "
+             "\"cost\" and \"month\", and the pair that comes back already aggregates daily sales and "
+             "monthly costs to fiscal month before dividing.")
+
+
+def build_v3():
+    parts, y = [], 56
+    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" font-weight="700" '
+                 f'fill="{INK}">NL2SQL Agent v3 <tspan fill="{MUTED}" font-weight="400">— ensemble-retrieved worked examples</tspan></text>')
+    y += 26
+    blk, h = text_block(MARGIN, y, "The v2 pipeline with a second, independent retrieval step after it. "
+                        "v2 retrieves prose about the database; v3 also retrieves worked question/SQL "
+                        "pairs, through an ensemble of three retrievers across two databases. Everything "
+                        "marked in indigo is new in v3; teal is v2's retrieval, unchanged.",
+                        CONTENT_R - MARGIN, 13.5, MUTED)
+    parts.append(blk); y += h + 26
+
+    svg, h = deployment(y, {"name": "nl2sql-agent:v3",
+                            "desc": "python -m nl2sql_agent. Started per question by "
+                                    "docker compose run --rm agent, after compose has all three "
+                                    "databases passing their health checks."},
+                        [PG, VECTORDB_V3, CHUNKDB], [OLLAMA_CHAT, OLLAMA_EMBED])
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "Two models, two hosts", TWO_HOSTS, color=TEAL, x=MARGIN,
+                      w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "The ensemble — three retrievers, one question", ENSEMBLE, color=INDIGO,
+                      x=MARGIN, w=CONTENT_R - MARGIN, dashed=False); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "How the three are fused, and why not RRF", FUSION, color=INDIGO,
+                      x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 36
+    svg, h = startup(y, STARTUP, FAIL2); parts.append(svg); y += h + 40
+
+    rows = [
+        {"id": "retrieve_knowledge", "kind": "step", "n": 0, "name": "retrieve_knowledge",
+         "badge": "v2", "accent": TEAL,
+         "does": "Embed the question once with bge-m3, then cosine-search every knowledge collection: "
+                 "ORDER BY embedding <=> $vec LIMIT k, merged across collections and re-sorted by "
+                 "distance. Produces the context block, the tables chunk_meta names, and the provenance "
+                 "of each chunk. Unchanged from v2.",
+         "tags": [("Ollama · embed_query", TEAL), ("pgvector · <=> cosine", TEAL)],
+         "why": RETRIEVE_WHY},
+        {"id": "retrieve_examples", "kind": "step", "n": 1, "name": "retrieve_examples",
+         "badge": "new in v3", "accent": INDIGO,
+         "does": "Run three retrievers over the 45 golden pairs and fuse them. One embed_query feeds "
+                 "both vector searches; BM25 runs inside the context store as golden_pairs_bm25(). "
+                 "Each returns up to candidate_k ids with scores; the fused winners are hydrated back "
+                 "into full rows — question, reasoning, SQL and expected result — in one query.",
+         "tags": [("Ollama · embed_query", TEAL), ("pgvector · 2 collections", TEAL),
+                  ("Postgres · BM25", INDIGO), ("fuse · 0.50 / 0.35 / 0.15", INDIGO)],
+         "why": RETRIEVE_EX_WHY},
+        {"id": "degrade", "kind": "note", "w": STEP_W, "color": AMBER,
+         "title": "If either retrieval fails — the run continues anyway",
+         "body": EX_DEGRADE},
+        {"id": "select_tables", "kind": "step", "n": 2, "name": "select_tables",
+         "badge": "changed", "accent": INDIGO,
+         "does": "Ask the model which tables the question needs, from the catalog plus the retrieved "
+                 "knowledge. Keep only names that exist, then merge in the tables the chunks document "
+                 "and the tables the retrieved examples query. Fall back to all tables if none survive.",
+         "tags": [("LLM · TableSelection", PURPLE), ("Postgres · pg_class", BLUE),
+                  ("+ chunk_meta.table", TEAL), ("+ example tables", INDIGO)],
+         "why": SELECT_WHY_V3},
+        {"id": "fetch_schema", "kind": "step", "n": 3, "name": "fetch_schema",
+         "does": "Pull full detail for the chosen tables only: column types, NOT NULL, primary and foreign "
+                 "key definitions, any COMMENT ON text, and 3 sample rows per table. Unchanged from v1.",
+         "tags": [("Postgres · pg_attribute, pg_constraint", BLUE)], "why": FETCH_WHY},
+        {"id": "generate_sql", "kind": "step", "n": 4, "name": "generate_sql",
+         "badge": "changed", "accent": INDIGO,
+         "does": "Ask the model for one SELECT, given the schema, the knowledge block, and — when "
+                 "MULTI_SHOT_ENABLED is on — the retrieved pairs as worked examples. strip_sql() removes "
+                 "any fence and trailing semicolon. On a retry, RETRY_FEEDBACK prepends the rejected SQL "
+                 "and the specific problems found with it.",
+         "tags": [("LLM · free-form", PURPLE), ("+ knowledge", TEAL), ("+ examples", INDIGO)],
+         "why": GEN_WHY_V3},
+        {"id": "multishot", "kind": "note", "w": STEP_W, "color": INDIGO,
+         "title": "Two switches, not one", "body": TWO_SWITCHES},
+        {"id": "validate_sql", "kind": "step", "n": 5, "name": "validate_sql",
+         "badge": "v2", "accent": TEAL,
+         "does": "Three checks, cheapest first. (a) ensure_read_only: a single statement starting with "
+                 "SELECT or WITH, no embedded semicolon. (b) EXPLAIN it — planned, not run. (c) Only "
+                 "then a model review, against the knowledge block as well as the schema.",
+         "tags": [("Postgres · EXPLAIN", BLUE), ("LLM · SqlReview", PURPLE),
+                  ("+ knowledge", TEAL)], "why": VAL_WHY_V2},
+        {"id": "route", "kind": "decision", "arms": ARMS, "why": ROUTE_WHY},
+        {"id": "terminals", "kind": "branch", "left": TERM_L, "right": TERM_R, "why": TERM_WHY},
+    ]
+    svg, h, nodes = pipeline(
+        y, rows,
+        rails=[
+            {"from": "retrieve_knowledge", "to": ("select_tables", "generate_sql", "validate_sql"),
+             "color": TEAL, "label": "state.knowledge &#8594; 3 consumers", "x": 604, "side": -1},
+            {"from": "retrieve_examples", "to": ("select_tables", "generate_sql"),
+             "color": INDIGO, "label": "state.examples &#8594; 2 consumers", "x": 636, "side": 1},
+        ])
+    parts.append(svg); y += h + 34
+    svg, h = outcomes(y, OUTCOMES, OUT_NOTE); parts.append(svg); y += h + 22
+    svg, h = note_row(y, "What the examples buy, on top of the knowledge", EX_PAYOFF, color=INDIGO,
+                      x=MARGIN, w=CONTENT_R - MARGIN, dashed=False); parts.append(svg); y += h + 26
+    svg, h = legend(y, [("solid", "control flow", SLATE), ("line", "retry loop", RED),
+                        ("line", "knowledge (data flow)", TEAL), ("line", "examples (data flow)", INDIGO),
+                        ("pill", "model call", PURPLE), ("pill", "database access", BLUE),
+                        ("pill", "new or changed in v3", INDIGO)])
+    parts.append(svg); y += h
+    return document("NL2SQL Agent v3 architecture", "Ensemble-retrieved worked examples",
+                    "\n".join(parts), y + 34, nodes)
+
+
 def main() -> None:
     here = Path(__file__).resolve().parent
-    for name, build in (("arch_v1.svg", build_v1), ("arch_v2.svg", build_v2)):
+    for name, build in (("arch_v1.svg", build_v1), ("arch_v2.svg", build_v2),
+                        ("arch_v3.svg", build_v3)):
         svg = build()
         (here / name).write_text(svg)
         print(f"{name}: {len(svg) / 1024:.1f} KB")

@@ -1,4 +1,5 @@
-"""The four tools from basic_agent_steps.md.
+"""The tools the pipeline calls: the four from basic_agent_steps.md plus
+knowledge-base retrieval.
 
 They are LangChain tools rather than plain functions so they can also be bound
 to a tool-calling model later; the graph invokes them directly at fixed points.
@@ -14,7 +15,8 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .database import Database, UnsafeQueryError, ensure_read_only
-from .prompts import SQL_VALIDATION_PROMPT
+from .prompts import SQL_VALIDATION_PROMPT, knowledge_block
+from .retrieval import KnowledgeBase, KnowledgeUnavailableError, format_chunks, tables_mentioned
 
 
 class TableSelection(BaseModel):
@@ -32,7 +34,12 @@ class SqlReview(BaseModel):
     )
 
 
-def build_tools(db: Database, llm: BaseChatModel, settings: Settings) -> dict[str, BaseTool]:
+def build_tools(
+    db: Database,
+    llm: BaseChatModel,
+    settings: Settings,
+    knowledge_base: KnowledgeBase | None = None,
+) -> dict[str, BaseTool]:
     @tool
     def describe_all_tables() -> str:
         """List every table in the database with its description and columns."""
@@ -44,7 +51,31 @@ def build_tools(db: Database, llm: BaseChatModel, settings: Settings) -> dict[st
         return db.schema_and_samples(tables, settings.sample_rows)
 
     @tool
-    def validate_sql(sql: str, question: str, schema_context: str) -> dict[str, Any]:
+    def search_knowledge(question: str) -> dict[str, Any]:
+        """Retrieve business rules, table docs, and query recipes for a question."""
+        if knowledge_base is None:
+            return {"context": "", "tables": [], "chunks": [], "error": "retrieval is disabled"}
+        try:
+            chunks = knowledge_base.search(question, settings.rag_top_k)
+        except KnowledgeUnavailableError as exc:
+            return {"context": "", "tables": [], "chunks": [], "error": str(exc)}
+        return {
+            "context": format_chunks(chunks, settings.rag_max_context_chars),
+            "tables": tables_mentioned(chunks),
+            "chunks": [
+                {
+                    "chunk_id": c.chunk_id,
+                    "source_doc": c.source_doc,
+                    "heading_path": c.heading_path,
+                    "distance": round(c.distance, 4),
+                }
+                for c in chunks
+            ],
+            "error": None,
+        }
+
+    @tool
+    def validate_sql(sql: str, question: str, schema_context: str, knowledge: str = "") -> dict[str, Any]:
         """Check a SQL query for safety, planner errors, and semantic correctness."""
         try:
             cleaned = ensure_read_only(sql)
@@ -60,6 +91,7 @@ def build_tools(db: Database, llm: BaseChatModel, settings: Settings) -> dict[st
             SQL_VALIDATION_PROMPT.format_messages(
                 dialect=db.dialect,
                 schema=schema_context,
+                knowledge=knowledge_block(knowledge),
                 question=question,
                 sql=cleaned,
                 engine_feedback="The database planner accepted this query.\n\n",
@@ -81,6 +113,7 @@ def build_tools(db: Database, llm: BaseChatModel, settings: Settings) -> dict[st
     return {
         "describe_all_tables": describe_all_tables,
         "get_schema_and_data": get_schema_and_data,
+        "search_knowledge": search_knowledge,
         "validate_sql": validate_sql,
         "execute_query": execute_query,
     }

@@ -8,7 +8,7 @@ from nl2sql_agent.config import Settings
 from nl2sql_agent.database import QueryResult
 from nl2sql_agent.tools import SqlReview, build_tools
 
-from .conftest import FakeDatabase, ScriptedLLM
+from .conftest import FakeDatabase, FakeKnowledgeBase, ScriptedLLM, make_chunk
 
 
 def test_describe_all_tables_delegates_to_the_database(fake_db, scripted_llm):
@@ -65,6 +65,63 @@ def test_validate_sql_surfaces_model_rejection_issues(fake_db):
         {"sql": "SELECT * FROM dim_store", "question": "q", "schema_context": "s"}
     )
     assert result == {"is_valid": False, "issues": ["wrong join key"]}
+
+
+def test_validate_sql_passes_knowledge_into_the_review_prompt(fake_db):
+    llm = ScriptedLLM(sql_reviews=[SqlReview(is_valid=True, issues=[])])
+    tools = build_tools(fake_db, llm, Settings())
+    tools["validate_sql"].invoke(
+        {
+            "sql": "SELECT * FROM dim_store",
+            "question": "q",
+            "schema_context": "s",
+            "knowledge": "Never sum a pre-aggregated total.",
+        }
+    )
+    prompt = "\n".join(
+        getattr(m, "content", str(m))
+        for _schema, messages in llm.structured_invocations
+        for m in messages
+    )
+    assert "Never sum a pre-aggregated total." in prompt
+
+
+def test_search_knowledge_returns_context_tables_and_provenance(fake_db, scripted_llm):
+    kb = FakeKnowledgeBase([
+        make_chunk(meta={"table": "fact_market_share_weekly"}, distance=0.2),
+        make_chunk(chunk_id="ddl:x", source_doc="ddl_index", meta={"table": "dim_competitor"}, distance=0.4),
+    ])
+    tools = build_tools(fake_db, scripted_llm, Settings(), kb)
+    result = tools["search_knowledge"].invoke({"question": "market share"})
+
+    assert result["error"] is None
+    assert result["tables"] == ["fact_market_share_weekly", "dim_competitor"]
+    assert "Market share fan-out" in result["context"]
+    assert [c["source_doc"] for c in result["chunks"]] == ["business_index", "ddl_index"]
+    assert result["chunks"][0]["distance"] == 0.2
+
+
+def test_search_knowledge_reports_an_unreachable_store_instead_of_raising(fake_db, scripted_llm):
+    kb = FakeKnowledgeBase(error="connection refused")
+    tools = build_tools(fake_db, scripted_llm, Settings(), kb)
+    result = tools["search_knowledge"].invoke({"question": "q"})
+    assert result["context"] == ""
+    assert result["tables"] == []
+    assert "connection refused" in result["error"]
+
+
+def test_search_knowledge_without_a_knowledge_base_reports_disabled(fake_db, scripted_llm):
+    tools = build_tools(fake_db, scripted_llm, Settings())
+    result = tools["search_knowledge"].invoke({"question": "q"})
+    assert result["context"] == ""
+    assert result["error"] == "retrieval is disabled"
+
+
+def test_search_knowledge_honors_the_configured_top_k(fake_db, scripted_llm):
+    kb = FakeKnowledgeBase()
+    tools = build_tools(fake_db, scripted_llm, Settings(rag_top_k=7), kb)
+    tools["search_knowledge"].invoke({"question": "q"})
+    assert kb.search_calls == [("q", 7)]
 
 
 def test_execute_query_shapes_the_result(scripted_llm):

@@ -7,25 +7,85 @@
 docker compose run --rm agent "How many stores are there?"
 ```
 
-[`setup.sh`](setup.sh) pulls the Postgres image with the test dataset already
-inside it, builds the agent image, starts the database, and writes a `.env` so
-plain `docker compose` commands pick all of that up. It takes a couple of
-minutes, mostly downloading the image, and is safe to re-run.
+That is the whole setup. [`setup.sh`](setup.sh) brings up the three containers
+the agent needs and leaves them ready:
+
+| Container | What it holds |
+|---|---|
+| `nl2sql-postgres` | The retail dataset, baked into the image |
+| `nl2sql-vectordb` | pgvector with the embedded knowledge base |
+| `agent` | The v2 agent, run on demand per question |
+
+It pulls each image, starts both databases, writes a `.env` so plain
+`docker compose` commands pick all of that up, checks that the chat and
+embedding models are reachable, and finishes by proving the agent container can
+actually retrieve from the knowledge base:
+
+```
+==> Checking the agent can reach the knowledge base
+    retrieval works end to end (3 collections searched)
+
+==> Setup complete. Running now:
+
+    nl2sql-postgres    the retail dataset
+    nl2sql-vectordb    the embedded knowledge base
+```
+
+It takes a couple of minutes, mostly downloading, and is safe to re-run.
 
 Useful flags: `--ollama-url URL` and `--model NAME` to point the agent at a
-different Ollama host or model, `--build` to generate the dataset locally
-instead of pulling it, and `--reset` to discard an existing database volume and
-start from the image's data. `./setup.sh --help` lists them all.
+different Ollama host or model, `--embed-url URL` for the host serving the
+embedding model, `--no-rag` to skip the knowledge base entirely, `--build-agent`
+to build the agent from source instead of pulling it, `--build` to generate the
+dataset locally, `--no-verify` to skip the closing check, and `--reset` to
+discard an existing database volume and start from the image's data.
+`./setup.sh --help` lists them all.
 
-## NL2SQL agent
+Stop everything with `docker compose down`; both databases keep their data.
+
+## NL2SQL agent (v2, with RAG)
 
 A LangChain/LangGraph agent that answers natural language questions by writing,
 validating, and running SQL against the Postgres container below. It uses any
-model served by Ollama. See [`agent/USAGE.md`](agent/USAGE.md) for how to launch
-it and ask questions, and [`agent/README.md`](agent/README.md) for how it works.
+model served by Ollama.
+
+**v2 retrieves before it writes.** Each question is embedded and matched against
+a pgvector knowledge base built from [`knowledge/`](knowledge) -- the data
+dictionary, DDL index and business index -- and the matching sections are fed to
+the model alongside the schema. That context carries what the schema cannot:
+fiscal-calendar semantics, pre-aggregated columns, and joins that fan out.
+
+See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
+and [`agent/README.md`](agent/README.md) for how it works.
 
 ```bash
 docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
+```
+
+Where it shows: asked for overall market share in FY2024, v1 answers **107.5%**
+(it sums a total that repeats once per competitor); v2 retrieves the documented
+fan-out rule, de-duplicates per cell, and answers **21.5%**.
+
+```bash
+docker compose run --rm agent "What is our overall market share in fiscal year 2024?"
+docker compose run --rm agent --no-rag "..."   # schema-only, v1 behavior
+```
+
+### Pulling the agent image
+
+```bash
+docker pull mcfaddja/nl2sql-agent:v2
+```
+
+| Tag | Use |
+|---|---|
+| `v2` | The RAG agent. Pinned. |
+| `latest` | Moves to the newest publish. |
+
+The knowledge base it searches is a separate image, started for you by compose:
+
+```bash
+docker pull mcfaddja/nl2sql-rag-vectordb:v1
 ```
 
 ## Synthetic data generator

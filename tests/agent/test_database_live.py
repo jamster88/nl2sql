@@ -95,3 +95,12 @@ def test_explain_returns_an_error_message_for_an_unknown_table(db: Database):
     error = db.explain("SELECT * FROM this_table_does_not_exist")
     assert error is not None
     assert "this_table_does_not_exist" in error
+
+
+def test_an_empty_schema_yields_no_tables(db: Database):
+    """The early return when the catalog query matches nothing -- otherwise
+    the follow-up column query would run with an empty name list.
+    """
+    empty = Database(POSTGRES_URL, db_schema="schema_that_does_not_exist")
+    assert empty.table_names() == []
+    assert empty.describe_all_tables() == ""

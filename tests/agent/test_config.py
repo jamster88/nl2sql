@@ -4,14 +4,23 @@ different Ollama host/model/database without a rebuild.
 
 from __future__ import annotations
 
-from nl2sql_agent.config import DEFAULT_DATABASE_URL, DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_MODEL, Settings
+from nl2sql_agent.config import (
+    DEFAULT_DATABASE_URL,
+    DEFAULT_EMBED_BASE_URL,
+    DEFAULT_EMBED_MODEL,
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_MODEL,
+    DEFAULT_VECTOR_DB_URL,
+    Settings,
+)
 
 
 def test_defaults_when_env_is_empty(monkeypatch):
     for var in (
         "OLLAMA_BASE_URL", "OLLAMA_MODEL", "OLLAMA_TEMPERATURE", "OLLAMA_REASONING",
         "OLLAMA_NUM_CTX", "DATABASE_URL", "DB_SCHEMA", "SAMPLE_ROWS", "MAX_ROWS",
-        "STATEMENT_TIMEOUT_MS", "MAX_SQL_ATTEMPTS",
+        "STATEMENT_TIMEOUT_MS", "MAX_SQL_ATTEMPTS", "RAG_ENABLED", "VECTOR_DB_URL",
+        "EMBED_MODEL", "EMBED_BASE_URL", "RAG_TOP_K", "RAG_MAX_CONTEXT_CHARS",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -27,6 +36,21 @@ def test_defaults_when_env_is_empty(monkeypatch):
     assert settings.max_rows == 50
     assert settings.statement_timeout_ms == 30000
     assert settings.max_sql_attempts == 3
+    assert settings.rag_enabled is True
+    assert settings.vector_db_url == DEFAULT_VECTOR_DB_URL
+    assert settings.embed_model == DEFAULT_EMBED_MODEL
+    assert settings.embed_base_url == DEFAULT_EMBED_BASE_URL
+    assert settings.rag_top_k == 4
+    assert settings.rag_max_context_chars == 12000
+
+
+def test_retrieval_defaults_target_the_compose_services(monkeypatch):
+    """The container defaults have to match docker-compose.yml: the vector
+    store is a compose service, but the embedding model is served by the
+    Ollama on the Docker host, not inside the compose network.
+    """
+    assert "@vectordb:5432/" in DEFAULT_VECTOR_DB_URL
+    assert DEFAULT_EMBED_BASE_URL.startswith("http://host.docker.internal")
 
 
 def test_default_base_url_is_plain_http_not_https():
@@ -47,8 +71,20 @@ def test_env_overrides_every_field(monkeypatch):
     monkeypatch.setenv("MAX_ROWS", "10")
     monkeypatch.setenv("STATEMENT_TIMEOUT_MS", "5000")
     monkeypatch.setenv("MAX_SQL_ATTEMPTS", "1")
+    monkeypatch.setenv("RAG_ENABLED", "false")
+    monkeypatch.setenv("VECTOR_DB_URL", "postgresql+psycopg://v:v@vhost/vectors")
+    monkeypatch.setenv("EMBED_MODEL", "nomic-embed-text")
+    monkeypatch.setenv("EMBED_BASE_URL", "http://embedhost:11434")
+    monkeypatch.setenv("RAG_TOP_K", "9")
+    monkeypatch.setenv("RAG_MAX_CONTEXT_CHARS", "2048")
 
     settings = Settings.from_env()
+    assert settings.rag_enabled is False
+    assert settings.vector_db_url == "postgresql+psycopg://v:v@vhost/vectors"
+    assert settings.embed_model == "nomic-embed-text"
+    assert settings.embed_base_url == "http://embedhost:11434"
+    assert settings.rag_top_k == 9
+    assert settings.rag_max_context_chars == 2048
     assert settings.ollama_base_url == "http://example.com:11434"
     assert settings.ollama_model == "llama3:latest"
     assert settings.temperature == 0.7

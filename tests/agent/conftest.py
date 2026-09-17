@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from nl2sql_agent.database import QueryResult
+from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
 from nl2sql_agent.tools import SqlReview, TableSelection
 
 
@@ -116,9 +117,58 @@ class ScriptedLLM:
         return _StructuredBinding(self, schema)
 
 
+class FakeKnowledgeBase:
+    """Stands in for nl2sql_agent.retrieval.KnowledgeBase.
+
+    Set `error` to simulate an unreachable vector store or embedding model,
+    which the pipeline is supposed to survive.
+    """
+
+    def __init__(
+        self,
+        chunks: list[RetrievedChunk] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self._chunks = chunks if chunks is not None else [make_chunk()]
+        self.error = error
+        self.search_calls: list[tuple[str, int | None]] = []
+
+    def search(self, question: str, top_k: int | None = None) -> list[RetrievedChunk]:
+        self.search_calls.append((question, top_k))
+        if self.error is not None:
+            raise KnowledgeUnavailableError(self.error)
+        return list(self._chunks)
+
+
+def make_chunk(
+    *,
+    collection: str = "business_index_embeddings",
+    chunk_id: str = "business_index:abc123",
+    source_doc: str = "business_index",
+    heading_path: str = "Business Index > Market share fan-out: the five-row trap",
+    content: str = "Each (week, product, region) cell repeats the same totals once per competitor.",
+    meta: dict | None = None,
+    distance: float = 0.25,
+) -> RetrievedChunk:
+    return RetrievedChunk(
+        collection=collection,
+        chunk_id=chunk_id,
+        source_doc=source_doc,
+        heading_path=heading_path,
+        content=content,
+        meta=meta if meta is not None else {"table": "fact_market_share_weekly"},
+        distance=distance,
+    )
+
+
 @pytest.fixture
 def fake_db() -> FakeDatabase:
     return FakeDatabase()
+
+
+@pytest.fixture
+def fake_kb() -> FakeKnowledgeBase:
+    return FakeKnowledgeBase()
 
 
 @pytest.fixture

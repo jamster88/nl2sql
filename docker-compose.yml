@@ -32,6 +32,27 @@ services:
       retries: 5
       start_period: 30s
 
+  # The RAG knowledge base: pgvector holding the embedded chunks of every
+  # document in knowledge/, one collection per document. The image ships the
+  # embeddings inside it, the same way the retail image ships its dataset.
+  vectordb:
+    image: ${VECTOR_IMAGE_NAME:-mcfaddja/nl2sql-rag-vectordb}:${VECTOR_IMAGE_TAG:-v1}
+    container_name: nl2sql-vectordb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    ports:
+      - "${VECTOR_DB_PORT:-5434}:5432"
+    volumes:
+      - vectordata:/var/lib/pgdata
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${VECTOR_DB_USER:-ragproc} -d ${VECTOR_DB_NAME:-nl2sql_vectors}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   agent:
     build:
       context: .
@@ -40,10 +61,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      vectordb:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nl2sql}:${POSTGRES_PASSWORD:-nl2sql}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.44.129:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:latest}
+      VECTOR_DB_URL: postgresql+psycopg://${VECTOR_DB_USER:-ragproc}:${VECTOR_DB_PASSWORD:-ragproc}@vectordb:5432/${VECTOR_DB_NAME:-nl2sql_vectors}
+      # bge-m3 is usually served by the Ollama on the machine running Docker,
+      # which is a different host than the one serving the chat model.
+      EMBED_BASE_URL: ${EMBED_BASE_URL:-http://host.docker.internal:11434}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      RAG_ENABLED: ${RAG_ENABLED:-true}
+      RAG_TOP_K: ${RAG_TOP_K:-4}
+    # Docker Desktop resolves host.docker.internal on its own; this is what
+    # makes the same EMBED_BASE_URL work on plain Linux Docker too.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     stdin_open: true
     tty: true
     # Not started by `up`; run on demand with `docker compose run --rm agent ...`
@@ -52,3 +86,8 @@ services:
 volumes:
   pgdata:
     name: nl2sql-pgdata
+  vectordata:
+    # Project-scoped (nl2sql_vectordata). The image ships the embeddings, so
+    # a fresh volume is seeded from it on first start -- no need to adopt the
+    # volume the RAG pipeline created under a different compose project, which
+    # only earned a warning on every compose command.

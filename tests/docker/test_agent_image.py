@@ -51,6 +51,23 @@ def test_entrypoint_shows_help_without_needing_a_live_ollama_or_database(agent_i
     assert "question" in result.stdout
 
 
+def test_image_exposes_the_retrieval_flags(agent_image: str):
+    result = _run_agent(agent_image, "--help")
+    assert result.returncode == 0
+    for flag in ("--vector-db-url", "--embed-model", "--embed-url", "--rag-top-k", "--no-rag"):
+        assert flag in result.stdout, f"{flag} missing from the packaged CLI"
+
+
+def test_image_declares_its_version(agent_image: str):
+    result = subprocess.run(
+        ["docker", "image", "inspect", agent_image,
+         "--format", "{{index .Config.Labels \"org.opencontainers.image.version\"}}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0
+    assert result.stdout.strip().startswith("2."), result.stdout
+
+
 def test_fails_fast_with_exit_two_when_ollama_is_unreachable(agent_image: str):
     # An address nothing listens on, so the connection fails immediately
     # instead of waiting out a real timeout.

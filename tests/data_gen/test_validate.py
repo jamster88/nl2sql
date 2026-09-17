@@ -54,3 +54,19 @@ def test_foreign_key_referenced_table_always_loads_before_the_referencing_table(
         assert position[ref_table] < position[table], (
             f"{ref_table} (referenced by {table}.{fk_col}) must precede {table} in TABLE_ORDER"
         )
+
+
+def test_verbose_mode_reports_every_table_and_the_foreign_key_summary(official_tables, capsys):
+    """generate_data.py calls validate() with verbose=True by default, so the
+    reporting path ships even though the quiet path is what other tests use.
+    A bad format spec in those lines would only ever surface at runtime.
+    """
+    validate.validate(official_tables, verbose=True)
+    out = capsys.readouterr().out
+
+    for table in validate.PRIMARY_KEYS:
+        assert f"OK  {table}:" in out, f"{table} missing from the verbose report"
+    assert f"all {len(validate.FOREIGN_KEYS)} foreign key relationships intact" in out
+    # Row counts are thousands-separated and right-aligned; a wrong spec here
+    # is exactly the kind of thing only executing the line catches.
+    assert not any(line.strip().endswith("rows,") for line in out.splitlines())

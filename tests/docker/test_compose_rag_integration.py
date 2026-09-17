@@ -10,7 +10,8 @@ The chat model is deliberately not involved -- these exercise the retrieval
 half directly, so they neither need nor wait on a remote Ollama.
 
 Opt-in (`pytest --run-docker`). Skips if Docker, the images, or the embedding
-host are unavailable.
+host are unavailable -- except for the degradation test, which stubs the
+embedder and so runs whether or not bge-m3 is up.
 """
 
 from __future__ import annotations
@@ -46,14 +47,22 @@ print("RESULT " + json.dumps({
 }))
 """
 
+# Deliberately stubs the embedder rather than building a real one. search()
+# embeds before it touches the store, so with a real embedder and an
+# unreachable embedding host this probe reports "Could not embed the question"
+# -- a true error, but not the one under test, and the assertion below would
+# fail for a reason that has nothing to do with the vector store.
 FAILURE_PROBE = """
 import json
-from nl2sql_agent.retrieval import KnowledgeBase, KnowledgeUnavailableError, build_embedder
-from nl2sql_agent.config import Settings
+from nl2sql_agent.retrieval import KnowledgeBase, KnowledgeUnavailableError
 
-settings = Settings.from_env()
-settings.vector_db_url = "postgresql+psycopg://ragproc:ragproc@127.0.0.1:1/nl2sql_vectors"
-kb = KnowledgeBase(settings.vector_db_url, build_embedder(settings))
+class StubEmbedder:
+    def embed_query(self, text):
+        return [0.0] * 1024
+
+kb = KnowledgeBase(
+    "postgresql+psycopg://ragproc:ragproc@127.0.0.1:1/nl2sql_vectors", StubEmbedder()
+)
 try:
     kb.search("anything")
     print("RESULT " + json.dumps({"raised": False}))
@@ -74,6 +83,14 @@ def _run_probe(script: str, timeout: int = 300) -> dict:
         "run", "--rm", "--entrypoint", "python", "agent", "-c", script, timeout=timeout
     )
     if result.returncode != 0:
+        # Distinguish "bge-m3 is not running on this machine" from a genuine
+        # packaging failure; both exit non-zero, but only one is a reason to
+        # skip quietly rather than to go looking for a bug in the image.
+        if "Could not embed the question" in result.stderr:
+            pytest.skip(
+                "the embedding host is unreachable from the agent container "
+                "(is Ollama running locally with bge-m3 pulled?)"
+            )
         pytest.skip(f"could not run the probe in the agent container:\n{result.stderr[-1500:]}")
     for line in result.stdout.splitlines():
         if line.startswith("RESULT "):

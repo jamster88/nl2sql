@@ -7,9 +7,9 @@ that the result actually satisfies the schema's primary key and foreign key
 constraints, and writes the result out as CSV files plus a ready-to-query
 SQLite database.
 
-See [`data_schema.md`](data_schema.md) and
-[`data_model_detail.md`](data_model_detail.md) for the narrative
-description of the data model this generator implements.
+See [`data_schema.md`](data_schema.md) for the narrative description of the
+data model this generator implements, and [`ddl.sql`](ddl.sql) for the
+authoritative schema itself.
 
 ## Quick start
 
@@ -98,8 +98,8 @@ New Year's Eve stretch).
 
 The independent `dim_promo_calendar` is generated separately, as
 variable-length (10-21 day) marketing cycles themed by month (e.g. "Back
-to School", "Summer Grilling", "Holiday Season"), per the dual-calendar
-design in `data_model_detail.md`.
+to School", "Summer Grilling", "Holiday Season"), independent of the
+corporate fiscal calendar in `dim_date`.
 
 ### Fictional content only
 
@@ -115,8 +115,6 @@ data_gen/
 ├── README.md              (this file)
 ├── ddl.sql                 Authoritative Postgres schema this generator implements
 ├── data_schema.md          Domain/table grouping overview
-├── data_model_detail.md    Narrative model description (dual-calendar design, etc.)
-├── old_ddl.sql             Superseded prior schema draft, kept for reference
 ├── requirements.txt
 ├── generate_data.py       CLI entry point
 └── datagen/

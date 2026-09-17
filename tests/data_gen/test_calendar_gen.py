@@ -114,3 +114,42 @@ def test_promo_calendar_is_deterministic_given_seed():
     a = calendar_gen.build_dim_promo_calendar(cfg, dim_date)
     b = calendar_gen.build_dim_promo_calendar(cfg, dim_date)
     assert a.equals(b)
+
+
+# ---------------------------------------------------------------------------
+# Weekday helpers
+# ---------------------------------------------------------------------------
+
+
+def test_nth_weekday_finds_the_right_occurrence():
+    # MLK Day 2024: third Monday in January, which was the 15th.
+    assert calendar_gen._nth_weekday(2024, 1, 0, 3) == date(2024, 1, 15)
+    # Thanksgiving 2024: fourth Thursday in November, the 28th.
+    assert calendar_gen._nth_weekday(2024, 11, 3, 4) == date(2024, 11, 28)
+
+
+def test_last_weekday_finds_the_final_occurrence_in_the_month():
+    # Memorial Day, the only holiday currently using this helper.
+    assert calendar_gen._last_weekday(2024, 5, 0) == date(2024, 5, 27)
+    assert calendar_gen._last_weekday(2025, 5, 0) == date(2025, 5, 26)
+
+
+def test_last_weekday_rolls_over_the_year_for_december():
+    """December has to look at January of the *next* year to find its own last
+    day. Nothing calls it with month=12 today, so the branch would otherwise
+    only be exercised the first time someone adds a December holiday -- by
+    which point an off-by-a-year is a wrong date, not a crash.
+    """
+    assert calendar_gen._last_weekday(2024, 12, 0) == date(2024, 12, 30)  # last Monday
+    assert calendar_gen._last_weekday(2024, 12, 1) == date(2024, 12, 31)  # last Tuesday
+    assert calendar_gen._last_weekday(2023, 12, 6) == date(2023, 12, 31)  # last Sunday
+
+
+@pytest.mark.parametrize("month", range(1, 13))
+def test_last_weekday_always_lands_in_the_month_it_was_asked_for(month: int):
+    for weekday in range(7):
+        result = calendar_gen._last_weekday(2024, month, weekday)
+        assert result.month == month and result.year == 2024
+        assert result.weekday() == weekday
+        # "Last" means adding a week would leave the month.
+        assert (result + timedelta(days=7)).month != month

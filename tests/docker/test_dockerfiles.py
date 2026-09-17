@@ -127,6 +127,61 @@ def test_emit_load_sql_copy_statements_match_the_csv_writer_format(emit_load_sql
     assert "FORMAT csv" in emit_load_sql_py
 
 
+@pytest.fixture(scope="module")
+def emitted_load_sql(tmp_path_factory) -> str:
+    """Run the script the way docker/Dockerfile does and return what it wrote.
+
+    The static checks above only read the source; this is the script actually
+    executing, which is the part the image build depends on.
+    """
+    import os
+    import subprocess
+    import sys
+
+    data_gen = DOCKER_DIR.parent / "data_gen"
+    out = tmp_path_factory.mktemp("load") / "_load.sql"
+    result = subprocess.run(
+        [sys.executable, str(DOCKER_DIR / "emit_load_sql.py"), "/csv", str(out)],
+        # The image sets ENV PYTHONPATH=/app/data_gen for exactly this import.
+        env={**os.environ, "PYTHONPATH": str(data_gen)},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    return out.read_text()
+
+
+def test_emit_load_sql_writes_one_copy_per_table_in_fk_safe_order(emitted_load_sql: str):
+    from datagen.schema_columns import TABLE_ORDER
+
+    statements = emitted_load_sql.strip().splitlines()
+    assert len(statements) == len(TABLE_ORDER)
+    emitted_tables = [re.match(r"COPY (\w+) FROM", line).group(1) for line in statements]
+    # Order is load order: test_validate.py separately pins that TABLE_ORDER
+    # itself puts every referenced table before the table referencing it.
+    assert emitted_tables == list(TABLE_ORDER)
+
+
+def test_emit_load_sql_points_every_copy_at_the_directory_it_was_given(emitted_load_sql: str):
+    for line in emitted_load_sql.strip().splitlines():
+        assert "FROM '/csv/" in line, line
+
+
+def test_emitted_statements_name_the_csv_files_the_writer_actually_produces(emitted_load_sql: str):
+    """The COPY path and writer.write_csvs()'s filename have to agree; nothing
+    at build time would notice a mismatch until the load fails.
+    """
+    from datagen.schema_columns import TABLE_ORDER
+
+    filenames = set(re.findall(r"FROM '/csv/([^']+)'", emitted_load_sql))
+    assert filenames == {f"{name}.csv" for name in TABLE_ORDER}
+
+
+def test_emitted_sql_ends_with_a_newline(emitted_load_sql: str):
+    # psql -f on a file whose last statement has no terminating newline still
+    # works, but the trailing newline is what keeps `cat`-ing it readable.
+    assert emitted_load_sql.endswith("\n")
+
+
 # ---------------------------------------------------------------------------
 # agent/Dockerfile
 # ---------------------------------------------------------------------------

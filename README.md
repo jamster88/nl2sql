@@ -79,8 +79,18 @@ docker pull mcfaddja/nl2sql-agent:v2
 
 | Tag | Use |
 |---|---|
-| `v2` | The RAG agent. Pinned. |
-| `latest` | Moves to the newest publish. |
+| `v2` | The RAG agent. Pinned -- what `setup.sh` pulls. |
+| `v1` | The original schema-only agent, before retrieval. Pinned. |
+| `latest` | Moves to the newest publish (currently the same image as `v2`). |
+
+`v1` is what the comparison below is measured against, and it is a genuinely
+different image rather than `v2` with retrieval switched off -- it has no
+`--rag` flags and no `retrieval` module at all:
+
+```bash
+docker pull mcfaddja/nl2sql-agent:v1
+./setup.sh --agent-tag v1 --no-rag      # set the stack up against it
+```
 
 The knowledge base it searches is a separate image, started for you by compose:
 
@@ -233,3 +243,27 @@ in one step so the tag stays multi-arch:
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile --push -t mcfaddja/nl2sql-retail-postgres:v2 .
 ```
+
+## Tests
+
+```bash
+pip install -r tests/requirements.txt
+pytest                  # 324 tests, no Docker or network needed
+pytest --run-docker     # all 373, including ones that build and run containers
+```
+
+| Directory | Covers |
+|---|---|
+| [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
+| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, retrieval, and read-only enforcement |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, and `setup.sh` run against fake `docker`/`curl` binaries |
+| [`tests/docs/`](tests/docs) | These documents, checked against the code they describe |
+
+The 49 tests behind `--run-docker` are the ones that need a working daemon:
+they build the agent image and run it, resolve the real compose file, and query
+the two live databases. Everything else runs offline in about 20 seconds --
+`setup.sh` included, since it is exercised against fake binaries rather than
+real Docker.
+
+Coverage is 99% of the agent package with `--run-docker` -- the one uncovered
+line is the `if __name__ == "__main__"` guard -- and 99% of the data generator.

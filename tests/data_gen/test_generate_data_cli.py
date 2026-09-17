@@ -109,3 +109,30 @@ def test_cli_reports_row_totals_when_not_quiet(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     assert "Done in" in result.stdout
     assert "total rows across" in result.stdout
+
+
+def test_cli_honors_a_custom_sqlite_filename(tmp_path: Path):
+    out = tmp_path / "out"
+    result = run_generator(out, "--sqlite-filename", "retail_snapshot.db")
+    assert result.returncode == 0, result.stderr
+    assert (out / "retail_snapshot.db").exists()
+    assert not (out / "nl2sql_retail.db").exists()
+
+
+def test_cli_labels_the_fiscal_year_it_was_asked_for(tmp_path: Path):
+    """Fiscal year Y starts April 1 of Y-1, so the label is not derivable from
+    the dates -- it comes straight from the flag, and getting it wrong shifts
+    every fiscal-year question the agent is asked.
+    """
+    import csv
+
+    out = tmp_path / "out"
+    result = run_generator(out, "--no-sqlite", "--first-fiscal-year", "2019")
+    assert result.returncode == 0, result.stderr
+
+    with (out / "dim_date.csv").open() as fh:
+        rows = list(csv.DictReader(fh))
+    assert {row["fiscal_year"] for row in rows} == {"2019"}
+
+    dates = sorted(row["calendar_date"] for row in rows)
+    assert dates[0].startswith("2018-04"), dates[0]

@@ -43,6 +43,8 @@ LangGraph node each, defined in [`nl2sql_agent/graph.py`](nl2sql_agent/graph.py)
 retrieve_knowledge -> select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query
                                                             ^               |
                                                             +---- retry ----+
+                                                                            |
+                                                          attempts exhausted +-> give_up
 ```
 
 | Step | Node | Tool | LLM |
@@ -54,8 +56,9 @@ retrieve_knowledge -> select_tables -> fetch_schema -> generate_sql -> validate_
 | 5. Execute | `execute_query` | `execute_query` | -- |
 
 Validation failures loop back to `generate_sql` with the specific problems
-appended to the prompt, up to `--max-attempts` (default 3). If the attempts run
-out, the agent reports the failure instead of executing anything.
+appended to the prompt, up to `--max-attempts` (default 3). When the attempts
+run out the graph routes to `give_up`, which records the last set of problems
+and ends the run -- nothing is executed.
 
 The validator runs `EXPLAIN` before consulting the model. A planner error
 (unknown column, type mismatch) is definitive and skips the LLM call, so the
@@ -75,8 +78,10 @@ Every setting is an environment variable with a CLI override:
 | `OLLAMA_BASE_URL` | `--base-url` | `http://192.168.44.129:11434` |
 | `OLLAMA_MODEL` | `--model` | `qwen3.8:latest` |
 | `OLLAMA_REASONING` | `--reasoning` / `--no-reasoning` | off |
+| `OLLAMA_TEMPERATURE` | -- | 0.0 |
 | `OLLAMA_NUM_CTX` | -- | 16384 |
 | `DATABASE_URL` | `--database-url` | the compose Postgres |
+| `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |
 | `MAX_SQL_ATTEMPTS` | `--max-attempts` | 3 |
 | `SAMPLE_ROWS` | `--sample-rows` | 3 |

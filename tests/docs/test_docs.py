@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -170,6 +171,51 @@ def test_the_pre_rag_agent_tag_is_documented(root_readme: str):
     assert "mcfaddja/nl2sql-agent:v1" in root_readme or re.search(
         r"\|\s*`v1`\s*\|", root_readme.split("Pulling the agent image")[1].split("##")[0]
     ), "README does not document the published v1 agent tag"
+
+
+# ---------------------------------------------------------------------------
+# The test counts the README quotes
+# ---------------------------------------------------------------------------
+
+
+def _collected(*args: str) -> int:
+    """How many tests pytest selects for the given arguments.
+
+    --collect-only, so nothing is executed and this cannot recurse.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", *args],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
+    )
+    # "389 tests collected", or "49/389 tests collected (340 deselected)"
+    match = re.search(r"(\d+)(?:/\d+)? tests? collected", result.stdout)
+    assert match, f"could not read a count from:\n{result.stdout[-800:]}"
+    return int(match.group(1))
+
+
+def test_the_readme_quotes_the_real_test_counts(root_readme: str):
+    """These numbers went stale twice before this test existed. They are the
+    first thing a contributor checks a run against, so a wrong one reads as a
+    broken checkout.
+    """
+    total = _collected("--run-docker")
+    docker_only = _collected("--run-docker", "-m", "docker")
+    offline = total - docker_only
+
+    quoted_offline = int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1))
+    quoted_total = int(re.search(r"pytest --run-docker\s+#\s*all (\d+)", root_readme).group(1))
+    quoted_docker = int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1))
+
+    assert quoted_offline == offline, f"README says {quoted_offline} offline tests, there are {offline}"
+    assert quoted_total == total, f"README says {quoted_total} total, there are {total}"
+    assert quoted_docker == docker_only, f"README says {quoted_docker} docker tests, there are {docker_only}"
+
+
+def test_the_quoted_counts_are_internally_consistent(root_readme: str):
+    offline = int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1))
+    total = int(re.search(r"pytest --run-docker\s+#\s*all (\d+)", root_readme).group(1))
+    docker_only = int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1))
+    assert offline + docker_only == total
 
 
 # ---------------------------------------------------------------------------

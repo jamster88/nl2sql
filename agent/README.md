@@ -37,7 +37,12 @@ stdout, so `... > answer.txt` captures just the answer.
 ## The pipeline
 
 The five steps in [`basic_agent_steps.md`](../basic_agent_steps.md) map onto one
-LangGraph node each, defined in [`nl2sql_agent/graph.py`](nl2sql_agent/graph.py):
+LangGraph node each, defined in [`nl2sql_agent/graph.py`](nl2sql_agent/graph.py).
+[`arch_diagrams/arch_v2.svg`](../arch_diagrams/arch_v2.svg) draws the same thing
+in full -- every node beside the reasoning for it, the retry loop, and where the
+retrieved context flows -- with
+[`arch_v1.svg`](../arch_diagrams/arch_v1.svg) alongside it for the schema-only
+version:
 
 ```
 retrieve_knowledge -> select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query

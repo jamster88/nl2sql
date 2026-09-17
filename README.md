@@ -98,6 +98,34 @@ The knowledge base it searches is a separate image, started for you by compose:
 docker pull mcfaddja/nl2sql-rag-vectordb:v1
 ```
 
+## Architecture diagrams
+
+[`arch_diagrams/`](arch_diagrams) holds one diagram per agent version: what
+each step does, why it is there, and how control flows.
+
+| | |
+|---|---|
+| [`arch_v1.svg`](arch_diagrams/arch_v1.svg) | The schema-only pipeline |
+| [`arch_v2.svg`](arch_diagrams/arch_v2.svg) | The same pipeline with retrieval in front of it, and that context threaded into three of the five steps |
+
+Both are laid out identically so the versions can be read side by side --
+everything new or changed in v2 is marked. Each shows the deployment (what runs
+where), the startup preflight, every LangGraph node paired with the reasoning
+behind it, the retry loop, and the exit codes.
+
+They are generated, not drawn:
+
+```bash
+python arch_diagrams/generate.py
+```
+
+[`generate.py`](arch_diagrams/generate.py) computes the layout -- text wrapped
+against real font metrics, row heights following their content -- and records
+the nodes it drew in the SVG, which is what lets
+[`tests/docs/test_arch_diagrams.py`](tests/docs/test_arch_diagrams.py) check
+the pictures against `graph.py` and fail when a node is renamed. Edit the
+content in `build_v1()` / `build_v2()` and re-run; do not hand-edit the SVGs.
+
 ## Synthetic data generator
 
 A synthetic dataset generator for a grocery retail data model, along with the schema it implements, lives in [`data_gen/`](data_gen/README.md) -- see that README for details, setup, and usage.
@@ -248,8 +276,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 324 tests, no Docker or network needed
-pytest --run-docker     # all 373, including ones that build and run containers
+pytest                  # 342 tests, no Docker or network needed
+pytest --run-docker     # all 391, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -257,7 +285,7 @@ pytest --run-docker     # all 373, including ones that build and run containers
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, retrieval, and read-only enforcement |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, and `setup.sh` run against fake `docker`/`curl` binaries |
-| [`tests/docs/`](tests/docs) | These documents, checked against the code they describe |
+| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 
 The 49 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
@@ -265,5 +293,13 @@ the two live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Coverage is 99% of the agent package with `--run-docker` -- the one uncovered
-line is the `if __name__ == "__main__"` guard -- and 99% of the data generator.
+Fourteen of those 49 also need the **embedding host**: a local Ollama serving
+`bge-m3`, the model the knowledge base was built with. Without it they skip
+with that as the stated reason rather than failing. Start it with `ollama serve`
+(and `ollama pull bge-m3` once) to run the whole suite.
+
+Coverage is **99%** of both the agent package and the data generator, which is
+every reachable statement. Exactly two are not covered, and neither can be:
+`__main__.py`'s `if __name__ == "__main__"` guard, which pytest never executes,
+and one defensive `continue` in `facts.py` that is unreachable by construction
+(the loop runs to `max(k)`, so the index set it guards against is never empty).

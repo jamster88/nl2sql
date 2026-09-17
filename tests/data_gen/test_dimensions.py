@@ -167,3 +167,26 @@ def test_dim_allowance_type_mirrors_reference_data_exactly(built):
     assert len(df) == len(ref.ALLOWANCE_TYPES)
     assert list(zip(df["allowance_type_code"], df["allowance_type_name"])) == ref.ALLOWANCE_TYPES
     assert df["allowance_type_key"].tolist() == list(range(1, len(ref.ALLOWANCE_TYPES) + 1))
+
+
+def test_min_purchase_requirement_follows_the_promotion_mechanic(tiny_config):
+    """BOGO means two, multi-item mechanics mean two-to-five, and everything
+    else means one. Generated with enough promotions that each mechanic in
+    PROMO_MECHANICS actually appears.
+    """
+    from dataclasses import replace
+
+    promotions = dimensions.gen_dim_promotion(replace(tiny_config, n_promotions=300))
+    by_mechanic = promotions.groupby("mechanic_type")["min_purchase_requirement"]
+
+    mechanics = {name for name, _weight in ref.PROMO_MECHANICS}
+    assert set(promotions["mechanic_type"]) == mechanics, "not every mechanic was generated"
+
+    for mechanic, values in by_mechanic:
+        if mechanic == "BOGO":
+            assert set(values) == {2}, mechanic
+        elif mechanic in ("Mix-and-Match", "Multi-Buy"):
+            assert set(values) <= {2, 3, 4, 5}, mechanic
+            assert values.min() >= 2, mechanic
+        else:
+            assert set(values) == {1}, mechanic

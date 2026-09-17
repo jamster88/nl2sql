@@ -6,6 +6,8 @@ edge-case branches for promo/ad performance when there's no participation.
 
 from __future__ import annotations
 
+from datetime import date
+
 import numpy as np
 import pandas as pd
 from datagen import facts
@@ -301,3 +303,80 @@ def test_fact_generation_is_deterministic_given_seed(built, tiny_config):
         built["promo_participation"],
     )
     assert again.equals(built["fact_item_prices"])
+
+
+# ---------------------------------------------------------------------------
+# Degenerate inputs: the guards that keep a sparse calendar from producing
+# rows dated outside it, or from crashing on an empty concat.
+# ---------------------------------------------------------------------------
+
+
+PROMO_PARTICIPATION_COLUMNS = [
+    "promotion_key", "promo_calendar_key", "product_key", "store_key",
+    "date_key", "calendar_date", "fiscal_year", "fiscal_week_num", "discount_pct",
+]
+AD_PARTICIPATION_COLUMNS = [
+    "ad_placement_key", "product_key", "store_key", "date_key", "calendar_date",
+]
+
+
+def test_promo_participation_skips_cycles_that_fall_outside_the_calendar(tiny_config, built):
+    """A promo cycle whose window lies outside dim_date contributes nothing.
+    Without the guard the cross-join would emit rows dated to days the calendar
+    does not contain, and every downstream fact joined on date_key would
+    silently gain orphans.
+    """
+    far_future = pd.DataFrame([
+        {
+            "promo_calendar_key": 1,
+            "promo_cycle_id": "PC0001",
+            # date, not Timestamp: dim_date.calendar_date holds datetime.date,
+            # and the two do not compare.
+            "cycle_start_date": date(1990, 1, 1),
+            "cycle_end_date": date(1990, 1, 31),
+        }
+    ])
+    result = facts.build_promo_participation(
+        tiny_config, built["dim_date"], far_future,
+        built["dim_promotion"], built["dim_product"], built["dim_store"],
+    )
+    assert result.empty
+    # Shape still has to be right: gen_fact_promo_performance reads these
+    # columns off the frame whether or not it has rows in it.
+    assert list(result.columns) == PROMO_PARTICIPATION_COLUMNS
+
+
+def test_promo_participation_with_no_promotions_returns_a_shaped_empty_frame(tiny_config, built):
+    result = facts.build_promo_participation(
+        tiny_config, built["dim_date"], built["dim_promo_calendar"],
+        built["dim_promotion"].iloc[0:0], built["dim_product"], built["dim_store"],
+    )
+    assert result.empty
+    assert list(result.columns) == PROMO_PARTICIPATION_COLUMNS
+
+
+def test_ad_participation_with_no_placements_returns_a_shaped_empty_frame(tiny_config, built):
+    result = facts.build_ad_participation(
+        tiny_config, built["dim_date"], built["dim_ad_placement"].iloc[0:0],
+        built["dim_product"], built["dim_store"],
+    )
+    assert result.empty
+    assert list(result.columns) == AD_PARTICIPATION_COLUMNS
+
+
+def test_ad_participation_never_invents_dates_the_calendar_does_not_have(tiny_config, built):
+    """Flight windows are derived from dim_date's own span, so a calendar with
+    gaps can place a whole flight inside one. Those flights drop out rather
+    than producing undated rows.
+    """
+    calendar = built["dim_date"]
+    sparse = calendar[calendar["calendar_date"].isin(
+        [calendar["calendar_date"].min(), calendar["calendar_date"].max()]
+    )]
+    assert len(sparse) == 2, "expected exactly the two endpoint days"
+
+    result = facts.build_ad_participation(
+        tiny_config, sparse, built["dim_ad_placement"], built["dim_product"], built["dim_store"],
+    )
+    assert list(result.columns) == AD_PARTICIPATION_COLUMNS
+    assert set(result["calendar_date"]) <= set(sparse["calendar_date"])

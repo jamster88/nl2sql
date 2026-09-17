@@ -60,10 +60,11 @@ def test_agent_service_is_hidden_without_the_agent_profile(default_config: dict)
     # profiles: ["agent"] means plain `docker compose up` never starts it.
     assert "agent" not in default_config["services"]
     assert "postgres" in default_config["services"]
+    assert "vectordb" in default_config["services"]
 
 
-def test_both_services_present_under_the_agent_profile(agent_profile_config: dict):
-    assert set(agent_profile_config["services"]) == {"postgres", "agent"}
+def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
+    assert set(agent_profile_config["services"]) == {"postgres", "vectordb", "agent"}
 
 
 def test_postgres_service_shape(agent_profile_config: dict):
@@ -83,6 +84,22 @@ def test_postgres_service_shape(agent_profile_config: dict):
     assert port["target"] == 5432
 
 
+def test_vectordb_service_shape(agent_profile_config: dict):
+    vectordb = agent_profile_config["services"]["vectordb"]
+    assert vectordb["container_name"] == "nl2sql-vectordb"
+    assert vectordb["restart"] == "unless-stopped"
+    assert "pg_isready" in " ".join(vectordb["healthcheck"]["test"])
+
+    [volume] = vectordb["volumes"]
+    assert volume["source"] == "vectordata"
+    # Same PGDATA convention as the retail image: outside the base image's
+    # declared VOLUME, so the embeddings baked into the image are visible.
+    assert volume["target"] == "/var/lib/pgdata"
+
+    [port] = vectordb["ports"]
+    assert port["target"] == 5432
+
+
 def test_agent_service_shape(agent_profile_config: dict):
     agent = agent_profile_config["services"]["agent"]
     assert agent["build"]["dockerfile"] == "agent/Dockerfile"
@@ -94,6 +111,27 @@ def test_agent_service_shape(agent_profile_config: dict):
     assert "OLLAMA_MODEL" in env
 
 
+def test_agent_waits_for_the_knowledge_base_to_be_healthy(agent_profile_config: dict):
+    agent = agent_profile_config["services"]["agent"]
+    assert agent["depends_on"]["vectordb"]["condition"] == "service_healthy"
+
+
+def test_agent_vector_db_url_points_at_the_compose_vectordb_service(agent_profile_config: dict):
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert "@vectordb:5432/nl2sql_vectors" in env["VECTOR_DB_URL"]
+    assert env["RAG_ENABLED"] == "true"
+
+
+def test_agent_embeds_against_the_docker_host_not_the_compose_network(agent_profile_config: dict):
+    """bge-m3 runs on the machine hosting Docker, so the container has to
+    reach back out to it; extra_hosts is what makes that work on Linux, where
+    host.docker.internal is not resolvable by default.
+    """
+    agent = agent_profile_config["services"]["agent"]
+    assert agent["environment"]["EMBED_BASE_URL"].startswith("http://host.docker.internal")
+    assert "host.docker.internal=host-gateway" in agent["extra_hosts"]
+
+
 def test_agent_database_url_points_at_the_compose_postgres_service_and_matches_its_credentials(
     agent_profile_config: dict,
 ):
@@ -103,8 +141,12 @@ def test_agent_database_url_points_at_the_compose_postgres_service_and_matches_i
     assert f"{user}:{password}@postgres:5432/{name}" in agent_env["DATABASE_URL"]
 
 
-def test_named_volume_is_declared_persistent(agent_profile_config: dict):
-    assert agent_profile_config["volumes"]["pgdata"]["name"] == "nl2sql-pgdata"
+def test_named_volumes_are_declared_persistent(agent_profile_config: dict):
+    volumes = agent_profile_config["volumes"]
+    assert volumes["pgdata"]["name"] == "nl2sql-pgdata"
+    # Reuses the volume the RAG pipeline populated, so an existing knowledge
+    # base is picked up instead of being re-seeded from the image.
+    assert volumes["vectordata"]["name"] == "nl2sql-rag-vectordb-data"
 
 
 def test_shell_env_vars_override_compose_defaults(tmp_path_factory):

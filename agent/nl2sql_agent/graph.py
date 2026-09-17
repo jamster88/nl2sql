@@ -1,13 +1,16 @@
 """The agent pipeline, as a LangGraph state graph.
 
-Node order mirrors basic_agent_steps.md:
+v2 adds retrieval in front of the v1 pipeline: the question is embedded and
+matched against the pgvector knowledge base, and the chunks that come back
+feed table selection, SQL generation, and validation.
 
-    select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query
-                                          ^               |
-                                          +---- retry ----+
+    retrieve_knowledge -> select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query
+                                                                ^               |
+                                                                +---- retry ----+
 
-Each step is its own node, so an extra step (a retrieval node feeding
-`schema`, for instance) is added by registering a node and moving one edge.
+Retrieval is best-effort. If the vector store or the embedding model is
+unreachable the node records why and the run continues schema-only, which is
+exactly the v1 behavior.
 """
 
 from __future__ import annotations
@@ -20,7 +23,8 @@ from langgraph.graph import END, START, StateGraph
 from .config import Settings
 from .database import Database, strip_sql
 from .llm import build_llm
-from .prompts import RETRY_FEEDBACK, SQL_GENERATION_PROMPT, TABLE_SELECTION_PROMPT
+from .prompts import RETRY_FEEDBACK, SQL_GENERATION_PROMPT, TABLE_SELECTION_PROMPT, knowledge_block
+from .retrieval import KnowledgeBase, build_embedder
 from .tools import TableSelection, build_tools
 
 ProgressFn = Callable[[str, str], None]
@@ -28,6 +32,10 @@ ProgressFn = Callable[[str, str], None]
 
 class AgentState(TypedDict, total=False):
     question: str
+    knowledge: str
+    knowledge_tables: list[str]
+    knowledge_chunks: list[dict[str, Any]]
+    retrieval_error: str
     selected_tables: list[str]
     schema: str
     sql: str
@@ -43,6 +51,7 @@ class Nl2SqlAgent:
         settings: Settings,
         *,
         llm: BaseChatModel | None = None,
+        knowledge_base: KnowledgeBase | None = None,
         on_progress: ProgressFn | None = None,
     ) -> None:
         self.settings = settings
@@ -53,15 +62,33 @@ class Nl2SqlAgent:
             max_rows=settings.max_rows,
         )
         self.llm = llm or build_llm(settings)
-        self.tools = build_tools(self.db, self.llm, settings)
+        self.knowledge_base = knowledge_base or self._build_knowledge_base(settings)
+        self.tools = build_tools(self.db, self.llm, settings, self.knowledge_base)
         self._on_progress = on_progress or (lambda step, detail: None)
         self._graph = self._build_graph()
+
+    @staticmethod
+    def _build_knowledge_base(settings: Settings) -> KnowledgeBase | None:
+        """Construct the knowledge base, or None when retrieval is off.
+
+        Construction is lazy (no connection, no embedding call), so an
+        unreachable vector store surfaces at search time as a degraded run
+        rather than as a failure to start.
+        """
+        if not settings.rag_enabled:
+            return None
+        return KnowledgeBase(
+            settings.vector_db_url,
+            build_embedder(settings),
+            top_k=settings.rag_top_k,
+        )
 
     def run(self, question: str) -> AgentState:
         return self._graph.invoke({"question": question, "attempts": 0})
 
     def _build_graph(self):
         graph = StateGraph(AgentState)
+        graph.add_node("retrieve_knowledge", self._retrieve_knowledge)
         graph.add_node("select_tables", self._select_tables)
         graph.add_node("fetch_schema", self._fetch_schema)
         graph.add_node("generate_sql", self._generate_sql)
@@ -69,7 +96,8 @@ class Nl2SqlAgent:
         graph.add_node("execute_query", self._execute_query)
         graph.add_node("give_up", self._give_up)
 
-        graph.add_edge(START, "select_tables")
+        graph.add_edge(START, "retrieve_knowledge")
+        graph.add_edge("retrieve_knowledge", "select_tables")
         graph.add_edge("select_tables", "fetch_schema")
         graph.add_edge("fetch_schema", "generate_sql")
         graph.add_edge("generate_sql", "validate_sql")
@@ -82,16 +110,41 @@ class Nl2SqlAgent:
         graph.add_edge("give_up", END)
         return graph.compile()
 
+    # --- Step 1: retrieve business rules / table docs for this question -----
+    def _retrieve_knowledge(self, state: AgentState) -> AgentState:
+        retrieved = self.tools["search_knowledge"].invoke({"question": state["question"]})
+        if retrieved["error"]:
+            self._on_progress("retrieve_knowledge", f"skipped: {retrieved['error']}")
+            return {"knowledge": "", "knowledge_tables": [], "knowledge_chunks": [], "retrieval_error": retrieved["error"]}
+
+        chunks = retrieved["chunks"]
+        summary = ", ".join(f"{c['source_doc']}:{c['heading_path'].split('>')[-1].strip()}" for c in chunks[:4])
+        self._on_progress("retrieve_knowledge", f"{len(chunks)} chunk(s) -- {summary}")
+        return {
+            "knowledge": retrieved["context"],
+            "knowledge_tables": retrieved["tables"],
+            "knowledge_chunks": chunks,
+        }
+
     # --- Step 2: describe all tables, ask the model which ones matter --------
     def _select_tables(self, state: AgentState) -> AgentState:
         catalog = self.tools["describe_all_tables"].invoke({})
         selection = self.llm.with_structured_output(TableSelection).invoke(
             TABLE_SELECTION_PROMPT.format_messages(
-                catalog=catalog, question=state["question"]
+                catalog=catalog,
+                knowledge=knowledge_block(state.get("knowledge", "")),
+                question=state["question"],
             )
         )
         known = set(self.db.table_names())
         tables = [t for t in selection.tables if t in known]
+
+        # Tables the retrieved chunks explicitly document are a strong signal;
+        # add any the model missed rather than replacing its choice.
+        for hinted in state.get("knowledge_tables", []):
+            if hinted in known and hinted not in tables:
+                tables.append(hinted)
+
         if not tables:
             tables = sorted(known)
         self._on_progress("select_tables", ", ".join(tables))
@@ -117,6 +170,7 @@ class Nl2SqlAgent:
             SQL_GENERATION_PROMPT.format_messages(
                 dialect=self.db.dialect,
                 schema=state["schema"],
+                knowledge=knowledge_block(state.get("knowledge", "")),
                 question=state["question"],
                 feedback=feedback,
             )
@@ -132,6 +186,7 @@ class Nl2SqlAgent:
                 "sql": state["sql"],
                 "question": state["question"],
                 "schema_context": state["schema"],
+                "knowledge": state.get("knowledge", ""),
             }
         )
         attempts = state.get("attempts", 0) + 1

@@ -12,11 +12,20 @@ Run the setup script once from the repo root, with Docker running:
 ./setup.sh
 ```
 
-It pulls the Postgres image with the test dataset already inside it, builds the
-agent image, starts the database, and checks that the Ollama host has the model
-the agent expects. It takes a couple of minutes -- mostly the download -- and is
-safe to re-run. Point it somewhere else with `./setup.sh --ollama-url URL
---model NAME`; `./setup.sh --help` lists every flag.
+It pulls the Postgres image with the test dataset already inside it, pulls the
+pgvector image holding the embedded knowledge base, pulls the agent image,
+starts both databases, and checks that the Ollama hosts have the chat model and
+the embedding model the agent expects. It takes a couple of minutes -- mostly
+downloads -- and is safe to re-run. Point it somewhere else with
+`./setup.sh --ollama-url URL --model NAME`; `./setup.sh --help` lists every
+flag.
+
+The agent uses **two** models on **two** possibly different hosts: a chat model
+(default `qwen3.8:latest` on `http://192.168.44.129:11434`) that writes the SQL,
+and an embedding model (default `bge-m3` on the Ollama running on your own
+machine) that searches the knowledge base. `./setup.sh` warns about either one
+being unreachable. Retrieval is optional -- without it the agent still answers,
+just without the business context that makes hard questions come out right.
 
 Every command below is run from the repo root, and assumes setup has completed.
 
@@ -78,6 +87,7 @@ read.
 Progress goes to **stderr**, the answer goes to **stdout**:
 
 ```
+[knowledge] 12 chunk(s) -- business_index:Market share fan-out ...  <- what it retrieved
 [tables] fact_pos_retail_sales, dim_product, dim_date     <- tables it chose
 [schema] 4,812 characters of context                      <- schema + samples it read
 [sql] SELECT p.department_name, SUM(...)                  <- the query it wrote
@@ -99,8 +109,8 @@ Or silence the progress lines entirely with `--quiet`.
 
 ### Structured output for scripts
 
-`--json` prints the question, chosen tables, generated SQL, and rows as one
-JSON object:
+`--json` prints the question, retrieved chunks, chosen tables, generated SQL,
+and rows as one JSON object:
 
 ```bash
 docker compose run --rm agent --json "Which 3 promotions had the highest total promo quantity sold?"
@@ -109,6 +119,15 @@ docker compose run --rm agent --json "Which 3 promotions had the highest total p
 ```json
 {
   "question": "Which 3 promotions had the highest total promo quantity sold?",
+  "knowledge_chunks": [
+    {
+      "chunk_id": "ddl_index:1f2a...",
+      "source_doc": "ddl_index",
+      "heading_path": "DDL Index > fact_promo_performance",
+      "distance": 0.3417
+    }
+  ],
+  "retrieval_error": null,
   "selected_tables": ["fact_promo_performance", "dim_promotion"],
   "sql": "SELECT\n  p.promotion_name,\n  SUM(f.promo_quantity_sold) AS ...",
   "error": null,
@@ -123,7 +142,46 @@ docker compose run --rm agent --json "Which 3 promotions had the highest total p
 
 The exit code is 0 on success and 1 when the agent could not answer, so it
 works in a shell pipeline. Pull out just the SQL with
-`... --json | jq -r .sql`.
+`... --json | jq -r .sql`, or see which knowledge shaped an answer with
+`... --json | jq -r '.knowledge_chunks[].heading_path'`.
+
+## The knowledge base
+
+Retrieval is on by default. It searches the embedded contents of
+[`../knowledge/`](../knowledge) -- the data dictionary, DDL index and business
+index -- and hands the best-matching sections to the model along with the
+schema.
+
+It matters most on questions where the schema is misleading:
+
+```bash
+docker compose run --rm agent "What is our overall market share in fiscal year 2024?"
+```
+
+`fact_market_share_weekly` repeats each cell's totals once per competitor, so a
+natural-looking `SUM()` over-counts fivefold. With retrieval the agent
+de-duplicates per cell and answers ~21.5%; with `--no-rag` it has returned
+107.5% for the same question.
+
+Useful flags:
+
+```bash
+docker compose run --rm agent --no-rag "..."            # schema only, v1 behavior
+docker compose run --rm agent --rag-top-k 8 "..."       # more context per collection
+docker compose run --rm agent --embed-model bge-m3 "..."
+docker compose run --rm agent --embed-url http://other-host:11434 "..."
+```
+
+The embedding model must be the one the knowledge base was built with (`bge-m3`)
+-- a different model puts the query in a different vector space and retrieval
+returns confident nonsense.
+
+If the vector database or the embedding host is unreachable, the agent says so
+and carries on without it:
+
+```
+[knowledge] skipped: Could not search the knowledge base: connection failed ...
+```
 
 ## Choosing a model or host
 
@@ -217,13 +275,29 @@ qwen3-coder-next:latest
 
 Exit codes: `0` answered, `1` could not answer, `2` Ollama misconfigured.
 
+**`[knowledge] skipped: ...`** -- the agent could not reach the vector database
+or the embedding model, and answered from the schema alone. Check that
+`nl2sql-vectordb` is up (`docker compose ps`) and that your local Ollama has
+`bge-m3` (`ollama list`). Pull it with `ollama pull bge-m3`.
+
+**Retrieval returns irrelevant chunks** -- usually an embedding-model mismatch.
+The store records what it was built with:
+
+```bash
+docker compose exec vectordb psql -U ragproc -d nl2sql_vectors \
+  -c "SELECT DISTINCT embedding_model FROM ddl_index_embeddings"
+```
+
+That has to match `--embed-model`.
+
 ## Stopping
 
 The agent container removes itself after each question. The database keeps
 running until you stop it:
 
 ```bash
-docker compose stop postgres     # keeps data
-docker compose down              # removes the container, keeps data
-docker compose down -v           # also deletes the volume, resetting to the shipped dataset
+docker compose stop postgres vectordb   # keeps data
+docker compose down                     # removes the containers, keeps data
+docker compose down -v                  # also deletes the volumes, resetting both
+                                        # databases to what the images ship
 ```

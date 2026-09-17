@@ -62,6 +62,34 @@ def test_settings_from_args_maps_every_field():
     assert settings.reasoning is True
 
 
+def test_retrieval_flags_map_onto_settings():
+    args = cli.parse_args(
+        [
+            "--vector-db-url", "postgresql+psycopg://v:v@host/vectors",
+            "--embed-model", "bge-m3",
+            "--embed-url", "http://embedhost:11434",
+            "--rag-top-k", "6",
+        ]
+    )
+    settings = cli.settings_from_args(args)
+    assert settings.rag_enabled is True
+    assert settings.vector_db_url == "postgresql+psycopg://v:v@host/vectors"
+    assert settings.embed_model == "bge-m3"
+    assert settings.embed_base_url == "http://embedhost:11434"
+    assert settings.rag_top_k == 6
+
+
+def test_no_rag_flag_disables_retrieval():
+    settings = cli.settings_from_args(cli.parse_args(["--no-rag", "q"]))
+    assert settings.rag_enabled is False
+
+
+def test_rag_is_on_by_default(monkeypatch):
+    monkeypatch.delenv("RAG_ENABLED", raising=False)
+    settings = cli.settings_from_args(cli.parse_args(["q"]))
+    assert settings.rag_enabled is True
+
+
 # ---------------------------------------------------------------------------
 # format_rows
 # ---------------------------------------------------------------------------
@@ -115,6 +143,9 @@ def test_answer_json_mode_emits_full_state_and_error_flag(capsys):
         {
             "selected_tables": ["dim_store"],
             "sql": "SELECT 1",
+            "knowledge_chunks": [
+                {"chunk_id": "biz:1", "source_doc": "business_index", "heading_path": "h", "distance": 0.2}
+            ],
             "result": {"columns": ["n"], "rows": [[1]], "row_count": 1, "truncated": False},
         }
     )
@@ -124,6 +155,10 @@ def test_answer_json_mode_emits_full_state_and_error_flag(capsys):
     assert payload["sql"] == "SELECT 1"
     assert payload["selected_tables"] == ["dim_store"]
     assert payload["error"] is None
+    # Retrieval provenance travels with the answer, so a result can be traced
+    # back to the chunks that shaped it.
+    assert payload["knowledge_chunks"][0]["chunk_id"] == "biz:1"
+    assert payload["retrieval_error"] is None
 
 
 def test_answer_json_mode_returns_one_on_error(capsys):

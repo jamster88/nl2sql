@@ -14,14 +14,19 @@ from nl2sql_agent.config import Settings
 from nl2sql_agent.graph import Nl2SqlAgent
 from nl2sql_agent.tools import SqlReview, TableSelection, build_tools
 
-from .conftest import FakeDatabase, ScriptedLLM
+from .conftest import FakeDatabase, FakeKnowledgeBase, ScriptedLLM, make_chunk
 
 
-def make_agent(db: FakeDatabase, llm: ScriptedLLM, **settings_kwargs) -> Nl2SqlAgent:
+def make_agent(
+    db: FakeDatabase,
+    llm: ScriptedLLM,
+    knowledge_base: FakeKnowledgeBase | None = None,
+    **settings_kwargs,
+) -> Nl2SqlAgent:
     settings = Settings(database_url="postgresql+psycopg://u:p@127.0.0.1:1/db", **settings_kwargs)
-    agent = Nl2SqlAgent(settings, llm=llm)
+    agent = Nl2SqlAgent(settings, llm=llm, knowledge_base=knowledge_base)
     agent.db = db
-    agent.tools = build_tools(db, llm, settings)
+    agent.tools = build_tools(db, llm, settings, knowledge_base)
     return agent
 
 
@@ -60,7 +65,10 @@ def test_happy_path_selects_tables_generates_and_executes(progress_log):
     assert state["result"]["row_count"] == 1
     assert db.run_select_calls == ["SELECT COUNT(*) FROM dim_store"]
     steps = [step for step, _ in progress_log.log]
-    assert steps == ["select_tables", "fetch_schema", "generate_sql", "validate_sql", "execute_query"]
+    assert steps == [
+        "retrieve_knowledge", "select_tables", "fetch_schema",
+        "generate_sql", "validate_sql", "execute_query",
+    ]
 
 
 def test_fetch_schema_only_requests_the_selected_tables():
@@ -85,6 +93,165 @@ def test_select_tables_falls_back_to_every_known_table_when_the_model_invents_na
     agent = make_agent(db, llm)
     state = agent.run("q")
     assert state["selected_tables"] == sorted(db.table_names())
+
+
+# ---------------------------------------------------------------------------
+# Retrieval (v2)
+# ---------------------------------------------------------------------------
+
+
+def test_retrieved_knowledge_reaches_generation_and_validation_prompts():
+    """The whole point of v2: the business rule that was retrieved has to show
+    up in the text the model actually sees, not just in state.
+    """
+    db = FakeDatabase(tables=["fact_market_share_weekly", "dim_date"])
+    kb = FakeKnowledgeBase([
+        make_chunk(
+            heading_path="Business Index > Market share fan-out: the five-row trap",
+            content="Never SUM total_market_sales_amount across competitor rows.",
+            meta={"table": "fact_market_share_weekly"},
+        )
+    ])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["fact_market_share_weekly"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, kb)
+
+    state = agent.run("What is our market share?")
+
+    assert "Never SUM total_market_sales_amount" in state["knowledge"]
+    assert kb.search_calls == [("What is our market share?", 4)]
+
+    generation_prompt = "\n".join(
+        getattr(m, "content", str(m)) for m in llm.plain_invocations[0]
+    )
+    assert "Never SUM total_market_sales_amount" in generation_prompt
+    assert "Knowledge base" in generation_prompt
+
+    # The validator sees it too, so it can catch a rule violation the planner
+    # would happily accept.
+    validation_prompt = "\n".join(
+        getattr(m, "content", str(m))
+        for schema, messages in llm.structured_invocations
+        if schema is SqlReview
+        for m in messages
+    )
+    assert "Never SUM total_market_sales_amount" in validation_prompt
+
+
+def test_table_selection_prompt_includes_retrieved_context():
+    db = FakeDatabase(tables=["dim_store"])
+    kb = FakeKnowledgeBase([make_chunk(content="dim_store holds one row per store.")])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, kb)
+    agent.run("how many stores")
+
+    selection_prompt = "\n".join(
+        getattr(m, "content", str(m))
+        for schema, messages in llm.structured_invocations
+        if schema is TableSelection
+        for m in messages
+    )
+    assert "dim_store holds one row per store." in selection_prompt
+
+
+def test_tables_hinted_by_retrieval_are_added_to_the_models_selection():
+    """chunk_meta.table is a strong signal; a table the model missed but the
+    knowledge base names explicitly still gets its schema fetched.
+    """
+    db = FakeDatabase(tables=["fact_market_share_weekly", "dim_competitor", "dim_store"])
+    kb = FakeKnowledgeBase([
+        make_chunk(meta={"table": "dim_competitor"}, distance=0.1),
+        make_chunk(meta={"table": "fact_market_share_weekly"}, distance=0.2),
+    ])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["fact_market_share_weekly"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, kb)
+
+    state = agent.run("market share by competitor")
+
+    assert state["selected_tables"] == ["fact_market_share_weekly", "dim_competitor"]
+    assert db.schema_and_samples_calls[0][0] == ["fact_market_share_weekly", "dim_competitor"]
+
+
+def test_hinted_tables_that_do_not_exist_are_ignored():
+    db = FakeDatabase(tables=["dim_store"])
+    kb = FakeKnowledgeBase([make_chunk(meta={"table": "table_from_an_older_schema"})])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, kb)
+    state = agent.run("q")
+    assert state["selected_tables"] == ["dim_store"]
+
+
+def test_pipeline_still_answers_when_the_knowledge_base_is_unreachable(progress_log):
+    """Retrieval is best-effort: an unreachable vector store degrades the run
+    to v1 behavior instead of failing the question.
+    """
+    db = FakeDatabase(tables=["dim_store"])
+    kb = FakeKnowledgeBase(error="connection refused")
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT COUNT(*) FROM dim_store"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, kb)
+    agent._on_progress = progress_log
+
+    state = agent.run("How many stores are there?")
+
+    assert state.get("error") is None
+    assert state["result"]["row_count"] == 1
+    assert state["knowledge"] == ""
+    assert "connection refused" in state["retrieval_error"]
+    assert any(step == "retrieve_knowledge" and "skipped" in detail for step, detail in progress_log.log)
+
+    # And no empty "Knowledge base" heading is left dangling in the prompt.
+    generation_prompt = "\n".join(
+        getattr(m, "content", str(m)) for m in llm.plain_invocations[0]
+    )
+    assert "Knowledge base (retrieved" not in generation_prompt
+
+
+def test_rag_disabled_skips_retrieval_entirely(progress_log):
+    db = FakeDatabase(tables=["dim_store"])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT COUNT(*) FROM dim_store"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, None, rag_enabled=False)
+
+    state = agent.run("How many stores are there?")
+
+    assert state.get("error") is None
+    assert state["knowledge"] == ""
+    assert agent.knowledge_base is None
+
+
+def test_rag_top_k_setting_is_passed_through_to_the_knowledge_base():
+    db = FakeDatabase(tables=["dim_store"])
+    kb = FakeKnowledgeBase()
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, kb, rag_top_k=9)
+    agent.run("q")
+    assert kb.search_calls == [("q", 9)]
 
 
 # ---------------------------------------------------------------------------

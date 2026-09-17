@@ -216,11 +216,18 @@ fi
 
 # --- Ollama ----------------------------------------------------------------
 step "Checking Ollama"
-# Read back whatever compose will actually hand the agent.
-effective_url=$(docker compose config 2>/dev/null |
-    awk '/OLLAMA_BASE_URL:/ {print $2; exit}')
-effective_model=$(docker compose config 2>/dev/null |
-    awk '/OLLAMA_MODEL:/ {print $2; exit}')
+
+# Read back whatever compose will actually hand the agent. awk consumes the
+# whole stream rather than exiting on the first match: under `set -o pipefail`
+# an early exit can take the pipeline down with SIGPIPE (141) if the producer
+# is still writing.
+compose_value() {
+    docker compose config 2>/dev/null |
+        awk -v key="$1:" '$1 == key && !seen { print $2; seen = 1 }'
+}
+
+effective_url=$(compose_value OLLAMA_BASE_URL)
+effective_model=$(compose_value OLLAMA_MODEL)
 effective_url=${effective_url:-http://192.168.44.129:11434}
 effective_model=${effective_model:-qwen3.8:latest}
 
@@ -239,10 +246,8 @@ fi
 # --- Embedding model -------------------------------------------------------
 if [[ $WITH_RAG -eq 1 ]]; then
     step "Checking the embedding model"
-    effective_embed_url=$(docker compose config 2>/dev/null |
-        awk '/EMBED_BASE_URL:/ {print $2; exit}')
-    effective_embed_model=$(docker compose config 2>/dev/null |
-        awk '/EMBED_MODEL:/ {print $2; exit}')
+    effective_embed_url=$(compose_value EMBED_BASE_URL)
+    effective_embed_model=$(compose_value EMBED_MODEL)
     effective_embed_url=${effective_embed_url:-http://host.docker.internal:11434}
     effective_embed_model=${effective_embed_model:-bge-m3}
 

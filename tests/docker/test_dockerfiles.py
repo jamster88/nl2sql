@@ -153,3 +153,68 @@ def test_agent_and_postgres_images_track_the_same_python_base(postgres_dockerfil
     match = re.search(r"ARG PYTHON_IMAGE=(\S+)", postgres_dockerfile)
     assert match
     assert f"FROM {match.group(1)}" in agent_dockerfile
+
+
+# ---------------------------------------------------------------------------
+# agent/Dockerfile: v2 publishing metadata
+# ---------------------------------------------------------------------------
+
+
+def test_agent_image_declares_a_version_arg_and_env(agent_dockerfile: str):
+    assert re.search(r"^ARG AGENT_VERSION=\d+\.\d+\.\d+", agent_dockerfile, re.MULTILINE)
+    assert "ENV AGENT_VERSION=${AGENT_VERSION}" in agent_dockerfile
+
+
+def test_agent_image_declares_oci_labels_for_publishing(agent_dockerfile: str):
+    assert "org.opencontainers.image.title=" in agent_dockerfile
+    assert "org.opencontainers.image.description=" in agent_dockerfile
+    assert 'org.opencontainers.image.version="${AGENT_VERSION}"' in agent_dockerfile
+
+
+def test_agent_image_description_mentions_retrieval(agent_dockerfile: str):
+    # The published description is what someone browsing Docker Hub reads.
+    assert "retrieval" in agent_dockerfile.lower() or "knowledge" in agent_dockerfile.lower()
+
+
+# ---------------------------------------------------------------------------
+# Version consistency across the files that declare it
+# ---------------------------------------------------------------------------
+
+
+def _agent_version_from_dockerfile(text: str) -> str:
+    match = re.search(r"^ARG AGENT_VERSION=(\S+)", text, re.MULTILINE)
+    assert match
+    return match.group(1)
+
+
+def test_package_version_matches_the_dockerfile(agent_dockerfile: str):
+    """__version__, the image label, and the published tag all say "v2"; a
+    bump that misses one of them ships an image that lies about itself.
+    """
+    from nl2sql_agent import __version__
+
+    assert _agent_version_from_dockerfile(agent_dockerfile) == __version__
+
+
+def test_published_tag_in_setup_matches_the_package_major_version(agent_dockerfile: str):
+    from nl2sql_agent import __version__
+
+    setup_sh = (DOCKER_DIR.parent / "setup.sh").read_text()
+    match = re.search(r'^AGENT_TAG="(v\d+)"', setup_sh, re.MULTILINE)
+    assert match, "setup.sh no longer pins an agent tag"
+    assert match.group(1) == f"v{__version__.split('.')[0]}"
+
+
+def test_setup_defaults_point_at_the_published_repositories(agent_dockerfile: str):
+    setup_sh = (DOCKER_DIR.parent / "setup.sh").read_text()
+    assert 'AGENT_IMAGE="mcfaddja/nl2sql-agent"' in setup_sh
+    assert 'VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"' in setup_sh
+
+
+def test_retrieval_module_is_shipped_in_the_image(agent_dockerfile: str):
+    """The agent image copies the package directory wholesale, so retrieval.py
+    travels with it -- this pins that the copy is still directory-wide rather
+    than a list of files that could omit the new module.
+    """
+    assert "COPY agent/nl2sql_agent/ ./nl2sql_agent/" in agent_dockerfile
+    assert (DOCKER_DIR.parent / "agent" / "nl2sql_agent" / "retrieval.py").exists()

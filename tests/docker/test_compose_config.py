@@ -175,3 +175,90 @@ def test_postgres_and_agent_image_tags_are_independently_settable(tmp_path_facto
     )
     assert config["services"]["postgres"]["image"].endswith(":v1")
     assert not config["services"]["agent"]["image"].endswith(":v1")
+
+
+# ---------------------------------------------------------------------------
+# Knowledge-base overrides (v2)
+# ---------------------------------------------------------------------------
+
+
+def test_vector_image_and_port_are_overridable(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={
+            "VECTOR_IMAGE_NAME": "example.org/vectors",
+            "VECTOR_IMAGE_TAG": "v7",
+            "VECTOR_DB_PORT": "15434",
+        },
+    )
+    vectordb = config["services"]["vectordb"]
+    assert vectordb["image"] == "example.org/vectors:v7"
+    assert vectordb["ports"][0]["published"] == "15434"
+
+
+def test_vector_credentials_flow_into_both_the_healthcheck_and_the_agent_url(tmp_path_factory):
+    """One set of variables has to drive both, or the database comes up with
+    credentials the agent does not use.
+    """
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={"VECTOR_DB_USER": "vuser", "VECTOR_DB_PASSWORD": "vpass", "VECTOR_DB_NAME": "vectors_db"},
+    )
+    healthcheck = " ".join(config["services"]["vectordb"]["healthcheck"]["test"])
+    assert "-U vuser" in healthcheck
+    assert "-d vectors_db" in healthcheck
+    assert (
+        config["services"]["agent"]["environment"]["VECTOR_DB_URL"]
+        == "postgresql+psycopg://vuser:vpass@vectordb:5432/vectors_db"
+    )
+
+
+def test_retrieval_can_be_turned_off_through_the_environment(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"), profile="agent", env={"RAG_ENABLED": "false"}
+    )
+    assert config["services"]["agent"]["environment"]["RAG_ENABLED"] == "false"
+
+
+def test_embedding_host_model_and_top_k_are_overridable(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={
+            "EMBED_BASE_URL": "http://embed-host:11434",
+            "EMBED_MODEL": "nomic-embed-text",
+            "RAG_TOP_K": "9",
+        },
+    )
+    env = config["services"]["agent"]["environment"]
+    assert env["EMBED_BASE_URL"] == "http://embed-host:11434"
+    assert env["EMBED_MODEL"] == "nomic-embed-text"
+    assert env["RAG_TOP_K"] == "9"
+
+
+def test_vectordb_gets_a_shutdown_grace_period_like_the_retail_database(agent_profile_config: dict):
+    # Postgres needs time to checkpoint cleanly; a hard kill risks recovery on
+    # the next start.
+    assert agent_profile_config["services"]["vectordb"]["stop_grace_period"] == "1m0s"
+
+
+def test_the_two_databases_do_not_collide_on_a_port_or_a_volume(agent_profile_config: dict):
+    postgres = agent_profile_config["services"]["postgres"]
+    vectordb = agent_profile_config["services"]["vectordb"]
+    assert postgres["ports"][0]["published"] != vectordb["ports"][0]["published"]
+    assert postgres["volumes"][0]["source"] != vectordb["volumes"][0]["source"]
+    assert postgres["container_name"] != vectordb["container_name"]
+
+
+def test_every_agent_environment_variable_is_one_the_agent_actually_reads(agent_profile_config: dict):
+    """Guards against a compose variable that quietly does nothing because the
+    agent reads a differently-spelled name.
+    """
+    from nl2sql_agent.config import Settings
+
+    source = Path(Settings.__module__.replace(".", "/"))  # nl2sql_agent/config
+    config_py = (REPO_ROOT / "agent" / source).with_suffix(".py").read_text()
+    for name in agent_profile_config["services"]["agent"]["environment"]:
+        assert f'"{name}"' in config_py, f"compose sets {name}, but config.py never reads it"

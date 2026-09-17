@@ -118,3 +118,51 @@ def test_database_construction_does_not_connect():
 def test_database_reports_its_dialect():
     db = Database("sqlite://")
     assert db.dialect == "sqlite"
+
+
+# ---------------------------------------------------------------------------
+# Result shaping and schema rendering (no server required)
+# ---------------------------------------------------------------------------
+
+
+def test_query_result_to_dicts_pairs_columns_with_values():
+    from nl2sql_agent.database import QueryResult
+
+    result = QueryResult(columns=["id", "name"], rows=[(1, "a"), (2, "b")], truncated=False)
+    assert result.to_dicts() == [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}]
+
+
+def test_query_result_to_dicts_on_no_rows():
+    from nl2sql_agent.database import QueryResult
+
+    assert QueryResult(columns=["id"], rows=[], truncated=False).to_dicts() == []
+
+
+def test_schema_rendering_includes_a_table_comment_when_one_exists(monkeypatch):
+    """COMMENT ON metadata is how the schema teaches the model what a table
+    means; the retail database has none today, so this path needs a stub.
+    """
+    from nl2sql_agent.database import Column, Table
+
+    db = Database("postgresql+psycopg://u:p@127.0.0.1:1/db")
+    table = Table(
+        name="dim_store",
+        comment="One row per retail store.",
+        approx_rows=10,
+        columns=[Column("store_key", "integer", True, "surrogate key")],
+    )
+    monkeypatch.setattr(db, "_load_tables", lambda names: [table])
+    monkeypatch.setattr(db, "_sample_rows", lambda name, limit: "  (stubbed)")
+
+    text = db.schema_and_samples(["dim_store"], sample_rows=1)
+
+    assert "description: One row per retail store." in text
+    assert "store_key (integer, NOT NULL)  -- surrogate key" in text
+
+
+def test_sample_rows_reports_an_empty_table_rather_than_a_bare_header(monkeypatch):
+    from nl2sql_agent.database import QueryResult
+
+    db = Database("postgresql+psycopg://u:p@127.0.0.1:1/db")
+    monkeypatch.setattr(db, "run_select", lambda sql: QueryResult(columns=["a"], rows=[], truncated=False))
+    assert db._sample_rows("dim_store", 3) == "  (table is empty)"

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from nl2sql_agent import __main__ as cli
 from nl2sql_agent.llm import LlmUnavailableError
 
@@ -185,3 +187,111 @@ def test_main_exits_two_and_prints_a_clean_message_when_the_llm_is_unavailable(m
     assert code == 2
     err = capsys.readouterr().err
     assert "error: Cannot reach Ollama" in err
+
+
+# ---------------------------------------------------------------------------
+# main(): question mode, interactive mode, and progress reporting
+# ---------------------------------------------------------------------------
+
+
+class _StubAgentFactory:
+    """Replaces Nl2SqlAgent so main() can be driven without a model or database."""
+
+    def __init__(self, state: dict | None = None):
+        self.state = state or {"result": {"columns": ["n"], "rows": [[1]], "truncated": False}}
+        self.questions: list[str] = []
+        self.on_progress = None
+
+    def __call__(self, settings, on_progress=None):
+        self.settings = settings
+        self.on_progress = on_progress
+        return self
+
+    def run(self, question: str) -> dict:
+        self.questions.append(question)
+        return self.state
+
+
+def test_main_joins_argv_words_into_one_question(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    code = cli.main(["how", "many", "stores"])
+    assert code == 0
+    assert factory.questions == ["how many stores"]
+
+
+def test_main_returns_one_when_the_agent_reports_an_error(monkeypatch, capsys):
+    factory = _StubAgentFactory({"error": "gave up"})
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    assert cli.main(["q"]) == 1
+
+
+def test_progress_lines_go_to_stderr_with_friendly_labels(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    cli.main(["q"])
+    factory.on_progress("retrieve_knowledge", "12 chunk(s)")
+    factory.on_progress("select_tables", "dim_store")
+    err = capsys.readouterr().err
+    assert "[knowledge] 12 chunk(s)" in err
+    assert "[tables] dim_store" in err
+
+
+@pytest.mark.parametrize("flag", ["--quiet", "--json"])
+def test_progress_is_suppressed_in_quiet_and_json_modes(monkeypatch, capsys, flag):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    cli.main([flag, "q"])
+    capsys.readouterr()  # drop the answer itself
+    factory.on_progress("retrieve_knowledge", "12 chunk(s)")
+    assert capsys.readouterr().err == ""
+
+
+def test_interactive_mode_announces_the_knowledge_base(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
+
+    code = cli.main(["--vector-db-url", "postgresql+psycopg://v:v@vhost/vectors"])
+
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "Knowledge base:" in out
+    assert "vhost/vectors" in out
+    assert "Ctrl-D to exit" in out
+
+
+def test_interactive_mode_omits_the_knowledge_line_when_rag_is_off(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
+
+    cli.main(["--no-rag"])
+
+    out = capsys.readouterr().out
+    assert "Knowledge base:" not in out
+
+
+def test_interactive_mode_answers_each_question_and_skips_blank_input(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+
+    answers = iter(["  how many stores ", "   ", "and departments?"])
+
+    def fake_input(_prompt):
+        try:
+            return next(answers)
+        except StopIteration:
+            raise EOFError
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    assert cli.main([]) == 0
+    assert factory.questions == ["how many stores", "and departments?"]
+
+
+def test_interactive_mode_exits_cleanly_on_keyboard_interrupt(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt))
+    assert cli.main([]) == 0

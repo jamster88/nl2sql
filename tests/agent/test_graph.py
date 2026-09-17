@@ -360,3 +360,53 @@ def test_route_after_validation_retries_under_the_attempt_limit():
 def test_route_after_validation_gives_up_at_the_attempt_limit():
     agent = make_agent(FakeDatabase(), ScriptedLLM(), max_sql_attempts=3)
     assert agent._route_after_validation({"issues": ["x"], "attempts": 3}) == "give_up"
+
+
+# ---------------------------------------------------------------------------
+# Knowledge base construction
+# ---------------------------------------------------------------------------
+
+
+def test_agent_builds_a_knowledge_base_from_settings_when_rag_is_on():
+    from nl2sql_agent.retrieval import KnowledgeBase
+
+    settings = Settings(
+        database_url="postgresql+psycopg://u:p@127.0.0.1:1/db",
+        vector_db_url="postgresql+psycopg://ragproc:ragproc@127.0.0.1:1/nl2sql_vectors",
+        rag_top_k=5,
+        embed_model="bge-m3",
+        embed_base_url="http://embedhost:11434",
+    )
+    agent = Nl2SqlAgent(settings, llm=ScriptedLLM())
+
+    assert isinstance(agent.knowledge_base, KnowledgeBase)
+    assert agent.knowledge_base._top_k == 5
+    assert agent.knowledge_base._embedder.model == "bge-m3"
+    assert agent.knowledge_base._embedder.base_url == "http://embedhost:11434"
+
+
+def test_building_the_agent_never_connects_to_the_vector_store():
+    """Construction must stay lazy: an unreachable knowledge base should
+    degrade a run, not stop the agent from starting.
+    """
+    settings = Settings(
+        database_url="postgresql+psycopg://u:p@127.0.0.1:1/db",
+        vector_db_url="postgresql+psycopg://u:p@127.0.0.1:1/nothing_here",
+    )
+    agent = Nl2SqlAgent(settings, llm=ScriptedLLM())  # must not raise
+    assert agent.knowledge_base is not None
+
+
+def test_an_explicit_knowledge_base_overrides_the_settings_built_one():
+    kb = FakeKnowledgeBase()
+    settings = Settings(database_url="postgresql+psycopg://u:p@127.0.0.1:1/db")
+    agent = Nl2SqlAgent(settings, llm=ScriptedLLM(), knowledge_base=kb)
+    assert agent.knowledge_base is kb
+
+
+def test_the_search_knowledge_tool_is_registered_alongside_the_original_four():
+    agent = make_agent(FakeDatabase(), ScriptedLLM(), FakeKnowledgeBase())
+    assert set(agent.tools) == {
+        "describe_all_tables", "get_schema_and_data", "search_knowledge",
+        "validate_sql", "execute_query",
+    }

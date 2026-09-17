@@ -155,3 +155,187 @@ def test_configured_collections_filter_out_unsafe_identifiers():
         collections=["good_embeddings", 'bad"; DROP TABLE x; --', "UPPER_CASE", "also-bad"],
     )
     assert kb.collections() == ["good_embeddings"]
+
+
+# ---------------------------------------------------------------------------
+# search() / collections() against a stubbed engine
+#
+# The live suite proves retrieval works against a real pgvector; these cover
+# the query construction and row mapping without needing a server, including
+# the failure branches a live store will not produce on demand.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return self._rows
+
+
+class _FakeConnection:
+    def __init__(self, engine):
+        self._engine = engine
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def exec_driver_sql(self, sql, params=None):
+        self._engine.calls.append((" ".join(sql.split()), params))
+        if self._engine.raises is not None:
+            raise self._engine.raises
+        for pattern, rows in self._engine.responses.items():
+            if pattern in sql:
+                return _FakeResult(rows)
+        return _FakeResult([])
+
+
+class _FakeEngine:
+    def __init__(self, responses=None, raises=None):
+        self.responses = responses or {}
+        self.raises = raises
+        self.calls: list[tuple[str, object]] = []
+
+    def connect(self):
+        return _FakeConnection(self)
+
+
+def _row(chunk_id, source_doc, heading, content, meta, distance):
+    return (chunk_id, source_doc, heading, content, meta, distance)
+
+
+def _kb_with_engine(engine, **kwargs) -> KnowledgeBase:
+    kb = _kb(_StaticEmbedder(), **kwargs)
+    kb._engine = engine
+    return kb
+
+
+def test_collections_are_discovered_from_the_catalog_and_filtered():
+    engine = _FakeEngine({
+        "pg_class": [("ddl_index_embeddings",), ("business_index_embeddings",), ("Bad-Name_embeddings",)]
+    })
+    kb = _kb_with_engine(engine)
+    assert kb.collections() == ["ddl_index_embeddings", "business_index_embeddings"]
+    # Discovery matches the naming convention rather than a hardcoded list.
+    sql, params = engine.calls[0]
+    assert "relkind = 'r'" in sql
+    assert params == ("%_embeddings",)
+
+
+def test_collection_discovery_is_cached():
+    engine = _FakeEngine({"pg_class": [("ddl_index_embeddings",)]})
+    kb = _kb_with_engine(engine)
+    kb.collections()
+    kb.collections()
+    assert len(engine.calls) == 1
+
+
+def test_configured_collections_skip_catalog_discovery_entirely():
+    engine = _FakeEngine({"pg_class": [("should_not_be_used_embeddings",)]})
+    kb = _kb_with_engine(engine, collections=["ddl_index_embeddings"])
+    assert kb.collections() == ["ddl_index_embeddings"]
+    assert engine.calls == []
+
+
+def test_embedding_models_aggregates_across_collections():
+    engine = _FakeEngine({"DISTINCT embedding_model": [("bge-m3",), (None,)]})
+    kb = _kb_with_engine(engine, collections=["a_embeddings", "b_embeddings"])
+    assert kb.embedding_models() == {"bge-m3"}
+
+
+def test_search_maps_rows_onto_chunks():
+    engine = _FakeEngine({
+        "embedding <=>": [
+            _row("c1", "business_index", "B > rule", "body text", {"table": "dim_store"}, 0.25)
+        ]
+    })
+    kb = _kb_with_engine(engine, collections=["business_index_embeddings"])
+
+    [chunk] = kb.search("q")
+
+    assert chunk.collection == "business_index_embeddings"
+    assert chunk.chunk_id == "c1"
+    assert chunk.source_doc == "business_index"
+    assert chunk.heading_path == "B > rule"
+    assert chunk.content == "body text"
+    assert chunk.table == "dim_store"
+    assert chunk.distance == 0.25
+
+
+def test_search_passes_the_embedding_as_a_pgvector_literal_and_honors_top_k():
+    engine = _FakeEngine({"embedding <=>": []})
+    kb = _kb_with_engine(engine, collections=["a_embeddings"])
+    kb.search("q", top_k=7)
+
+    search_sql, params = [c for c in engine.calls if "embedding <=>" in c[0]][0]
+    literal, literal_again, limit = params
+    assert literal == _vector_literal(_StaticEmbedder().vector)
+    # Same literal for the SELECT distance and the ORDER BY, so the ranking
+    # and the reported distance cannot drift apart.
+    assert literal_again == literal
+    assert limit == 7
+    assert "::vector" in search_sql
+
+
+def test_search_merges_collections_and_sorts_by_distance():
+    engine = _FakeEngine({
+        "embedding <=>": [
+            _row("far", "d", "h", "c", {}, 0.9),
+            _row("near", "d", "h", "c", {}, 0.1),
+        ]
+    })
+    kb = _kb_with_engine(engine, collections=["a_embeddings", "b_embeddings"])
+
+    chunks = kb.search("q")
+
+    assert [c.distance for c in chunks] == [0.1, 0.1, 0.9, 0.9]
+    assert len({c.collection for c in chunks}) == 2
+
+
+def test_search_applies_a_statement_timeout():
+    engine = _FakeEngine({"embedding <=>": []})
+    kb = _kb_with_engine(engine, collections=["a_embeddings"], statement_timeout_ms=1234)
+    kb.search("q")
+    assert any("SET statement_timeout = 1234" in sql for sql, _ in engine.calls)
+
+
+def test_search_handles_a_null_chunk_meta():
+    engine = _FakeEngine({"embedding <=>": [_row("c1", "d", None, None, None, 0.5)]})
+    kb = _kb_with_engine(engine, collections=["a_embeddings"])
+    [chunk] = kb.search("q")
+    assert chunk.meta == {}
+    assert chunk.heading_path == ""
+    assert chunk.content == ""
+    assert chunk.table is None
+
+
+def test_search_does_not_double_wrap_an_already_wrapped_failure():
+    original = KnowledgeUnavailableError("the original message")
+    engine = _FakeEngine(raises=original)
+    kb = _kb_with_engine(engine, collections=["a_embeddings"])
+    with pytest.raises(KnowledgeUnavailableError) as excinfo:
+        kb.search("q")
+    assert str(excinfo.value) == "the original message"
+
+
+# ---------------------------------------------------------------------------
+# build_embedder
+# ---------------------------------------------------------------------------
+
+
+def test_build_embedder_configures_ollama_from_settings():
+    from types import SimpleNamespace
+
+    from nl2sql_agent.retrieval import build_embedder
+
+    embedder = build_embedder(
+        SimpleNamespace(embed_model="bge-m3", embed_base_url="http://embedhost:11434")
+    )
+    assert embedder.model == "bge-m3"
+    assert embedder.base_url == "http://embedhost:11434"
+    # Satisfies the Embedder protocol the KnowledgeBase depends on.
+    assert hasattr(embedder, "embed_query")

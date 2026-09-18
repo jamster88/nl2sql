@@ -295,3 +295,26 @@ def test_interactive_mode_exits_cleanly_on_keyboard_interrupt(monkeypatch, capsy
     monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
     monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt))
     assert cli.main([]) == 0
+
+
+def test_the_module_entry_point_runs_when_executed_directly():
+    """`python -m nl2sql_agent` is how the container's ENTRYPOINT starts, so the
+    `if __name__ == "__main__"` guard is real code on the only path that
+    matters -- and the one path pytest never takes by itself.
+    """
+    import runpy
+    import sys
+    import warnings
+
+    argv = sys.argv
+    sys.argv = ["nl2sql-agent", "--help"]
+    try:
+        with warnings.catch_warnings():
+            # runpy re-executes a module already imported by the suite; that is
+            # exactly the point here and its warning about it is not actionable.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            with pytest.raises(SystemExit) as exit_info:
+                runpy.run_module("nl2sql_agent.__main__", run_name="__main__")
+    finally:
+        sys.argv = argv
+    assert exit_info.value.code == 0

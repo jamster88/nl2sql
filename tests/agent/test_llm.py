@@ -38,13 +38,13 @@ def test_build_llm_returns_the_model_on_success(monkeypatch):
     sentinel = object()
 
     def fake_chat_ollama(**kwargs):
-        assert kwargs["model"] == "qwen3.8:latest"
+        assert kwargs["model"] == "qwen3.8-256k"
         assert kwargs["base_url"] == "http://host:11434"
         assert kwargs["validate_model_on_init"] is True
         return sentinel
 
     monkeypatch.setattr("nl2sql_agent.llm.ChatOllama", fake_chat_ollama)
-    settings = Settings(ollama_model="qwen3.8:latest", ollama_base_url="http://host:11434")
+    settings = Settings(ollama_model="qwen3.8-256k", ollama_base_url="http://host:11434")
     assert build_llm(settings) is sentinel
 
 
@@ -53,12 +53,12 @@ def test_build_llm_wraps_connection_error(monkeypatch):
         raise ConnectionError("refused")
 
     monkeypatch.setattr("nl2sql_agent.llm.ChatOllama", fake_chat_ollama)
-    settings = Settings(ollama_base_url="https://192.168.44.129:11434")
+    settings = Settings(ollama_base_url="https://192.168.10.82:11434")
 
     with pytest.raises(LlmUnavailableError) as excinfo:
         build_llm(settings)
     message = str(excinfo.value)
-    assert "https://192.168.44.129:11434" in message
+    assert "https://192.168.10.82:11434" in message
     assert "port 11434 serves http, not https" in message
 
 

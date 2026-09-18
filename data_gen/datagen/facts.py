@@ -309,7 +309,11 @@ def _sample_baskets_products(
         need = k_array > slot
         idx = np.where(need)[0]
         if len(idx) == 0:
-            continue
+            # Unreachable, and kept only as a guard against the loop bounds
+            # changing: the loop runs to max(k_array), so the basket whose k
+            # equals that maximum satisfies k > slot for every slot the loop
+            # visits, and `idx` therefore always holds at least that one.
+            continue  # pragma: no cover
         result[idx, slot] = assortment[rng.integers(0, a, size=len(idx))]
         for _ in range(6):
             if slot == 0:

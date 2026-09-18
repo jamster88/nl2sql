@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .database import Database, UnsafeQueryError, ensure_read_only
+from .examples import ExamplesUnavailableError, GoldenPairLibrary, format_examples
+from .examples import tables_mentioned as example_tables
 from .prompts import SQL_VALIDATION_PROMPT, knowledge_block
 from .retrieval import KnowledgeBase, KnowledgeUnavailableError, format_chunks, tables_mentioned
 
@@ -39,6 +41,7 @@ def build_tools(
     llm: BaseChatModel,
     settings: Settings,
     knowledge_base: KnowledgeBase | None = None,
+    example_library: GoldenPairLibrary | None = None,
 ) -> dict[str, BaseTool]:
     @tool
     def describe_all_tables() -> str:
@@ -70,6 +73,44 @@ def build_tools(
                     "distance": round(c.distance, 4),
                 }
                 for c in chunks
+            ],
+            "error": None,
+        }
+
+    @tool
+    def search_examples(question: str) -> dict[str, Any]:
+        """Retrieve worked question/SQL pairs closest to this question."""
+        empty = {"context": "", "tables": [], "pairs": [], "shots": [], "error": None}
+        if example_library is None:
+            return {**empty, "error": "examples are disabled"}
+        try:
+            pairs = example_library.search(question, settings.examples_top_k)
+        except ExamplesUnavailableError as exc:
+            return {**empty, "error": str(exc)}
+        return {
+            "context": format_examples(pairs, settings.examples_max_context_chars),
+            "tables": example_tables(pairs),
+            # Summaries for tracing and --json: small, and safe to log.
+            "pairs": [
+                {
+                    "chunk_id": p.chunk_id,
+                    "pair_id": p.pair_id,
+                    "title": p.title,
+                    "score": round(p.score, 5),
+                    "rerank_score": round(p.rerank_score, 5),
+                    "found_by": p.found_by,
+                }
+                for p in pairs
+            ],
+            # The full text the multi-shot turns are built from.
+            "shots": [
+                {
+                    "pair_id": p.pair_id,
+                    "question": p.question,
+                    "reasoning_target": p.reasoning_target,
+                    "sql_code": p.sql_code,
+                }
+                for p in pairs
             ],
             "error": None,
         }
@@ -114,6 +155,7 @@ def build_tools(
         "describe_all_tables": describe_all_tables,
         "get_schema_and_data": get_schema_and_data,
         "search_knowledge": search_knowledge,
+        "search_examples": search_examples,
         "validate_sql": validate_sql,
         "execute_query": execute_query,
     }

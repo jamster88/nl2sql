@@ -64,7 +64,9 @@ def test_agent_service_is_hidden_without_the_agent_profile(default_config: dict)
 
 
 def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
-    assert set(agent_profile_config["services"]) == {"postgres", "vectordb", "agent"}
+    assert set(agent_profile_config["services"]) == {
+        "postgres", "vectordb", "chunkdb", "agent"
+    }
 
 
 def test_postgres_service_shape(agent_profile_config: dict):
@@ -269,3 +271,55 @@ def test_every_agent_environment_variable_is_one_the_agent_actually_reads(agent_
     config_py = (REPO_ROOT / "agent" / source).with_suffix(".py").read_text()
     for name in agent_profile_config["services"]["agent"]["environment"]:
         assert f'"{name}"' in config_py, f"compose sets {name}, but config.py never reads it"
+
+
+# ---------------------------------------------------------------------------
+# v3: the context store
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_is_pointed_at_the_context_store(agent_profile_config: dict):
+    """The example retriever reads golden pairs and runs BM25 there, so the
+    agent needs the URL as well as the dependency -- one without the other
+    fails at the first question rather than at startup.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert env["CONTEXT_DB_URL"] == (
+        "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2sql_chunks"
+    )
+
+
+def test_the_agent_waits_for_every_database_to_be_healthy(agent_profile_config: dict):
+    depends = agent_profile_config["services"]["agent"]["depends_on"]
+    assert set(depends) == {"postgres", "vectordb", "chunkdb"}
+    assert all(d["condition"] == "service_healthy" for d in depends.values())
+
+
+def test_the_context_store_keeps_its_data_outside_the_base_image_volume(agent_profile_config: dict):
+    """PGDATA has to sit outside /var/lib/postgresql, which the base image
+    declares as a VOLUME -- writes there are invisible to `docker commit`, so a
+    cluster living there could never be published as an image.
+    """
+    mounts = agent_profile_config["services"]["chunkdb"]["volumes"]
+    assert any(m["target"] == "/var/lib/pgdata" for m in mounts)
+
+
+def test_multi_shot_and_the_rerank_are_on_by_default_in_compose(agent_profile_config: dict):
+    """Both are the architecture now rather than experiments, so the image has
+    to ship with them on -- a default that disagrees with the source default
+    means the container behaves differently from everything the tests exercise.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert env["EXAMPLES_ENABLED"] == "true"
+    assert env["MULTI_SHOT_ENABLED"] == "true"
+    assert env["EXAMPLES_RERANK"] == "mmr"
+
+
+def test_the_context_window_is_set_explicitly(agent_profile_config: dict):
+    """Ollama caps num_ctx at a few thousand tokens whatever the model supports,
+    and truncates past it silently. Multi-shot puts the schema, the knowledge
+    block and three worked SQL queries in one window, so this is not optional.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert env["OLLAMA_NUM_CTX"] == "262144"
+    assert env["OLLAMA_MODEL"] == "qwen3.8-256k"

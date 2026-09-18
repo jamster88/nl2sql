@@ -22,9 +22,11 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v2"
+AGENT_TAG="v3"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
-VECTOR_TAG="v1"
+VECTOR_TAG="v3"
+CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
+CONTEXT_TAG="v3"
 OLLAMA_URL=""
 OLLAMA_MODEL=""
 EMBED_URL=""
@@ -48,10 +50,12 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v2)
+      --agent-tag TAG    Agent image tag to pull (default: v3)
       --build-agent      Build the agent image from source instead of pulling
-      --vector-image N   Knowledge base image (default: mcfaddja/nl2sql-rag-vectordb)
-      --vector-tag TAG   Knowledge base image tag (default: v1)
+      --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
+      --vector-tag TAG   Vector store image tag (default: v3)
+      --context-image N  Context store image (default: mcfaddja/nl2sql-rag-chunkdb)
+      --context-tag TAG  Context store image tag (default: v3)
       --embed-url URL    Ollama host serving the embedding model
                          (default: http://host.docker.internal:11434, i.e. the
                          Ollama on this machine)
@@ -79,6 +83,8 @@ while [[ $# -gt 0 ]]; do
         --build-agent) BUILD_AGENT=1; shift ;;
         --vector-image) VECTOR_IMAGE="$2"; shift 2 ;;
         --vector-tag) VECTOR_TAG="$2"; shift 2 ;;
+        --context-image) CONTEXT_IMAGE="$2"; shift 2 ;;
+        --context-tag) CONTEXT_TAG="$2"; shift 2 ;;
         --embed-url) EMBED_URL="$2"; shift 2 ;;
         --embed-model) EMBED_MODEL_NAME="$2"; shift 2 ;;
         --no-rag) WITH_RAG=0; shift ;;
@@ -128,9 +134,23 @@ else
         die "could not pull $POSTGRES_IMAGE:$POSTGRES_TAG. Check the tag and your network."
 fi
 
-# --- Knowledge base image --------------------------------------------------
+# --- Retrieval images ------------------------------------------------------
 if [[ $WITH_RAG -eq 1 ]]; then
-    step "Pulling $VECTOR_IMAGE:$VECTOR_TAG (pgvector with the embedded knowledge base)"
+    step "Pulling $CONTEXT_IMAGE:$CONTEXT_TAG (context store: golden pairs and BM25 statistics)"
+    if ! docker pull "$CONTEXT_IMAGE:$CONTEXT_TAG"; then
+        die "could not pull $CONTEXT_IMAGE:$CONTEXT_TAG.
+       If the repository is private, run 'docker login' first, or make it
+       public on Docker Hub. To set up without retrieval, re-run with --no-rag."
+    fi
+
+    # Same story as the vector store below: the RAG pipeline may have left a
+    # standalone container on this port and volume.
+    if [[ -n "$(docker ps -q --filter name='^nl2sql-rag-chunkdb$')" ]]; then
+        info "stopping the standalone nl2sql-rag-chunkdb container (compose takes over; data is kept)"
+        docker stop nl2sql-rag-chunkdb >/dev/null
+    fi
+
+    step "Pulling $VECTOR_IMAGE:$VECTOR_TAG (pgvector with the knowledge base and golden-pair vectors)"
     if ! docker pull "$VECTOR_IMAGE:$VECTOR_TAG"; then
         die "could not pull $VECTOR_IMAGE:$VECTOR_TAG.
        If the repository is private, run 'docker login' first, or make it
@@ -159,6 +179,8 @@ fi
     echo "AGENT_IMAGE_TAG=$AGENT_TAG"
     echo "VECTOR_IMAGE_NAME=$VECTOR_IMAGE"
     echo "VECTOR_IMAGE_TAG=$VECTOR_TAG"
+    echo "CONTEXT_IMAGE_NAME=$CONTEXT_IMAGE"
+    echo "CONTEXT_IMAGE_TAG=$CONTEXT_TAG"
     echo "RAG_ENABLED=$([[ $WITH_RAG -eq 1 ]] && echo true || echo false)"
     if [[ -n "$OLLAMA_URL" ]]; then echo "OLLAMA_BASE_URL=$OLLAMA_URL"; fi
     if [[ -n "$OLLAMA_MODEL" ]]; then echo "OLLAMA_MODEL=$OLLAMA_MODEL"; fi
@@ -199,7 +221,7 @@ rows=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-nl2sql}" \
 [[ -n "$rows" ]] || die "the database is up but the dataset is missing. Try --reset."
 info "database ready with $rows sales rows"
 
-# --- Knowledge base --------------------------------------------------------
+# --- Retrieval stores ------------------------------------------------------
 if [[ $WITH_RAG -eq 1 ]]; then
     step "Starting the knowledge base"
     docker compose up -d vectordb
@@ -226,6 +248,27 @@ if [[ $WITH_RAG -eq 1 ]]; then
         warn "the knowledge base is up but has no embedded chunks in it."
         warn "Retrieval will be skipped until it is populated."
     fi
+
+    step "Starting the context store"
+    docker compose up -d chunkdb
+
+    info "waiting for the context store to become healthy..."
+    for _ in $(seq 1 60); do
+        cstatus=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-chunkdb 2>/dev/null || echo starting)
+        [[ "$cstatus" == "healthy" ]] && break
+        sleep 2
+    done
+    [[ "${cstatus:-}" == "healthy" ]] || die "the context store did not become healthy. Check 'docker compose logs chunkdb'."
+
+    pairs=$(docker compose exec -T chunkdb psql -U "${CONTEXT_DB_USER:-ragproc}" \
+        -d "${CONTEXT_DB_NAME:-nl2sql_chunks}" -tAc \
+        "SELECT count(*) FROM golden_pairs" 2>/dev/null | tr -d '[:space:]' || echo "")
+    if [[ -n "$pairs" && "$pairs" != "0" ]]; then
+        info "context store ready with $pairs golden question/SQL pairs"
+    else
+        warn "the context store is up but holds no golden pairs."
+        warn "Worked examples will be skipped until it is populated."
+    fi
 fi
 
 # --- Ollama ----------------------------------------------------------------
@@ -242,8 +285,8 @@ compose_value() {
 
 effective_url=$(compose_value OLLAMA_BASE_URL)
 effective_model=$(compose_value OLLAMA_MODEL)
-effective_url=${effective_url:-http://192.168.44.129:11434}
-effective_model=${effective_model:-qwen3.8:latest}
+effective_url=${effective_url:-http://192.168.10.82:11434}
+effective_model=${effective_model:-qwen3.8-256k}
 
 if tags=$(curl -sf --max-time 5 "$effective_url/api/tags" 2>/dev/null); then
     if printf '%s' "$tags" | grep -q "\"$effective_model\""; then

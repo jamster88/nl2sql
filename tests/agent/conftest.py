@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from nl2sql_agent.database import QueryResult
+from nl2sql_agent.examples import ExamplesUnavailableError, GoldenPair
 from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
 from nl2sql_agent.tools import SqlReview, TableSelection
 
@@ -138,6 +139,63 @@ class FakeKnowledgeBase:
         if self.error is not None:
             raise KnowledgeUnavailableError(self.error)
         return list(self._chunks)
+
+
+class FakeGoldenPairLibrary:
+    """Stands in for nl2sql_agent.examples.GoldenPairLibrary.
+
+    Set `error` to simulate an unreachable context store, an unreachable vector
+    store, or a missing embedding model -- all three of which the pipeline is
+    supposed to survive with examples simply absent.
+    """
+
+    def __init__(
+        self,
+        pairs: list[GoldenPair] | None = None,
+        error: str | None = None,
+    ) -> None:
+        self._pairs = pairs if pairs is not None else [make_pair()]
+        self.error = error
+        self.search_calls: list[tuple[str, int | None]] = []
+
+    def search(self, question: str, top_k: int | None = None) -> list[GoldenPair]:
+        self.search_calls.append((question, top_k))
+        if self.error is not None:
+            raise ExamplesUnavailableError(self.error)
+        return list(self._pairs)
+
+
+def make_pair(
+    *,
+    chunk_id: str = "eval:q10",
+    pair_id: str = "Q10",
+    title: str = "Weekly market share trend for a category in one region",
+    suite: str = "Suite 10 - Syndicated market share",
+    type: str = "golden pair",
+    tables: str = "fact_market_share_weekly, dim_geography, dim_product, dim_date",
+    keywords: str = "market share, fan-out, de-duplicate, region, weekly trend",
+    question: str = "Show our weekly market share for Cheese in the Pacific Northwest.",
+    reasoning_target: str = "The five-row fan-out: the totals repeat once per competitor.",
+    sql_code: str = "SELECT DISTINCT week_key, grocer_sales_amount FROM fact_market_share_weekly",
+    result: str = "13 rows: one per fiscal week.",
+    score: float = 0.87,
+    ranks: dict[str, int] | None = None,
+) -> GoldenPair:
+    return GoldenPair(
+        chunk_id=chunk_id,
+        pair_id=pair_id,
+        title=title,
+        suite=suite,
+        type=type,
+        tables=tables,
+        keywords=keywords,
+        question=question,
+        reasoning_target=reasoning_target,
+        sql_code=sql_code,
+        result=result,
+        score=score,
+        ranks=ranks if ranks is not None else {"question": 1, "keywords": 2, "reasoning": 3},
+    )
 
 
 def make_chunk(

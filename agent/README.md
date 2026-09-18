@@ -1,4 +1,4 @@
-# NL2SQL Agent (v2, RAG)
+# NL2SQL Agent (v3, RAG + worked examples)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -38,23 +38,25 @@ stdout, so `... > answer.txt` captures just the answer.
 
 The five steps in [`basic_agent_steps.md`](../basic_agent_steps.md) map onto one
 LangGraph node each, defined in [`nl2sql_agent/graph.py`](nl2sql_agent/graph.py).
-[`arch_diagrams/arch_v2.svg`](../arch_diagrams/arch_v2.svg) draws the same thing
+[`arch_diagrams/arch_v3.svg`](../arch_diagrams/arch_v3.svg) draws the same thing
 in full -- every node beside the reasoning for it, the retry loop, and where the
-retrieved context flows -- with
-[`arch_v1.svg`](../arch_diagrams/arch_v1.svg) alongside it for the schema-only
-version:
+retrieved context and examples flow -- with
+[`arch_v2.svg`](../arch_diagrams/arch_v2.svg) and
+[`arch_v1.svg`](../arch_diagrams/arch_v1.svg) alongside it for the earlier
+versions:
 
 ```
-retrieve_knowledge -> select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query
-                                                            ^               |
-                                                            +---- retry ----+
-                                                                            |
-                                                          attempts exhausted +-> give_up
+retrieve_knowledge -> retrieve_examples -> select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query
+                                                                                ^               |
+                                                                                +---- retry ----+
+                                                                                                |
+                                                                              attempts exhausted +-> give_up
 ```
 
 | Step | Node | Tool | LLM |
 |---|---|---|---|
-| 1. Retrieve context | `retrieve_knowledge` | `search_knowledge` | -- |
+| 1a. Retrieve context | `retrieve_knowledge` | `search_knowledge` | -- |
+| 1b. Retrieve examples | `retrieve_examples` | `search_examples` | -- |
 | 2. Find relevant tables | `select_tables` | `describe_all_tables` | picks tables |
 | 3. Get schema + samples | `fetch_schema` / `generate_sql` | `get_schema_and_data` | writes SQL |
 | 4. Validate | `validate_sql` | `validate_sql` | reviews dialect/semantics |
@@ -80,11 +82,11 @@ Every setting is an environment variable with a CLI override:
 
 | Variable | Flag | Default |
 |---|---|---|
-| `OLLAMA_BASE_URL` | `--base-url` | `http://192.168.44.129:11434` |
-| `OLLAMA_MODEL` | `--model` | `qwen3.8:latest` |
+| `OLLAMA_BASE_URL` | `--base-url` | `http://192.168.10.82:11434` |
+| `OLLAMA_MODEL` | `--model` | `qwen3.8-256k` |
 | `OLLAMA_REASONING` | `--reasoning` / `--no-reasoning` | off |
 | `OLLAMA_TEMPERATURE` | -- | 0.0 |
-| `OLLAMA_NUM_CTX` | -- | 16384 |
+| `OLLAMA_NUM_CTX` | -- | 262144 (256k) |
 | `DATABASE_URL` | `--database-url` | the compose Postgres |
 | `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |
@@ -97,6 +99,21 @@ Every setting is an environment variable with a CLI override:
 | `EMBED_BASE_URL` | `--embed-url` | `http://host.docker.internal:11434` |
 | `RAG_TOP_K` | `--rag-top-k` | 4 per collection |
 | `RAG_MAX_CONTEXT_CHARS` | -- | 12000 |
+| `EXAMPLES_ENABLED` | `--examples` / `--no-examples` | on |
+| `MULTI_SHOT_ENABLED` | `--multi-shot` / `--no-multi-shot` | on |
+| `CONTEXT_DB_URL` | `--context-db-url` | the compose chunkdb |
+| `EXAMPLES_TOP_K` | `--examples-top-k` | 3 |
+| `EXAMPLES_CANDIDATE_K` | -- | 10 per retriever |
+| `EXAMPLE_WEIGHT_QUESTION` | -- | 0.50 |
+| `EXAMPLE_WEIGHT_KEYWORDS` | -- | 0.35 |
+| `EXAMPLE_WEIGHT_REASONING` | -- | 0.15 |
+| `EXAMPLES_FUSION` | -- | `score` (or `rrf`) |
+| `EXAMPLES_RRF_K` | -- | 60, used only by `rrf` |
+| `EXAMPLES_RERANK` | -- | `mmr` (or `relevance`, `none`) |
+| `EXAMPLES_RERANK_K` | -- | 8 candidates into the rerank |
+| `EXAMPLES_RERANK_LAMBDA` | -- | 0.5 |
+| `EXAMPLES_GROUNDING_WEIGHT` | -- | 0.25 |
+| `EXAMPLES_MAX_CONTEXT_CHARS` | -- | 8000 |
 
 Any Ollama model and host works:
 
@@ -116,6 +133,173 @@ Two notes on the defaults:
 Reasoning is off by default. Qwen3 returns reasoning in a separate field, so
 disabling it costs no output quality and saves a large share of the latency;
 turn it on with `--reasoning` for harder questions.
+
+## Worked examples (v3)
+
+Retrieval in v2 fetches **prose**: business rules, table docs, grain warnings.
+v3 adds a second, independent step that fetches **worked examples** -- the 45
+question/SQL pairs in
+[`context_questions/translated_questions.md`](../context_questions/translated_questions.md),
+each one verified to run against this database and return rows.
+
+The distinction is the point. The knowledge base can tell the model that costs
+are monthly and sales are daily; the model can read that and still emit the join
+that matches 24 days a year. A pair that has already reconciled the two grains
+carries the shape of the answer, not just the warning.
+
+### The ensemble
+
+Three retrievers over the same 45 pairs, each answering a different question
+about a pair, fused into one ranking:
+
+| Retriever | Searches | Where | Weight |
+|---|---|---|---|
+| Question similarity | `golden_pair_question_vectors` | vectordb (pgvector, cosine) | **0.50** |
+| Keyword match | `golden_pairs.keywords` | chunkdb (BM25) | **0.35** |
+| Reasoning similarity | `golden_pair_reasoning_vectors` | vectordb (pgvector, cosine) | **0.15** |
+
+Question similarity matches what the user is asking for. BM25 catches the
+vocabulary a paraphrase preserves but an embedding blurs -- `slotting`,
+`fan-out`, `BOGO`. Reasoning similarity matches what the query has to get
+*right* rather than what it asks, so a question that never says "fan-out" can
+still reach the pair that warns about it; it is weighted low because on its own
+it finds the right pair only 13% of the time.
+
+BM25 is computed **in the database**, not in the client. Postgres ships
+`ts_rank`, which is a length-normalised tf-idf and not BM25, so the term
+statistics are materialised at load time and the scoring function is written
+out as SQL -- see
+[`golden_pairs_bm25()`](../rag/ragproc/golden_pairs.py). Over 45 short keyword
+lists this costs nothing to maintain and keeps the ranking next to the data.
+
+### The rerank
+
+Fusing three rankings is not the same as reranking them. Every score the fusion
+combines was produced *independently* -- the query against the pair's question,
+against its reasoning target, against its keywords -- and no stage of that ever
+looks at the query and the whole pair together, or at the retrieved set as a
+set. So the top `EXAMPLES_RERANK_K` fused candidates get a second pass, in
+[`rerank.py`](nl2sql_agent/rerank.py):
+
+**Grounding** scores the query against the pair's `tables` and `sql_code`, which
+*no* first-stage retriever indexes -- BM25 searches only the `keywords` column.
+A question naming "Produce" should favour the pair whose SQL says
+`department_name = 'Produce'`, and a quoted literal counts double an identifier
+word, because `'Produce'` in a WHERE clause says what a pair is about while the
+word `sales` inside a column name says almost nothing.
+
+**MMR** then trades a little relevance for coverage. This is what multi-shot
+needs: three near-identical exemplars teach one pattern three times.
+
+Both were measured rather than assumed:
+
+| | self-retrieval @1 | paraphrase @3 | entity @1 | names-a-table @3 | redundancy |
+|---|---|---|---|---|---|
+| fusion order | 45/45 | 12/15 | 10/10 | 5/8 | 0.560 |
+| + grounding | 45/45 | 12/15 | 10/10 | **6/8** | 0.551 |
+| + MMR (λ=0.5) | 45/45 | 12/15 | 10/10 | 6/8 | **0.514** |
+
+*Redundancy* is the mean pairwise cosine between the three chosen pairs -- lower
+means the model sees three different shapes of answer. *names-a-table* is the
+query class grounding exists for; on the other three the first stage is already
+saturated and grounding correctly changes nothing.
+
+Recall never degrades, at any λ from 1.0 down to 0.3, and that is not luck:
+MMR's first pick has nothing to be redundant with, so rank 1 is untouched by the
+diversity term by construction. That is what makes the coverage free.
+
+### How the three are fused
+
+Each retriever's scores are min-max normalised across its own candidates, then
+weighted and summed. Normalising first is what makes the weights mean anything:
+a cosine similarity sits in a narrow band near 0.5 and a BM25 score is unbounded
+and corpus-dependent, so weighting the raw numbers would weight incomparable
+units.
+
+Weighted reciprocal rank fusion -- what LangChain's `EnsembleRetriever` does --
+is implemented too (`EXAMPLES_FUSION=rrf`) and was measured rather than assumed.
+It is worse here. RRF scores a hit as `w / (60 + rank)`, a formula tuned for
+candidate lists thousands of documents long; across 10 candidates rank 1 and
+rank 10 differ by only 15%, which is less than the 0.15 a third retriever
+contributes just by voting at all. The weights stop expressing how *strongly* a
+retriever matched and start counting how *many* did.
+
+Measured over all 45 questions retrieving their own pair at rank 1:
+
+| Fusion | Correct |
+|---|---|
+| weighted score (default) | **45/45** |
+| weighted RRF, k=1 | 43/45 |
+| weighted RRF, k=10 | 37/45 |
+| weighted RRF, k=60 (the usual default) | 25/45 |
+
+On 15 hand-written paraphrases that deliberately avoid each pair's own wording,
+the ensemble matches the best single retriever rather than beating it (10/15 at
+rank 1, against 10/15 for question similarity alone and 6/15 for BM25 alone).
+What the ensemble buys there is robustness, not a uniform lift: it is never much
+worse than the best leg, and the keyword leg rescues the keyword-heavy questions
+where embeddings drift.
+
+### Multi-shot generation
+
+The retrieved pairs are **not** pasted into the prompt as a block of text. They
+are replayed as real conversation turns in front of the actual question:
+
+```
+system     rules, then the schema and sample data
+human      Rule that applies here: <pair 1 reasoning target>
+           Question: <pair 1 question>
+ai         <pair 1 SQL>
+human      Rule that applies here: <pair 2 reasoning target>
+           Question: <pair 2 question>
+ai         <pair 2 SQL>
+...
+human      <knowledge block>
+           Question: <the real question>
+```
+
+That shape is what instruct models are tuned on. A text block invites the model
+to *describe* the examples; a turn sequence invites it to *continue the pattern*.
+
+Three properties hold it together:
+
+- **The turns are symmetric with the real one.** Every human turn is [the rule
+  that applies] + [the question]. For an exemplar the rule is its
+  `reasoning_target`; for the real question it is whatever the knowledge base
+  returned. An exemplar shaped differently from the real task demonstrates the
+  wrong task.
+- **Assistant turns are bare SQL.** Anything they contain gets imitated -- which
+  is also why they carry no leading SQL comment: `ensure_read_only` requires the
+  statement to begin with SELECT or WITH, so a model that learned to prefix a
+  comment would have every query rejected.
+- **The schema lives in the system turn.** It is shared by every turn, so
+  repeating it per exemplar would cost tokens and say nothing new.
+
+The system turn also states what the earlier turns *are*, and that the question
+to answer is the last one. Without that a model can read the exemplars as prior
+user requests still waiting to be answered.
+
+### Two switches, not one
+
+`EXAMPLES_ENABLED` controls retrieval; `MULTI_SHOT_ENABLED` controls whether the
+pairs are replayed as turns. Both default on, but they stay separate: with the
+second off the examples are still fetched, ranked and visible in `--json`, so
+the ranking can be inspected without it steering generation. Off, the prompt is
+byte-for-byte the zero-shot one -- a system turn, then the question.
+
+```bash
+docker compose run --rm agent --json "gross margin for produce" | jq .example_pairs
+docker compose run --rm agent --no-multi-shot "gross margin for produce"
+```
+
+### Degradation
+
+Three separate things can be down -- the context store, the vector store, and
+the embedding host -- and all three surface as `ExamplesUnavailableError`, which
+`search_examples` turns into an empty context plus a reason on
+`state.examples_error`. A run without examples is a v2 run; a run without either
+retrieval is a v1 run.
+
 
 ## Safety
 

@@ -30,7 +30,7 @@ def test_defaults_when_env_is_empty(monkeypatch):
     assert settings.database_url == DEFAULT_DATABASE_URL
     assert settings.temperature == 0.0
     assert settings.reasoning is False
-    assert settings.num_ctx == 16384
+    assert settings.num_ctx == 262144
     assert settings.db_schema == "public"
     assert settings.sample_rows == 3
     assert settings.max_rows == 50

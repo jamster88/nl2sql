@@ -14,19 +14,29 @@ from nl2sql_agent.config import Settings
 from nl2sql_agent.graph import Nl2SqlAgent
 from nl2sql_agent.tools import SqlReview, TableSelection, build_tools
 
-from .conftest import FakeDatabase, FakeKnowledgeBase, ScriptedLLM, make_chunk
+from .conftest import (
+    FakeDatabase,
+    FakeGoldenPairLibrary,
+    FakeKnowledgeBase,
+    ScriptedLLM,
+    make_chunk,
+    make_pair,
+)
 
 
 def make_agent(
     db: FakeDatabase,
     llm: ScriptedLLM,
     knowledge_base: FakeKnowledgeBase | None = None,
+    example_library: FakeGoldenPairLibrary | None = None,
     **settings_kwargs,
 ) -> Nl2SqlAgent:
     settings = Settings(database_url="postgresql+psycopg://u:p@127.0.0.1:1/db", **settings_kwargs)
-    agent = Nl2SqlAgent(settings, llm=llm, knowledge_base=knowledge_base)
+    agent = Nl2SqlAgent(
+        settings, llm=llm, knowledge_base=knowledge_base, example_library=example_library
+    )
     agent.db = db
-    agent.tools = build_tools(db, llm, settings, knowledge_base)
+    agent.tools = build_tools(db, llm, settings, knowledge_base, example_library)
     return agent
 
 
@@ -66,7 +76,7 @@ def test_happy_path_selects_tables_generates_and_executes(progress_log):
     assert db.run_select_calls == ["SELECT COUNT(*) FROM dim_store"]
     steps = [step for step, _ in progress_log.log]
     assert steps == [
-        "retrieve_knowledge", "select_tables", "fetch_schema",
+        "retrieve_knowledge", "retrieve_examples", "select_tables", "fetch_schema",
         "generate_sql", "validate_sql", "execute_query",
     ]
 
@@ -404,9 +414,130 @@ def test_an_explicit_knowledge_base_overrides_the_settings_built_one():
     assert agent.knowledge_base is kb
 
 
-def test_the_search_knowledge_tool_is_registered_alongside_the_original_four():
-    agent = make_agent(FakeDatabase(), ScriptedLLM(), FakeKnowledgeBase())
+def test_the_retrieval_tools_are_registered_alongside_the_original_four():
+    agent = make_agent(
+        FakeDatabase(), ScriptedLLM(), FakeKnowledgeBase(), FakeGoldenPairLibrary()
+    )
     assert set(agent.tools) == {
         "describe_all_tables", "get_schema_and_data", "search_knowledge",
-        "validate_sql", "execute_query",
+        "search_examples", "validate_sql", "execute_query",
     }
+
+
+# ---------------------------------------------------------------------------
+# v3: the golden-pair ensemble in the pipeline
+# ---------------------------------------------------------------------------
+
+
+def test_retrieved_examples_land_in_state_with_their_provenance(progress_log):
+    db = FakeDatabase(tables=["dim_store"])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    library = FakeGoldenPairLibrary()
+    agent = make_agent(db, llm, FakeKnowledgeBase(), library)
+    agent._on_progress = progress_log
+
+    state = agent.run("how is market share computed")
+
+    assert library.search_calls == [("how is market share computed", 3)]
+    assert state["example_pairs"][0]["pair_id"] == "Q10"
+    assert state["example_pairs"][0]["found_by"] == "keywords#2, question#1, reasoning#3"
+    assert "SELECT DISTINCT week_key" in state["examples"]
+    assert ("retrieve_examples", "1 pair(s) -- Q10 (0.870)") in progress_log.log
+
+
+def test_an_unavailable_example_store_is_recorded_and_the_run_continues(progress_log):
+    """Three separate things can be down -- the context store, the vector store,
+    the embedding host -- and none of them should cost more than the examples.
+    """
+    db = FakeDatabase(tables=["dim_store"])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    library = FakeGoldenPairLibrary(error="context store is down")
+    agent = make_agent(db, llm, FakeKnowledgeBase(), library)
+    agent._on_progress = progress_log
+
+    state = agent.run("how many stores")
+
+    assert state.get("error") is None
+    assert state["result"]["row_count"] == 1
+    assert state["examples"] == ""
+    assert state["examples_error"] == "context store is down"
+    assert ("retrieve_examples", "skipped: context store is down") in progress_log.log
+
+
+def test_tables_an_example_queries_are_added_to_the_selection():
+    """A worked example that already answers a question of this shape knows
+    which tables the answer needs -- a signal the catalog alone does not carry.
+    """
+    db = FakeDatabase(tables=["dim_store", "fact_market_share_weekly", "dim_geography"])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    library = FakeGoldenPairLibrary(
+        [make_pair(tables="fact_market_share_weekly, dim_geography, not_a_real_table")]
+    )
+    agent = make_agent(db, llm, FakeKnowledgeBase(chunks=[]), library)
+
+    state = agent.run("market share by region")
+
+    assert state["selected_tables"] == ["dim_store", "fact_market_share_weekly", "dim_geography"]
+    assert "not_a_real_table" not in state["selected_tables"]
+
+
+def test_examples_are_replayed_as_turns_only_when_multi_shot_is_on():
+    """Retrieval and prompting stay separate switches. With multi-shot off the
+    pairs are still retrieved and inspectable, but the generator sees the plain
+    two-message prompt; with it on they arrive as exemplar turns.
+    """
+    db = FakeDatabase(tables=["dim_store"])
+
+    def run(multi_shot: bool):
+        llm = ScriptedLLM(
+            table_selection=TableSelection(tables=["dim_store"]),
+            sql_responses=["SELECT 1"],
+            sql_reviews=[SqlReview(is_valid=True, issues=[])],
+        )
+        agent = make_agent(
+            db, llm, FakeKnowledgeBase(), FakeGoldenPairLibrary(), multi_shot_enabled=multi_shot
+        )
+        state = agent.run("how many stores")
+        assert state["example_shots"], "examples should be retrieved either way"
+        # Table selection goes through with_structured_output, so the plain
+        # invoke() the generator makes is the only one recorded here.
+        return llm.plain_invocations[0]
+
+    without = run(multi_shot=False)
+    assert [m.type for m in without] == ["system", "human"]
+
+    with_shots = run(multi_shot=True)
+    assert [m.type for m in with_shots] == ["system", "human", "ai", "human"]
+    assert "SELECT DISTINCT week_key" in str(with_shots[2].content)
+    # The real question is last, and never appears inside an exemplar.
+    assert "how many stores" in str(with_shots[-1].content)
+    assert "how many stores" not in "".join(str(m.content) for m in with_shots[:-1])
+
+
+def test_examples_disabled_skips_the_step_but_keeps_the_node():
+    """The node stays in the graph so the pipeline shape is constant; only its
+    output is empty. A conditional node would make the diagram version-dependent.
+    """
+    db = FakeDatabase(tables=["dim_store"])
+    llm = ScriptedLLM(
+        table_selection=TableSelection(tables=["dim_store"]),
+        sql_responses=["SELECT 1"],
+        sql_reviews=[SqlReview(is_valid=True, issues=[])],
+    )
+    agent = make_agent(db, llm, FakeKnowledgeBase(), None, examples_enabled=False)
+    state = agent.run("how many stores")
+    assert state["examples"] == ""
+    assert state["examples_error"] == "examples are disabled"
+    assert state.get("error") is None

@@ -40,6 +40,11 @@ def agent_usage() -> str:
 
 
 @pytest.fixture(scope="module")
+def launch_sh() -> str:
+    return (REPO_ROOT / "launch.sh").read_text()
+
+
+@pytest.fixture(scope="module")
 def setup_sh() -> str:
     return (REPO_ROOT / "setup.sh").read_text()
 
@@ -297,3 +302,41 @@ def _table_row(text: str, name: str) -> str:
         if line.startswith("|") and f"`{name}`" in line:
             return line
     raise AssertionError(f"{name} has no row in the README config table")
+
+
+# ---------------------------------------------------------------------------
+# launch.sh
+# ---------------------------------------------------------------------------
+
+
+def test_every_launch_flag_is_documented(launch_sh: str, root_readme: str, agent_usage: str):
+    """A flag nobody has read about is a flag nobody uses. The parser is the
+    source of truth, so the docs are checked against it rather than the reverse.
+    """
+    flags = set(re.findall(r"^\s+(--[a-z-]+)\)", launch_sh, re.MULTILINE))
+    assert flags, "no flags found in launch.sh -- the pattern needs updating"
+    documented = root_readme + agent_usage
+    for flag in flags - {"--help"}:
+        assert flag in documented, f"{flag} is not mentioned in README.md or agent/USAGE.md"
+
+
+def test_the_two_scripts_are_both_documented_with_when_to_use_each(root_readme: str):
+    """They look interchangeable and are not: one pulls images, the other checks
+    the databases are populated. Someone who reaches for the wrong one either
+    waits minutes for nothing or misses the problem they came to find.
+    """
+    assert "./setup.sh" in root_readme
+    assert "./launch.sh" in root_readme
+    assert "First run" in root_readme
+
+
+def test_the_quick_start_is_still_two_commands(root_readme: str):
+    """The contract the scripts exist to keep: run one, then ask a question."""
+    assert 'docker compose run --rm agent "How many stores are there?"' in root_readme
+
+
+def test_launch_does_not_pull_images(launch_sh: str):
+    """Documented as the fast path, so it has to stay fast. A `docker pull` here
+    would make every start a download.
+    """
+    assert "docker pull" not in launch_sh

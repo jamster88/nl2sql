@@ -12,15 +12,16 @@ Run the setup script once from the repo root, with Docker running:
 ./setup.sh
 ```
 
-One call sets up all three containers:
+One call sets up all four containers:
 
 | Container | Role |
 |---|---|
 | `nl2sql-postgres` | the retail dataset you are querying |
-| `nl2sql-vectordb` | pgvector holding the embedded knowledge base |
+| `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
+| `nl2sql-chunkdb` | the context store: the golden pairs and their BM25 index |
 | `agent` | the agent itself, started per question and removed after |
 
-It pulls each image, starts both databases, checks that the Ollama hosts have
+It pulls each image, starts the databases, checks that the Ollama hosts have
 the chat model and the embedding model, and ends by proving the agent container
 can actually reach the knowledge base:
 
@@ -36,6 +37,33 @@ host is reachable.
 It takes a couple of minutes -- mostly downloads -- and is safe to re-run.
 Point it somewhere else with `./setup.sh --ollama-url URL --model NAME`;
 `./setup.sh --help` lists every flag.
+
+### Afterwards, use launch.sh
+
+`setup.sh` is the first-time script. Day to day -- after a reboot, or when you
+are not sure the stack is up -- use the launch script instead:
+
+```bash
+./launch.sh
+docker compose run --rm agent "How many stores are there?"
+```
+
+It starts whatever is down, then checks that each database is actually
+*populated* and that both models are reachable. Those are the failures that
+happen later and are invisible from the outside: a container that comes up
+healthy but empty, a chat host that has moved, an embedding model that is not
+the one the vectors were built with. It pulls nothing, so it takes seconds.
+
+```
+==> Checking what is actually in each database
+    retail dataset: 1291781 sales rows
+    knowledge base: 53 embedded chunks
+    worked examples: 45 golden pairs, 45 embedded questions
+```
+
+`--no-rag` starts only the retail database, `--restart` recreates the
+containers, `-q` prints only problems, and running it with no `.env` hands off
+to `setup.sh`.
 
 The agent uses **two** models on **two** possibly different hosts: a chat model
 (default `qwen3.8-256k` on `http://192.168.10.82:11434`) that writes the SQL,

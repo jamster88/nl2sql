@@ -1,0 +1,213 @@
+"""launch.sh, run against fake docker and curl.
+
+The script's whole value is in what it notices: a container that is up but
+empty, a chat host that moved, an embedding model that is not the one the
+vectors were built with. None of those stop it from starting; all of them make
+the agent look bad at its job. So the tests are mostly about which warnings
+come out, and they need a sandbox because the real answers depend on whatever
+happens to be running on the developer's machine.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.docker
+
+
+# ---------------------------------------------------------------------------
+# The two-command contract
+# ---------------------------------------------------------------------------
+
+
+def test_a_clean_run_succeeds_and_ends_by_showing_the_next_command(run_launch):
+    """The point of the script: run it, then ask a question. If the closing
+    lines ever stop printing that command, the contract is broken.
+    """
+    result = run_launch()
+    assert result.returncode == 0
+    assert 'docker compose run --rm agent "How many stores are there?"' in result.output
+
+
+def test_it_starts_all_three_databases(run_launch):
+    result = run_launch()
+    assert result.called("compose up -d postgres vectordb chunkdb")
+
+
+def test_it_waits_for_every_container_to_be_healthy(run_launch):
+    """Compose reports a container "started" well before Postgres is accepting
+    connections; the agent would then fail on its first query.
+    """
+    result = run_launch()
+    for container in ("nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb"):
+        assert result.called(f"inspect --format {{{{.State.Health.Status}}}} {container}")
+
+
+def test_it_does_not_pull_or_rebuild_anything(run_launch):
+    """That is setup.sh's job. A launch that re-pulled would turn a five-second
+    start into a minutes-long one every time.
+    """
+    result = run_launch()
+    assert not result.calls_matching("pull ")
+    assert not result.calls_matching("compose build")
+
+
+def test_restart_recreates_rather_than_reusing(run_launch):
+    assert run_launch("--restart").called("compose up -d --force-recreate")
+
+
+# ---------------------------------------------------------------------------
+# Handing off to setup.sh
+# ---------------------------------------------------------------------------
+
+
+def test_a_missing_env_file_hands_off_to_setup_rather_than_guessing(run_launch):
+    """Without .env, compose falls back to building images locally, which is
+    not what someone running launch.sh wants and takes very much longer.
+    """
+    result = run_launch(env_file=None)
+    assert result.returncode == 0
+    assert "running setup.sh first" in result.output
+    # setup.sh's own work is visible: it pulls, which launch.sh never does.
+    assert result.calls_matching("pull ")
+
+
+# ---------------------------------------------------------------------------
+# Noticing an empty database
+# ---------------------------------------------------------------------------
+
+
+def test_it_reports_what_each_database_actually_holds(run_launch):
+    result = run_launch()
+    assert "194101 sales rows" in result.output
+    assert "53 embedded chunks" in result.output
+    assert "45 golden pairs" in result.output
+
+
+def test_an_empty_retail_database_is_called_out(run_launch):
+    """Healthy and empty is the failure mode a volume created before the image
+    shipped its data produces, and nothing else reports it.
+    """
+    result = run_launch(env={"FAKE_ROW_COUNT": "0"})
+    assert "no sales rows" in result.output
+    assert "--reset" in result.output
+
+
+def test_an_empty_knowledge_base_warns_that_retrieval_will_be_skipped(run_launch):
+    result = run_launch(env={"FAKE_CHUNK_COUNT": "0"})
+    assert "no embedded chunks" in result.output
+    assert "schema-only" in result.output
+
+
+def test_golden_pairs_without_their_vectors_is_reported(run_launch):
+    """The pairs live in one database and their embeddings in another, so they
+    can be out of step. Multi-shot needs both.
+    """
+    result = run_launch(env={"FAKE_VECTOR_COUNT": "0"})
+    assert "Multi-shot needs both" in result.output
+
+
+def test_vectors_without_their_pairs_is_reported(run_launch):
+    result = run_launch(env={"FAKE_PAIR_COUNT": "0"})
+    assert "Multi-shot needs both" in result.output
+
+
+def test_a_container_that_never_becomes_healthy_fails_loudly(run_launch):
+    result = run_launch(env={"FAKE_CONTEXT_HEALTH": "unhealthy"})
+    assert result.returncode != 0
+    assert "did not become healthy" in result.output
+    assert "docker compose logs chunkdb" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
+
+def test_it_probes_the_chat_host_compose_will_really_use(run_launch):
+    """Read back from `compose config`, not from this script's own defaults --
+    otherwise it cheerfully validates a host the agent is not going to use.
+    """
+    result = run_launch()
+    assert result.called("curl http://192.168.10.82:11434/api/tags")
+    assert "qwen3.8-256k is available" in result.output
+
+
+def test_an_env_override_of_the_chat_host_is_followed(run_launch):
+    env_file = "RAG_ENABLED=true\nOLLAMA_BASE_URL=http://elsewhere:11434\n"
+    result = run_launch(env_file=env_file)
+    assert result.called("curl http://elsewhere:11434/api/tags")
+
+
+def test_an_unreachable_chat_host_warns_that_questions_will_fail(run_launch):
+    result = run_launch(env={"FAKE_OLLAMA_DOWN": "1"})
+    assert result.returncode == 0, "an unreachable model host is a warning, not a failure"
+    assert "could not reach the chat host" in result.output
+
+
+def test_a_chat_host_without_the_model_is_distinguished_from_one_that_is_down(run_launch):
+    """Different fixes: pull the model, versus start the host."""
+    result = run_launch(env={"FAKE_OLLAMA_MODELS": '{"name":"some-other-model"}'})
+    assert "does not have qwen3.8-256k" in result.output
+    assert "could not reach the chat host" not in result.output
+
+
+def test_a_missing_embedding_model_explains_why_it_matters(run_launch):
+    """A different embedding model does not fail -- it puts the query in another
+    vector space and retrieves confident nonsense.
+    """
+    result = run_launch(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k"}'})
+    assert "does not have bge-m3" in result.output
+    assert "ollama pull bge-m3" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --no-rag
+# ---------------------------------------------------------------------------
+
+
+def test_no_rag_starts_only_the_retail_database(run_launch):
+    result = run_launch("--no-rag")
+    assert result.called("compose up -d postgres")
+    assert not result.calls_matching("up -d postgres vectordb")
+
+
+def test_no_rag_skips_the_retrieval_checks_entirely(run_launch):
+    result = run_launch("--no-rag")
+    assert "embedded chunks" not in result.output
+    assert "golden pairs" not in result.output
+    assert "bge-m3" not in result.output
+
+
+def test_no_rag_still_checks_the_chat_model(run_launch):
+    """Without retrieval the agent still needs the model that writes the SQL."""
+    assert "qwen3.8-256k is available" in run_launch("--no-rag").output
+
+
+# ---------------------------------------------------------------------------
+# Interface
+# ---------------------------------------------------------------------------
+
+
+def test_help_exits_cleanly_and_points_first_timers_at_setup(run_launch):
+    result = run_launch("--help")
+    assert result.returncode == 0
+    assert "./setup.sh" in result.output
+    assert not result.calls_matching("compose up")
+
+
+def test_an_unknown_option_fails_rather_than_starting_anything(run_launch):
+    result = run_launch("--wat")
+    assert result.returncode != 0
+    assert "unknown option: --wat" in result.output
+    assert not result.calls_matching("compose up")
+
+
+def test_quiet_prints_nothing_when_all_is_well(run_launch):
+    assert run_launch("-q").stdout.strip() == ""
+
+
+def test_quiet_still_prints_problems(run_launch):
+    """Silencing the good news must not silence the bad."""
+    result = run_launch("-q", env={"FAKE_OLLAMA_DOWN": "1"})
+    assert "could not reach the chat host" in result.stderr

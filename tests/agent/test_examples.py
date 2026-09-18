@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 from nl2sql_agent.examples import (
+    ExamplesUnavailableError,
     BY_KEYWORDS,
     BY_QUESTION,
     BY_REASONING,
@@ -267,3 +268,131 @@ def test_the_vector_literal_is_pgvector_text_format():
     """
     assert _vector_literal([0.1, -0.25, 3.0]) == "[0.1,-0.25,3.0]"
     assert _vector_literal([]) == "[]"
+
+
+# ---------------------------------------------------------------------------
+# Degradation: every way the two stores can fail
+# ---------------------------------------------------------------------------
+
+UNREACHABLE = "postgresql+psycopg://ragproc:ragproc@127.0.0.1:1/nowhere"
+
+
+class _Embedder:
+    """Returns a fixed vector, so nothing here depends on a live model."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+
+    def embed_query(self, text: str) -> list[float]:
+        if self.fail:
+            raise RuntimeError("model not pulled")
+        return [0.0] * 1024
+
+
+def _library(**kwargs) -> GoldenPairLibrary:
+    kwargs.setdefault("embedder", _Embedder())
+    return GoldenPairLibrary(UNREACHABLE, UNREACHABLE, kwargs.pop("embedder"), **kwargs)
+
+
+def test_the_library_reports_its_own_configuration():
+    """The agent prints these back to the user, and the container probe asserts
+    on them -- a property that silently returned the wrong thing would make both
+    lie about what ran.
+    """
+    library = GoldenPairLibrary(
+        UNREACHABLE, UNREACHABLE, _Embedder(),
+        weights={BY_QUESTION: 0.6, BY_KEYWORDS: 0.3, BY_REASONING: 0.1},
+        fusion="rrf", rerank="relevance",
+    )
+    assert library.weights == {BY_QUESTION: 0.6, BY_KEYWORDS: 0.3, BY_REASONING: 0.1}
+    assert library.fusion == "rrf"
+    assert library.reranker == "relevance"
+
+
+def test_weights_are_copied_so_a_caller_cannot_mutate_them_later():
+    library = _library()
+    library.weights[BY_QUESTION] = 99.0
+    assert library.weights[BY_QUESTION] == DEFAULT_WEIGHTS[BY_QUESTION]
+
+
+def test_an_unreachable_context_store_raises_the_wrapped_error():
+    with pytest.raises(ExamplesUnavailableError, match="context store"):
+        _library().count()
+
+
+def test_an_unreachable_store_during_the_keyword_search_is_wrapped():
+    with pytest.raises(ExamplesUnavailableError, match="keyword search"):
+        _library().search("anything")
+
+
+def test_an_embedding_failure_names_the_model_rather_than_the_database():
+    """Three different things can be down and they need different fixes, so the
+    message has to say which one it was.
+    """
+    library = GoldenPairLibrary(UNREACHABLE, UNREACHABLE, _Embedder(fail=True))
+    with pytest.raises(ExamplesUnavailableError, match="embedding model"):
+        library._by_vectors("anything")
+
+
+def test_a_blank_or_zero_k_search_does_not_touch_either_store():
+    """Cheap guard: no connection attempt at all, so it cannot raise even with
+    both stores down.
+    """
+    library = _library()
+    assert library.search("") == []
+    assert library.search("   ") == []
+    assert library.search("real question", top_k=0) == []
+
+
+def test_an_empty_shortlist_returns_nothing_rather_than_reranking_it(monkeypatch):
+    library = _library()
+    monkeypatch.setattr(library, "rank", lambda q: {BY_QUESTION: [], BY_KEYWORDS: [], BY_REASONING: []})
+    assert library.search("anything") == []
+
+
+def test_a_vector_with_no_row_behind_it_is_skipped_not_fatal(monkeypatch):
+    """The two stores are separate databases and can drift -- a pair deleted
+    from the context store but still embedded should cost that one example, not
+    the whole search.
+    """
+    library = _library()
+    monkeypatch.setattr(library, "rank", lambda q: {BY_QUESTION: [("ghost", 0.9), ("real", 0.5)]})
+    monkeypatch.setattr(library, "_hydrate", lambda ids: {"real": make_pair(chunk_id="real")})
+    found = library.search("anything")
+    assert [p.chunk_id for p in found] == ["real"]
+
+
+def test_losing_the_similarity_query_costs_diversity_not_the_search():
+    """MMR's pair-to-pair cosine comes from the vector store. With it down the
+    reranker must fall back to relevance order rather than raise.
+    """
+    library = _library(rerank="mmr")
+    assert library._pair_similarity([make_pair(chunk_id="a"), make_pair(chunk_id="b")]) is None
+
+
+def test_a_pair_is_always_maximally_similar_to_itself():
+    """Guards the MMR redundancy term: a candidate compared with itself has to
+    score 1.0 even though the store only holds the off-diagonal pairs.
+    """
+    library = _library(rerank="mmr")
+    similarity = library._pair_similarity([make_pair(chunk_id="only")])
+    assert similarity is not None
+    assert similarity("only", "only") == 1.0
+    assert similarity("only", "absent") == 0.0
+
+
+def test_an_unreachable_vector_store_is_wrapped_and_names_the_vectors():
+    """Distinct from the context-store message: the two are separate databases,
+    and knowing which one is down is the difference between restarting the right
+    container and the wrong one.
+    """
+    with pytest.raises(ExamplesUnavailableError, match="golden-pair vectors"):
+        _library()._by_vectors("anything")
+
+
+def test_an_unreachable_context_store_during_hydration_is_wrapped():
+    """Retrieval can succeed and hydration still fail -- the vectors live in one
+    database and the rows in another, so they go down independently.
+    """
+    with pytest.raises(ExamplesUnavailableError, match="load golden pairs"):
+        _library()._hydrate(["eval:q01"])

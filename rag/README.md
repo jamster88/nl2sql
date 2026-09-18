@@ -317,5 +317,27 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r rag/requirements.txt
 ```
 
+## Tests
+
+```bash
+pytest tests/rag --run-docker
+```
+
+79 tests: the parser against the real document, the BM25 ranking compared score
+for score against an independent Okapi implementation, the pgvector storage
+layer, and both loader scripts as command line programs.
+
+Everything that writes gets a **throwaway database**, created from `template0`
+and dropped afterwards. A scratch schema would not be enough: every function
+here addresses its tables unqualified, so with `public` still on the search path
+an unqualified `TRUNCATE` in `rebuild_bm25_index` would fall through to the
+published table whenever the scratch copy did not exist yet. The published
+golden pairs and embeddings are what the v3 images ship, and nothing in the
+suite can reach them.
+
+The vector tests use synthetic unit vectors rather than calling bge-m3, so the
+distances are predictable instead of merely plausible; the real embedding round
+trip is covered by `tests/agent/test_examples_live.py`.
+
 `sentence-transformers` is commented out of `requirements.txt` — it is only
 needed for `--backend sentence-transformers` and pulls in torch.

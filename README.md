@@ -7,17 +7,57 @@
 docker compose run --rm agent "How many stores are there?"
 ```
 
-That is the whole setup. [`setup.sh`](setup.sh) brings up the three containers
+That is the whole setup. [`setup.sh`](setup.sh) brings up the four containers
 the agent needs and leaves them ready:
 
 | Container | What it holds |
 |---|---|
 | `nl2sql-postgres` | The retail dataset, baked into the image |
-| `nl2sql-vectordb` | pgvector with the embedded knowledge base |
-| `agent` | The v2 agent, run on demand per question |
+| `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
+| `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
+| `agent` | The v3 agent, run on demand per question |
 
-It pulls each image, starts both databases, writes a `.env` so plain
-`docker compose` commands pick all of that up, checks that the chat and
+### Two scripts
+
+| | When | What it does |
+|---|---|---|
+| [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
+| [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
+
+Afterwards, in both cases:
+
+```bash
+docker compose run --rm agent "<your question>"
+```
+
+They fail in different ways, which is why they are separate. Setup fails when an
+image will not pull. Launch catches the things that go wrong later: a container
+that is up but empty, a chat host that has moved, an embedding model that is not
+the one the vectors were built with. None of those stop the stack from starting,
+and all of them make the agent look bad at its job rather than broken.
+
+```
+$ ./launch.sh
+==> Checking what is actually in each database
+    retail dataset: 1291781 sales rows
+    knowledge base: 53 embedded chunks
+    worked examples: 45 golden pairs, 45 embedded questions
+
+==> Checking the models
+    chat model qwen3.8-256k is available at http://192.168.10.82:11434
+    embedding model bge-m3 is available on this machine
+
+==> Ready. Ask a question:
+
+    docker compose run --rm agent "How many stores are there?"
+```
+
+`./launch.sh --no-rag` starts only the retail database; `--restart` recreates the
+containers; `-q` prints only problems. Run it with no `.env` present and it hands
+off to `setup.sh` rather than guessing.
+
+[`setup.sh`](setup.sh) pulls each image, starts the databases, writes a `.env` so
+plain `docker compose` commands pick all of that up, checks that the chat and
 embedding models are reachable, and finishes by proving the agent container can
 actually retrieve from the knowledge base:
 
@@ -29,6 +69,7 @@ actually retrieve from the knowledge base:
 
     nl2sql-postgres    the retail dataset
     nl2sql-vectordb    the embedded knowledge base
+    nl2sql-chunkdb     the golden pairs and their BM25 index
 ```
 
 It takes a couple of minutes, mostly downloading, and is safe to re-run.
@@ -312,31 +353,43 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 417 tests, no Docker or network needed
-pytest --run-docker     # all 495, including ones that build and run containers
+pytest                  # 466 tests, no Docker or network needed
+pytest --run-docker     # all 601, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, and read-only enforcement |
-| [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs out of the markdown before anything is loaded or embedded |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, and `setup.sh` run against fake `docker`/`curl` binaries |
+| [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 
-The 78 tests behind `--run-docker` are the ones that need a working daemon:
+The 135 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Thirty-four of those 78 also need the **embedding host**: a local Ollama serving
-`bge-m3`, the model both vector stores were built with. Without it they skip
-with that as the stated reason rather than failing. Start it with `ollama serve`
-(and `ollama pull bge-m3` once) to run the whole suite.
+Thirty-eight of those 135 also need the **embedding host**: a local Ollama
+serving `bge-m3`, the model both vector stores were built with. Without it they
+skip with that as the stated reason rather than failing. Start it with
+`ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.
 
-Coverage is **99%** of both the agent package and the data generator, which is
-every reachable statement. Exactly two are not covered, and neither can be:
+The 79 tests in [`tests/rag/`](tests/rag) need the databases but **not** the
+embedding model: they exercise the storage layer with synthetic vectors, which
+makes the distances predictable rather than merely plausible. Each one runs
+against a throwaway database created and dropped around it, so the published
+golden pairs and embeddings in the running containers are never touched.
+
+Coverage is **99%** of the agent package and the data generator, which is every
+reachable statement. Exactly two are not covered, and neither can be:
 `__main__.py`'s `if __name__ == "__main__"` guard, which pytest never executes,
 and one defensive `continue` in `facts.py` that is unreachable by construction
 (the loop runs to `max(k)`, so the index set it guards against is never empty).
+
+In [`rag/ragproc/`](rag/ragproc) the golden-pair modules -- `golden_pairs.py`,
+`golden_vectors.py` and `config.py` -- are at **100%**. Three modules there are
+**not covered**: `chunker.py`, `chunk_store.py` and `vector_store.py`, the
+knowledge-document pipeline that built the v1 and v2 stores. They predate this
+work and were restored onto this branch unchanged rather than written for it.

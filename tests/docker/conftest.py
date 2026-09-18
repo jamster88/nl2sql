@@ -52,6 +52,8 @@ case "$1" in
     inspect)
         if [[ "$*" == *nl2sql-vectordb* ]]; then
             echo "${FAKE_VECTOR_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-chunkdb* ]]; then
+            echo "${FAKE_CONTEXT_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi
@@ -71,7 +73,13 @@ case "$1" in
                     "${FAKE_PROBE_CHUNKS-1}" "${FAKE_PROBE_COLLECTIONS-3}"
                 exit 0 ;;
             exec)
-                if [[ "$*" == *vectordb* ]]; then
+                # Ordered most specific first: several of these run against the
+                # same service and are told apart only by the SQL.
+                if [[ "$*" == *golden_pair_question_vectors* ]]; then
+                    echo "${FAKE_VECTOR_COUNT-45}"
+                elif [[ "$*" == *golden_pairs* ]]; then
+                    echo "${FAKE_PAIR_COUNT-45}"
+                elif [[ "$*" == *vectordb* ]]; then
                     echo "${FAKE_CHUNK_COUNT-53}"
                 else
                     echo "${FAKE_ROW_COUNT-194101}"
@@ -173,6 +181,71 @@ def run_setup(tmp_path: Path):
 
         result = subprocess.run(
             ["bash", str(workdir / "setup.sh"), *args],
+            cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
+        )
+        return SetupRun(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            calls=log.read_text().splitlines(),
+            workdir=workdir,
+        )
+
+    return _run
+
+
+@pytest.fixture
+def run_launch(tmp_path: Path):
+    """Run launch.sh in the same sandbox setup.sh gets.
+
+    launch.sh expects a .env to already exist -- that is setup.sh's job -- so
+    one is written by default. Pass `env_file=None` to exercise the handoff.
+    """
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    for name in ("launch.sh", "setup.sh", "docker-compose.yml"):
+        shutil.copy(REPO_ROOT / name, workdir / name)
+        os.chmod(workdir / name, 0o755)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP)):
+        path = bin_dir / name
+        path.write_text(body)
+        os.chmod(path, 0o755)
+
+    log = tmp_path / "calls.log"
+    log.touch()
+
+    DEFAULT_ENV_FILE = (
+        "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
+        "IMAGE_TAG=v1\n"
+        "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
+        "AGENT_IMAGE_TAG=v3\n"
+        "VECTOR_IMAGE_NAME=mcfaddja/nl2sql-rag-vectordb\n"
+        "VECTOR_IMAGE_TAG=v3\n"
+        "CONTEXT_IMAGE_NAME=mcfaddja/nl2sql-rag-chunkdb\n"
+        "CONTEXT_IMAGE_TAG=v3\n"
+        "RAG_ENABLED=true\n"
+    )
+
+    def _run(*args: str, env: dict | None = None, env_file: str | None = DEFAULT_ENV_FILE,
+             timeout: int = 60) -> SetupRun:
+        dotenv = workdir / ".env"
+        if env_file is None:
+            dotenv.unlink(missing_ok=True)
+        else:
+            dotenv.write_text(env_file)
+
+        run_env = dict(os.environ)
+        run_env["PATH"] = f"{bin_dir}:{run_env['PATH']}"
+        run_env["FAKE_LOG"] = str(log)
+        if env:
+            run_env.update(env)
+
+        result = subprocess.run(
+            ["bash", str(workdir / "launch.sh"), *args],
             cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
         )
         return SetupRun(

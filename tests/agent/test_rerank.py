@@ -228,3 +228,7 @@ def test_an_empty_shortlist_or_zero_k_returns_nothing():
 def test_an_unknown_strategy_is_refused():
     with pytest.raises(ValueError, match="unknown rerank"):
         rerank("q", [pair("a", 1.0)], 1, strategy="vibes")
+
+
+def test_blending_an_empty_shortlist_returns_nothing():
+    assert blended_relevance("q", []) == {}

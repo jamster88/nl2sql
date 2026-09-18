@@ -116,14 +116,23 @@ and [`agent/README.md`](agent/README.md) for how it works.
 docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"
 ```
 
-Where it shows: asked for overall market share in FY2024, v1 answers **107.5%**
-(it sums a total that repeats once per competitor); v2 retrieves the documented
-fan-out rule, de-duplicates per cell, and answers **21.5%**.
+Where it shows: the benchmark's grain and fan-out questions. Schema-only scores
+1 of 3 on grain and 0 of 1 on fan-out; with the knowledge base both go to full
+marks. See [Benchmark](#benchmark) for the run.
 
 ```bash
 docker compose run --rm agent "What is our overall market share in fiscal year 2024?"
 docker compose run --rm agent --no-rag "..."   # schema-only, v1 behavior
 ```
+
+The market-share question is subtler than it first looks, and worth knowing
+before reading too much into any single number. Summing both columns raw
+inflates each by 5x and the **ratio survives** -- 21.51% either way. The mistake
+that yields 107.5% is asymmetric: a raw numerator over a de-duplicated
+denominator. In the benchmark run the schema-only agent produced neither. It
+wrote a correct query, rejected it three times in its own validation step, and
+gave up -- the only question in the whole run where any configuration failed to
+produce an answer at all.
 
 ### Pulling the agent image
 
@@ -171,6 +180,68 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + B
 | `nl2sql-rag-vectordb:v3` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each |
 | `nl2sql-rag-chunkdb:v3` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
+
+## Benchmark
+
+```bash
+python benchmarks/run_benchmark.py            # 15 questions, accuracy then speed
+python benchmarks/run_benchmark.py --compare  # schema-only vs knowledge vs multi-shot
+```
+
+[`benchmarks/`](benchmarks) holds fifteen questions that are deliberately **not**
+the 45 golden pairs the agent retrieves from -- a benchmark drawn from those
+would measure how well it can look something up. Accuracy is **execution
+accuracy**: the SQL is run and its rows compared against reference SQL verified
+against the shipped dataset. Query text is never compared, because two correct
+queries for the same question rarely look alike.
+
+### Measured
+
+All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
+
+| | accuracy | produced SQL | retries | total | median |
+|---|---|---|---|---|---|
+| `schema-only` (v1) | 12/15 (80%) | 14/15 | 5 | 511s | 21.0s |
+| `knowledge` (v2) | **15/15 (100%)** | 15/15 | 0 | 1251s | 81.8s |
+| `multi-shot` (v3) | **15/15 (100%)** | 15/15 | 0 | 1499s | 100.5s |
+
+| | analysis | calendar | fan-out | grain | schema |
+|---|---|---|---|---|---|
+| `schema-only` | 5/5 | 3/3 | **0/1** | **1/3** | 3/3 |
+| `knowledge` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
+| `multi-shot` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
+
+Three things this says, including one that is not flattering:
+
+**The knowledge base earns its place.** Every question schema-only missed is a
+grain or fan-out question, and the knowledge base fixes all of them. It also
+removes every retry: 5 down to 0.
+
+**Multi-shot adds no measurable accuracy here, and costs 20% more time.** Both
+retrieval configurations score 15/15, so this set cannot distinguish them --
+once the knowledge base is on there is no headroom left to measure. That is a
+limitation of a 15-question benchmark, not evidence that the examples do
+nothing, but it is what the numbers say and they should not be read as more.
+Telling the two apart needs harder questions than these.
+
+**Accuracy costs roughly 3x the wall time**, and almost none of it is retrieval.
+Across 15 questions the knowledge base and the golden-pair ensemble together
+take **1.2 seconds**; the rest is the model:
+
+```
+  generate_sql            634s
+  validate_sql            499s
+  select_tables           364s
+  retrieve_knowledge      1.1s
+  retrieve_examples       0.1s
+```
+
+`select_tables` and `validate_sql` together cost more than generation itself.
+Two model calls that do not write the answer take the majority of the time,
+which is the obvious latency lever -- well ahead of anything in the RAG layer.
+
+See [`benchmarks/README.md`](benchmarks/README.md) for the scoring rules and
+what they do and do not forgive.
 
 ## Architecture diagrams
 
@@ -353,8 +424,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 466 tests, no Docker or network needed
-pytest --run-docker     # all 601, including ones that build and run containers
+pytest                  # 564 tests, no Docker or network needed
+pytest --run-docker     # all 751, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -364,32 +435,41 @@ pytest --run-docker     # all 601, including ones that build and run containers
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
+| [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 135 tests behind `--run-docker` are the ones that need a working daemon:
+The 187 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Thirty-eight of those 135 also need the **embedding host**: a local Ollama
+Thirty-eight of those 187 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing. Start it with
 `ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.
 
-The 79 tests in [`tests/rag/`](tests/rag) need the databases but **not** the
+The 148 tests in [`tests/rag/`](tests/rag) need the databases but **not** the
 embedding model: they exercise the storage layer with synthetic vectors, which
 makes the distances predictable rather than merely plausible. Each one runs
 against a throwaway database created and dropped around it, so the published
 golden pairs and embeddings in the running containers are never touched.
 
-Coverage is **99%** of the agent package and the data generator, which is every
-reachable statement. Exactly two are not covered, and neither can be:
-`__main__.py`'s `if __name__ == "__main__"` guard, which pytest never executes,
-and one defensive `continue` in `facts.py` that is unreachable by construction
-(the loop runs to `max(k)`, so the index set it guards against is never empty).
+Coverage is **100%** of all three packages -- the agent, the data generator and
+the RAG pipeline -- measured with `--run-docker`:
 
-In [`rag/ragproc/`](rag/ragproc) the golden-pair modules -- `golden_pairs.py`,
-`golden_vectors.py` and `config.py` -- are at **100%**. Three modules there are
-**not covered**: `chunker.py`, `chunk_store.py` and `vector_store.py`, the
-knowledge-document pipeline that built the v1 and v2 stores. They predate this
-work and were restored onto this branch unchanged rather than written for it.
+```bash
+pytest --run-docker --cov=agent/nl2sql_agent --cov=rag/ragproc --cov=data_gen/datagen
+```
+
+Exactly one statement is excluded, and the reason is written beside it: a
+defensive `continue` in `facts.py` that is unreachable by construction, because
+the loop runs to `max(k)` and the basket whose `k` equals that maximum always
+satisfies the condition the guard tests. It is kept in case the loop bounds ever
+change.
+
+Getting the RAG pipeline there turned up a real defect. `vector_store.search()`
+bound its query vector as a Python list, which Postgres reads as
+`double precision[]` -- a type with no `<=>` operator at all, so the function
+raised for every caller. It had only ever been reached from a README example.
+The fix is the same text-literal cast the agent-side retrievers use, and the
+regression is pinned by a test.

@@ -80,22 +80,35 @@ def build_tools(
     @tool
     def search_examples(question: str) -> dict[str, Any]:
         """Retrieve worked question/SQL pairs closest to this question."""
+        empty = {"context": "", "tables": [], "pairs": [], "shots": [], "error": None}
         if example_library is None:
-            return {"context": "", "tables": [], "pairs": [], "error": "examples are disabled"}
+            return {**empty, "error": "examples are disabled"}
         try:
             pairs = example_library.search(question, settings.examples_top_k)
         except ExamplesUnavailableError as exc:
-            return {"context": "", "tables": [], "pairs": [], "error": str(exc)}
+            return {**empty, "error": str(exc)}
         return {
             "context": format_examples(pairs, settings.examples_max_context_chars),
             "tables": example_tables(pairs),
+            # Summaries for tracing and --json: small, and safe to log.
             "pairs": [
                 {
                     "chunk_id": p.chunk_id,
                     "pair_id": p.pair_id,
                     "title": p.title,
                     "score": round(p.score, 5),
+                    "rerank_score": round(p.rerank_score, 5),
                     "found_by": p.found_by,
+                }
+                for p in pairs
+            ],
+            # The full text the multi-shot turns are built from.
+            "shots": [
+                {
+                    "pair_id": p.pair_id,
+                    "question": p.question,
+                    "reasoning_target": p.reasoning_target,
+                    "sql_code": p.sql_code,
                 }
                 for p in pairs
             ],

@@ -286,7 +286,7 @@ compose_value() {
 effective_url=$(compose_value OLLAMA_BASE_URL)
 effective_model=$(compose_value OLLAMA_MODEL)
 effective_url=${effective_url:-http://192.168.10.82:11434}
-effective_model=${effective_model:-qwen3.8:latest}
+effective_model=${effective_model:-qwen3.8-256k}
 
 if tags=$(curl -sf --max-time 5 "$effective_url/api/tags" 2>/dev/null); then
     if printf '%s' "$tags" | grep -q "\"$effective_model\""; then

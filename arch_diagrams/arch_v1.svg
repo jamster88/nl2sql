@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="2194" viewBox="0 0 1300 2194" role="img" aria-label="NL2SQL Agent v1 architecture">
+<svg xmlns="http://www.w3.org/2000/svg" width="1300" height="2210" viewBox="0 0 1300 2210" role="img" aria-label="NL2SQL Agent v1 architecture">
 <title>NL2SQL Agent v1 architecture</title>
 <desc>Schema-only pipeline</desc>
 <metadata id="graph-nodes">select_tables fetch_schema generate_sql validate_sql execute_query give_up</metadata>
@@ -8,7 +8,7 @@
 <marker id="a-2f5d8f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#2f5d8f"/></marker>
 <marker id="a-6a4c93" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#6a4c93"/></marker>
 <marker id="a-8a6a14" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8a6a14"/></marker></defs>
-<rect width="1300" height="2194" fill="#fbfaf8"/>
+<rect width="1300" height="2210" fill="#fbfaf8"/>
 <text x="48" y="56" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="27" font-weight="700" fill="#1b1b1d">NL2SQL Agent v1 <tspan fill="#65656b" font-weight="400">— schema-only pipeline</tspan></text>
 <text x="48" y="82.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">What each step does, why it is there, and how control flows. Five steps, three of which call the model. The agent holds no state between questions: every run starts from START with nothing but the</text>
 <text x="48" y="102.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">question.</text>
@@ -20,195 +20,196 @@
 <text x="62" y="246.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">image at build time, so it is queryable the</text>
 <text x="62" y="262.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">moment the container starts.</text>
 <text x="62" y="288.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="10.5" fill="#8e8e94">← SQLAlchemy + psycopg</text>
-<rect x="994" y="168.0" width="258" height="150.0" rx="10" fill="#6a4c930a" stroke="#6a4c9355" stroke-width="1.3" />
+<rect x="994" y="168.0" width="258" height="166.0" rx="10" fill="#6a4c930a" stroke="#6a4c9355" stroke-width="1.3" />
 <text x="1008" y="195.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#6a4c93">Ollama — chat model</text>
-<text x="1008" y="214.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">qwen3.8:latest on a remote host. Picks the</text>
-<text x="1008" y="230.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">tables, writes the SQL, and reviews it.</text>
-<text x="1008" y="246.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Reasoning off by default: Qwen3 returns it</text>
-<text x="1008" y="262.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">separately, so disabling it costs no quality</text>
-<text x="1008" y="278.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">and saves most of the latency.</text>
-<text x="1008" y="304.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="10.5" fill="#8e8e94">→ 3 prompts per attempt</text>
-<rect x="490" y="194.5" width="320" height="113.0" rx="12" fill="#eef1f6" stroke="#43566e" stroke-width="1.8" />
-<text x="506" y="227.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14" font-weight="700" fill="#43566e">nl2sql-agent:v1</text>
-<text x="506" y="249.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">python -m nl2sql_agent. Started per question by</text>
-<text x="506" y="266.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">docker compose run --rm agent and removed when it</text>
-<text x="506" y="283.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">exits.</text>
-<path d="M 484 251.0 L 316.0 235.0" fill="none" stroke="#2f5d8f" stroke-width="1.5" marker-end="url(#a-2f5d8f)"/>
-<path d="M 816 251.0 L 984.0 243.0" fill="none" stroke="#6a4c93" stroke-width="1.5" marker-end="url(#a-6a4c93)"/>
-<text x="48" y="370.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">STARTUP — BEFORE THE GRAPH RUNS</text>
-<rect x="48.0" y="390.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<text x="61.0" y="415.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">parse_args()</text>
-<text x="61.0" y="433.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">CLI flags, each defaulting to the matching</text>
-<text x="61.0" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">environment variable.</text>
-<path d="M 322.5 428.5 L 352.5 428.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="360.5" y="390.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<text x="373.5" y="415.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">Settings.from_env()</text>
-<text x="373.5" y="433.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">One dataclass holding every knob, so the</text>
-<text x="373.5" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">same image runs anywhere.</text>
-<path d="M 635.0 428.5 L 665.0 428.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="673.0" y="390.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<text x="686.0" y="415.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">build_llm()</text>
-<text x="686.0" y="433.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">validate_model_on_init=True — reach Ollama</text>
-<text x="686.0" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">and confirm the model exists.</text>
-<path d="M 947.5 428.5 L 977.5 428.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="985.5" y="390.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<text x="998.5" y="415.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">Nl2SqlAgent()</text>
-<text x="998.5" y="433.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Open the database, build the tools, compile the</text>
-<text x="998.5" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">StateGraph.</text>
-<path d="M 806.2 469.0 L 806.2 485.0" fill="none" stroke="#a8422f" stroke-width="1.6" marker-end="url(#a-a8422f)"/>
-<rect x="673.0" y="489.0" width="579.0" height="109.0" rx="10" fill="#a8422f0b" stroke="#a8422f66" stroke-width="1.3" />
-<text x="691.0" y="518.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Unreachable host or a model that is not pulled raises LlmUnavailableError and exits 2 with the</text>
-<text x="691.0" y="537.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">available model list. The preflight sits here deliberately: a wrong URL is the most common</text>
-<text x="691.0" y="556.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">misconfiguration, and discovering it three nodes into the pipeline costs a catalog read and two</text>
-<text x="691.0" y="575.7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">prompts to learn what one HTTP call already knew.</text>
-<text x="48" y="637.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">THE PIPELINE — A COMPILED LANGGRAPH STATEGRAPH</text>
-<text x="48" y="663.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#8e8e94">state: AgentState (TypedDict) &#183; every node returns a partial update</text>
-<circle cx="365.0" cy="694.9" r="9" fill="#43566e"/>
-<text x="381.0" y="698.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="700" fill="#43566e">START</text>
-<path d="M 365.0 703.9 L 365.0 714.9" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="140" y="719.9" width="450" height="169.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<rect x="140" y="719.9" width="4" height="169.0" rx="2" fill="#43566e"/>
-<circle cx="169" cy="746.9" r="11" fill="#43566e"/>
-<text x="169" y="750.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">1</text>
-<text x="188" y="751.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">select_tables</text>
-<text x="158" y="778.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ask the model which tables the question needs, from a compact catalog</text>
-<text x="158" y="798.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">of every table: name, description, column list and approximate row</text>
-<text x="158" y="817.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">count. Keep only names that exist in the live catalog; fall back to all</text>
-<text x="158" y="836.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">tables if none survive.</text>
-<rect x="158.0" y="851.9" width="148.0" height="21" rx="10.5" fill="#6a4c9314" stroke="#6a4c9355" stroke-width="1"/><text x="232.0" y="866.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#6a4c93" text-anchor="middle">LLM · TableSelection</text>
-<rect x="313.0" y="851.9" width="141.6" height="21" rx="10.5" fill="#2f5d8f14" stroke="#2f5d8f55" stroke-width="1"/><text x="383.8" y="866.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2f5d8f" text-anchor="middle">Postgres · pg_class</text>
-<rect x="660" y="719.9" width="592" height="169.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
-<rect x="660" y="719.9" width="3" height="169.0" fill="#bf9b30"/>
-<text x="684" y="745.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
-<text x="684" y="765.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">The full schema with sample rows is far larger than the context window, so narrowing first is</text>
-<text x="684" y="785.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">what makes the next step fit at all. Filtering the model's answer against the live catalog is what</text>
-<text x="684" y="804.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">stops a hallucinated table name from ever reaching SQL generation, and falling back to every</text>
-<text x="684" y="823.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">table means a bad pick degrades to slow-but-correct rather than to no answer at all.</text>
-<path d="M 365.0 890.9 L 365.0 917.9" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="140" y="922.9" width="450" height="149.7" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<rect x="140" y="922.9" width="4" height="149.7" rx="2" fill="#43566e"/>
-<circle cx="169" cy="949.9" r="11" fill="#43566e"/>
-<text x="169" y="953.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">2</text>
-<text x="188" y="954.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">fetch_schema</text>
-<text x="158" y="981.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Pull full detail for the chosen tables only: column types, NOT NULL,</text>
-<text x="158" y="1001.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">primary and foreign key definitions, any COMMENT ON text, and 3</text>
-<text x="158" y="1020.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">sample rows per table.</text>
-<rect x="158.0" y="1035.6" width="263.2" height="21" rx="10.5" fill="#2f5d8f14" stroke="#2f5d8f55" stroke-width="1"/><text x="289.6" y="1050.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2f5d8f" text-anchor="middle">Postgres · pg_attribute, pg_constraint</text>
-<rect x="660" y="922.9" width="592" height="149.7" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
-<rect x="660" y="922.9" width="3" height="149.7" fill="#bf9b30"/>
-<text x="684" y="948.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
-<text x="684" y="968.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Declared keys are what let the model join on the real relationship instead of guessing from</text>
-<text x="684" y="988.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">column names that happen to match. The sample rows carry what a schema cannot: how a</text>
-<text x="684" y="1007.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">department name is actually spelled, what a date column really looks like — the details that</text>
-<text x="684" y="1026.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">decide whether a WHERE clause matches anything. COMMENT ON text, if the schema has</text>
-<text x="684" y="1045.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">any, arrives through the same path with no code change.</text>
-<path d="M 365.0 1074.6 L 365.0 1101.6" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="140" y="1106.6" width="450" height="169.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<rect x="140" y="1106.6" width="4" height="169.0" rx="2" fill="#43566e"/>
-<circle cx="169" cy="1133.6" r="11" fill="#43566e"/>
-<text x="169" y="1137.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">3</text>
-<text x="188" y="1138.6" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">generate_sql</text>
-<text x="158" y="1165.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ask the model for one SELECT and nothing else. strip_sql() removes</text>
-<text x="158" y="1184.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">any markdown fence and trailing semicolon regardless. On a retry,</text>
-<text x="158" y="1204.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">RETRY_FEEDBACK prepends the rejected SQL and the specific</text>
-<text x="158" y="1223.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">problems found with it.</text>
-<rect x="158.0" y="1238.6" width="116.0" height="21" rx="10.5" fill="#6a4c9314" stroke="#6a4c9355" stroke-width="1"/><text x="216.0" y="1253.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#6a4c93" text-anchor="middle">LLM · free-form</text>
-<rect x="660" y="1106.6" width="592" height="169.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
-<rect x="660" y="1106.6" width="3" height="169.0" fill="#bf9b30"/>
-<text x="684" y="1132.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
-<text x="684" y="1152.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">This node, not the top of the graph, is the retry target. A rejected attempt re-enters here with the</text>
-<text x="684" y="1171.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">schema already in state, so a correction costs one prompt instead of a whole pipeline — and</text>
-<text x="684" y="1191.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">the model is shown the exact problems rather than simply being asked again.</text>
-<path d="M 365.0 1277.6 L 365.0 1304.6" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="140" y="1309.6" width="450" height="169.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
-<rect x="140" y="1309.6" width="4" height="169.0" rx="2" fill="#43566e"/>
-<circle cx="169" cy="1336.6" r="11" fill="#43566e"/>
-<text x="169" y="1340.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">4</text>
-<text x="188" y="1341.6" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">validate_sql</text>
-<text x="158" y="1368.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Three checks, cheapest first. (a) ensure_read_only: a single statement</text>
-<text x="158" y="1387.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">starting with SELECT or WITH, no embedded semicolon. (b) EXPLAIN</text>
-<text x="158" y="1407.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">it — planned, not run. (c) Only then a model review for semantics: right</text>
-<text x="158" y="1426.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">join key, right aggregation, does it actually answer the question.</text>
-<rect x="158.0" y="1441.5" width="135.2" height="21" rx="10.5" fill="#2f5d8f14" stroke="#2f5d8f55" stroke-width="1"/><text x="225.6" y="1456.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2f5d8f" text-anchor="middle">Postgres · EXPLAIN</text>
-<rect x="300.2" y="1441.5" width="116.0" height="21" rx="10.5" fill="#6a4c9314" stroke="#6a4c9355" stroke-width="1"/><text x="358.2" y="1456.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#6a4c93" text-anchor="middle">LLM · SqlReview</text>
-<rect x="660" y="1309.6" width="592" height="169.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
-<rect x="660" y="1309.6" width="3" height="169.0" fill="#bf9b30"/>
-<text x="684" y="1335.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
-<text x="684" y="1355.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Three filters, ordered by cost. The static check is free and refuses the dangerous shapes</text>
-<text x="684" y="1374.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">outright. EXPLAIN then catches the common failure — an unknown column, a type mismatch</text>
-<text x="684" y="1394.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">— without executing anything, and a planner error is definitive, so the model is never consulted</text>
-<text x="684" y="1413.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">about a query the database has already refused. Only SQL that both parses and plans is worth</text>
-<text x="684" y="1432.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">spending a review on.</text>
-<path d="M 365.0 1480.5 L 365.0 1507.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="140" y="1512.5" width="450" height="119.0" rx="10" fill="#fdf8ec" stroke="#e0cf9e" stroke-width="1.4" />
-<text x="158" y="1541.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14.5" font-weight="700" fill="#8a6a14">_route_after_validation()</text>
-<circle cx="163" cy="1562.5" r="4" fill="#2e7d4f"/>
-<text x="176" y="1566.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#65656b">no issues</text>
-<text x="572" y="1566.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#2e7d4f" text-anchor="end">execute_query</text>
-<circle cx="163" cy="1583.5" r="4" fill="#a8422f"/>
-<text x="176" y="1587.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#65656b">issues, attempts &lt; max</text>
-<text x="572" y="1587.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#a8422f" text-anchor="end">generate_sql</text>
-<circle cx="163" cy="1604.5" r="4" fill="#8a6a14"/>
-<text x="176" y="1608.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#65656b">issues, attempts = max</text>
-<text x="572" y="1608.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#8a6a14" text-anchor="end">give_up</text>
-<rect x="660" y="1512.5" width="592" height="119.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
-<rect x="660" y="1512.5" width="3" height="119.0" fill="#bf9b30"/>
-<text x="684" y="1538.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
-<text x="684" y="1558.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Bounded on purpose. Some questions the data simply cannot answer, and retrying one of</text>
-<text x="684" y="1577.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">those forever spends tokens without converging. Three attempts covers the usual case — a</text>
-<text x="684" y="1597.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">wrong join key, a missing GROUP BY — which the model generally fixes on the second.</text>
-<path d="M 365.0 1633.5 L 365.0 1660.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
-<rect x="140.0" y="1665.5" width="218.0" height="191.0" rx="10" fill="#2e7d4f0c" stroke="#2e7d4f55" stroke-width="1.4" />
-<text x="154.0" y="1694.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14" font-weight="700" fill="#2e7d4f">execute_query</text>
-<text x="154.0" y="1717.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">run_select() inside SET</text>
-<text x="154.0" y="1736.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">TRANSACTION READ ONLY</text>
-<text x="154.0" y="1754.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">with SET LOCAL</text>
-<text x="154.0" y="1773.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">statement_timeout, fetching</text>
-<text x="154.0" y="1791.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">max_rows + 1 so truncation is</text>
-<text x="154.0" y="1810.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">detected rather than guessed at.</text>
-<rect x="154.0" y="1821.5" width="167.2" height="21" rx="10.5" fill="#2e7d4f14" stroke="#2e7d4f55" stroke-width="1"/><text x="237.6" y="1836.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2e7d4f" text-anchor="middle">Postgres · READ ONLY tx</text>
-<rect x="372.0" y="1665.5" width="218.0" height="191.0" rx="10" fill="#8a6a140c" stroke="#8a6a1455" stroke-width="1.4" />
-<text x="386.0" y="1694.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14" font-weight="700" fill="#8a6a14">give_up</text>
-<text x="386.0" y="1717.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Record "Could not produce a valid</text>
-<text x="386.0" y="1736.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">query in N attempts" together with</text>
-<text x="386.0" y="1754.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">the last set of problems. Nothing</text>
-<text x="386.0" y="1773.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">is executed.</text>
-<rect x="386.0" y="1821.5" width="135.2" height="21" rx="10.5" fill="#8a6a1414" stroke="#8a6a1455" stroke-width="1"/><text x="453.6" y="1836.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#8a6a14" text-anchor="middle">no database access</text>
-<rect x="660" y="1665.5" width="592" height="191.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
-<rect x="660" y="1665.5" width="3" height="191.0" fill="#bf9b30"/>
-<text x="684" y="1691.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
-<text x="684" y="1711.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">execute_query is the second, independent safety layer, and the one that actually holds: the</text>
-<text x="684" y="1730.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">static check in step 4 cannot reject WITH d AS (DELETE ... RETURNING *) SELECT * FROM</text>
-<text x="684" y="1750.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">d, because that is a legitimate WITH query. The READ ONLY transaction is what refuses it.</text>
-<text x="684" y="1769.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">give_up is a real outcome rather than a failure of nerve — the alternative is running a query</text>
-<text x="684" y="1788.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">already known to be wrong. Together they are why "delete every row from dim_store" is safe to</text>
-<text x="684" y="1807.7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">ask: it is refused, not attempted.</text>
-<path d="M 249.0 1858.5 L 249.0 1876.5 L 365.0 1876.5 L 365.0 1886.5" fill="none" stroke="#43566e" stroke-width="1.5" marker-end="url(#a-43566e)"/>
-<path d="M 481.0 1858.5 L 481.0 1876.5 L 365.0 1876.5 L 365.0 1886.5" fill="none" stroke="#43566e" stroke-width="1.5" marker-end="url(#a-43566e)"/>
-<circle cx="365.0" cy="1899.5" r="9" fill="none" stroke="#43566e" stroke-width="2.5"/>
-<circle cx="365.0" cy="1899.5" r="4" fill="#43566e"/>
-<text x="381.0" y="1903.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="700" fill="#43566e">END</text>
-<path d="M 136 1572.0 L 74 1572.0 L 74 1191.1 L 132 1191.1" fill="none" stroke="#a8422f" stroke-width="1.7" stroke-dasharray="7 5" marker-end="url(#a-a8422f)"/>
-<text x="65" y="1381.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="700" fill="#a8422f" text-anchor="middle" transform="rotate(-90 65 1381.6)">retry &#183; up to --max-attempts</text>
-<text x="48" y="1954.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">OUTCOMES</text>
-<rect x="48.0" y="1974.5" width="388.0" height="61.0" rx="10" fill="#2e7d4f0c" stroke="#2e7d4f55" stroke-width="1.3" />
-<text x="61.0" y="1999.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#2e7d4f">exit 0</text>
-<text x="61.0" y="2017.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Answered. The result table goes to stdout.</text>
-<rect x="456.0" y="1974.5" width="388.0" height="61.0" rx="10" fill="#8a6a140c" stroke="#8a6a1455" stroke-width="1.3" />
-<text x="469.0" y="1999.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#8a6a14">exit 1</text>
-<text x="469.0" y="2017.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ran, but could not answer — give_up, or the query failed at execution.</text>
-<rect x="864.0" y="1974.5" width="388.0" height="61.0" rx="10" fill="#a8422f0c" stroke="#a8422f55" stroke-width="1.3" />
-<text x="877.0" y="1999.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#a8422f">exit 2</text>
-<text x="877.0" y="2017.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ollama misconfigured. Raised during startup; the graph never runs.</text>
-<text x="48" y="2060.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Progress lines go to stderr and the answer to stdout, so<tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.2"> ...</tspan><tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.2"> 2&gt;/dev/null</tspan> leaves just the result and<tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.2"> --json</tspan> replaces it with one machine-readable object. Because the exit code distinguishes "could not answer" from</text>
-<text x="48" y="2078.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">"misconfigured", the agent composes into a shell pipeline without parsing its output.</text>
-<line x1="48" y1="2122.0" x2="1252" y2="2122.0" stroke="#dcd8cf" stroke-width="1"/>
-<line x1="48" y1="2142.0" x2="72" y2="2142.0" stroke="#43566e" stroke-width="2"/>
-<text x="80" y="2146.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">control flow</text>
-<line x1="187.2" y1="2142.0" x2="211.2" y2="2142.0" stroke="#a8422f" stroke-width="2" stroke-dasharray="6 4"/>
-<text x="219.2" y="2146.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">retry loop</text>
-<rect x="314.2" y="2134.0" width="24" height="13" rx="6.5" fill="#6a4c9322" stroke="#6a4c9377"/>
-<text x="346.2" y="2146.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">model call</text>
-<rect x="441.2" y="2134.0" width="24" height="13" rx="6.5" fill="#2f5d8f22" stroke="#2f5d8f77"/>
-<text x="473.2" y="2146.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">database access</text>
+<text x="1008" y="214.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">qwen3.8-256k on a remote host, served with</text>
+<text x="1008" y="230.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">a 256k context window. Picks the tables,</text>
+<text x="1008" y="246.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">writes the SQL, and reviews it. Reasoning off</text>
+<text x="1008" y="262.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">by default: Qwen3 returns it separately, so</text>
+<text x="1008" y="278.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">disabling it costs no quality and saves most</text>
+<text x="1008" y="294.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">of the latency.</text>
+<text x="1008" y="320.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="10.5" fill="#8e8e94">→ 3 prompts per attempt</text>
+<rect x="490" y="202.5" width="320" height="113.0" rx="12" fill="#eef1f6" stroke="#43566e" stroke-width="1.8" />
+<text x="506" y="235.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14" font-weight="700" fill="#43566e">nl2sql-agent:v1</text>
+<text x="506" y="257.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">python -m nl2sql_agent. Started per question by</text>
+<text x="506" y="274.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">docker compose run --rm agent and removed when it</text>
+<text x="506" y="291.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">exits.</text>
+<path d="M 484 259.0 L 316.0 235.0" fill="none" stroke="#2f5d8f" stroke-width="1.5" marker-end="url(#a-2f5d8f)"/>
+<path d="M 816 259.0 L 984.0 251.0" fill="none" stroke="#6a4c93" stroke-width="1.5" marker-end="url(#a-6a4c93)"/>
+<text x="48" y="386.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">STARTUP — BEFORE THE GRAPH RUNS</text>
+<rect x="48.0" y="406.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<text x="61.0" y="431.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">parse_args()</text>
+<text x="61.0" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">CLI flags, each defaulting to the matching</text>
+<text x="61.0" y="465.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">environment variable.</text>
+<path d="M 322.5 444.5 L 352.5 444.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="360.5" y="406.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<text x="373.5" y="431.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">Settings.from_env()</text>
+<text x="373.5" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">One dataclass holding every knob, so the</text>
+<text x="373.5" y="465.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">same image runs anywhere.</text>
+<path d="M 635.0 444.5 L 665.0 444.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="673.0" y="406.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<text x="686.0" y="431.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">build_llm()</text>
+<text x="686.0" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">validate_model_on_init=True — reach Ollama</text>
+<text x="686.0" y="465.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">and confirm the model exists.</text>
+<path d="M 947.5 444.5 L 977.5 444.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="985.5" y="406.0" width="266.5" height="77.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<text x="998.5" y="431.0" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#1b1b1d">Nl2SqlAgent()</text>
+<text x="998.5" y="449.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Open the database, build the tools, compile the</text>
+<text x="998.5" y="465.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">StateGraph.</text>
+<path d="M 806.2 485.0 L 806.2 501.0" fill="none" stroke="#a8422f" stroke-width="1.6" marker-end="url(#a-a8422f)"/>
+<rect x="673.0" y="505.0" width="579.0" height="109.0" rx="10" fill="#a8422f0b" stroke="#a8422f66" stroke-width="1.3" />
+<text x="691.0" y="534.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Unreachable host or a model that is not pulled raises LlmUnavailableError and exits 2 with the</text>
+<text x="691.0" y="553.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">available model list. The preflight sits here deliberately: a wrong URL is the most common</text>
+<text x="691.0" y="572.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">misconfiguration, and discovering it three nodes into the pipeline costs a catalog read and two</text>
+<text x="691.0" y="591.7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">prompts to learn what one HTTP call already knew.</text>
+<text x="48" y="653.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">THE PIPELINE — A COMPILED LANGGRAPH STATEGRAPH</text>
+<text x="48" y="679.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.5" fill="#8e8e94">state: AgentState (TypedDict) &#183; every node returns a partial update</text>
+<circle cx="365.0" cy="710.9" r="9" fill="#43566e"/>
+<text x="381.0" y="714.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="700" fill="#43566e">START</text>
+<path d="M 365.0 719.9 L 365.0 730.9" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="140" y="735.9" width="450" height="169.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<rect x="140" y="735.9" width="4" height="169.0" rx="2" fill="#43566e"/>
+<circle cx="169" cy="762.9" r="11" fill="#43566e"/>
+<text x="169" y="766.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">1</text>
+<text x="188" y="767.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">select_tables</text>
+<text x="158" y="794.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ask the model which tables the question needs, from a compact catalog</text>
+<text x="158" y="814.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">of every table: name, description, column list and approximate row</text>
+<text x="158" y="833.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">count. Keep only names that exist in the live catalog; fall back to all</text>
+<text x="158" y="852.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">tables if none survive.</text>
+<rect x="158.0" y="867.9" width="148.0" height="21" rx="10.5" fill="#6a4c9314" stroke="#6a4c9355" stroke-width="1"/><text x="232.0" y="882.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#6a4c93" text-anchor="middle">LLM · TableSelection</text>
+<rect x="313.0" y="867.9" width="141.6" height="21" rx="10.5" fill="#2f5d8f14" stroke="#2f5d8f55" stroke-width="1"/><text x="383.8" y="882.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2f5d8f" text-anchor="middle">Postgres · pg_class</text>
+<rect x="660" y="735.9" width="592" height="169.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
+<rect x="660" y="735.9" width="3" height="169.0" fill="#bf9b30"/>
+<text x="684" y="761.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
+<text x="684" y="781.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">The full schema with sample rows is far larger than the context window, so narrowing first is</text>
+<text x="684" y="801.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">what makes the next step fit at all. Filtering the model's answer against the live catalog is what</text>
+<text x="684" y="820.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">stops a hallucinated table name from ever reaching SQL generation, and falling back to every</text>
+<text x="684" y="839.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">table means a bad pick degrades to slow-but-correct rather than to no answer at all.</text>
+<path d="M 365.0 906.9 L 365.0 933.9" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="140" y="938.9" width="450" height="149.7" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<rect x="140" y="938.9" width="4" height="149.7" rx="2" fill="#43566e"/>
+<circle cx="169" cy="965.9" r="11" fill="#43566e"/>
+<text x="169" y="969.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">2</text>
+<text x="188" y="970.9" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">fetch_schema</text>
+<text x="158" y="997.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Pull full detail for the chosen tables only: column types, NOT NULL,</text>
+<text x="158" y="1017.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">primary and foreign key definitions, any COMMENT ON text, and 3</text>
+<text x="158" y="1036.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">sample rows per table.</text>
+<rect x="158.0" y="1051.6" width="263.2" height="21" rx="10.5" fill="#2f5d8f14" stroke="#2f5d8f55" stroke-width="1"/><text x="289.6" y="1066.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2f5d8f" text-anchor="middle">Postgres · pg_attribute, pg_constraint</text>
+<rect x="660" y="938.9" width="592" height="149.7" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
+<rect x="660" y="938.9" width="3" height="149.7" fill="#bf9b30"/>
+<text x="684" y="964.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
+<text x="684" y="984.9" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Declared keys are what let the model join on the real relationship instead of guessing from</text>
+<text x="684" y="1004.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">column names that happen to match. The sample rows carry what a schema cannot: how a</text>
+<text x="684" y="1023.4" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">department name is actually spelled, what a date column really looks like — the details that</text>
+<text x="684" y="1042.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">decide whether a WHERE clause matches anything. COMMENT ON text, if the schema has</text>
+<text x="684" y="1061.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">any, arrives through the same path with no code change.</text>
+<path d="M 365.0 1090.6 L 365.0 1117.6" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="140" y="1122.6" width="450" height="169.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<rect x="140" y="1122.6" width="4" height="169.0" rx="2" fill="#43566e"/>
+<circle cx="169" cy="1149.6" r="11" fill="#43566e"/>
+<text x="169" y="1153.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">3</text>
+<text x="188" y="1154.6" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">generate_sql</text>
+<text x="158" y="1181.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ask the model for one SELECT and nothing else. strip_sql() removes</text>
+<text x="158" y="1200.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">any markdown fence and trailing semicolon regardless. On a retry,</text>
+<text x="158" y="1220.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">RETRY_FEEDBACK prepends the rejected SQL and the specific</text>
+<text x="158" y="1239.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">problems found with it.</text>
+<rect x="158.0" y="1254.6" width="116.0" height="21" rx="10.5" fill="#6a4c9314" stroke="#6a4c9355" stroke-width="1"/><text x="216.0" y="1269.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#6a4c93" text-anchor="middle">LLM · free-form</text>
+<rect x="660" y="1122.6" width="592" height="169.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
+<rect x="660" y="1122.6" width="3" height="169.0" fill="#bf9b30"/>
+<text x="684" y="1148.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
+<text x="684" y="1168.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">This node, not the top of the graph, is the retry target. A rejected attempt re-enters here with the</text>
+<text x="684" y="1187.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">schema already in state, so a correction costs one prompt instead of a whole pipeline — and</text>
+<text x="684" y="1207.1" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">the model is shown the exact problems rather than simply being asked again.</text>
+<path d="M 365.0 1293.6 L 365.0 1320.6" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="140" y="1325.6" width="450" height="169.0" rx="10" fill="#ffffff" stroke="#dcd8cf" stroke-width="1" />
+<rect x="140" y="1325.6" width="4" height="169.0" rx="2" fill="#43566e"/>
+<circle cx="169" cy="1352.6" r="11" fill="#43566e"/>
+<text x="169" y="1356.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="700" fill="#fff" text-anchor="middle">4</text>
+<text x="188" y="1357.6" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="15.5" font-weight="700" fill="#1b1b1d">validate_sql</text>
+<text x="158" y="1384.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Three checks, cheapest first. (a) ensure_read_only: a single statement</text>
+<text x="158" y="1403.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">starting with SELECT or WITH, no embedded semicolon. (b) EXPLAIN</text>
+<text x="158" y="1423.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">it — planned, not run. (c) Only then a model review for semantics: right</text>
+<text x="158" y="1442.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">join key, right aggregation, does it actually answer the question.</text>
+<rect x="158.0" y="1457.5" width="135.2" height="21" rx="10.5" fill="#2f5d8f14" stroke="#2f5d8f55" stroke-width="1"/><text x="225.6" y="1472.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2f5d8f" text-anchor="middle">Postgres · EXPLAIN</text>
+<rect x="300.2" y="1457.5" width="116.0" height="21" rx="10.5" fill="#6a4c9314" stroke="#6a4c9355" stroke-width="1"/><text x="358.2" y="1472.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#6a4c93" text-anchor="middle">LLM · SqlReview</text>
+<rect x="660" y="1325.6" width="592" height="169.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
+<rect x="660" y="1325.6" width="3" height="169.0" fill="#bf9b30"/>
+<text x="684" y="1351.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
+<text x="684" y="1371.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Three filters, ordered by cost. The static check is free and refuses the dangerous shapes</text>
+<text x="684" y="1390.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">outright. EXPLAIN then catches the common failure — an unknown column, a type mismatch</text>
+<text x="684" y="1410.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">— without executing anything, and a planner error is definitive, so the model is never consulted</text>
+<text x="684" y="1429.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">about a query the database has already refused. Only SQL that both parses and plans is worth</text>
+<text x="684" y="1448.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">spending a review on.</text>
+<path d="M 365.0 1496.5 L 365.0 1523.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="140" y="1528.5" width="450" height="119.0" rx="10" fill="#fdf8ec" stroke="#e0cf9e" stroke-width="1.4" />
+<text x="158" y="1557.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14.5" font-weight="700" fill="#8a6a14">_route_after_validation()</text>
+<circle cx="163" cy="1578.5" r="4" fill="#2e7d4f"/>
+<text x="176" y="1582.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#65656b">no issues</text>
+<text x="572" y="1582.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#2e7d4f" text-anchor="end">execute_query</text>
+<circle cx="163" cy="1599.5" r="4" fill="#a8422f"/>
+<text x="176" y="1603.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#65656b">issues, attempts &lt; max</text>
+<text x="572" y="1603.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#a8422f" text-anchor="end">generate_sql</text>
+<circle cx="163" cy="1620.5" r="4" fill="#8a6a14"/>
+<text x="176" y="1624.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" fill="#65656b">issues, attempts = max</text>
+<text x="572" y="1624.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#8a6a14" text-anchor="end">give_up</text>
+<rect x="660" y="1528.5" width="592" height="119.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
+<rect x="660" y="1528.5" width="3" height="119.0" fill="#bf9b30"/>
+<text x="684" y="1554.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
+<text x="684" y="1574.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">Bounded on purpose. Some questions the data simply cannot answer, and retrying one of</text>
+<text x="684" y="1593.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">those forever spends tokens without converging. Three attempts covers the usual case — a</text>
+<text x="684" y="1613.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">wrong join key, a missing GROUP BY — which the model generally fixes on the second.</text>
+<path d="M 365.0 1649.5 L 365.0 1676.5" fill="none" stroke="#43566e" stroke-width="1.6" marker-end="url(#a-43566e)"/>
+<rect x="140.0" y="1681.5" width="218.0" height="191.0" rx="10" fill="#2e7d4f0c" stroke="#2e7d4f55" stroke-width="1.4" />
+<text x="154.0" y="1710.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14" font-weight="700" fill="#2e7d4f">execute_query</text>
+<text x="154.0" y="1733.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">run_select() inside SET</text>
+<text x="154.0" y="1752.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">TRANSACTION READ ONLY</text>
+<text x="154.0" y="1770.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">with SET LOCAL</text>
+<text x="154.0" y="1789.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">statement_timeout, fetching</text>
+<text x="154.0" y="1807.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">max_rows + 1 so truncation is</text>
+<text x="154.0" y="1826.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">detected rather than guessed at.</text>
+<rect x="154.0" y="1837.5" width="167.2" height="21" rx="10.5" fill="#2e7d4f14" stroke="#2e7d4f55" stroke-width="1"/><text x="237.6" y="1852.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#2e7d4f" text-anchor="middle">Postgres · READ ONLY tx</text>
+<rect x="372.0" y="1681.5" width="218.0" height="191.0" rx="10" fill="#8a6a140c" stroke="#8a6a1455" stroke-width="1.4" />
+<text x="386.0" y="1710.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="14" font-weight="700" fill="#8a6a14">give_up</text>
+<text x="386.0" y="1733.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Record "Could not produce a valid</text>
+<text x="386.0" y="1752.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">query in N attempts" together with</text>
+<text x="386.0" y="1770.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">the last set of problems. Nothing</text>
+<text x="386.0" y="1789.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">is executed.</text>
+<rect x="386.0" y="1837.5" width="135.2" height="21" rx="10.5" fill="#8a6a1414" stroke="#8a6a1455" stroke-width="1"/><text x="453.6" y="1852.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="600" fill="#8a6a14" text-anchor="middle">no database access</text>
+<rect x="660" y="1681.5" width="592" height="191.0" rx="10" fill="#f4f1e9" stroke="none" stroke-width="1" />
+<rect x="660" y="1681.5" width="3" height="191.0" fill="#bf9b30"/>
+<text x="684" y="1707.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">WHY</text>
+<text x="684" y="1727.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">execute_query is the second, independent safety layer, and the one that actually holds: the</text>
+<text x="684" y="1746.8" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">static check in step 4 cannot reject WITH d AS (DELETE ... RETURNING *) SELECT * FROM</text>
+<text x="684" y="1766.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">d, because that is a legitimate WITH query. The READ ONLY transaction is what refuses it.</text>
+<text x="684" y="1785.2" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">give_up is a real outcome rather than a failure of nerve — the alternative is running a query</text>
+<text x="684" y="1804.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">already known to be wrong. Together they are why "delete every row from dim_store" is safe to</text>
+<text x="684" y="1823.7" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13" font-weight="400" fill="#4a4a50" text-anchor="start" xml:space="preserve">ask: it is refused, not attempted.</text>
+<path d="M 249.0 1874.5 L 249.0 1892.5 L 365.0 1892.5 L 365.0 1902.5" fill="none" stroke="#43566e" stroke-width="1.5" marker-end="url(#a-43566e)"/>
+<path d="M 481.0 1874.5 L 481.0 1892.5 L 365.0 1892.5 L 365.0 1902.5" fill="none" stroke="#43566e" stroke-width="1.5" marker-end="url(#a-43566e)"/>
+<circle cx="365.0" cy="1915.5" r="9" fill="none" stroke="#43566e" stroke-width="2.5"/>
+<circle cx="365.0" cy="1915.5" r="4" fill="#43566e"/>
+<text x="381.0" y="1919.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="700" fill="#43566e">END</text>
+<path d="M 136 1588.0 L 74 1588.0 L 74 1207.1 L 132 1207.1" fill="none" stroke="#a8422f" stroke-width="1.7" stroke-dasharray="7 5" marker-end="url(#a-a8422f)"/>
+<text x="65" y="1397.6" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="700" fill="#a8422f" text-anchor="middle" transform="rotate(-90 65 1397.6)">retry &#183; up to --max-attempts</text>
+<text x="48" y="1970.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="700" fill="#8e8e94" letter-spacing="1.3">OUTCOMES</text>
+<rect x="48.0" y="1990.5" width="388.0" height="61.0" rx="10" fill="#2e7d4f0c" stroke="#2e7d4f55" stroke-width="1.3" />
+<text x="61.0" y="2015.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#2e7d4f">exit 0</text>
+<text x="61.0" y="2033.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Answered. The result table goes to stdout.</text>
+<rect x="456.0" y="1990.5" width="388.0" height="61.0" rx="10" fill="#8a6a140c" stroke="#8a6a1455" stroke-width="1.3" />
+<text x="469.0" y="2015.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#8a6a14">exit 1</text>
+<text x="469.0" y="2033.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ran, but could not answer — give_up, or the query failed at execution.</text>
+<rect x="864.0" y="1990.5" width="388.0" height="61.0" rx="10" fill="#a8422f0c" stroke="#a8422f55" stroke-width="1.3" />
+<text x="877.0" y="2015.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12.5" font-weight="700" fill="#a8422f">exit 2</text>
+<text x="877.0" y="2033.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Ollama misconfigured. Raised during startup; the graph never runs.</text>
+<text x="48" y="2076.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">Progress lines go to stderr and the answer to stdout, so<tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.2"> ...</tspan><tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.2"> 2&gt;/dev/null</tspan> leaves just the result and<tspan font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11.2"> --json</tspan> replaces it with one machine-readable object. Because the exit code distinguishes "could not answer" from</text>
+<text x="48" y="2094.3" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12" font-weight="400" fill="#65656b" text-anchor="start" xml:space="preserve">"misconfigured", the agent composes into a shell pipeline without parsing its output.</text>
+<line x1="48" y1="2138.0" x2="1252" y2="2138.0" stroke="#dcd8cf" stroke-width="1"/>
+<line x1="48" y1="2158.0" x2="72" y2="2158.0" stroke="#43566e" stroke-width="2"/>
+<text x="80" y="2162.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">control flow</text>
+<line x1="187.2" y1="2158.0" x2="211.2" y2="2158.0" stroke="#a8422f" stroke-width="2" stroke-dasharray="6 4"/>
+<text x="219.2" y="2162.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">retry loop</text>
+<rect x="314.2" y="2150.0" width="24" height="13" rx="6.5" fill="#6a4c9322" stroke="#6a4c9377"/>
+<text x="346.2" y="2162.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">model call</text>
+<rect x="441.2" y="2150.0" width="24" height="13" rx="6.5" fill="#2f5d8f22" stroke="#2f5d8f77"/>
+<text x="473.2" y="2162.0" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" fill="#65656b">database access</text>
 </svg>

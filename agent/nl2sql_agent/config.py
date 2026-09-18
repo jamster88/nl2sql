@@ -10,7 +10,10 @@ import os
 from dataclasses import dataclass
 
 DEFAULT_OLLAMA_BASE_URL = "http://192.168.10.82:11434"
-DEFAULT_OLLAMA_MODEL = "qwen3.8:latest"
+DEFAULT_OLLAMA_MODEL = "qwen3.8-256k"
+# 256 * 1024. Ollama allocates the KV cache from this, so it is a real memory
+# cost on the serving host, not just a cap.
+DEFAULT_NUM_CTX = 262144
 DEFAULT_DATABASE_URL = "postgresql+psycopg://nl2sql:nl2sql@postgres:5432/nl2sql_retail"
 
 # The knowledge base built by the RAG pipeline: one pgvector collection per
@@ -56,8 +59,11 @@ class Settings:
     # nothing in output quality but saves a lot of latency.
     reasoning: bool = False
     # Ollama defaults num_ctx to a few thousand tokens regardless of what the
-    # model supports; the schema context alone can exceed that.
-    num_ctx: int = 16384
+    # model supports, and silently truncates past it. 256k is what the
+    # qwen3.8-256k build is served with, and multi-shot needs the room: the
+    # schema, the knowledge block and three worked SQL examples are all in the
+    # same window.
+    num_ctx: int = DEFAULT_NUM_CTX
 
     database_url: str = DEFAULT_DATABASE_URL
     db_schema: str = "public"
@@ -94,12 +100,24 @@ class Settings:
     # every pair from its own question and RRF at its usual k=60 manages 25/45.
     examples_fusion: str = "score"
     examples_rrf_k: int = 60
+    # Second-stage rerank over the fused shortlist: "mmr" (grounding against the
+    # pair's tables/SQL, then diversity across the chosen set), "relevance"
+    # (grounding only), or "none" (fusion order).
+    examples_rerank: str = "mmr"
+    # How many fused candidates enter the rerank. Wider than examples_top_k, or
+    # the reranker could only reorder what the fusion already picked.
+    examples_rerank_k: int = 8
+    # MMR: 1.0 is pure relevance, 0.0 pure diversity. Measured flat on recall
+    # across that whole range, so the balanced value buys coverage for free.
+    examples_rerank_lambda: float = 0.5
+    # How far the grounding evidence is allowed to move the fused relevance.
+    examples_grounding_weight: float = 0.25
     examples_max_context_chars: int = 8000
-    # Whether the retrieved examples are actually shown to the SQL generator.
-    # Retrieval and prompting are separated so the examples can be inspected
-    # before they start steering generation; turning this on is the multi-shot
-    # step.
-    multi_shot_enabled: bool = False
+    # Whether the retrieved examples are replayed as exemplar turns in front of
+    # the real question. On by default -- this is the generation architecture,
+    # not an experiment. Retrieval stays a separate switch so the examples can
+    # still be inspected with multi-shot off.
+    multi_shot_enabled: bool = True
 
     sample_rows: int = 3
     max_rows: int = 50
@@ -113,7 +131,7 @@ class Settings:
             ollama_model=os.getenv("OLLAMA_MODEL", DEFAULT_OLLAMA_MODEL),
             temperature=float(os.getenv("OLLAMA_TEMPERATURE", "0")),
             reasoning=_env_bool("OLLAMA_REASONING", False),
-            num_ctx=_env_int("OLLAMA_NUM_CTX", 16384),
+            num_ctx=_env_int("OLLAMA_NUM_CTX", DEFAULT_NUM_CTX),
             database_url=os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL),
             db_schema=os.getenv("DB_SCHEMA", "public"),
             rag_enabled=_env_bool("RAG_ENABLED", True),
@@ -131,8 +149,12 @@ class Settings:
             example_weight_reasoning=_env_float("EXAMPLE_WEIGHT_REASONING", 0.15),
             examples_fusion=os.getenv("EXAMPLES_FUSION", "score"),
             examples_rrf_k=_env_int("EXAMPLES_RRF_K", 60),
+            examples_rerank=os.getenv("EXAMPLES_RERANK", "mmr"),
+            examples_rerank_k=_env_int("EXAMPLES_RERANK_K", 8),
+            examples_rerank_lambda=_env_float("EXAMPLES_RERANK_LAMBDA", 0.5),
+            examples_grounding_weight=_env_float("EXAMPLES_GROUNDING_WEIGHT", 0.25),
             examples_max_context_chars=_env_int("EXAMPLES_MAX_CONTEXT_CHARS", 8000),
-            multi_shot_enabled=_env_bool("MULTI_SHOT_ENABLED", False),
+            multi_shot_enabled=_env_bool("MULTI_SHOT_ENABLED", True),
             sample_rows=_env_int("SAMPLE_ROWS", 3),
             max_rows=_env_int("MAX_ROWS", 50),
             statement_timeout_ms=_env_int("STATEMENT_TIMEOUT_MS", 30000),

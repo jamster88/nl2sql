@@ -39,7 +39,7 @@ from .prompts import (
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
     TABLE_SELECTION_PROMPT,
-    examples_block,
+    example_messages,
     knowledge_block,
 )
 from .retrieval import KnowledgeBase, build_embedder
@@ -57,6 +57,7 @@ class AgentState(TypedDict, total=False):
     examples: str
     example_tables: list[str]
     example_pairs: list[dict[str, Any]]
+    example_shots: list[dict[str, Any]]
     examples_error: str
     selected_tables: list[str]
     schema: str
@@ -132,6 +133,10 @@ class Nl2SqlAgent:
             },
             fusion=settings.examples_fusion,
             rrf_k=settings.examples_rrf_k,
+            rerank=settings.examples_rerank,
+            rerank_k=settings.examples_rerank_k,
+            rerank_lambda=settings.examples_rerank_lambda,
+            grounding_weight=settings.examples_grounding_weight,
         )
 
     def run(self, question: str) -> AgentState:
@@ -188,6 +193,7 @@ class Nl2SqlAgent:
                 "examples": "",
                 "example_tables": [],
                 "example_pairs": [],
+                "example_shots": [],
                 "examples_error": retrieved["error"],
             }
 
@@ -198,6 +204,7 @@ class Nl2SqlAgent:
             "examples": retrieved["context"],
             "example_tables": retrieved["tables"],
             "example_pairs": pairs,
+            "example_shots": retrieved["shots"],
         }
 
     # --- Step 2: describe all tables, ask the model which ones matter --------
@@ -243,19 +250,18 @@ class Nl2SqlAgent:
                 sql=state.get("sql", ""),
                 issues="\n".join(f"- {issue}" for issue in state["issues"]),
             )
-        # Retrieval and prompting are separate switches: the examples are
-        # fetched either way, and shown only when multi-shot is on.
-        shots = state.get("examples", "") if self.settings.multi_shot_enabled else ""
-        response = self.llm.invoke(
-            SQL_GENERATION_PROMPT.format_messages(
-                dialect=self.db.dialect,
-                schema=state["schema"],
-                knowledge=knowledge_block(state.get("knowledge", "")),
-                examples=examples_block(shots),
-                question=state["question"],
-                feedback=feedback,
-            )
+        # Retrieval and prompting stay separate switches: the examples are
+        # fetched either way, and replayed as turns only when multi-shot is on.
+        shots = state.get("example_shots", []) if self.settings.multi_shot_enabled else []
+        messages = SQL_GENERATION_PROMPT.format_messages(
+            dialect=self.db.dialect,
+            schema=state["schema"],
+            knowledge=knowledge_block(state.get("knowledge", "")),
+            examples=example_messages(shots),
+            question=state["question"],
+            feedback=feedback,
         )
+        response = self.llm.invoke(messages)
         sql = strip_sql(str(response.content))
         self._on_progress("generate_sql", sql)
         return {"sql": sql}

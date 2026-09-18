@@ -287,18 +287,18 @@ def test_an_existing_volume_warns_that_it_shadows_the_image(run_setup):
 
 def test_both_models_are_confirmed_when_present(run_setup):
     result = run_setup()
-    assert "qwen3.8:latest is available" in result.output
+    assert "qwen3.8-256k is available" in result.output
     assert "bge-m3 is available" in result.output
 
 
 def test_a_missing_chat_model_warns_without_failing(run_setup):
     result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"bge-m3:latest"}'})
     assert result.returncode == 0
-    assert "does not have qwen3.8:latest" in result.output
+    assert "does not have qwen3.8-256k" in result.output
 
 
 def test_a_missing_embedding_model_warns_with_the_pull_command(run_setup):
-    result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8:latest"}'})
+    result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k"}'})
     assert result.returncode == 0
     assert "ollama pull bge-m3" in result.output
     assert "without knowledge retrieval" in result.output

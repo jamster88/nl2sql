@@ -82,7 +82,7 @@ case "$1" in
                 # must not be able to SIGPIPE us mid-stream.
                 printf '    OLLAMA_BASE_URL: %s\n    OLLAMA_MODEL: %s\n    EMBED_BASE_URL: %s\n    EMBED_MODEL: %s\n' \
                     "$(read_env OLLAMA_BASE_URL http://192.168.10.82:11434)" \
-                    "$(read_env OLLAMA_MODEL qwen3.8:latest)" \
+                    "$(read_env OLLAMA_MODEL qwen3.8-256k)" \
                     "$(read_env EMBED_BASE_URL http://host.docker.internal:11434)" \
                     "$(read_env EMBED_MODEL bge-m3)"
                 exit 0 ;;
@@ -103,7 +103,7 @@ if [[ -n "${FAKE_OLLAMA_DOWN:-}" ]]; then exit 7; fi
 # expansion stops at the first unescaped } and would truncate this JSON.
 models="${FAKE_OLLAMA_MODELS:-}"
 if [[ -z "$models" ]]; then
-    models='{"name":"qwen3.8:latest"},{"name":"bge-m3:latest"}'
+    models='{"name":"qwen3.8-256k"},{"name":"bge-m3:latest"}'
 fi
 printf '{"models":[%s]}\n' "$models"
 """

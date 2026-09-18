@@ -94,7 +94,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nl2sql}:${POSTGRES_PASSWORD:-nl2sql}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.10.82:11434}
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8:latest}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8-256k}
+      # 256k. Multi-shot puts the schema, the knowledge block and three
+      # worked SQL examples in one window; Ollama truncates silently past
+      # num_ctx, so it is set here rather than left to its own default.
+      OLLAMA_NUM_CTX: ${OLLAMA_NUM_CTX:-262144}
       VECTOR_DB_URL: postgresql+psycopg://${VECTOR_DB_USER:-ragproc}:${VECTOR_DB_PASSWORD:-ragproc}@vectordb:5432/${VECTOR_DB_NAME:-nl2sql_vectors}
       CONTEXT_DB_URL: postgresql+psycopg://${CONTEXT_DB_USER:-ragproc}:${CONTEXT_DB_PASSWORD:-ragproc}@chunkdb:5432/${CONTEXT_DB_NAME:-nl2sql_chunks}
       # bge-m3 is usually served by the Ollama on the machine running Docker,
@@ -105,9 +109,9 @@ services:
       RAG_TOP_K: ${RAG_TOP_K:-4}
       EXAMPLES_ENABLED: ${EXAMPLES_ENABLED:-true}
       EXAMPLES_TOP_K: ${EXAMPLES_TOP_K:-3}
-      # The next step turns this on: the examples are retrieved either way,
-      # and shown to the SQL generator only when it is true.
-      MULTI_SHOT_ENABLED: ${MULTI_SHOT_ENABLED:-false}
+      # Replay the retrieved pairs as exemplar turns in front of the question.
+      MULTI_SHOT_ENABLED: ${MULTI_SHOT_ENABLED:-true}
+      EXAMPLES_RERANK: ${EXAMPLES_RERANK:-mmr}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     extra_hosts:

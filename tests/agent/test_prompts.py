@@ -14,7 +14,7 @@ from nl2sql_agent.prompts import (
     SQL_GENERATION_PROMPT,
     SQL_VALIDATION_PROMPT,
     TABLE_SELECTION_PROMPT,
-    examples_block,
+    example_messages,
     knowledge_block,
 )
 
@@ -75,7 +75,7 @@ def test_sql_generation_prompt_renders_with_knowledge():
             dialect="postgresql",
             schema="=== dim_store ===",
             knowledge=knowledge_block("fiscal year 2024 starts 2023-04-01"),
-            examples=examples_block(""),
+            examples=[],
             question="q",
             feedback="",
         )
@@ -110,7 +110,7 @@ def test_sql_validation_prompt_renders_with_knowledge():
                 "schema": "s",
                 "question": "q",
                 "feedback": "",
-                "examples": examples_block(""),
+                "examples": [],
             },
         ),
         (
@@ -130,7 +130,7 @@ def test_every_template_renders_cleanly_with_no_knowledge(template, kwargs):
 def test_generation_prompt_tells_the_model_to_prefer_knowledge_over_assumptions():
     text = render(
         SQL_GENERATION_PROMPT.format_messages(
-            dialect="postgresql", schema="s", knowledge="", examples="",
+            dialect="postgresql", schema="s", knowledge="", examples=[],
             question="q", feedback="",
         )
     ).lower()
@@ -165,7 +165,7 @@ def test_generation_prompt_carries_retry_feedback_and_knowledge_together():
             dialect="postgresql",
             schema="s",
             knowledge=knowledge_block("the rule"),
-            examples=examples_block(""),
+            examples=[],
             question="q",
             feedback=RETRY_FEEDBACK.format(sql="SELECT bad", issues="- broke the rule"),
         )
@@ -176,58 +176,114 @@ def test_generation_prompt_carries_retry_feedback_and_knowledge_together():
 
 
 # ---------------------------------------------------------------------------
-# The worked-examples block (v3)
+# Multi-shot: the worked examples as conversation turns
 # ---------------------------------------------------------------------------
 
+SHOTS = [
+    {
+        "pair_id": "Q01",
+        "question": "Gross profit for Produce in fiscal month 12 of FY2025?",
+        "reasoning_target": "Reconciling daily sales against monthly costs.",
+        "sql_code": "WITH s AS (SELECT 1)\nSELECT * FROM s",
+    },
+    {
+        "pair_id": "Q10",
+        "question": "Weekly market share for Cheese in the Pacific Northwest?",
+        "reasoning_target": "The five-row fan-out.",
+        "sql_code": "SELECT DISTINCT week_key FROM fact_market_share_weekly",
+    },
+]
 
-def test_generation_prompt_renders_retrieved_examples():
-    text = render(
-        SQL_GENERATION_PROMPT.format_messages(
-            dialect="postgresql",
-            schema="=== dim_store ===",
-            knowledge=knowledge_block(""),
-            examples=examples_block("Question: how many stores\nSQL:\nSELECT count(*)"),
-            question="q",
-            feedback="",
-        )
-    )
-    assert "Worked examples" in text
-    assert "SELECT count(*)" in text
 
-
-def test_an_empty_examples_block_leaves_no_orphan_heading():
-    """Multi-shot is a switch, so the same template renders both ways. An empty
-    block must vanish entirely rather than leave a heading with nothing under it.
+def test_each_example_becomes_a_human_turn_and_an_assistant_turn():
+    """The shape is the whole point: a model continues a demonstrated pattern
+    more reliably than it follows a described one.
     """
-    assert examples_block("") == ""
-    assert examples_block("   \n  ") == ""
-    text = render(
-        SQL_GENERATION_PROMPT.format_messages(
-            dialect="postgresql",
-            schema="s",
-            knowledge=knowledge_block(""),
-            examples=examples_block(""),
-            question="q",
-            feedback="",
-        )
-    )
-    assert "Worked examples" not in text
+    messages = example_messages(SHOTS)
+    assert [m.type for m in messages] == ["human", "ai", "human", "ai"]
+    assert "Gross profit for Produce" in messages[0].content
+    assert messages[1].content == "WITH s AS (SELECT 1)\nSELECT * FROM s"
 
 
-def test_knowledge_and_examples_are_separate_blocks_in_one_prompt():
-    """They answer different questions -- rules versus worked patterns -- and
-    the model is told so. Collapsing them into one block would lose that.
+def test_the_assistant_turns_are_bare_sql():
+    """Whatever the assistant turns contain, the model imitates. A leading SQL
+    comment would be imitated too -- and `ensure_read_only` rejects anything not
+    starting with SELECT or WITH, so every generated query would then fail.
     """
-    text = render(
+    for message in example_messages(SHOTS):
+        if message.type != "ai":
+            continue
+        assert message.content.upper().startswith(("SELECT", "WITH"))
+        assert "--" not in message.content
+        assert "```" not in message.content
+
+
+def test_an_example_turn_carries_the_rule_that_applies_to_it():
+    human = example_messages(SHOTS)[0].content
+    assert "Reconciling daily sales against monthly costs." in human
+    assert human.index("Rule that applies here") < human.index("Question:")
+
+
+def test_example_turns_mirror_the_real_question_turn():
+    """Both are [the rule that applies] then [the question]. An exemplar shaped
+    differently from the real task demonstrates the wrong task.
+    """
+    exemplar = example_messages(SHOTS)[0].content
+    real = render(
         SQL_GENERATION_PROMPT.format_messages(
-            dialect="postgresql",
-            schema="s",
-            knowledge=knowledge_block("fiscal year 2024 starts 2023-04-01"),
-            examples=examples_block("Question: margin\nSQL:\nSELECT 1"),
-            question="q",
-            feedback="",
+            dialect="postgresql", schema="s",
+            knowledge=knowledge_block("FY2024 starts 2023-04-01"),
+            examples=[], question="How many stores?", feedback="",
         )
     )
-    assert "Knowledge base" in text
-    assert "Worked examples" in text
-    assert text.index("Knowledge base") < text.index("Worked examples")
+    for text in (exemplar, real):
+        assert "Question:" in text
+        assert text.rstrip().endswith("SQL:")
+
+
+def test_a_pair_missing_its_question_or_sql_is_skipped():
+    """A half-rendered exemplar teaches the model to answer with nothing."""
+    assert example_messages([{"question": "q", "sql_code": ""}]) == []
+    assert example_messages([{"question": "", "sql_code": "SELECT 1"}]) == []
+    assert example_messages([{"question": "q", "sql_code": "SELECT 1"}]) != []
+
+
+def test_an_example_with_no_rule_still_renders_a_clean_turn():
+    [human, _] = example_messages([{"question": "q", "sql_code": "SELECT 1"}])
+    assert "Rule that applies here" not in human.content
+    assert human.content.startswith("Question: q")
+
+
+def test_no_examples_leaves_the_zero_shot_prompt_untouched():
+    """Multi-shot is a switch, and off it has to cost exactly nothing -- same
+    messages, same order, as if the feature were not there.
+    """
+    zero = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge=knowledge_block(""),
+        examples=[], question="q", feedback="",
+    )
+    assert [m.type for m in zero] == ["system", "human"]
+
+
+def test_examples_are_replayed_before_the_real_question():
+    messages = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge=knowledge_block(""),
+        examples=example_messages(SHOTS), question="the real one", feedback="",
+    )
+    assert [m.type for m in messages] == ["system", "human", "ai", "human", "ai", "human"]
+    assert "the real one" in messages[-1].content
+    assert "the real one" not in "".join(str(m.content) for m in messages[:-1])
+
+
+def test_the_system_turn_carries_the_schema_and_names_the_examples():
+    """The schema is shared by every turn, so it belongs once in the system
+    message rather than repeated per exemplar -- and the model is told what the
+    earlier turns are, or it may read them as prior user requests to revisit.
+    """
+    system = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="=== dim_store ===", knowledge=knowledge_block(""),
+        examples=example_messages(SHOTS), question="q", feedback="",
+    )[0].content
+    assert "=== dim_store ===" in system
+    assert "worked examples" in system.lower()
+    assert "the question actually asked" in system.lower()

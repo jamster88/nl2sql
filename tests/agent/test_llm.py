@@ -38,13 +38,13 @@ def test_build_llm_returns_the_model_on_success(monkeypatch):
     sentinel = object()
 
     def fake_chat_ollama(**kwargs):
-        assert kwargs["model"] == "qwen3.8:latest"
+        assert kwargs["model"] == "qwen3.8-256k"
         assert kwargs["base_url"] == "http://host:11434"
         assert kwargs["validate_model_on_init"] is True
         return sentinel
 
     monkeypatch.setattr("nl2sql_agent.llm.ChatOllama", fake_chat_ollama)
-    settings = Settings(ollama_model="qwen3.8:latest", ollama_base_url="http://host:11434")
+    settings = Settings(ollama_model="qwen3.8-256k", ollama_base_url="http://host:11434")
     assert build_llm(settings) is sentinel
 
 

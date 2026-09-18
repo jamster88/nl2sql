@@ -530,7 +530,8 @@ PG = {"name": "nl2sql-postgres", "color": BLUE,
       "link": "← SQLAlchemy + psycopg"}
 
 OLLAMA_CHAT = {"name": "Ollama — chat model", "color": PURPLE,
-               "desc": "qwen3.8:latest on a remote host. Picks the tables, writes the SQL, and reviews it. "
+               "desc": "qwen3.8-256k on a remote host, served with a 256k context window. Picks the tables, "
+                       "writes the SQL, and reviews it. "
                        "Reasoning off by default: Qwen3 returns it separately, so disabling it costs "
                        "no quality and saves most of the latency.",
                "link": "→ 3 prompts per attempt"}
@@ -809,6 +810,34 @@ VECTORDB_V3 = {"name": "nl2sql-vectordb", "color": TEAL,
                        "All HNSW, vector_cosine_ops.",
                "link": "← cosine search, knowledge + both pair fields"}
 
+RERANK = ("Fusing three rankings is not reranking them. Every score the fusion combines was "
+          "produced independently -- query against the pair's question, against its reasoning "
+          "target, against its keywords -- and nothing in that ever looks at the query and the "
+          "whole pair together, or at the retrieved set as a set. So the top 8 fused candidates "
+          "get a second pass. Grounding scores the query against the pair's tables and SQL, which "
+          "no first-stage retriever indexes: a question naming \"Produce\" should favour the pair "
+          "whose SQL says department_name = 'Produce'. Then MMR trades a little relevance for "
+          "coverage, because three near-identical exemplars teach one pattern three times.")
+
+RERANK_NUMBERS = ("Measured, not assumed. MMR's first pick has nothing to be redundant with, so "
+                  "rank 1 is untouched at any lambda and recall stayed flat from 1.0 down to 0.3 "
+                  "on every evaluation set; lambda 0.5 therefore buys coverage for free, cutting "
+                  "mean pairwise similarity among the three chosen pairs from 0.560 to 0.514. "
+                  "Grounding at 0.25 lifts questions that name a table or column outright from "
+                  "5/8 to 6/8 at rank 3 -- the one thing BM25 cannot see, since it indexes only "
+                  "the keywords column -- and changes nothing elsewhere.")
+
+MULTISHOT = ("The examples are not pasted into the prompt as text. They are replayed as real "
+             "conversation turns -- human asks, assistant answers with SQL, repeated -- in front "
+             "of the actual question. That is the shape instruct models are tuned on: a text "
+             "block invites the model to describe the examples, a turn sequence invites it to "
+             "continue the pattern. Every human turn is [the rule that applies] + [the question] "
+             "and every assistant turn is bare SQL, so the exemplars are the same task the model "
+             "is about to be given rather than a differently-shaped cousin of it. Nothing the "
+             "assistant turns contain is safe from imitation, which is why they carry no "
+             "commentary and no leading SQL comment: ensure_read_only rejects anything that does "
+             "not begin with SELECT or WITH.")
+
 ENSEMBLE = ("Three retrievers over the same 45 pairs, each answering a different question about a "
             "pair. Question similarity (0.50) matches what the user is asking for. BM25 over the "
             "keyword column (0.35) catches the vocabulary a paraphrase preserves but an embedding "
@@ -838,10 +867,10 @@ EX_DEGRADE = ("ExamplesUnavailableError → state.examples_error set, examples =
               "run, and a run without either retrieval is a v1 run.")
 
 TWO_SWITCHES = ("EXAMPLES_ENABLED controls retrieval; MULTI_SHOT_ENABLED controls whether the "
-                "retrieved pairs are shown to the generator. They are separate on purpose: the "
-                "examples can be inspected in --json output, and their ranking tuned, before they "
-                "start steering generation. Turning the second one on is the multi-shot step, and it "
-                "is a prompt change rather than a plumbing change.")
+                "retrieved pairs are replayed as turns. Both default on, but they stay separate: "
+                "with the second off the examples are still fetched, ranked and visible in --json, "
+                "so the ranking can be inspected without it steering generation. Off, the prompt "
+                "is byte-for-byte the zero-shot one -- system turn, then the question.")
 
 SELECT_WHY_V3 = (SELECT_WHY + " v3 adds a second hint alongside the chunk_meta tables: the tables a "
                  "closely-matching worked example actually queries. Both are merged into the model's "
@@ -882,6 +911,8 @@ def build_v3():
     svg, h = note_row(y, "The ensemble — three retrievers, one question", ENSEMBLE, color=INDIGO,
                       x=MARGIN, w=CONTENT_R - MARGIN, dashed=False); parts.append(svg); y += h + 18
     svg, h = note_row(y, "How the three are fused, and why not RRF", FUSION, color=INDIGO,
+                      x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What the rerank is worth", RERANK_NUMBERS, color=INDIGO,
                       x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 36
     svg, h = startup(y, STARTUP, FAIL2); parts.append(svg); y += h + 40
 

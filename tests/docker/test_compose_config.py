@@ -304,10 +304,22 @@ def test_the_context_store_keeps_its_data_outside_the_base_image_volume(agent_pr
     assert any(m["target"] == "/var/lib/pgdata" for m in mounts)
 
 
-def test_multi_shot_defaults_to_off_in_compose(agent_profile_config: dict):
-    """Retrieval on, prompting off: the examples are fetched and inspectable
-    but do not steer generation until the next step turns this on.
+def test_multi_shot_and_the_rerank_are_on_by_default_in_compose(agent_profile_config: dict):
+    """Both are the architecture now rather than experiments, so the image has
+    to ship with them on -- a default that disagrees with the source default
+    means the container behaves differently from everything the tests exercise.
     """
     env = agent_profile_config["services"]["agent"]["environment"]
     assert env["EXAMPLES_ENABLED"] == "true"
-    assert env["MULTI_SHOT_ENABLED"] == "false"
+    assert env["MULTI_SHOT_ENABLED"] == "true"
+    assert env["EXAMPLES_RERANK"] == "mmr"
+
+
+def test_the_context_window_is_set_explicitly(agent_profile_config: dict):
+    """Ollama caps num_ctx at a few thousand tokens whatever the model supports,
+    and truncates past it silently. Multi-shot puts the schema, the knowledge
+    block and three worked SQL queries in one window, so this is not optional.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert env["OLLAMA_NUM_CTX"] == "262144"
+    assert env["OLLAMA_MODEL"] == "qwen3.8-256k"

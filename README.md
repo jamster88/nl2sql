@@ -55,17 +55,18 @@ dictionary, DDL index and business index -- and the matching sections are fed to
 the model alongside the schema. That context carries what the schema cannot:
 fiscal-calendar semantics, pre-aggregated columns, and joins that fan out.
 
-**v3 also retrieves worked examples.** A second, independent step searches the
-45 question/SQL pairs in
+**v3 also retrieves worked examples, and generates multi-shot.** A second,
+independent step searches the 45 question/SQL pairs in
 [`context_questions/translated_questions.md`](context_questions/translated_questions.md)
 -- each verified to run against this database -- through an ensemble of three
 retrievers: question similarity (0.50), BM25 over the pairs' keywords (0.35),
-and reasoning-target similarity (0.15). Prose tells the model the rule; a worked
-example shows it applied.
+and reasoning-target similarity (0.15). The fused shortlist is then **reranked**:
+scored against the pair's tables and SQL, which no retriever indexes, and
+diversified so three exemplars teach three patterns rather than one three times.
 
-Retrieving the examples is on by default; **showing** them to the SQL generator
-is a separate switch (`--multi-shot`, off by default) so the ranking can be
-inspected before it steers generation.
+The winners are replayed to the model as real conversation turns -- human asks,
+assistant answers with SQL -- in front of the actual question. Prose tells the
+model the rule; a worked example shows it applied.
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -311,8 +312,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 388 tests, no Docker or network needed
-pytest --run-docker     # all 460, including ones that build and run containers
+pytest                  # 417 tests, no Docker or network needed
+pytest --run-docker     # all 495, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -323,13 +324,13 @@ pytest --run-docker     # all 460, including ones that build and run containers
 | [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, and `setup.sh` run against fake `docker`/`curl` binaries |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 
-The 72 tests behind `--run-docker` are the ones that need a working daemon:
+The 78 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Twenty-eight of those 72 also need the **embedding host**: a local Ollama serving
+Thirty-four of those 78 also need the **embedding host**: a local Ollama serving
 `bge-m3`, the model both vector stores were built with. Without it they skip
 with that as the stated reason rather than failing. Start it with `ollama serve`
 (and `ollama pull bge-m3` once) to run the whole suite.

@@ -493,14 +493,14 @@ def test_tables_an_example_queries_are_added_to_the_selection():
     assert "not_a_real_table" not in state["selected_tables"]
 
 
-def test_examples_are_withheld_from_the_prompt_until_multi_shot_is_on():
-    """Retrieval and prompting are separate switches. With multi-shot off the
-    pairs are still retrieved and inspectable, but the generator must not see
-    them -- otherwise the next step has already happened by accident.
+def test_examples_are_replayed_as_turns_only_when_multi_shot_is_on():
+    """Retrieval and prompting stay separate switches. With multi-shot off the
+    pairs are still retrieved and inspectable, but the generator sees the plain
+    two-message prompt; with it on they arrive as exemplar turns.
     """
     db = FakeDatabase(tables=["dim_store"])
 
-    def run(multi_shot: bool) -> str:
+    def run(multi_shot: bool):
         llm = ScriptedLLM(
             table_selection=TableSelection(tables=["dim_store"]),
             sql_responses=["SELECT 1"],
@@ -510,13 +510,20 @@ def test_examples_are_withheld_from_the_prompt_until_multi_shot_is_on():
             db, llm, FakeKnowledgeBase(), FakeGoldenPairLibrary(), multi_shot_enabled=multi_shot
         )
         state = agent.run("how many stores")
-        assert state["examples"], "examples should be retrieved either way"
-        # The generation prompt is the second plain invocation-free call: the
-        # table selection is structured, so invoke() only sees generation.
-        return "\n".join(str(m.content) for m in llm.plain_invocations[0])
+        assert state["example_shots"], "examples should be retrieved either way"
+        # Table selection goes through with_structured_output, so the plain
+        # invoke() the generator makes is the only one recorded here.
+        return llm.plain_invocations[0]
 
-    assert "Worked examples" not in run(multi_shot=False)
-    assert "Worked examples" in run(multi_shot=True)
+    without = run(multi_shot=False)
+    assert [m.type for m in without] == ["system", "human"]
+
+    with_shots = run(multi_shot=True)
+    assert [m.type for m in with_shots] == ["system", "human", "ai", "human"]
+    assert "SELECT DISTINCT week_key" in str(with_shots[2].content)
+    # The real question is last, and never appears inside an exemplar.
+    assert "how many stores" in str(with_shots[-1].content)
+    assert "how many stores" not in "".join(str(m.content) for m in with_shots[:-1])
 
 
 def test_examples_disabled_skips_the_step_but_keeps_the_node():

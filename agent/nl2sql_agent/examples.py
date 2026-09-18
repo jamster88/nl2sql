@@ -55,6 +55,9 @@ from typing import Protocol
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
+from .rerank import DEFAULT_GROUNDING_WEIGHT, DEFAULT_LAMBDA, DEFAULT_RERANK, DEFAULT_RERANK_K
+from .rerank import rerank as rerank_pairs
+
 PAIRS_TABLE = "golden_pairs"
 BM25_FUNCTION = "golden_pairs_bm25"
 QUESTION_VECTORS = "golden_pair_question_vectors"
@@ -104,6 +107,9 @@ class GoldenPair:
     sql_code: str
     result: str
     score: float = 0.0
+    # Set by the rerank stage; the fused score above is left alone so both are
+    # visible in --json output and the two stages can be told apart.
+    rerank_score: float = 0.0
     ranks: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -242,6 +248,10 @@ class GoldenPairLibrary:
         weights: dict[str, float] | None = None,
         fusion: str = DEFAULT_FUSION,
         rrf_k: int = DEFAULT_RRF_K,
+        rerank: str = DEFAULT_RERANK,
+        rerank_k: int = DEFAULT_RERANK_K,
+        rerank_lambda: float = DEFAULT_LAMBDA,
+        grounding_weight: float = DEFAULT_GROUNDING_WEIGHT,
         statement_timeout_ms: int = 15000,
     ) -> None:
         if fusion not in FUSIONS:
@@ -254,6 +264,10 @@ class GoldenPairLibrary:
         self._weights = dict(weights or DEFAULT_WEIGHTS)
         self._fusion = fusion
         self._rrf_k = rrf_k
+        self._rerank = rerank
+        self._rerank_k = rerank_k
+        self._rerank_lambda = rerank_lambda
+        self._grounding_weight = grounding_weight
         self._statement_timeout_ms = statement_timeout_ms
 
     @property
@@ -263,6 +277,10 @@ class GoldenPairLibrary:
     @property
     def fusion(self) -> str:
         return self._fusion
+
+    @property
+    def reranker(self) -> str:
+        return self._rerank
 
     def count(self) -> int:
         """How many pairs are loaded -- a cheap reachability check."""
@@ -275,26 +293,78 @@ class GoldenPairLibrary:
             ) from exc
 
     def search(self, question: str, top_k: int | None = None) -> list[GoldenPair]:
-        """The ensemble: three rankings, fused, then hydrated into full rows."""
+        """Retrieve wide, fuse, rerank, cut to k.
+
+        The shortlist that enters the rerank is deliberately wider than k: a
+        reranker that only ever sees the pairs the fusion already chose can
+        reorder them but never rescue one the fusion ranked fourth.
+        """
         k = top_k if top_k is not None else self._top_k
         if k <= 0 or not question.strip():
             return []
 
         rankings = self.rank(question)
-        fused = FUSIONS[self._fusion](rankings, self._weights, rrf_k=self._rrf_k)[:k]
-        if not fused:
+        fused = FUSIONS[self._fusion](rankings, self._weights, rrf_k=self._rrf_k)
+        shortlist = fused[: max(self._rerank_k, k)]
+        if not shortlist:
             return []
 
-        rows = self._hydrate([chunk_id for chunk_id, _, _ in fused])
+        rows = self._hydrate([chunk_id for chunk_id, _, _ in shortlist])
         pairs: list[GoldenPair] = []
-        for chunk_id, score, ranks in fused:
+        for chunk_id, score, ranks in shortlist:
             row = rows.get(chunk_id)
             if row is None:  # a vector with no row behind it: skip, don't fail
                 continue
             row.score = score
             row.ranks = ranks
             pairs.append(row)
-        return pairs
+
+        return rerank_pairs(
+            question,
+            pairs,
+            k,
+            strategy=self._rerank,
+            similarity=self._pair_similarity(pairs) if self._rerank == "mmr" else None,
+            lambda_=self._rerank_lambda,
+            grounding_weight=self._grounding_weight,
+        )
+
+    def _pair_similarity(self, pairs: list[GoldenPair]):
+        """Pair-to-pair cosine over the stored question vectors, fetched once.
+
+        MMR needs to know how alike two candidates are. The vectors are already
+        in the store, so one query over the shortlist is cheaper and truer than
+        comparing their text. An unreachable store costs the diversity term
+        rather than the whole search -- the rerank falls back to relevance order.
+        """
+        ids = [p.chunk_id for p in pairs]
+        table: dict[tuple[str, str], float] = {}
+        if len(ids) > 1:
+            try:
+                with self._vectors.connect() as conn:
+                    self._apply_timeout(conn)
+                    rows = conn.exec_driver_sql(
+                        f"""
+                        SELECT a.chunk_id, b.chunk_id,
+                               1 - (a.embedding <=> b.embedding) AS similarity
+                        FROM "{QUESTION_VECTORS}" a
+                        JOIN "{QUESTION_VECTORS}" b ON b.chunk_id > a.chunk_id
+                        WHERE a.chunk_id = ANY(%s) AND b.chunk_id = ANY(%s)
+                        """,
+                        (ids, ids),
+                    ).fetchall()
+                for left, right, similarity in rows:
+                    table[(left, right)] = float(similarity)
+            except Exception:
+                return None
+
+        def similarity(a: str, b: str) -> float:
+            if a == b:
+                return 1.0
+            key = (a, b) if a < b else (b, a)
+            return table.get(key, 0.0)
+
+        return similarity
 
     def rank(self, question: str) -> dict[str, Ranked]:
         """Each retriever's candidates, unfused -- exposed for evaluation."""

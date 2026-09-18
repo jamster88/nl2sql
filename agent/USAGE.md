@@ -38,7 +38,7 @@ Point it somewhere else with `./setup.sh --ollama-url URL --model NAME`;
 `./setup.sh --help` lists every flag.
 
 The agent uses **two** models on **two** possibly different hosts: a chat model
-(default `qwen3.8:latest` on `http://192.168.10.82:11434`) that writes the SQL,
+(default `qwen3.8-256k` on `http://192.168.10.82:11434`) that writes the SQL,
 and an embedding model (default `bge-m3` on the Ollama running on your own
 machine) that searches the knowledge base. `./setup.sh` warns about either one
 being unreachable. Retrieval is optional -- without it the agent still answers,
@@ -78,7 +78,7 @@ docker compose run --rm agent
 ```
 
 ```
-Connected to qwen3.8:latest at http://192.168.10.82:11434.
+Connected to qwen3.8-256k at http://192.168.10.82:11434.
 Ask a question, or Ctrl-D to exit.
 
 > How many vendors are there?
@@ -200,6 +200,43 @@ and carries on without it:
 [knowledge] skipped: Could not search the knowledge base: connection failed ...
 ```
 
+## Worked examples and multi-shot
+
+Alongside the knowledge base the agent retrieves **worked examples**: real
+questions from
+[`../context_questions/translated_questions.md`](../context_questions/translated_questions.md)
+already answered with SQL that runs against this database. They are chosen by an
+ensemble of three retrievers, reranked for relevance and variety, and then
+replayed to the model as conversation turns in front of your question -- so it
+sees the pattern demonstrated rather than described.
+
+The `[examples]` progress line names what was chosen and its score:
+
+```
+[examples] 3 pair(s) -- Q01 (0.850), Q08 (0.255), Q21 (0.279)
+```
+
+Useful flags:
+
+```bash
+docker compose run --rm agent --no-multi-shot "..."      # retrieve them, but do not prompt with them
+docker compose run --rm agent --no-examples "..."        # skip the retrieval entirely, v2 behavior
+docker compose run --rm agent --examples-top-k 5 "..."   # more exemplar turns
+docker compose run --rm agent --json "..." | jq .example_pairs
+```
+
+`--json` reports both scores per pair: `score` is where the ensemble's fusion
+put it, `rerank_score` is where the second pass moved it to. A pair with a lower
+fused score sitting above a higher one is the diversity term working -- three
+exemplars that all demonstrate the same trick teach less than three that do not.
+
+If the context store, the vector store or the embedding host is unreachable, the
+examples are skipped and the run continues:
+
+```
+[examples] skipped: Could not read golden_pairs from the context store: ...
+```
+
 ## Choosing a model or host
 
 ```bash
@@ -277,8 +314,8 @@ running and reachable, and note that port 11434 serves http, not https.
 
 error: Model `no-such-model:latest` not found in Ollama. Please pull the model
 (using `ollama pull no-such-model:latest`) or specify a valid model name.
-Available local models: gemma4:12b-mlx, qwen3.6:latest, qwen3.8:latest,
-qwen3-coder-next:latest
+Available local models: gemma4:12b-mlx, qwen3.6:latest, qwen3.8-256k,
+qwen3.8:latest, qwen3-coder-next:latest
 ```
 
 | Symptom | Cause | Fix |
@@ -286,7 +323,7 @@ qwen3-coder-next:latest
 | `Cannot reach Ollama at ...` | host unreachable from the container, or `https://` was used | Check the URL and that Ollama is listening; confirm with the `curl` above |
 | `Model ... not found in Ollama` | model not pulled on that host | `ollama pull <model>` on the host, or pick one from the list in the message |
 | `does not provide tool support` or malformed table picks | model lacks tool/structured-output support | Choose a model whose `capabilities` include `tools` |
-| Answers reference columns that do not exist | schema context truncated | Raise `OLLAMA_NUM_CTX` (default 16384) |
+| Answers reference columns that do not exist | schema context truncated | Raise `OLLAMA_NUM_CTX` (default 262144) |
 | Query times out | statement exceeded 30s | Narrow the question, or raise `STATEMENT_TIMEOUT_MS` |
 | Results cut off with `... truncated at 50 rows` | row cap | Raise `--max-rows` |
 

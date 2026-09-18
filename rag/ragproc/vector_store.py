@@ -117,17 +117,29 @@ def delete_missing(conn: psycopg.Connection, slug: str, keep_ids: list[str]) -> 
     return result.rowcount or 0
 
 
+def vector_literal(vector) -> str:
+    """pgvector's text input format.
+
+    A plain list of floats binds as `double precision[]`, which has no `<=>`
+    operator at all, so the query fails rather than returning something wrong.
+    The text form plus an explicit cast avoids needing a client-side vector
+    type, and matches what the agent-side retrievers do.
+    """
+    return "[" + ",".join(repr(float(v)) for v in vector) + "]"
+
+
 def search(
     conn: psycopg.Connection, slug: str, query_vector, limit: int = 5
 ) -> list[dict]:
     """Nearest chunks by cosine distance -- used by the RAG retriever later."""
     table = embedding_table(slug)
+    literal = vector_literal(query_vector)
     rows = conn.execute(
         sql.SQL(
-            "SELECT chunk_id, heading_path, content, embedding <=> %s AS distance "
-            "FROM {} ORDER BY embedding <=> %s LIMIT %s"
+            "SELECT chunk_id, heading_path, content, embedding <=> %s::vector AS distance "
+            "FROM {} ORDER BY embedding <=> %s::vector, ordinal LIMIT %s"
         ).format(sql.Identifier(table)),
-        (query_vector, query_vector, limit),
+        (literal, literal, limit),
     ).fetchall()
     return [
         {"chunk_id": r[0], "heading_path": r[1], "content": r[2], "distance": float(r[3])}

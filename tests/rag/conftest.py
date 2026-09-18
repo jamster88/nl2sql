@@ -59,8 +59,12 @@ def _scratch_database(url: str, connect):
         pytest.skip(f"cannot create a scratch database ({exc}); ragproc may lack CREATEDB")
 
     conn = None
+    scratch_url = _with_database(url, name)
     try:
-        conn = connect(_with_database(url, name))
+        conn = connect(scratch_url)
+        # Handed out so a test can open its own connection with whichever
+        # `connect()` helper is under test.
+        conn.scratch_url = scratch_url  # type: ignore[attr-defined]
         yield conn
     finally:
         if conn is not None:

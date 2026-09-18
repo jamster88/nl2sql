@@ -205,3 +205,71 @@ def test_an_unreachable_host_says_so_and_mentions_the_http_trap(monkeypatch):
     monkeypatch.setattr(embedder_module.requests, "get", fake_get)
     with pytest.raises(RuntimeError, match="http, not https"):
         embedder_module.OllamaEmbedder("bge-m3", "https://h:11434").check()
+
+
+# ---------------------------------------------------------------------------
+# The sentence-transformers backend
+# ---------------------------------------------------------------------------
+
+
+class _FakeSentenceTransformer:
+    """Stands in for the real class, which pulls in torch and model weights."""
+
+    def __init__(self, name):
+        self.name = name
+
+    def get_sentence_embedding_dimension(self):
+        return 1024
+
+    def encode(self, texts, convert_to_numpy=True):
+        import numpy as np
+
+        return np.array([[float(len(t))] * 3 for t in texts])
+
+
+@pytest.fixture
+def stub_sentence_transformers(monkeypatch):
+    """Injects a fake `sentence_transformers` module.
+
+    The real import happens inside __init__ precisely so the Ollama path does
+    not need torch installed -- which also means it can be replaced here.
+    """
+    import types
+
+    module = types.ModuleType("sentence_transformers")
+    module.SentenceTransformer = _FakeSentenceTransformer
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+    return module
+
+
+@pytest.mark.parametrize("name", ["sentence-transformers", "st"])
+def test_the_local_weights_backend_is_reachable_by_either_name(stub_sentence_transformers, name):
+    built = embedder_module.build_embedder(name, "BAAI/bge-m3", "http://unused")
+    assert isinstance(built, embedder_module.SentenceTransformerEmbedder)
+    assert built.model_name == "BAAI/bge-m3"
+
+
+def test_the_local_backend_reports_the_models_dimension(stub_sentence_transformers):
+    built = embedder_module.build_embedder("st", "BAAI/bge-m3", "http://unused")
+    assert built.dimension == 1024
+
+
+def test_the_local_backend_returns_plain_lists_not_arrays(stub_sentence_transformers):
+    """They go straight into a pgvector literal, and a numpy array formats with
+    spaces that pgvector will not parse.
+    """
+    built = embedder_module.build_embedder("st", "m", "http://unused")
+    vectors = built.embed(["ab", "cde"])
+    assert vectors == [[2.0, 2.0, 2.0], [3.0, 3.0, 3.0]]
+    assert all(isinstance(v, list) for v in vectors)
+
+
+def test_the_local_backend_embeds_nothing_without_calling_the_model(stub_sentence_transformers):
+    assert embedder_module.build_embedder("st", "m", "http://unused").embed([]) == []
+
+
+def test_the_local_backend_has_no_host_to_check(stub_sentence_transformers):
+    """It runs in-process, so there is nothing to be unreachable -- but the
+    pipeline calls check() for whichever backend it built.
+    """
+    assert embedder_module.build_embedder("st", "m", "http://unused").check() is None

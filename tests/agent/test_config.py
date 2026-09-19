@@ -15,6 +15,20 @@ from nl2sql_agent.config import (
 )
 
 
+def test_the_default_database_url_is_the_read_only_role_not_the_owner():
+    """Least privilege starts here: the agent's built-in identity is the
+    reader created by docker/reader_role.sql. The owner that loads the data
+    (`nl2sql`, per docker/Dockerfile) must never be the default, or a run
+    with DATABASE_URL unset would silently have write access.
+    """
+    from sqlalchemy.engine import make_url
+
+    url = make_url(DEFAULT_DATABASE_URL)
+    assert url.username == "nl2sql_reader"
+    assert url.username != "nl2sql"
+    assert url.database == "nl2sql_retail"
+
+
 def test_defaults_when_env_is_empty(monkeypatch):
     for var in (
         "OLLAMA_BASE_URL", "OLLAMA_MODEL", "OLLAMA_TEMPERATURE", "OLLAMA_REASONING",

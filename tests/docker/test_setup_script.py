@@ -407,3 +407,27 @@ def test_the_closing_message_names_all_three_containers(run_setup):
     assert "nl2sql-postgres" in result.output
     assert "nl2sql-vectordb" in result.output
     assert 'docker compose run --rm agent "How many stores are there?"' in result.output
+
+
+# ---------------------------------------------------------------------------
+# The agent's read-only role
+# ---------------------------------------------------------------------------
+
+
+def test_default_run_creates_the_agents_read_only_role(run_setup):
+    """Setup ends by telling the user to run the agent, and the agent connects
+    as the reader role -- so setup has to create it, as the superuser, before
+    that command can work.
+    """
+    result = run_setup()
+    [call] = result.calls_matching("reader=")
+    assert "compose exec -T postgres psql -U postgres" in call
+    assert "reader=nl2sql_reader" in call and "owner=nl2sql" in call
+    assert "read-only role nl2sql_reader ready" in result.output
+
+
+def test_a_role_that_cannot_be_created_is_fatal(run_setup):
+    result = run_setup(env={"FAKE_READER_ROLE_FAILS": "1"})
+    assert result.returncode != 0
+    assert "read-only role" in result.output
+    assert "docker compose logs postgres" in result.output

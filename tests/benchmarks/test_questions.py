@@ -33,7 +33,7 @@ from benchmarks.questions import (  # noqa: E402
 
 EXPECTED_COUNT = 15
 DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail"
+    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
 )
 
 

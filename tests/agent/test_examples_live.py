@@ -260,13 +260,13 @@ def test_a_reranked_pair_reports_both_its_fused_and_rerank_scores(library):
     assert pair.rerank_score > 0
 
 
-def test_the_rerank_survives_an_unreachable_vector_store_for_similarity():
+def test_the_rerank_survives_an_unreachable_vector_store_for_similarity(library):
     """The pair-to-pair cosine is a nice-to-have. Losing it costs the diversity
     term; the search still returns relevant examples.
+
+    Takes `library` purely for its skip guard: searching needs the embedder,
+    so without it this fails on bge-m3 being down while the rest of the
+    module skips.
     """
-    lib = GoldenPairLibrary(
-        CONTEXT_DB_URL, VECTOR_DB_URL, build_embedder(_Settings()),
-        top_k=3, candidate_k=10, rerank="mmr",
-    )
-    pairs = lib.search("gross margin by department")
+    pairs = _library(rerank="mmr").search("gross margin by department")
     assert pairs, "expected examples even before considering diversity"

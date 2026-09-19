@@ -211,3 +211,45 @@ def test_quiet_still_prints_problems(run_launch):
     """Silencing the good news must not silence the bad."""
     result = run_launch("-q", env={"FAKE_OLLAMA_DOWN": "1"})
     assert "could not reach the chat host" in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# The agent's read-only role
+# ---------------------------------------------------------------------------
+
+
+def test_it_creates_the_agents_read_only_role_on_every_start(run_launch):
+    """The published image predates the role and a volume keeps whatever roles
+    it had, so launch (re)creates it each time rather than assuming it.
+    """
+    result = run_launch()
+    [call] = result.calls_matching("reader=")
+    assert "compose exec -T postgres psql -U postgres" in call
+    assert "-d nl2sql_retail" in call
+    assert "reader=nl2sql_reader" in call and "owner=nl2sql" in call
+    assert "can read every table and write none" in result.output
+
+
+def test_the_role_is_created_even_without_rag(run_launch):
+    assert run_launch("--no-rag").called("reader=nl2sql_reader")
+
+
+def test_the_role_follows_the_credentials_compose_will_use(run_launch):
+    """Shell overrides win, then .env -- the same precedence compose applies
+    to DATABASE_URL, or the agent would be handed a role that does not exist.
+    """
+    from_env_file = run_launch(env_file="IMAGE_NAME=x\nPOSTGRES_READER_USER=dotenv_reader\nPOSTGRES_DB=other_db\n")
+    [call] = from_env_file.calls_matching("reader=")
+    assert "reader=dotenv_reader" in call and "-d other_db" in call
+
+    from_shell = run_launch(env={"POSTGRES_READER_USER": "shell_reader", "POSTGRES_USER": "shell_owner"},
+                            env_file="POSTGRES_READER_USER=dotenv_reader\n")
+    call = from_shell.calls_matching("reader=")[-1]  # the sandbox log spans both runs
+    assert "reader=shell_reader" in call and "owner=shell_owner" in call
+
+
+def test_a_role_that_cannot_be_created_warns_that_the_agent_cannot_connect(run_launch):
+    result = run_launch(env={"FAKE_READER_ROLE_FAILS": "1"})
+    assert result.returncode == 0
+    assert "read-only role" in result.output
+    assert "fail to connect" in result.output

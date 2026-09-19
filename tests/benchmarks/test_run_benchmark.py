@@ -26,7 +26,7 @@ from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, St
 from tests.benchmarks.test_runner import result  # noqa: E402
 
 DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail"
+    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
 )
 
 

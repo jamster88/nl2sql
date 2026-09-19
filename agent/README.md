@@ -87,7 +87,7 @@ Every setting is an environment variable with a CLI override:
 | `OLLAMA_REASONING` | `--reasoning` / `--no-reasoning` | off |
 | `OLLAMA_TEMPERATURE` | -- | 0.0 |
 | `OLLAMA_NUM_CTX` | -- | 262144 (256k) |
-| `DATABASE_URL` | `--database-url` | the compose Postgres |
+| `DATABASE_URL` | `--database-url` | the compose Postgres, as the read-only `nl2sql_reader` role |
 | `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |
 | `MAX_SQL_ATTEMPTS` | `--max-attempts` | 3 |
@@ -303,13 +303,25 @@ retrieval is a v1 run.
 
 ## Safety
 
-Generated SQL is untrusted, so execution has two independent layers:
+Generated SQL is untrusted, so execution has three independent layers:
 
 1. **Static check** (`ensure_read_only`) -- must be a single statement starting
    with `SELECT` or `WITH`.
 2. **`READ ONLY` transaction** with a statement timeout -- this is what stops a
    data-modifying CTE such as `WITH d AS (DELETE ... RETURNING *) SELECT * FROM d`,
    which is a legitimate `WITH` query as far as layer 1 is concerned.
+3. **A read-only database role** -- the agent connects as `nl2sql_reader`, which
+   holds `SELECT` on the tables and nothing else (see
+   [`docker/reader_role.sql`](../docker/reader_role.sql)). The owner that loads
+   the data is never in the agent's `DATABASE_URL`, so a write that somehow got
+   past the first two layers is refused by Postgres itself with
+   `permission denied`.
+
+Layers 1 and 2 are tested in `tests/agent/test_database_safety.py` and
+`tests/agent/test_database_live.py`; layer 3 in
+`tests/agent/test_least_privilege_live.py`, which asks the live catalog what
+the role holds and then tries every write path anyway. The last two need a
+started stack and `pytest --run-docker`.
 
 Results are capped at `--max-rows`, and the flag reports when output was
 truncated rather than silently cutting it off.
@@ -389,7 +401,7 @@ want the model to choose its own sequence rather than following a fixed graph.
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r agent/requirements.txt
-DATABASE_URL="postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail" \
+DATABASE_URL="postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail" \
 VECTOR_DB_URL="postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors" \
 EMBED_BASE_URL="http://localhost:11434" \
   python -m nl2sql_agent "How many stores are there?"

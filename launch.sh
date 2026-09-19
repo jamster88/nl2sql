@@ -88,6 +88,30 @@ wait_healthy() {
     die "$container did not become healthy (last status: ${status:-unknown}). Check: docker compose logs ${container#nl2sql-}"
 }
 
+# --- Read-only role --------------------------------------------------------
+# The agent connects as a role that can SELECT and nothing else, not as the
+# owner that loaded the data. A volume created from an image that predates
+# that role keeps whatever roles it had, so the role is (re)created on every
+# start; docker/reader_role.sql is idempotent. Local connections inside the
+# container are trusted, which is why no superuser password is needed here.
+compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
+    local value="${!1:-}"
+    if [[ -z "$value" && -f .env ]]; then
+        value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
+    fi
+    printf '%s' "${value:-$2}"
+}
+
+ensure_reader_role() {
+    docker compose exec -T postgres psql -U postgres -q \
+        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -v ON_ERROR_STOP=1 \
+        -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
+        -v reader_password="$(compose_env POSTGRES_READER_PASSWORD nl2sql_reader)" \
+        -v owner="$(compose_env POSTGRES_USER nl2sql)" \
+        -f - < docker/reader_role.sql >/dev/null
+}
+
 step "Waiting for health checks"
 wait_healthy nl2sql-postgres
 info "nl2sql-postgres is healthy"
@@ -96,6 +120,14 @@ if [[ $WITH_RAG -eq 1 ]]; then
     info "nl2sql-vectordb is healthy"
     wait_healthy nl2sql-chunkdb
     info "nl2sql-chunkdb is healthy"
+fi
+
+step "Making sure the agent's read-only role exists"
+if ensure_reader_role; then
+    info "role $(compose_env POSTGRES_READER_USER nl2sql_reader) can read every table and write none"
+else
+    warn "could not create the agent's read-only role in the retail database."
+    warn "The agent will fail to connect. Check: docker compose logs postgres"
 fi
 
 # --- Contents --------------------------------------------------------------

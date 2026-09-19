@@ -88,7 +88,7 @@ def test_fails_fast_with_exit_two_when_ollama_is_unreachable(agent_image: str):
     result = _run_agent(
         agent_image,
         "--base-url", "http://127.0.0.1:1",
-        "--database-url", "postgresql+psycopg://nl2sql:nl2sql@127.0.0.1:1/nl2sql_retail",
+        "--database-url", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@127.0.0.1:1/nl2sql_retail",
         "some question",
     )
     assert result.returncode == 2

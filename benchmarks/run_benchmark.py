@@ -53,7 +53,7 @@ from benchmarks.runner import (  # noqa: E402
 # port is used instead. An environment variable still wins, so running the
 # benchmark inside the compose network needs no flags.
 HOST_DEFAULTS = {
-    "database_url": ("DATABASE_URL", "postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail"),
+    "database_url": ("DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"),
     "vector_db_url": ("VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
     "context_db_url": ("CONTEXT_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
     "embed_base_url": ("EMBED_BASE_URL", "http://localhost:11434"),

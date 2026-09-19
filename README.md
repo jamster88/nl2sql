@@ -302,6 +302,45 @@ docker compose up -d             # afterwards: just starts, nothing regenerated
 Connect with `psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail`
 (the `postgres` superuser has the same password).
 
+### Roles
+
+The cluster has two application roles, and the agent only ever uses the second:
+
+| Role | Password | Can | Used by |
+|---|---|---|---|
+| `nl2sql` | `nl2sql` | everything: owns the database and every table | the build (`ddl.sql`, the `COPY` load) and you, at a `psql` prompt |
+| `nl2sql_reader` | `nl2sql_reader` | `SELECT` on every table in `public`, nothing else | the agent, the benchmark, the live tests |
+
+The reader is created by [`docker/reader_role.sql`](docker/reader_role.sql):
+a plain login role with no `CREATE`, `INSERT`, `UPDATE` or `DELETE` anywhere,
+whose sessions also start read-only. Tables the owner adds later are readable
+too, through a default privilege. The agent's own `SET TRANSACTION READ ONLY`
+still runs on top of that; the grants are what hold if anything gets past it.
+
+The image build creates the role, and so do `setup.sh` and `launch.sh` on every
+start, because a volume created from an older image keeps the roles it had.
+The file is idempotent, so running it again is always safe. If you run the
+container by hand, do the same once:
+
+```bash
+docker exec -i nl2sql-postgres psql -U postgres -d nl2sql_retail \
+  -v reader=nl2sql_reader -v reader_password=nl2sql_reader -v owner=nl2sql \
+  -f - < docker/reader_role.sql
+```
+
+`POSTGRES_READER_USER` / `POSTGRES_READER_PASSWORD` rename the role; both the
+build and the agent's `DATABASE_URL` read them, so they stay in step.
+
+That this is really least privilege, and not just a file that says so, is
+tested against the live cluster by
+[`tests/agent/test_least_privilege_live.py`](tests/agent/test_least_privilege_live.py):
+it reads the role's attributes and grants back out of the catalog, tries every
+kind of write directly in a `READ WRITE` transaction, checks that a table the
+owner adds later is readable but not writable, and confirms the agent's own
+database layer runs as the reader. Pointed at the owner instead, 23 of its
+29 checks fail. Run it with `pytest tests/agent/test_least_privilege_live.py --run-docker`
+against a started stack.
+
 ### How the build works
 
 The build ([`docker/Dockerfile`](docker/Dockerfile)) is two stages:
@@ -351,8 +390,9 @@ GEN_ARGS="--scale 3 --seed 7" docker compose build
 docker compose down -v && docker compose up -d
 ```
 
-Other overrides: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (applied at
-build time), `POSTGRES_PORT`, `IMAGE_NAME`, `IMAGE_TAG`.
+Other overrides: `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`,
+`POSTGRES_READER_USER`, `POSTGRES_READER_PASSWORD` (applied at build time),
+`POSTGRES_PORT`, `IMAGE_NAME`, `IMAGE_TAG`.
 
 ### Pulling the prebuilt image
 
@@ -395,7 +435,9 @@ psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail
 ```
 
 The credentials are baked into the published cluster, so treat them as public --
-fine for synthetic test data, and not to be reused elsewhere.
+fine for synthetic test data, and not to be reused elsewhere. The `v1` image
+predates the agent's read-only role, so create it as shown under
+[Roles](#roles) before running the agent against a container started this way.
 
 #### Use it with compose
 
@@ -424,20 +466,20 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 564 tests, no Docker or network needed
-pytest --run-docker     # all 751, including ones that build and run containers
+pytest                  # 573 tests, no Docker or network needed
+pytest --run-docker     # all 796, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
-| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, and read-only enforcement |
+| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, `docker-compose.yml` as `docker compose config` resolves it, retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 187 tests behind `--run-docker` are the ones that need a working daemon:
+The 223 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than

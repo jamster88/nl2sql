@@ -21,7 +21,7 @@ from nl2sql_agent.database import Database, UnsafeQueryError
 pytestmark = pytest.mark.docker
 
 POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail"
+    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
 )
 
 
@@ -104,3 +104,29 @@ def test_an_empty_schema_yields_no_tables(db: Database):
     empty = Database(POSTGRES_URL, db_schema="schema_that_does_not_exist")
     assert empty.table_names() == []
     assert empty.describe_all_tables() == ""
+
+
+def test_the_reader_role_cannot_write_even_with_the_read_only_default_switched_off():
+    """The agent's role (docker/reader_role.sql) is the layer under both of
+    the others: `ensure_read_only` is a regex, `SET TRANSACTION READ ONLY` is
+    per transaction and the role's read-only default is a session setting.
+    Grants are what hold when all three are bypassed.
+    """
+    engine = sqlalchemy.create_engine(POSTGRES_URL)
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+    except sqlalchemy.exc.SQLAlchemyError as exc:
+        pytest.skip(f"no reachable Postgres at {POSTGRES_URL}: {exc}")
+
+    for statement in (
+        "DELETE FROM dim_store WHERE false",
+        "CREATE TABLE public.reader_role_probe (a int)",
+        "SELECT setval('dim_store_store_key_seq', 1)",
+    ):
+        with engine.connect() as conn, conn.begin() as tx:
+            # Overrides the role's read-only default for this transaction.
+            conn.exec_driver_sql("SET TRANSACTION READ WRITE")
+            with pytest.raises(sqlalchemy.exc.ProgrammingError, match="permission denied"):
+                conn.exec_driver_sql(statement)
+            tx.rollback()

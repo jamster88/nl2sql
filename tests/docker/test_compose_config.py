@@ -134,13 +134,41 @@ def test_agent_embeds_against_the_docker_host_not_the_compose_network(agent_prof
     assert "host.docker.internal=host-gateway" in agent["extra_hosts"]
 
 
-def test_agent_database_url_points_at_the_compose_postgres_service_and_matches_its_credentials(
+def test_agent_database_url_points_at_the_compose_postgres_service_as_the_read_only_role(
     agent_profile_config: dict,
 ):
+    """The agent only ever reads, so it connects as the reader role the image
+    creates (docker/reader_role.sql), never as the owner that loaded the data.
+    """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
     agent_env = agent_profile_config["services"]["agent"]["environment"]
-    user, password, name = postgres_args["DB_USER"], postgres_args["DB_PASSWORD"], postgres_args["DB_NAME"]
-    assert f"{user}:{password}@postgres:5432/{name}" in agent_env["DATABASE_URL"]
+    reader, password = postgres_args["DB_READER"], postgres_args["DB_READER_PASSWORD"]
+    assert f"{reader}:{password}@postgres:5432/{postgres_args['DB_NAME']}" in agent_env["DATABASE_URL"]
+    assert reader != postgres_args["DB_USER"]
+    assert f"{postgres_args['DB_USER']}:" not in agent_env["DATABASE_URL"]
+
+
+def test_the_owners_credentials_never_reach_the_agent_container(agent_profile_config: dict):
+    """Least privilege at the compose level: the only Postgres identity in the
+    agent's environment is the reader. The owner's password is a build arg
+    of the postgres service and nothing else.
+    """
+    postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
+    agent_env = agent_profile_config["services"]["agent"]["environment"]
+    owner, owner_password = postgres_args["DB_USER"], postgres_args["DB_PASSWORD"]
+    for key, value in agent_env.items():
+        assert f"{owner}:" not in str(value), f"{key} carries the owner's login"
+        assert f":{owner_password}@" not in str(value), f"{key} carries the owner's password"
+
+
+def test_the_reader_role_can_be_renamed_from_the_environment(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={"POSTGRES_READER_USER": "ro", "POSTGRES_READER_PASSWORD": "secret"},
+    )
+    assert config["services"]["postgres"]["build"]["args"]["DB_READER"] == "ro"
+    assert "ro:secret@postgres:5432/" in config["services"]["agent"]["environment"]["DATABASE_URL"]
 
 
 def test_named_volumes_are_declared_persistent(agent_profile_config: dict):

@@ -148,6 +148,19 @@ def test_agent_database_url_points_at_the_compose_postgres_service_as_the_read_o
     assert f"{postgres_args['DB_USER']}:" not in agent_env["DATABASE_URL"]
 
 
+def test_the_owners_credentials_never_reach_the_agent_container(agent_profile_config: dict):
+    """Least privilege at the compose level: the only Postgres identity in the
+    agent's environment is the reader. The owner's password is a build arg
+    of the postgres service and nothing else.
+    """
+    postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
+    agent_env = agent_profile_config["services"]["agent"]["environment"]
+    owner, owner_password = postgres_args["DB_USER"], postgres_args["DB_PASSWORD"]
+    for key, value in agent_env.items():
+        assert f"{owner}:" not in str(value), f"{key} carries the owner's login"
+        assert f":{owner_password}@" not in str(value), f"{key} carries the owner's password"
+
+
 def test_the_reader_role_can_be_renamed_from_the_environment(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("compose"),

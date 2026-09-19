@@ -317,6 +317,12 @@ Generated SQL is untrusted, so execution has three independent layers:
    past the first two layers is refused by Postgres itself with
    `permission denied`.
 
+Layers 1 and 2 are tested in `tests/agent/test_database_safety.py` and
+`tests/agent/test_database_live.py`; layer 3 in
+`tests/agent/test_least_privilege_live.py`, which asks the live catalog what
+the role holds and then tries every write path anyway. The last two need a
+started stack and `pytest --run-docker`.
+
 Results are capped at `--max-rows`, and the flag reports when output was
 truncated rather than silently cutting it off.
 

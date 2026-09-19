@@ -14,7 +14,9 @@ DEFAULT_OLLAMA_MODEL = "qwen3.8-256k"
 # 256 * 1024. Ollama allocates the KV cache from this, so it is a real memory
 # cost on the serving host, not just a cap.
 DEFAULT_NUM_CTX = 262144
-DEFAULT_DATABASE_URL = "postgresql+psycopg://nl2sql:nl2sql@postgres:5432/nl2sql_retail"
+# The read-only role created by docker/reader_role.sql, not the owner that
+# loads the data: the agent only ever reads.
+DEFAULT_DATABASE_URL = "postgresql+psycopg://nl2sql_reader:nl2sql_reader@postgres:5432/nl2sql_retail"
 
 # The knowledge base built by the RAG pipeline: one pgvector collection per
 # document in knowledge/. Host name is the compose service; override for a

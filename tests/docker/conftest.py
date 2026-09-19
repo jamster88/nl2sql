@@ -75,7 +75,11 @@ case "$1" in
             exec)
                 # Ordered most specific first: several of these run against the
                 # same service and are told apart only by the SQL.
-                if [[ "$*" == *golden_pair_question_vectors* ]]; then
+                if [[ "$*" == *reader=* ]]; then
+                    # docker/reader_role.sql, piped in as the superuser.
+                    [[ -n "${FAKE_READER_ROLE_FAILS:-}" ]] && exit 1
+                    exit 0
+                elif [[ "$*" == *golden_pair_question_vectors* ]]; then
                     echo "${FAKE_VECTOR_COUNT-45}"
                 elif [[ "$*" == *golden_pairs* ]]; then
                     echo "${FAKE_PAIR_COUNT-45}"
@@ -152,6 +156,12 @@ class SetupRun:
         return [call for call in self.calls if fragment in call]
 
 
+def _copy_reader_role_sql(workdir: Path) -> None:
+    """Both scripts pipe docker/reader_role.sql into the (fake) container."""
+    (workdir / "docker").mkdir()
+    shutil.copy(REPO_ROOT / "docker" / "reader_role.sql", workdir / "docker" / "reader_role.sql")
+
+
 @pytest.fixture
 def run_setup(tmp_path: Path):
     """Run setup.sh in a sandbox. Returns a callable: run_setup(*args, env=...)."""
@@ -161,6 +171,7 @@ def run_setup(tmp_path: Path):
     for name in ("setup.sh", "docker-compose.yml"):
         shutil.copy(REPO_ROOT / name, workdir / name)
     os.chmod(workdir / "setup.sh", 0o755)
+    _copy_reader_role_sql(workdir)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -207,6 +218,7 @@ def run_launch(tmp_path: Path):
     for name in ("launch.sh", "setup.sh", "docker-compose.yml"):
         shutil.copy(REPO_ROOT / name, workdir / name)
         os.chmod(workdir / name, 0o755)
+    _copy_reader_role_sql(workdir)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

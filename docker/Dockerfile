@@ -28,12 +28,17 @@ FROM ${POSTGRES_IMAGE} AS db
 ARG DB_NAME=nl2sql_retail
 ARG DB_USER=nl2sql
 ARG DB_PASSWORD=nl2sql
+# The agent's read-only role (docker/reader_role.sql). DB_USER above owns the
+# data and is what loads it; the agent never connects as that.
+ARG DB_READER=nl2sql_reader
+ARG DB_READER_PASSWORD=nl2sql_reader
 
 # PGDATA must sit outside /var/lib/postgresql: that path is a VOLUME in the
 # base image, and anything written to a volume path during build is discarded.
 ENV PGDATA=/var/lib/pgdata
 
 COPY data_gen/ddl.sql /opt/nl2sql/ddl.sql
+COPY docker/reader_role.sql /opt/nl2sql/reader_role.sql
 COPY docker/init_db.sh /opt/nl2sql/init_db.sh
 RUN mkdir -p "$PGDATA" \
  && chown -R postgres:postgres "$PGDATA" /opt/nl2sql \

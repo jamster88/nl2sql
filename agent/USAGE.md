@@ -132,17 +132,29 @@ read.
 Progress goes to **stderr**, the answer goes to **stdout**:
 
 ```
+[screen] proceed / aggregate                              <- scope, injection, intent
 [knowledge] 12 chunk(s) -- business_index:Market share fan-out ...  <- what it retrieved
-[tables] fact_pos_retail_sales, dim_product, dim_date     <- tables it chose
-[schema] 4,812 characters of context                      <- schema + samples it read
+[examples] Q42 (0.675), Q36 (0.500), Q16 (0.394)          <- worked examples it found
+[tables] fact_pos_retail_sales, dim_product, dim_date     <- tables the vectors ranked
+[literals] "dairy and eggs" -> dim_product.department_name = 'Dairy & Eggs'
+[schema] fact_pos_retail_sales, dim_product, dim_date (+1 bridge: dim_date)
 [sql] SELECT p.department_name, SUM(...)                  <- the query it wrote
-[validation] valid                                        <- EXPLAIN + model review
+[validation] valid                                        <- AST parse, no model call
+[planner] cost 20,555.96                                  <- EXPLAIN, under the ceiling
 [result] 5 row(s)
+[chart] bar                                               <- chosen from the shape
+[narrative] 2 claim(s)                                    <- each naming its cells
+[audit] passed                                            <- every number traced back
+
+Meat & Seafood led on net sales at 821785.92.
 
 department_name | total_net_sales
 ----------------+----------------
 Meat & Seafood  | 821785.92
 ```
+
+The first five lines are Stage 1 and they run concurrently, so their order in
+the output is whichever finished first, not a sequence.
 
 Because the streams are separate, you can keep just the answer:
 
@@ -317,11 +329,14 @@ not the 2024 calendar year. Say "calendar 2024" if that is what you mean.
 ## When it cannot answer
 
 The agent validates every query before running it and retries up to three
-times, feeding the specific problems back to the model. If it still cannot
-produce a valid query, it stops rather than executing anything:
+times, feeding a specific repair hint back to the model. Every kind of failure
+spends the same budget -- a parse rejection, a planner error, a runtime error,
+or the audit judging the answer unsupported -- so there is no way to loop that
+does not count. If it still cannot produce a valid query, it stops rather than
+executing anything:
 
 ```
-failed: Could not produce a valid query in 3 attempts. Last problems: ...
+failed: Could not produce a valid query in 4 attempts. Last problems: ...
 ```
 
 That is the expected outcome for questions the data cannot answer, and for

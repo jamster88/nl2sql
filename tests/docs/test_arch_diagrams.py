@@ -25,14 +25,33 @@ DIAGRAMS = REPO_ROOT / "arch_diagrams"
 GRAPH_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "graph.py"
 RETRIEVAL_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "retrieval.py"
 EXAMPLES_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "examples.py"
+# v4's marker. state.py is the shared-state contract every v4 agent reads from
+# and writes to; v4 is the first version to have one, so its presence is what
+# says which pipeline is checked out.
+STATE_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "state.py"
 
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
+V4 = DIAGRAMS / "arch_v4.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
 # other diagrams still be verified against the tree that is here.
 RETRIEVAL_NODE = "retrieve_knowledge"
 EXAMPLES_NODE = "retrieve_examples"
+
+# v4 breaks that pattern, so it is pinned by what it actually did to v3's graph
+# rather than by a count. The two retrievals survive; the two model calls that
+# did not write the answer do not, and neither does fetch_schema, whose work
+# moved into the aggregator.
+V4_KEEPS = {"retrieve_knowledge", "retrieve_examples", "generate_sql", "execute_query", "give_up"}
+V4_DROPS = {"select_tables", "fetch_schema", "validate_sql"}
+V4_ADDS = {
+    "supervise", "refuse",                              # intake and screening
+    "retrieve_schema", "retrieve_literals", "aggregate",  # the rest of the fan-out
+    "validate_static", "planner_gate", "repair",        # the deterministic gates
+    "visualise", "narrate", "audit", "finish",          # presentation and audit
+}
 
 
 def graph_nodes() -> set[str]:
@@ -56,8 +75,14 @@ def this_tree_is_v3() -> bool:
     return EXAMPLES_PY.exists()
 
 
+def this_tree_is_v4() -> bool:
+    return STATE_PY.exists()
+
+
 def diagram_for_this_tree() -> Path:
     """The diagram that is supposed to describe the code actually checked out."""
+    if this_tree_is_v4():
+        return V4
     if this_tree_is_v3():
         return V3
     return V2 if this_tree_is_v2() else V1
@@ -79,13 +104,33 @@ def test_the_diagram_for_this_tree_matches_its_graph_exactly():
     )
 
 
-def test_each_version_differs_from_the_last_by_exactly_one_node():
-    """Each version is the one before it plus a single retrieval step, and the
-    set of diagrams has to keep saying so even though only one version is
-    checked out at a time.
+def test_each_version_up_to_v3_differs_from_the_last_by_exactly_one_node():
+    """v1, v2 and v3 are each the one before it plus a single retrieval step,
+    and the set of diagrams has to keep saying so even though only one version
+    is checked out at a time.
+
+    The rule stops at v3 because v4 stopped obeying it, not because it was
+    relaxed: see the test below for what v4 did instead.
     """
     assert diagram_nodes(V2) == diagram_nodes(V1) | {RETRIEVAL_NODE}
     assert diagram_nodes(V3) == diagram_nodes(V2) | {EXAMPLES_NODE}
+
+
+def test_v4_restructures_v3_rather_than_adding_one_more_node():
+    """What v4 actually did, as sets rather than as a count.
+
+    It is a rewrite of the pipeline, not a step appended to it: the two v3
+    model calls that did not write the answer are gone, table selection and
+    schema fetching collapse into the fan-in, and a repair loop and a
+    presentation stage arrive. Pinning that keeps the same guarantee the
+    incremental rule gave v1-v3 -- a node that quietly appears or disappears
+    from the drawing fails a test -- without pretending v4 was an increment.
+    """
+    v3, v4 = diagram_nodes(V3), diagram_nodes(V4)
+    assert V4_DROPS < v3, "v4 can only drop nodes v3 actually had"
+    assert v3 & v4 == V4_KEEPS, "v4 keeps both retrievals, generation, execution and give_up"
+    assert v4 - v3 == V4_ADDS, "the new agents are exactly the ones named above"
+    assert v4 == (v3 - V4_DROPS) | V4_ADDS
 
 
 def test_the_retrieval_node_is_present_exactly_when_the_module_is():
@@ -104,7 +149,21 @@ def test_the_examples_node_is_present_exactly_when_the_module_is():
     )
 
 
-@pytest.mark.parametrize("svg", [V1, V2, V3], ids=["v1", "v2", "v3"])
+def test_the_v4_agents_are_present_exactly_when_the_shared_state_module_is():
+    """Twelve nodes rather than one, so this asks about the whole set: either
+    the tree has the v4 state contract and the diagram draws every v4 agent,
+    or it has neither.
+    """
+    drawn = diagram_nodes(diagram_for_this_tree())
+    if this_tree_is_v4():
+        assert V4_ADDS <= drawn, f"state.py is here but {sorted(V4_ADDS - drawn)} is not drawn"
+    else:
+        assert V4_ADDS.isdisjoint(drawn), (
+            f"{sorted(V4_ADDS & drawn)} is drawn, but this tree has no state.py"
+        )
+
+
+@pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=["v1", "v2", "v3", "v4"])
 def test_every_node_in_the_metadata_is_actually_drawn(svg: Path):
     """Guards the metadata itself: it is generated from the rows, so a node
     listed there but absent from the rendered text would mean the two drifted.
@@ -129,8 +188,9 @@ def generator():
 
 @pytest.mark.parametrize(
     "name,builder",
-    [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3")],
-    ids=["v1", "v2", "v3"],
+    [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
+     ("arch_v4.svg", "build_v4")],
+    ids=["v1", "v2", "v3", "v4"],
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
     """Catches both halves of the drift: an SVG edited by hand, and a change to
@@ -147,9 +207,10 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v1() == generator.build_v1()
     assert generator.build_v2() == generator.build_v2()
     assert generator.build_v3() == generator.build_v3()
+    assert generator.build_v4() == generator.build_v4()
 
 
-@pytest.mark.parametrize("svg", [V1, V2, V3], ids=["v1", "v2", "v3"])
+@pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=["v1", "v2", "v3", "v4"])
 def test_diagrams_are_well_formed_svg(svg: Path):
     root = xml.dom.minidom.parse(str(svg)).documentElement
     assert root.tagName == "svg"

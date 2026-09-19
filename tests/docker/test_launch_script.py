@@ -253,3 +253,15 @@ def test_a_role_that_cannot_be_created_warns_that_the_agent_cannot_connect(run_l
     assert result.returncode == 0
     assert "read-only role" in result.output
     assert "fail to connect" in result.output
+
+
+def test_it_installs_the_trigram_extension_the_literal_matcher_prefers(run_launch):
+    """Same reasoning as the reader role: the published image predates
+    pg_trgm and an existing volume keeps whatever extensions it had. The
+    agent falls back to difflib without it, so a failure warns rather than
+    stopping the launch.
+    """
+    result = run_launch()
+    [call] = result.calls_matching("CREATE EXTENSION")
+    assert "compose exec -T postgres psql -U postgres" in call
+    assert "IF NOT EXISTS pg_trgm" in call

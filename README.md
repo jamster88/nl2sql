@@ -15,7 +15,7 @@ the agent needs and leaves them ready:
 | `nl2sql-postgres` | The retail dataset, baked into the image |
 | `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
 | `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
-| `agent` | The v3 agent, run on demand per question |
+| `agent` | The v4 agent, run on demand per question |
 
 ### Two scripts
 
@@ -84,7 +84,7 @@ discard an existing database volume and start from the image's data.
 
 Stop everything with `docker compose down`; both databases keep their data.
 
-## NL2SQL agent (v3, RAG + worked examples)
+## NL2SQL agent (v4, multi-agent)
 
 A LangChain/LangGraph agent that answers natural language questions by writing,
 validating, and running SQL against the Postgres container below. It uses any
@@ -108,6 +108,23 @@ diversified so three exemplars teach three patterns rather than one three times.
 The winners are replayed to the model as real conversation turns -- human asks,
 assistant answers with SQL -- in front of the actual question. Prose tells the
 model the rule; a worked example shows it applied.
+
+**v4 splits the work across agents and takes the model out of two of them.**
+The same retrieval runs, now as four parallel branches -- schema, literals,
+knowledge, worked examples -- joined by a context aggregator. Table selection
+became a vector search over the DDL chunks plus foreign-key closure, and
+validation became a `pglast` parse plus a plain `EXPLAIN` with a cost ceiling.
+Both had been model calls, and between them they cost 863 of v3's 1499
+benchmark seconds without writing any part of the answer. A literal matcher
+resolves phrases to real values, so "dairy and eggs" reaches the generator as
+`dim_product.department_name = 'Dairy & Eggs'`. After execution a formatter
+picks a chart from the result's shape, a narrator writes claims that each name
+the cells they came from, and a deterministic audit checks every number against
+those cells. Any failure -- parse, planner, runtime or audit -- routes to one
+repair agent and spends one shared retry budget.
+
+The design, and every place it departs from the three source documents, is in
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md).
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -137,12 +154,13 @@ produce an answer at all.
 ### Pulling the agent image
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v3
+docker pull mcfaddja/nl2sql-agent:v4
 ```
 
 | Tag | Use |
 |---|---|
-| `v3` | RAG plus the golden-pair ensemble. Pinned -- what `setup.sh` pulls. |
+| `v4` | The multi-agent pipeline. Pinned -- what `setup.sh` pulls. |
+| `v3` | RAG plus the golden-pair ensemble, one linear graph. Pinned. |
 | `v2` | Retrieval over the knowledge base only. Pinned. |
 | `v1` | The original schema-only agent, before retrieval. Pinned. |
 | `latest` | Moves to the newest publish (currently the same image as `v2`). |
@@ -158,6 +176,11 @@ turned off -- `v1` has no `retrieval` module and no `--rag` flags; `v2` has no
 
 `v2` also reads the v3 databases quite happily: it finds its knowledge
 collections by name and never looks at the golden-pair tables.
+
+`v4` needs one thing the earlier images did not: a `nl2sql_reader` role, and
+`pg_trgm` if literal matching is to use trigram search rather than falling
+back to `difflib`. Both are created by `setup.sh` and `launch.sh` on every
+start, so a `v1` retail image works with the `v4` agent.
 
 `v1` is what the comparison below is measured against, and it is a genuinely
 different image rather than `v2` with retrieval switched off -- it has no
@@ -204,6 +227,7 @@ All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
 | `schema-only` (v1) | 12/15 (80%) | 14/15 | 5 | 511s | 21.0s |
 | `knowledge` (v2) | **15/15 (100%)** | 15/15 | 0 | 1251s | 81.8s |
 | `multi-shot` (v3) | **15/15 (100%)** | 15/15 | 0 | 1499s | 100.5s |
+| multi-agent (v4) | **15/15 (100%)** | 15/15 | 3 | 910s | 61.2s |
 
 | | analysis | calendar | fan-out | grain | schema |
 |---|---|---|---|---|---|
@@ -235,6 +259,25 @@ take **1.2 seconds**; the rest is the model:
   retrieve_knowledge      1.1s
   retrieve_examples       0.1s
 ```
+
+**v4 spends a third less time for the same answers**, by deleting the two model
+calls that were not writing them. Validation became an AST parse and a plain
+`EXPLAIN`; table selection became a vector search over the DDL chunks plus
+foreign-key closure:
+
+```
+  v3  validate_sql   499.4s   ->   v4  validate_static + planner_gate   0.1s
+  v3  select_tables  363.9s   ->   v4  retrieve_schema                  1.2s
+```
+
+It spends some of that back on a narrator, about a quarter of the run, which
+the architecture did not anticipate. What it buys is a narrative whose every
+number has been checked against a cell of the result rather than asserted, and
+`NARRATE_ENABLED=false` removes it.
+
+The retries are not a regression either: v3 had none because its LLM validator
+passed everything it did not reject outright, while v4's planner catches three
+real errors and repairs them without a model call.
 
 `select_tables` and `validate_sql` together cost more than generation itself.
 Two model calls that do not write the answer take the majority of the time,
@@ -466,8 +509,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 573 tests, no Docker or network needed
-pytest --run-docker     # all 796, including ones that build and run containers
+pytest                  # 856 tests, no Docker or network needed
+pytest --run-docker     # all 1091, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -479,7 +522,7 @@ pytest --run-docker     # all 796, including ones that build and run containers
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 223 tests behind `--run-docker` are the ones that need a working daemon:
+The 235 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than

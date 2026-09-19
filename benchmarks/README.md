@@ -163,8 +163,27 @@ SPEED
 ```
 
 Median rather than mean, because one retry loop doubles a mean and says nothing
-about a typical question. Stage totals sum repeats: `generate_sql` and
-`validate_sql` run again on every retry, and the useful number is the total.
+about a typical question. Stage totals sum repeats: `generate_sql` runs again on
+every retry, and the useful number is the total.
+
+### Where the timing comes from
+
+For a v3 run the harness times the gaps between the agent's progress callbacks:
+the graph calls back as each node finishes, so the gap is that node's duration.
+The v4 pipeline breaks that assumption. Its four Stage 1 retrievers are branches
+of one superstep and run concurrently, so the gap after one of them is not its
+duration.
+
+So each v4 node times itself and reports the result in `state["trace"]`, and the
+harness prefers that when it is there. The same entries carry a model-call
+count, which is what makes the architecture's economic claim checkable rather
+than merely stated: the happy path should cost three model calls, and the repair
+agent's classifier should keep most retries from costing a fourth.
+
+A v4 run also scores the **narrative**: the fraction of the answer's claims that
+the audit could trace back to a cell of the result set. Execution accuracy says
+whether the SQL was right; this says whether the user was told the truth about
+it, which is a different failure and one nothing in the v3 harness could see.
 
 ## Comparing configurations
 

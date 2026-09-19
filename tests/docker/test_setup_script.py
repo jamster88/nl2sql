@@ -82,7 +82,7 @@ def test_default_run_pulls_all_four_images(run_setup):
     assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
     assert result.called("pull mcfaddja/nl2sql-rag-vectordb:v3")
     assert result.called("pull mcfaddja/nl2sql-rag-chunkdb:v3")
-    assert result.called("pull mcfaddja/nl2sql-agent:v3")
+    assert result.called("pull mcfaddja/nl2sql-agent:v4")
 
 
 def test_default_run_starts_every_database(run_setup):
@@ -97,7 +97,7 @@ def test_default_run_writes_env_pinning_every_image(run_setup):
     assert env["IMAGE_NAME"] == "mcfaddja/nl2sql-retail-postgres"
     assert env["IMAGE_TAG"] == "v1"
     assert env["AGENT_IMAGE_NAME"] == "mcfaddja/nl2sql-agent"
-    assert env["AGENT_IMAGE_TAG"] == "v3"
+    assert env["AGENT_IMAGE_TAG"] == "v4"
     assert env["VECTOR_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-vectordb"
     assert env["VECTOR_IMAGE_TAG"] == "v3"
     assert env["CONTEXT_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-chunkdb"
@@ -431,3 +431,9 @@ def test_a_role_that_cannot_be_created_is_fatal(run_setup):
     assert result.returncode != 0
     assert "read-only role" in result.output
     assert "docker compose logs postgres" in result.output
+
+
+def test_default_run_installs_the_trigram_extension(run_setup):
+    result = run_setup()
+    [call] = result.calls_matching("CREATE EXTENSION")
+    assert "IF NOT EXISTS pg_trgm" in call

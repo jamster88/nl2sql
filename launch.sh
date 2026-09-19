@@ -102,6 +102,13 @@ compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shel
     printf '%s' "${value:-$2}"
 }
 
+ensure_extensions() {
+    docker compose exec -T postgres psql -U postgres -q \
+        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -v ON_ERROR_STOP=1 \
+        -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null
+}
+
 ensure_reader_role() {
     docker compose exec -T postgres psql -U postgres -q \
         -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
@@ -123,6 +130,7 @@ if [[ $WITH_RAG -eq 1 ]]; then
 fi
 
 step "Making sure the agent's read-only role exists"
+ensure_extensions || warn "could not create pg_trgm; literal matching falls back to difflib."
 if ensure_reader_role; then
     info "role $(compose_env POSTGRES_READER_USER nl2sql_reader) can read every table and write none"
 else

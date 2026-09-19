@@ -36,6 +36,13 @@ super --dbname=postgres --command="CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_P
 super --dbname=postgres --command="CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}"
 super --dbname="${DB_NAME}" --command="ALTER SCHEMA public OWNER TO ${DB_USER}"
 
+# pg_trgm backs the Literal Matcher's fuzzy search over the literal catalog
+# (arch4 section 4.3). It ships with the base image but is not installed by
+# default, and only a superuser can install it -- the agent connects as a
+# read-only role. The agent falls back to Python difflib when it is absent,
+# so this makes matching better, not possible.
+super --dbname="${DB_NAME}" --command="CREATE EXTENSION IF NOT EXISTS pg_trgm"
+
 psql -v ON_ERROR_STOP=1 --username="${DB_USER}" --dbname="${DB_NAME}" --file="$DDL_FILE"
 
 # Server-side COPY (reads /csv directly) rather than \copy: same container,

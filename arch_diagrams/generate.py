@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Regenerate arch_v1.svg and arch_v2.svg.
+"""Regenerate arch_v1.svg, arch_v2.svg, arch_v3.svg and arch_v4.svg.
 
     python arch_diagrams/generate.py
 
-Pure standard library, no arguments, writes both files next to this script.
+Pure standard library, no arguments, writes every file next to this script.
 
 The SVGs are computed rather than hand-placed: text is wrapped against real
 Helvetica advance widths, each row takes the height its content needs, and the
@@ -12,11 +12,19 @@ the point of keeping this script -- editing a 60 KB SVG by hand to reword one
 "why" card is not something anyone will do twice, whereas editing the string
 in build_v2() below and re-running this takes a second.
 
-Both diagrams describe agent/nl2sql_agent/. v1 is the schema-only pipeline;
+Every diagram describes agent/nl2sql_agent/. v1 is the schema-only pipeline;
 v2 adds retrieve_knowledge in front of it and threads that context into table
-selection, SQL generation and validation. When graph.py gains or renames a
-node, or a step's rationale changes, the content lives in build_v1()/build_v2()
-at the bottom of this file -- everything above them is layout machinery.
+selection, SQL generation and validation; v3 adds the golden-pair ensemble;
+v4 is the multi-agent restructure -- four stages, one shared state, one repair
+loop. When graph.py gains or renames a node, or a step's rationale changes,
+the content lives in the build_v*() functions at the bottom of this file --
+everything above them is layout machinery, shared by all four.
+
+The layout machinery only ever grows by optional arguments. A test compares
+each committed SVG against what this file produces right now, so a helper
+that changed shape for v4 would rewrite three older diagrams as a side
+effect; every parameter added here therefore defaults to what v1-v3 already
+drew.
 """
 from __future__ import annotations
 
@@ -37,6 +45,14 @@ SLATE, BLUE, PURPLE, TEAL, RED, AMBER = "#43566e", "#2f5d8f", "#6a4c93", "#0f726
 # v3's accent, for the golden-pair ensemble. Distinct from TEAL so a v3 diagram
 # still reads which parts arrived with retrieval and which with the examples.
 INDIGO = "#3a4b9c"
+# v4's accent. A red-violet, which is the one hue slot nothing else here uses:
+# against v2's teal and v3's indigo it says "new in v4" at a glance, and it is
+# far enough from PURPLE (a blue-violet) that a model-call pill is never
+# mistaken for a v4 badge.
+MAGENTA = "#9b2f6b"
+# The success green v1-v3 use as a literal. Named because v4 draws an arrow in
+# it, and an arrowhead needs a marker declared for its colour.
+GREEN = "#2e7d4f"
 
 SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace"
@@ -159,7 +175,7 @@ def path(d, color=SLATE, dash=None, marker="a", wdt=1.6):
 PADX, PADY = 18, 16
 
 
-def step_row(y, n, name, does, tags, why, accent=SLATE, badge=None):
+def step_row(y, n, name, does, tags, why, accent=SLATE, badge=None, badge_color=TEAL):
     iw = STEP_W - 2 * PADX
     ww = WHY_W - 2 * PADX - 6
 
@@ -183,7 +199,7 @@ def step_row(y, n, name, does, tags, why, accent=SLATE, badge=None):
              f'font-weight="700" fill="{INK}">{esc(name)}</text>')
     if badge:
         bx = STEP_X + PADX + 30 + len(name) * 9.6 + 10
-        p, _ = pill(bx, y + PADY + 1, badge, TEAL)
+        p, _ = pill(bx, y + PADY + 1, badge, badge_color)
         s.append(p)
 
     ty = y + PADY + title_h + 8 + 13
@@ -221,7 +237,7 @@ def note_row(y, title, body, color=TEAL, x=STEP_X, w=CONTENT_R - STEP_X, dashed=
     return "\n".join(s), h
 
 
-def decision_row(y, arms, why):
+def decision_row(y, arms, why, title="_route_after_validation()"):
     ww = WHY_W - 2 * PADX - 6
     arm_h = 21
     dec_h = PADY + 20 + 8 + len(arms) * arm_h + PADY - 4
@@ -230,7 +246,7 @@ def decision_row(y, arms, why):
 
     s = [card(STEP_X, y, STEP_W, h, fill="#fdf8ec", stroke="#e0cf9e", sw=1.4)]
     s.append(f'<text x="{STEP_X+PADX}" y="{y+PADY+13:.1f}" font-family="{MONO}" font-size="14.5" '
-             f'font-weight="700" fill="{AMBER}">_route_after_validation()</text>')
+             f'font-weight="700" fill="{AMBER}">{esc(title)}</text>')
     yy = y + PADY + 20 + 18
     for cond, dest, col in arms:
         s.append(f'<circle cx="{STEP_X+PADX+5}" cy="{yy-4:.1f}" r="4" fill="{col}"/>')
@@ -278,6 +294,96 @@ def branch_row(y, left, right, why):
     blk, _ = text_block(WHY_X + PADX + 6, y + PADY + 30, why, ww, 13, "#4a4a50")
     s.append(blk)
     return "\n".join(s), h, bw
+
+
+def fan_row(y, n, boxes, caption, accent=SLATE):
+    """One superstep: a bracket out to N parallel nodes and a bracket back in.
+
+    The step column is 450px, which fits one node name at a readable size and
+    not four, so this row spans the full content width -- which is also the
+    honest thing for it to do, since it is the one row that is not a step.
+    The incoming flow line enters at the step column's centre (cx) and the
+    fan-in returns to it, so the row drops into pipeline()'s vertical run
+    without the rest of the column moving.
+    """
+    w = CONTENT_R - STEP_X
+    cx = STEP_X + STEP_W / 2
+    gap = 16
+    bw = (w - (len(boxes) - 1) * gap) / len(boxes)
+    iw = bw - 28
+    centres = [STEP_X + i * (bw + gap) + bw / 2 for i in range(len(boxes))]
+
+    head = 34                      # badge, caption, and the fan-out bracket
+    bh = max(12 + 17 + 4 + block_h(b["does"], iw, 11.5, 16) + 26 + 12 for b in boxes)
+    foot = 30                      # the fan-in bracket
+    h = head + bh + foot
+
+    bar_y = y + head - 10
+    top = y + head
+    s = [f'<circle cx="{STEP_X+PADX+11}" cy="{y+13:.1f}" r="11" fill="{accent}"/>',
+         f'<text x="{STEP_X+PADX+11}" y="{y+17:.1f}" font-family="{SANS}" font-size="12" '
+         f'font-weight="700" fill="#fff" text-anchor="middle">{n}</text>',
+         label(STEP_X + PADX + 30, y + 17, "one superstep", accent),
+         f'<text x="{CONTENT_R-PADX}" y="{y+17:.1f}" font-family="{SANS}" font-size="11.5" '
+         f'fill="{MUTED}" text-anchor="end">{esc(caption)}</text>']
+
+    # fan-out: down from the flow line, across, and into each branch
+    s.append(path(f"M {cx:.1f} {y:.1f} L {cx:.1f} {bar_y:.1f}", color=SLATE, wdt=1.6, marker=None))
+    s.append(path(f"M {centres[0]:.1f} {bar_y:.1f} L {centres[-1]:.1f} {bar_y:.1f}",
+                  color=SLATE, wdt=1.6, marker=None))
+    for c in centres:
+        s.append(arrow(c, bar_y, c, top - 4, color=SLATE, wdt=1.6))
+
+    for i, b in enumerate(boxes):
+        bx = STEP_X + i * (bw + gap)
+        col = b["color"]
+        s.append(card(bx, top, bw, bh, fill=f"{col}0a", stroke=f"{col}66", sw=1.4))
+        s.append(f'<text x="{bx+14}" y="{top+12+14:.1f}" font-family="{MONO}" font-size="13" '
+                 f'font-weight="700" fill="{col}">{esc(b["name"])}</text>')
+        blk, _ = text_block(bx + 14, top + 12 + 17 + 4 + 10, b["does"], iw, 11.5, MUTED, lh=16)
+        s.append(blk)
+        p, _ = pill(bx + 14, top + bh - 12 - 21, b["tag"], col)
+        s.append(p)
+
+    # fan-in: out of each branch, across, and back to the flow line
+    join_y = top + bh + 18
+    for c in centres:
+        s.append(path(f"M {c:.1f} {top+bh:.1f} L {c:.1f} {join_y:.1f}",
+                      color=SLATE, wdt=1.6, marker=None))
+    s.append(path(f"M {centres[0]:.1f} {join_y:.1f} L {centres[-1]:.1f} {join_y:.1f}",
+                  color=SLATE, wdt=1.6, marker=None))
+    s.append(path(f"M {cx:.1f} {join_y:.1f} L {cx:.1f} {y+h:.1f}",
+                  color=SLATE, wdt=1.6, marker=None))
+    return "\n".join(s), h
+
+
+def offramp_row(y, name, does, tag, why, color=AMBER):
+    """A terminal that leaves the column without interrupting it.
+
+    Narrow enough to clear the flow line at cx, so the arrow from the row
+    above continues past it to the next step rather than through it.
+    """
+    bw = 210
+    iw = bw - 28
+    ww = WHY_W - 2 * PADX - 6
+    box_h = 14 + 18 + 6 + block_h(does, iw, 12, 16.5) + 26 + 14
+    why_h = PADY + 16 + block_h(why, ww, 13) + PADY - 2
+    h = max(box_h, why_h)
+
+    s = [card(STEP_X, y, bw, box_h, fill=f"{color}0c", stroke=f"{color}55", sw=1.4),
+         f'<text x="{STEP_X+14}" y="{y+14+14:.1f}" font-family="{MONO}" font-size="14" '
+         f'font-weight="700" fill="{color}">{esc(name)}</text>']
+    blk, _ = text_block(STEP_X + 14, y + 14 + 18 + 6 + 10, does, iw, 12, MUTED, lh=16.5)
+    s.append(blk)
+    p, _ = pill(STEP_X + 14, y + box_h - 14 - 21, tag, color)
+    s.append(p)
+
+    s.append(card(WHY_X, y, WHY_W, h, fill=WHY_BG, stroke="none"))
+    s.append(f'<rect x="{WHY_X}" y="{y:.1f}" width="3" height="{h:.1f}" fill="{WHY_RULE}"/>')
+    s.append(label(WHY_X + PADX + 6, y + PADY + 10, "why"))
+    blk, _ = text_block(WHY_X + PADX + 6, y + PADY + 30, why, ww, 13, "#4a4a50")
+    s.append(blk)
+    return "\n".join(s), h
 
 
 # --------------------------------------------------------------------------
@@ -370,13 +476,20 @@ def startup(y, steps, fail):
 # Pipeline assembly
 # --------------------------------------------------------------------------
 
-def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=()):
+def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=(),
+             retry_label="retry &#183; up to --max-attempts",
+             loop_from=(), loop_into=None):
     """Draw the node column, the retry rail, and any data-flow rails.
 
     A rail is {from, to, color, label, x, side}: where the data originates,
     which nodes consume it, and which vertical track to run it on. v1 has none,
     v2 has one (knowledge), v3 has two -- so the track position and the side the
     label sits on are per-rail rather than constants.
+
+    `loop_from` names rows that hand their failure to the rail the decision row
+    already runs on, and `loop_into` the row the rail arrows into. v4 has four
+    failure sources and one Repair Agent spending one counter, and drawing that
+    as one track rather than four is the point of the picture.
     """
     if knowledge_from:
         rails = (*rails, {"from": knowledge_from, "to": knowledge_to, "color": TEAL,
@@ -400,21 +513,41 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=()):
         k = r["kind"]
         if k == "step":
             svg, h = step_row(yy, r["n"], r["name"], r["does"], r.get("tags", []),
-                              r["why"], r.get("accent", SLATE), r.get("badge"))
+                              r["why"], r.get("accent", SLATE), r.get("badge"),
+                              r.get("badge_color", TEAL))
             drawn.append(r["name"])
         elif k == "note":
             svg, h = note_row(yy, r.get("title"), r["body"], r.get("color", TEAL),
                               w=r.get("w", CONTENT_R - STEP_X))
         elif k == "decision":
-            svg, h = decision_row(yy, r["arms"], r["why"])
+            svg, h = decision_row(yy, r["arms"], r["why"],
+                                  r.get("title", "_route_after_validation()"))
         elif k == "branch":
             svg, h, bw = branch_row(yy, r["left"], r["right"], r["why"])
             drawn += [r["left"]["name"], r["right"]["name"]]
             r["_bw"] = bw
-        s.append(arrow(cx, prev, cx, yy - 5))
+        elif k == "fan":
+            svg, h = fan_row(yy, r["n"], r["boxes"], r["caption"], r.get("accent", SLATE))
+            drawn += [b["name"] for b in r["boxes"]]
+        elif k == "offramp":
+            svg, h = offramp_row(yy, r["name"], r["does"], r["tag"], r["why"],
+                                 r.get("color", AMBER))
+            drawn.append(r["name"])
+        # An incoming arrow is the column's flow, so a row may move it (an
+        # off-ramp is entered from one side) or recolour it (v4's audit hands
+        # its failure down, and that is not the happy path).
+        flow = r.get("flow", {})
+        fx = flow.get("x", cx)
+        s.append(arrow(fx, prev, fx, yy - 5, color=flow.get("color", SLATE),
+                       dash=flow.get("dash")))
         s.append(svg)
         pos[r["id"]] = (yy, h)
-        prev, yy = yy + h + 2, yy + h + 34
+        if k == "offramp":
+            # The column does not pass through it: the next row is still
+            # drawn from the row above, so the flow line runs past its side.
+            yy += h + 34
+        else:
+            prev, yy = yy + h + 2, yy + h + 34
 
     # END
     br = next((r for r in rows if r["kind"] == "branch"), None)
@@ -431,6 +564,16 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=()):
              f'font-weight="700" fill="{SLATE}">END</text>')
     yy += 30
 
+    # Failure sources feed the rail the retry runs back on -- one track.
+    for src in loop_from:
+        sy, sh = pos[src]
+        s.append(path(f"M {STEP_X-4} {sy+sh/2:.1f} L {RAIL_X} {sy+sh/2:.1f}",
+                      color=RED, dash="7 5", wdt=1.7, marker=None))
+    if loop_into:
+        iy, ih = pos[loop_into]
+        s.append(arrow(RAIL_X, iy + ih / 2, STEP_X - 8, iy + ih / 2,
+                       color=RED, dash="7 5", wdt=1.7))
+
     # retry rail (control flow), decision -> generate_sql
     dec = next((r for r in rows if r["kind"] == "decision"), None)
     if dec:
@@ -442,21 +585,22 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=()):
         my = (dy + dh / 2 + gy + gh / 2) / 2
         s.append(f'<text x="{RAIL_X-9}" y="{my:.1f}" font-family="{SANS}" font-size="11.5" '
                  f'font-weight="700" fill="{RED}" text-anchor="middle" '
-                 f'transform="rotate(-90 {RAIL_X-9} {my:.1f})">retry &#183; up to --max-attempts</text>')
+                 f'transform="rotate(-90 {RAIL_X-9} {my:.1f})">{retry_label}</text>')
 
     # data-flow rails: a producing node out to each of its consumers
     for rail in rails:
         rx, col = rail["x"], rail["color"]
+        dash = rail.get("dash", "5 4")
         ky, kh = pos[rail["from"]]
         s.append(path(f"M {STEP_X+STEP_W+4} {ky+kh/2:.1f} L {rx} {ky+kh/2:.1f}",
-                      color=col, dash="5 4", wdt=1.7, marker=None))
+                      color=col, dash=dash, wdt=1.7, marker=None))
         last = max(pos[t][0] + pos[t][1] / 2 for t in rail["to"])
         s.append(path(f"M {rx} {ky+kh/2:.1f} L {rx} {last:.1f}",
-                      color=col, dash="5 4", wdt=1.7, marker=None))
+                      color=col, dash=dash, wdt=1.7, marker=None))
         for t in rail["to"]:
             ty, th = pos[t]
             s.append(arrow(rx, ty + th / 2, STEP_X + STEP_W + 6, ty + th / 2,
-                           color=col, dash="5 4", wdt=1.7))
+                           color=col, dash=dash, wdt=1.7))
         mid = (ky + kh / 2 + last) / 2
         lx = rx + 15 * rail.get("side", 1)
         s.append(f'<text x="{lx}" y="{mid:.1f}" font-family="{SANS}" font-size="11.5" '
@@ -503,8 +647,10 @@ def legend(y, items):
     return "\n".join(s), 24 + 14
 
 
-def document(title, subtitle, body, height, nodes):
-    cols = [SLATE, RED, TEAL, BLUE, PURPLE, AMBER, "#0f7268", "#2f5d8f"]
+def document(title, subtitle, body, height, nodes, extra_colors=()):
+    # An arrow finds its head by colour, so a diagram that draws one in a
+    # colour with no marker declared here renders the line and no head.
+    cols = [SLATE, RED, TEAL, BLUE, PURPLE, AMBER, "#0f7268", "#2f5d8f", *extra_colors]
     marks = "\n".join(
         f'<marker id="a-{c[1:]}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" '
         f'markerHeight="6.5" orient="auto-start-reverse">'
@@ -990,10 +1136,386 @@ def build_v3():
                     "\n".join(parts), y + 34, nodes)
 
 
+# --- v4: the multi-agent pipeline ------------------------------------------
+
+PG_V4 = {"name": "nl2sql-postgres", "color": BLUE,
+         "desc": "Postgres 18. The synthetic retail dataset — 19 tables, ~2M rows — is baked into "
+                 "the image. v4 asks it three things v3 never did: pg_constraint for the "
+                 "foreign-key closure, every low-cardinality text column for the literal catalog, "
+                 "and EXPLAIN for a plan cost.",
+         "link": "← SQLAlchemy + psycopg · pg_trgm"}
+
+VECTORDB_V4 = {"name": "nl2sql-vectordb", "color": TEAL,
+               "desc": "pgvector, the same stores as v3. The DDL collection now has a reader: it "
+                       "is the Schema Retriever's index, one chunk per table, and it is excluded "
+                       "from the knowledge search so no table is described twice.",
+               "link": "← cosine search, DDL + knowledge + both pair fields"}
+
+OLLAMA_CHAT_V4 = {"name": "Ollama — chat model", "color": PURPLE,
+                  "desc": "qwen3.8-256k on a remote host, 256k context. In v4 it screens the "
+                          "question, writes the SQL and narrates the result — and diagnoses a "
+                          "repair only when the classifier cannot. Reasoning stays off: Qwen3 "
+                          "returns it separately, so disabling it costs no quality.",
+                  "link": "→ 3 prompts on the happy path"}
+
+OLLAMA_EMBED_V4 = {"name": "Ollama — embedding model", "color": TEAL,
+                   "desc": "bge-m3 on the machine running Docker, reached as host.docker.internal "
+                           "via extra_hosts: host-gateway. 1024 dimensions. Three of the four "
+                           "retrievers embed the question; only the two vector searches over the "
+                           "golden pairs share one call.",
+                   "link": "→ one embed_query per retriever"}
+
+V4_REMOVED = ("Two v3 model calls are gone. select_tables asked the model which tables a question "
+              "needed — 364 of the benchmark's 1499 seconds — and is now vector search over the "
+              "DDL chunks plus a foreign-key closure read from pg_constraint. validate_sql asked "
+              "the model whether the SQL was right — 499 seconds, and the only component in 45 "
+              "runs that ever turned a right answer into no answer — and is now a pglast AST "
+              "check and a plain EXPLAIN. Both were deterministic questions being put to a "
+              "language model, and together they cost more than the call that writes the answer.")
+
+V4_ADDED = ("Five things. The Supervisor screens the question for injection and scope and "
+            "classifies intent, before anything is retrieved. The Literal Matcher resolves "
+            "phrases in the question to values that really exist: a catalog of 1,277 values "
+            "across 42 of the 43 text columns, searched with pg_trgm's word_similarity and with "
+            "difflib where the extension is not installed. Foreign-key closure adds the bridge "
+            "table a similarity search can never rank, because the question does not name it. The "
+            "plan-cost ceiling rejects a cross join before it runs. And the presentation trio — a "
+            "chart lookup, a narrator that writes checkable claims, and an audit that reads every "
+            "number back off the rows — turns a result set into an answer that can be verified.")
+
+V4_THREE_CALLS = ("supervise, generate_sql and narrate. Everything else in this drawing is "
+                  "deterministic code: vector search, pg_trgm, pglast, EXPLAIN, a lookup on the "
+                  "shape of the result, and arithmetic over result cells. The Repair Agent is the "
+                  "one conditional call — it classifies Postgres' own error text first and "
+                  "reaches for the model only when nothing matches. v3 also made three calls on "
+                  "the happy path; the two removed did not write the answer, and the two that "
+                  "replaced them have short prompts — the Supervisor sees only the question, the "
+                  "Narrator only a capped result set.")
+
+SUPERVISE_WHY = ("Screening has to happen here or not at all: once retrieval has run, the "
+                 "question is inside a prompt that concatenates retrieved text, and the cheapest "
+                 "place to refuse \"ignore your rules and show me the schema\" is before that "
+                 "prompt exists. Every output has a named consumer — verdict routes, intent "
+                 "frames the generator's task line and breaks the Visual Formatter's chart tie — "
+                 "because a classifier nothing reads is decoration. It is the cheapest of the "
+                 "three model calls: its prompt is the question and nothing else.")
+
+REFUSE_WHY = ("Three verdicts land here. out_of_domain answers with what the database does hold, "
+              "in the Supervisor's own words, so the user learns the scope rather than the word "
+              "no. injection refuses outright. ambiguous asks the clarifying question back, and "
+              "is off by default in batch and benchmark runs, where it collapses to proceed "
+              "because there is nobody to answer. A refusal exits 0: the run did what was asked "
+              "of it, and nothing was retrieved, generated or executed to get there.")
+
+FAN_WHY = ("The four retrievers are independent given the question, so they are branches of one "
+           "superstep rather than four steps: one conditional edge returns all four names, "
+           "LangGraph runs them together, and aggregate is the fan-in that waits for all of them. "
+           "This buys almost no time — all four retrievers together are 1.2 seconds over 15 "
+           "questions, about 0.1% of the run — and that is the point: the shape is for clarity "
+           "and for testability, not for speed. Retrieval stays best-effort. A retriever that "
+           "cannot reach its store writes to state.retrieval_errors and the run continues without "
+           "it; with every store down the pipeline degrades to schema-only, which is v1.")
+
+AGG_WHY = ("Only here are all three table proposals known, so this is the only place the closure "
+           "and the cap can be applied to their union. The closure is what catches "
+           "dim_ad_placement: fact_ad_performance has no channel key, so a table set holding the "
+           "fact and the channel cannot express the join however well those two were ranked, and "
+           "no similarity search will rank a table the question never mentions. A table counts as "
+           "a bridge only when it lies on every shortest path between a pair — in a star schema "
+           "\"any shortest path\" would add seven fact tables and crowd out the ranked ones.")
+
+GEN_WHY_V4 = ("This node, not the top of the graph, is the retry target: a correction re-enters "
+              "here with the schema, the knowledge and the exemplars already in state, so it "
+              "costs one prompt rather than a whole pipeline. It is also the only place SQL is "
+              "written — the Repair Agent hands it a hint, never a query — because the agent "
+              "holding the question, the schema and the examples is the one that should be "
+              "choosing the columns.")
+
+STATIC_WHY = ("v3 put this question to a model: 499 of 1499 benchmark seconds, and the only "
+              "component in 45 runs that ever turned a right answer into no answer. It is a "
+              "deterministic question. pglast wraps PostgreSQL's own parser, so what is accepted "
+              "here is what the server accepts, and the tree sees what a prefix check cannot: "
+              "WITH d AS (DELETE FROM dim_store RETURNING *) SELECT * FROM d is one statement, "
+              "begins with WITH, and deletes a table. A rejection at this stage costs nothing and "
+              "never reaches the database.")
+
+PLANNER_WHY = ("Calibrated, not guessed. The most expensive of the 45 golden pairs plans at "
+               "125,767, a full scan of the sales fact at 20,096, and that fact cross-joined with "
+               "dim_product at 1.6 million — so a ceiling of 1,000,000 sits eight times above the "
+               "hardest known-good query and below the cheapest cross join that touches the fact "
+               "table. Plain EXPLAIN, never EXPLAIN ANALYZE: ANALYZE executes the statement to "
+               "time it, which is the one thing this gate exists to prevent. And its error text "
+               "is the best feedback in the pipeline — unknown column, type mismatch, aggregate "
+               "outside GROUP BY — none of which the parser can see.")
+
+EXEC_WHY_V4 = ("The second, independent safety layer, and the one that actually holds: the AST "
+               "check rejects a writing CTE, but it is SET TRANSACTION READ ONLY that makes the "
+               "rejection unnecessary. A runtime failure — a timeout the planner could not "
+               "predict, a division by zero that only shows on real rows — is an Issue like any "
+               "other and goes to the same Repair Agent. principal is in the state contract so "
+               "that SET ROLE and row-level security are a deployment change rather than a "
+               "rewrite; the test system has no RLS policies to apply.")
+
+VIS_WHY = ("arch3 had an agent infer chart configuration. A lookup should not cost a model call, "
+           "and a deterministic one can be pinned row by row against the table in section 7.1 of "
+           "the architecture — which is what the unit tests do. Nothing is rendered here either: "
+           "the output is a spec, so the consumer draws it with whatever it has.")
+
+NARRATE_WHY = ("A narrative nobody can check is this system's worst failure mode, because it "
+               "looks exactly like an answer. Claims that name their cells are what make the next "
+               "node a program rather than a second opinion. The narrator reads the exemplar's "
+               "reasoning_target straight out of state: the draw.io design had both presentation "
+               "agents call back into stage 1, and that edge is removed — everything they need is "
+               "already in the state object.")
+
+AUDIT_WHY = ("This is where v3's LLM semantic review went: after execution, with rows in hand "
+             "instead of guessed from a schema, and inside the retry budget. It asks no model. A "
+             "claim that cannot be reproduced from the cells it names is dropped, and the report "
+             "says how many were; a formula arrives from a language model, so it is walked as an "
+             "AST against a whitelist and never passed to eval. When the rows say the SQL is "
+             "wrong rather than the prose, that is a repair like any other and spends the same "
+             "counter.")
+
+ONE_LOOP = ("Four failure sources — the AST check, the planner, the executor, the audit — route "
+            "to one agent and spend one counter: MAX_ATTEMPTS = 4, one draft and three repairs. "
+            "The source diagram let planner failures skip repair entirely and let the audit "
+            "re-enter generation uncounted, which is two ways to loop without paying for it. "
+            "There is no such path here, and the red track on the left is the whole of it.")
+
+REPAIR_WHY = ("A repair that called the model would double the model calls of every retry, on "
+              "exactly the questions that are already slow. Most failures do not need one: "
+              "Postgres says column \"store_nam\" does not exist and the pruned schema says "
+              "store_name — the gap between those two facts is a trigram match, not an act of "
+              "reasoning. So the classifier runs first and the model is asked only for what it "
+              "cannot name. Every attempt is appended to attempt_history, which is how the hint "
+              "on attempt 3 can say that attempts 1 and 2 failed the same way.")
+
+ROUTE_WHY_V4 = ("Bounded on purpose, and bounded in one place. Some questions the data simply "
+                "cannot answer, and retrying one of those spends tokens without converging. Four "
+                "generations is the budget for the whole run rather than for each gate, because "
+                "every failure source shares the counter — a query that passes the AST check on "
+                "its third try and then fails the planner has one attempt left, not three.")
+
+TERM_WHY_V4 = ("give_up is a real outcome rather than a failure of nerve: the alternative is "
+               "returning a query already known to be wrong. It carries the whole "
+               "attempt_history, so a user who gets no answer can still see what was tried and "
+               "why each try was rejected. finish is the only node that produces output, which is "
+               "what makes it the only place HTML escaping has to happen — the rows and the "
+               "question are untrusted text right up until here.")
+
+V4_FAN = [
+    {"name": "retrieve_schema", "color": MAGENTA, "tag": "pgvector · ddl_index",
+     "does": "Embed the question and search the one collection of DDL chunks — a CREATE TABLE "
+             "with its comments, grain and keywords, one chunk per table — keeping the top 6 by "
+             "cosine distance. No model call."},
+    {"name": "retrieve_literals", "color": MAGENTA, "tag": "Postgres · pg_trgm",
+     "does": "Take candidate phrases out of the question and match them against the literal "
+             "catalog: 1,277 values across 42 of the 43 text columns, scored by pg_trgm "
+             "word_similarity, or by difflib where the extension is not installed."},
+    {"name": "retrieve_knowledge", "color": TEAL, "tag": "pgvector · <=> cosine",
+     "does": "v2's retriever, unchanged but for what it searches: the data dictionary and "
+             "business index collections, the DDL index having moved next door. Top-k per "
+             "collection, merged and re-sorted by distance."},
+    {"name": "retrieve_examples", "color": INDIGO, "tag": "pgvector + BM25 · 45 pairs",
+     "does": "v3's ensemble, unchanged: question vectors 0.50, BM25 over keywords 0.35, "
+             "reasoning vectors 0.15, min-max fused, then grounding and MMR reranked to the "
+             "top 3 worked pairs."},
+]
+
+ARMS_V4 = [("attempts < max (4 by default)", "generate_sql", RED),
+           ("attempts = max", "give_up", AMBER)]
+
+TERM_L_V4 = {"name": "give_up", "color": AMBER,
+             "does": "Record \"Could not produce a valid query in N attempts\" with the last set "
+                     "of problems, and keep attempt_history: every rejected query and the hint it "
+                     "was given.",
+             "tag": "no answer · exit 1"}
+TERM_R_V4 = {"name": "finish", "color": GREEN,
+             "does": "Render the answer: the claims the audit let through, the result as a "
+                     "markdown table, the chart spec, the SQL and the trace. Everything is "
+                     "HTML-escaped here.",
+             "tag": "the only output · exit 0"}
+
+OUTCOMES_V4 = [("exit 0", "Answered — narrative, table and chart spec. A refusal is also exit 0: "
+                "the run did what was asked.", GREEN),
+               ("exit 1", "Ran, but could not answer — give_up after four generations, or the "
+                "query failed at execution.", AMBER),
+               ("exit 2", "Ollama misconfigured. Raised during startup; the graph never runs.",
+                RED)]
+
+OUT_NOTE_V4 = ("Progress lines go to stderr and the answer to stdout, so `... 2>/dev/null` leaves "
+               "just the result. `--json` carries the whole state instead: the verdict and "
+               "intent, the literal map, the selected tables, the plan cost, every attempt with "
+               "the hint it was given, the claims, the audit report, and a trace entry per node "
+               "with its milliseconds and model calls. That last field is what lets the benchmark "
+               "attribute time per agent rather than per stage, which is how the claim that this "
+               "pipeline is cheaper than v3's gets tested rather than asserted.")
+
+
+def build_v4():
+    parts, y = [], 56
+    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                 f'font-weight="700" fill="{INK}">NL2SQL Agent v4 '
+                 f'<tspan fill="{MUTED}" font-weight="400">— multi-agent pipeline</tspan></text>')
+    y += 26
+    blk, h = text_block(MARGIN, y, "Four stages — intake and context gathering, synthesis, "
+                        "validation and repair, presentation and audit — over one shared state "
+                        "object, with one repair loop. v3's linear pipeline asked the model three "
+                        "times: which tables, what SQL, and was the SQL right. v4 asks it three "
+                        "times too — but about the question, the SQL, and the result — and "
+                        "answers the other two questions with a "
+                        "parser and a planner. Everything marked in magenta is new in v4; teal is "
+                        "v2's retrieval and indigo v3's examples, both carried over as they were.",
+                        CONTENT_R - MARGIN, 13.5, MUTED)
+    parts.append(blk); y += h + 26
+
+    svg, h = deployment(y, {"name": "nl2sql-agent:v4",
+                            "desc": "python -m nl2sql_agent. Started per question by "
+                                    "docker compose run --rm agent, after compose has all three "
+                                    "databases passing their health checks."},
+                        [PG_V4, VECTORDB_V4, CHUNKDB], [OLLAMA_CHAT_V4, OLLAMA_EMBED_V4])
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "Two models, two hosts", TWO_HOSTS, color=TEAL, x=MARGIN,
+                      w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v4 removes, and what it cost", V4_REMOVED, color=MAGENTA,
+                      x=MARGIN, w=CONTENT_R - MARGIN, dashed=False); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v4 adds", V4_ADDED, color=MAGENTA, x=MARGIN,
+                      w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "Three model calls on the happy path", V4_THREE_CALLS, color=PURPLE,
+                      x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 36
+    svg, h = startup(y, STARTUP, FAIL2); parts.append(svg); y += h + 40
+
+    rows = [
+        {"id": "supervise", "kind": "step", "n": 1, "name": "supervise",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "One structured-output call on the raw question, returning three fields: "
+                 "verdict (proceed, out_of_domain, injection, ambiguous), intent (lookup, "
+                 "aggregate, compare, trend, narrative) and the clarification to ask back. The "
+                 "only agent that sees the question before retrieval.",
+         "tags": [("LLM · Supervision", PURPLE), ("stage 1 · intake", MAGENTA)],
+         "why": SUPERVISE_WHY},
+        {"id": "refuse", "kind": "offramp", "name": "refuse", "color": AMBER,
+         "flow": {"x": STEP_X + 105, "color": AMBER},
+         "does": "Answer with the scope sentence, the refusal, or the clarifying question, and "
+                 "stop. No retrieval, no SQL, no database access. → END",
+         "tag": "terminal · exit 0", "why": REFUSE_WHY},
+        {"id": "retrievers", "kind": "fan", "n": 2, "boxes": V4_FAN, "accent": MAGENTA,
+         "caption": "all four read the question and nothing else — LangGraph joins them "
+                    "at aggregate"},
+        # Step-width, like v2 and v3's notes: the gap to the right of the
+        # column is where the rails run, and a full-width note sits in it.
+        {"id": "fan_note", "kind": "note", "color": MAGENTA, "w": STEP_W,
+         "title": "Stage 1 fans out — and what a store being down costs",
+         "body": FAN_WHY},
+        {"id": "aggregate", "kind": "step", "n": 3, "name": "aggregate",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "The fan-in. Union the tables the three retrievers proposed, keep the ones the "
+                 "live catalog knows, close over foreign keys to pull in the bridge tables, cap "
+                 "at max_tables (10) dropping the lowest-ranked non-bridge first, then fetch the "
+                 "schema: columns, types, keys, COMMENT ON text and sample rows.",
+         "tags": [("Postgres · pg_constraint", BLUE), ("FK closure", MAGENTA)],
+         "why": AGG_WHY},
+        {"id": "generate_sql", "kind": "step", "n": 4, "name": "generate_sql",
+         "badge": "changed", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "Ask the model for one SELECT. The system turn carries the rules and the pruned "
+                 "schema; the exemplars are replayed as human/assistant turns; the human turn "
+                 "carries the knowledge block, the literal map, the intent framing, the question "
+                 "and — on a retry — the Repair Agent's hint. strip_sql() removes any fence.",
+         "tags": [("stage 2 · synthesis", MAGENTA), ("LLM · free-form", PURPLE),
+                  ("+ literals", MAGENTA)],
+         "why": GEN_WHY_V4},
+        {"id": "validate_static", "kind": "step", "n": 5, "name": "validate_static",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "Parse with pglast and reject: more than one statement, anything that is not a "
+                 "SelectStmt, a CTE that writes, an INTO target, a denylisted function "
+                 "(pg_sleep, pg_read_file, dblink …), or a relation outside selected_tables. The "
+                 "message names the nearest allowed table by trigram.",
+         "tags": [("stage 3 · validation", MAGENTA), ("pglast · AST", MAGENTA),
+                  ("no model call", MAGENTA)], "why": STATIC_WHY},
+        {"id": "planner_gate", "kind": "step", "n": 6, "name": "planner_gate",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "EXPLAIN (FORMAT JSON) inside a READ ONLY transaction — planned, never run. A "
+                 "planner error goes to the Repair Agent verbatim; a Plan.Total Cost above "
+                 "max_plan_cost (1,000,000 by default) is rejected as a cross join or an "
+                 "unfiltered scan.",
+         "tags": [("Postgres · EXPLAIN", BLUE), ("cost ceiling", MAGENTA)], "why": PLANNER_WHY},
+        {"id": "execute_query", "kind": "step", "n": 7, "name": "execute_query",
+         "badge": "carried over", "badge_color": SLATE, "accent": SLATE,
+         "does": "run_select() inside SET TRANSACTION READ ONLY with SET LOCAL "
+                 "statement_timeout, fetching max_rows + 1 so truncation is detected rather than "
+                 "guessed at, and SET ROLE <principal> when the state carries one.",
+         "tags": [("Postgres · READ ONLY tx", BLUE)], "why": EXEC_WHY_V4},
+        {"id": "visualise", "kind": "step", "n": 8, "name": "visualise",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "A lookup on the shape of the result: one cell is a scalar, a category and a "
+                 "measure is a bar, a date column and a measure is a line, two measures are a "
+                 "scatter, more than 30 rows is a table. intent breaks the ties — trend prefers "
+                 "a line. The output is a ChartSpec; nothing is drawn here.",
+         "tags": [("no model call", MAGENTA), ("stage 4 · presentation", MAGENTA)],
+         "why": VIS_WHY},
+        {"id": "narrate", "kind": "step", "n": 9, "name": "narrate",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "The third and last model call on the happy path. It writes claims rather than "
+                 "prose: every number points at the result cells it came from, with an optional "
+                 "formula over them. Its prompt gets the question, the capped result, the chart "
+                 "spec and the top exemplar's reasoning_target.",
+         "tags": [("LLM · Claims", PURPLE), ("reads state, never re-enters", MAGENTA)],
+         "why": NARRATE_WHY},
+        {"id": "audit", "kind": "step", "n": 10, "name": "audit",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "does": "Reproduce every claim from the cells it names, directly or through its "
+                 "formula, to the benchmark's 2-decimal tolerance; drop the ones that do not "
+                 "reproduce. Withhold columns tagged sensitive. When the rows say the SQL is "
+                 "wrong — no rows where the question implied rows, a percentage over 100 — set "
+                 "semantic_issue and send it to repair.",
+         "tags": [("no model call", MAGENTA), ("→ repair on semantic_issue", RED)],
+         "why": AUDIT_WHY},
+        {"id": "loop_note", "kind": "note", "color": RED, "w": STEP_W,
+         "flow": {"color": RED, "dash": "7 5"},
+         "title": "One loop, one counter", "body": ONE_LOOP},
+        {"id": "repair", "kind": "step", "n": 11, "name": "repair",
+         "badge": "new in v4", "badge_color": MAGENTA, "accent": MAGENTA,
+         "flow": {"color": RED, "dash": "7 5"},
+         "does": "Turn the failure into a hint and hand it back. A classifier reads Postgres' "
+                 "own message first — unknown column to the nearest column in the pruned schema, "
+                 "add it to GROUP BY, cast one side, guard the denominator with NULLIF, filter "
+                 "before joining — and the model is called only for what it cannot classify. "
+                 "This agent never writes SQL.",
+         "tags": [("classifier first", MAGENTA), ("LLM only if unclassified", PURPLE)],
+         "why": REPAIR_WHY},
+        {"id": "route", "kind": "decision", "title": "_route_after_repair()", "arms": ARMS_V4,
+         "why": ROUTE_WHY_V4},
+        {"id": "terminals", "kind": "branch", "left": TERM_L_V4, "right": TERM_R_V4,
+         "flow": {"x": STEP_X + (STEP_W - 14) / 4, "color": AMBER}, "why": TERM_WHY_V4},
+    ]
+    svg, h, nodes = pipeline(
+        y, rows,
+        retry_label="retry &#183; one shared attempts budget",
+        loop_from=("validate_static", "planner_gate", "execute_query"), loop_into="repair",
+        # No data-flow rail here, unlike v2 and v3. state.intent really does
+        # reach generate_sql and visualise, but its track would have to cross
+        # the fan band, and the fan band is the more important thing to draw;
+        # the Supervisor's why card names its consumers instead.
+        rails=[
+            {"from": "audit", "to": ("terminals",), "color": GREEN, "dash": None,
+             "label": "audit passes &#8594; finish", "x": 628, "side": 1},
+        ])
+    parts.append(svg); y += h + 34
+    svg, h = outcomes(y, OUTCOMES_V4, OUT_NOTE_V4); parts.append(svg); y += h + 26
+    svg, h = legend(y, [("solid", "control flow", SLATE),
+                        ("line", "repair loop — one counter", RED),
+                        ("solid", "audit passes — finish", GREEN),
+                        ("pill", "model call", PURPLE), ("pill", "database access", BLUE),
+                        ("pill", "new or changed in v4", MAGENTA)])
+    parts.append(svg); y += h
+    return document("NL2SQL Agent v4 architecture", "Multi-agent pipeline",
+                    "\n".join(parts), y + 34, nodes, extra_colors=(GREEN,))
+
+
 def main() -> None:
     here = Path(__file__).resolve().parent
     for name, build in (("arch_v1.svg", build_v1), ("arch_v2.svg", build_v2),
-                        ("arch_v3.svg", build_v3)):
+                        ("arch_v3.svg", build_v3), ("arch_v4.svg", build_v4)):
         svg = build()
         (here / name).write_text(svg)
         print(f"{name}: {len(svg) / 1024:.1f} KB")

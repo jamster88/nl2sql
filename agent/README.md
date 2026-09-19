@@ -1,4 +1,4 @@
-# NL2SQL Agent (v3, RAG + worked examples)
+# NL2SQL Agent (v4, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -36,45 +36,132 @@ stdout, so `... > answer.txt` captures just the answer.
 
 ## The pipeline
 
-The five steps in [`basic_agent_steps.md`](../basic_agent_steps.md) map onto one
-LangGraph node each, defined in [`nl2sql_agent/graph.py`](nl2sql_agent/graph.py).
-[`arch_diagrams/arch_v3.svg`](../arch_diagrams/arch_v3.svg) draws the same thing
-in full -- every node beside the reasoning for it, the retry loop, and where the
-retrieved context and examples flow -- with
+Four stages, one shared state object, one retry loop, defined in
+[`nl2sql_agent/graph.py`](nl2sql_agent/graph.py) and drawn in full by
+[`arch_diagrams/arch_v4.svg`](../arch_diagrams/arch_v4.svg), with
+[`arch_v3.svg`](../arch_diagrams/arch_v3.svg),
 [`arch_v2.svg`](../arch_diagrams/arch_v2.svg) and
 [`arch_v1.svg`](../arch_diagrams/arch_v1.svg) alongside it for the earlier
-versions:
+versions. The design and the reasoning behind each departure from it are in
+[`Multi-Agent_NL2SQL_arch4.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md).
 
 ```
-retrieve_knowledge -> retrieve_examples -> select_tables -> fetch_schema -> generate_sql -> validate_sql -> execute_query
-                                                                                ^               |
-                                                                                +---- retry ----+
-                                                                                                |
-                                                                              attempts exhausted +-> give_up
+supervise --+-- retrieve_schema ----+
+            |-- retrieve_literals --|
+            |-- retrieve_knowledge -+--> aggregate --> generate_sql
+            +-- retrieve_examples --+                       |
+            |                                               v
+            +--> refuse                              validate_static
+                                                            | pass
+   give_up <-- repair <------------------------------+      v
+                 ^   |                               |  planner_gate --> execute_query
+                 |   +-- attempts < max --> generate_sql                      |
+                 |                                                            v
+                 +---------- semantic_issue -- audit <-- narrate <-- visualise
 ```
 
-| Step | Node | Tool | LLM |
+| Stage | Node | What it does | LLM |
 |---|---|---|---|
-| 1a. Retrieve context | `retrieve_knowledge` | `search_knowledge` | -- |
-| 1b. Retrieve examples | `retrieve_examples` | `search_examples` | -- |
-| 2. Find relevant tables | `select_tables` | `describe_all_tables` | picks tables |
-| 3. Get schema + samples | `fetch_schema` / `generate_sql` | `get_schema_and_data` | writes SQL |
-| 4. Validate | `validate_sql` | `validate_sql` | reviews dialect/semantics |
-| 5. Execute | `execute_query` | `execute_query` | -- |
+| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent | screens |
+| 1. Intake | `refuse` | Answers a refused or ambiguous question without touching the database | -- |
+| 1. Context | `retrieve_schema` | Tables from the DDL-chunk vectors | -- |
+| 1. Context | `retrieve_literals` | Phrases in the question resolved to real values | -- |
+| 1. Context | `retrieve_knowledge` | Business rules and data-dictionary chunks | -- |
+| 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
+| 1. Join | `aggregate` | One table set: deduplicated, foreign-key closed, capped, described | -- |
+| 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
+| 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope | -- |
+| 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
+| 3. Execute | `execute_query` | Reader role, READ ONLY, statement timeout, row cap | -- |
+| 3. Repair | `repair` | Classifies the failure into a hint; asks the model only when it cannot | rarely |
+| 3. Repair | `give_up` | Returns the last SQL and every attempt that was made | -- |
+| 4. Present | `visualise` | Chart choice from the result's shape, as a lookup | -- |
+| 4. Present | `narrate` | Structured claims, each pointing at the cells it came from | narrates |
+| 4. Present | `audit` | Verifies every number against those cells | -- |
+| 4. Present | `finish` | Renders the markdown answer | -- |
 
-Validation failures loop back to `generate_sql` with the specific problems
-appended to the prompt, up to `--max-attempts` (default 3). When the attempts
-run out the graph routes to `give_up`, which records the last set of problems
-and ends the run -- nothing is executed.
+The four Stage 1 retrievers are branches of one LangGraph superstep, so they
+run concurrently and `aggregate` is the fan-in. Each is best-effort: one that
+cannot reach its store records why in `retrieval_errors` and the run continues
+without it. With all of them down the pipeline degrades to schema-only, which
+is exactly what v1 was.
 
-The validator runs `EXPLAIN` before consulting the model. A planner error
-(unknown column, type mismatch) is definitive and skips the LLM call, so the
-common failure mode costs nothing.
+**Three model calls on the happy path**: `supervise`, `generate_sql`,
+`narrate`. v3 also made three, but two of them were table selection and
+validation review, which cost 364 and 499 of 1499 benchmark seconds and
+neither of which wrote the answer. Validation is now an AST parse and a
+planner call, both deterministic and both measured in milliseconds.
+
+**One retry budget.** A failure from any gate -- the AST check, the planner, a
+runtime error, or the audit -- becomes an `Issue`, routes to `repair`, and
+spends the same `attempts` counter. There is no path that loops without being
+counted, and `MAX_ATTEMPTS` (default 4) is one draft and three repairs.
+
+The Repair Agent does not write SQL. It turns a failure into a hint and hands
+it back to the generator, which keeps a single component responsible for the
+query. It classifies deterministically first and calls the model only for
+errors it does not recognise, so the common failures cost no model call at all.
 
 Table and column descriptions come from Postgres `COMMENT ON` metadata. The
 current schema has no comments, so the agent works from names alone -- adding
-comments to [`ddl.sql`](../data_gen/ddl.sql) feeds straight into both the
-catalog and schema prompts with no code change.
+comments to [`ddl.sql`](../data_gen/ddl.sql) feeds straight into the schema
+prompt with no code change.
+
+### Tools
+
+The nodes reach the database and the retrieval stores through LangChain tools
+built by `build_tools()` in [`nl2sql_agent/tools.py`](nl2sql_agent/tools.py),
+so the same functions can later be bound to a tool-calling model rather than
+invoked at fixed points:
+
+| Tool | Used by | What it reads |
+|---|---|---|
+| `search_knowledge` | `retrieve_knowledge` | The business-rule and data-dictionary collections |
+| `search_examples` | `retrieve_examples` | The golden pairs, through the three-retriever ensemble |
+| `get_schema_and_data` | `aggregate` | Columns, types, keys, comments and sample rows |
+| `describe_all_tables` | `retrieve_schema`, only under `SCHEMA_RETRIEVAL=llm` | The whole catalog, for v3's table-selection call |
+| `execute_query` | -- | Retained for callers outside the graph; the graph executes through `Database` directly so it can pass a principal |
+
+### Measured
+
+The 15-question benchmark, same questions and same model as v3:
+
+| | v3 | v4 |
+|---|---|---|
+| Execution accuracy | 15/15 | 15/15 |
+| Total | 1499s | 909.7s |
+| Median per question | 100.5s | 61.2s |
+| Model calls per question | 3 | 3.7 |
+| Narrative traced to cells | not measured | 84.6% |
+
+The two model calls v4 removes are what that difference is made of:
+
+```
+v3  validate_sql    499.4s      v4  validate_static + planner_gate   0.1s
+v3  select_tables   363.9s      v4  retrieve_schema                  1.2s
+```
+
+Accuracy holds because neither call was writing the answer. The Supervisor is
+cheap, 45.8s across 15 questions. The Narrator is not: 217.3s, a quarter of the
+run, which the architecture did not anticipate. It buys a narrative whose every
+number has been checked against a cell, and `NARRATE_ENABLED=false` turns it off
+for a run that only wants rows.
+
+Model calls come to 3.7 per question rather than the 3 the architecture
+predicts, and the gap is all retries: 18 generations for 15 questions, and 22
+narrations because the audit sends a claim back when it cannot reproduce one.
+Not one of the repairs cost a model call -- the classifier recognised every
+failure -- which is the part of the design that was most at risk of being
+merely asserted.
+
+Treat the totals as one run. Wall time against a shared Ollama host varied by
+about 30% across three runs of the same 15 questions; what does not vary is the
+shape, and the shape is that generation is most of the time and the gates are
+none of it.
+
+Re-measure with `python benchmarks/run_benchmark.py`, which now reports
+per-agent timing, model calls per node, and the fraction of the narrative the
+audit could trace back to the result.
 
 ## Configuration
 
@@ -90,7 +177,7 @@ Every setting is an environment variable with a CLI override:
 | `DATABASE_URL` | `--database-url` | the compose Postgres, as the read-only `nl2sql_reader` role |
 | `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |
-| `MAX_SQL_ATTEMPTS` | `--max-attempts` | 3 |
+| `MAX_ATTEMPTS` | `--max-attempts` | 4 generations: one draft, three repairs |
 | `SAMPLE_ROWS` | `--sample-rows` | 3 |
 | `STATEMENT_TIMEOUT_MS` | -- | 30000 |
 | `RAG_ENABLED` | `--rag` / `--no-rag` | on |
@@ -303,6 +390,13 @@ retrieval is a v1 run.
 
 ## Safety
 
+v3 reviewed generated SQL with a model call. The benchmark showed that cost
+499 of 1499 seconds and that it was the only component in 45 runs ever to
+turn a correct answer into no answer, so v4 removed it. What it was reaching
+for now happens twice, in better places: the structural half deterministically
+before execution, and the semantic half after it, where there are real rows to
+check against.
+
 Generated SQL is untrusted, so execution has three independent layers:
 
 1. **Static check** (`ensure_read_only`) -- must be a single statement starting
@@ -395,6 +489,33 @@ validation, and execution are independent of how the prompt was assembled.
 Tools are constructed by `build_tools()` in `tools.py` and are ordinary
 LangChain tools, so they can also be bound to a tool-calling model if you later
 want the model to choose its own sequence rather than following a fixed graph.
+
+
+The v4 pipeline adds these. Each one names a stage the architecture makes
+optional, so an ablation is an environment change rather than a code change:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `SUPERVISOR_ENABLED` | -- | on |
+| `CLARIFY_ENABLED` | -- | off (batch and benchmark runs have nobody to answer) |
+| `SCHEMA_RETRIEVAL` | -- | `vector` (or `llm` for v3's table-selection call) |
+| `SCHEMA_TOP_K` | -- | 6 tables from the DDL vectors, before FK closure |
+| `MAX_TABLES` | -- | 10 after closure |
+| `LITERALS_ENABLED` | -- | on |
+| `LITERAL_MAX_DISTINCT` | -- | 500 distinct values per catalogued column |
+| `LITERAL_MIN_SCORE` | -- | 0.6 |
+| `MAX_PLAN_COST` | -- | 1000000 |
+| `NARRATE_ENABLED` | -- | on |
+| `AUDIT_ENABLED` | -- | on |
+| `MAX_SQL_ATTEMPTS` | -- | v3's name for `MAX_ATTEMPTS`; still honoured |
+
+`MAX_PLAN_COST` is calibrated against this dataset rather than chosen: the most
+expensive of the 45 golden pairs plans at 125,767 and a full scan of the sales
+fact at 20,096, while that fact cross-joined with `dim_product` is 1.6 million
+and with itself 12.5 billion. The default is eight times the hardest known-good
+query and below the cheapest cross join involving the fact table, so it rejects
+runaway plans without rejecting real work. Re-derive it the same way whenever
+the data is regenerated, since plan costs scale with row counts.
 
 ## Running outside Docker
 

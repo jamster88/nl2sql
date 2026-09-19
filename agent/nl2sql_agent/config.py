@@ -124,7 +124,50 @@ class Settings:
     sample_rows: int = 3
     max_rows: int = 50
     statement_timeout_ms: int = 30000
-    max_sql_attempts: int = 3
+
+    # --- v4: the one retry budget ----------------------------------------
+    # Generations, not retries: one first draft and three repairs. Every
+    # failure source -- static validation, the planner, execution, the audit
+    # -- increments the same counter, so there is no way to loop that does
+    # not spend it. (arch4 W5, section 6.4)
+    max_attempts: int = 4
+
+    # --- v4: stage 1 ------------------------------------------------------
+    # The Supervisor screens for prompt injection and out-of-domain questions
+    # and classifies intent. It is the only input screen, which is why it is
+    # on the happy path despite costing a model call (arch4 section 13.1).
+    supervisor_enabled: bool = True
+    # Clarification interrupts are off in batch and benchmark mode by
+    # definition; an ambiguous verdict then collapses to "proceed".
+    clarify_enabled: bool = False
+    # "vector" is the v4 Schema Retriever (DDL-chunk vectors + FK closure);
+    # "llm" is the v3 model call, kept for ablation.
+    schema_retrieval: str = "vector"
+    # Tables taken from the DDL-chunk vectors before FK closure widens them.
+    schema_top_k: int = 6
+    # The hard cap after closure. With 19 tables this is a real limit; the
+    # largest of the 45 golden pairs touches 6 and the median touches 4.
+    max_tables: int = 10
+    literals_enabled: bool = True
+    # A text column with more distinct values than this is not catalogued.
+    # In this schema 42 of 43 text columns qualify; the exclusion is
+    # fact_pos_retail_sales.basket_id at 258,308.
+    literal_max_distinct: int = 500
+    # Trigram/difflib similarity below which a match is not worth offering.
+    literal_min_score: float = 0.6
+
+    # --- v4: stage 3 ------------------------------------------------------
+    # Estimated-plan cost ceiling. Calibrated on this dataset: the most
+    # expensive of the 45 golden pairs plans at 125,767 and a full scan of
+    # the sales fact at 20,096, while that fact cross-joined with dim_product
+    # is 1.6 million and with itself 12.5 billion. So this is eight times the
+    # hardest known-good query and below the cheapest cross join that
+    # involves the fact table. Re-derive it whenever the data is regenerated.
+    max_plan_cost: float = 1_000_000.0
+
+    # --- v4: stage 4 ------------------------------------------------------
+    narrate_enabled: bool = True
+    audit_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -160,5 +203,19 @@ class Settings:
             sample_rows=_env_int("SAMPLE_ROWS", 3),
             max_rows=_env_int("MAX_ROWS", 50),
             statement_timeout_ms=_env_int("STATEMENT_TIMEOUT_MS", 30000),
-            max_sql_attempts=_env_int("MAX_SQL_ATTEMPTS", 3),
+            # MAX_SQL_ATTEMPTS is v3's name for the same budget; it is still
+            # honoured so an existing .env keeps working, but it counted
+            # generations too, so the value carries over unchanged.
+            max_attempts=_env_int("MAX_ATTEMPTS", _env_int("MAX_SQL_ATTEMPTS", 4)),
+            supervisor_enabled=_env_bool("SUPERVISOR_ENABLED", True),
+            clarify_enabled=_env_bool("CLARIFY_ENABLED", False),
+            schema_retrieval=os.getenv("SCHEMA_RETRIEVAL", "vector"),
+            schema_top_k=_env_int("SCHEMA_TOP_K", 6),
+            max_tables=_env_int("MAX_TABLES", 10),
+            literals_enabled=_env_bool("LITERALS_ENABLED", True),
+            literal_max_distinct=_env_int("LITERAL_MAX_DISTINCT", 500),
+            literal_min_score=_env_float("LITERAL_MIN_SCORE", 0.6),
+            max_plan_cost=_env_float("MAX_PLAN_COST", 1_000_000.0),
+            narrate_enabled=_env_bool("NARRATE_ENABLED", True),
+            audit_enabled=_env_bool("AUDIT_ENABLED", True),
         )

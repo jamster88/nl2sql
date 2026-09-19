@@ -12,10 +12,12 @@ import pytest
 from nl2sql_agent.prompts import (
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
-    SQL_VALIDATION_PROMPT,
+    SUPERVISOR_PROMPT,
     TABLE_SELECTION_PROMPT,
     example_messages,
     knowledge_block,
+    literal_block,
+    task_block,
 )
 
 
@@ -72,6 +74,8 @@ def test_table_selection_prompt_renders_with_knowledge():
 def test_sql_generation_prompt_renders_with_knowledge():
     text = render(
         SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
             dialect="postgresql",
             schema="=== dim_store ===",
             knowledge=knowledge_block("fiscal year 2024 starts 2023-04-01"),
@@ -84,73 +88,17 @@ def test_sql_generation_prompt_renders_with_knowledge():
     assert "postgresql" in text
 
 
-def test_sql_validation_prompt_renders_with_knowledge():
-    text = render(
-        SQL_VALIDATION_PROMPT.format_messages(
-            dialect="postgresql",
-            schema="=== dim_store ===",
-            knowledge=knowledge_block("market share fans out per competitor"),
-            question="q",
-            sql="SELECT 1",
-            engine_feedback="",
-        )
-    )
-    assert "market share fans out per competitor" in text
-    assert "SELECT 1" in text
-
-
-@pytest.mark.parametrize(
-    ("template", "kwargs"),
-    [
-        (TABLE_SELECTION_PROMPT, {"catalog": "c", "question": "q"}),
-        (
-            SQL_GENERATION_PROMPT,
-            {
-                "dialect": "postgresql",
-                "schema": "s",
-                "question": "q",
-                "feedback": "",
-                "examples": [],
-            },
-        ),
-        (
-            SQL_VALIDATION_PROMPT,
-            {"dialect": "postgresql", "schema": "s", "question": "q", "sql": "SELECT 1", "engine_feedback": ""},
-        ),
-    ],
-)
-def test_every_template_renders_cleanly_with_no_knowledge(template, kwargs):
-    """The with- and without-RAG paths share these templates, so an empty
-    knowledge block must leave no orphan heading behind.
-    """
-    text = render(template.format_messages(knowledge=knowledge_block(""), **kwargs))
-    assert "Knowledge base" not in text
-
-
 def test_generation_prompt_tells_the_model_to_prefer_knowledge_over_assumptions():
     text = render(
         SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
             dialect="postgresql", schema="s", knowledge="", examples=[],
             question="q", feedback="",
         )
     ).lower()
     assert "knowledge base" in text
     assert "assumptions" in text or "authoritative" in text
-
-
-def test_validation_prompt_asks_for_knowledge_rule_violations():
-    text = render(
-        SQL_VALIDATION_PROMPT.format_messages(
-            dialect="postgresql", schema="s", knowledge="", question="q",
-            sql="SELECT 1", engine_feedback="",
-        )
-    ).lower()
-    assert "double count" in text or "fan-out" in text
-
-
-# ---------------------------------------------------------------------------
-# Retry feedback (unchanged by v2, still part of the generation contract)
-# ---------------------------------------------------------------------------
 
 
 def test_retry_feedback_includes_previous_sql_and_issues():
@@ -162,6 +110,8 @@ def test_retry_feedback_includes_previous_sql_and_issues():
 def test_generation_prompt_carries_retry_feedback_and_knowledge_together():
     text = render(
         SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
             dialect="postgresql",
             schema="s",
             knowledge=knowledge_block("the rule"),
@@ -231,6 +181,8 @@ def test_example_turns_mirror_the_real_question_turn():
     exemplar = example_messages(SHOTS)[0].content
     real = render(
         SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
             dialect="postgresql", schema="s",
             knowledge=knowledge_block("FY2024 starts 2023-04-01"),
             examples=[], question="How many stores?", feedback="",
@@ -259,6 +211,8 @@ def test_no_examples_leaves_the_zero_shot_prompt_untouched():
     messages, same order, as if the feature were not there.
     """
     zero = SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
         dialect="postgresql", schema="s", knowledge=knowledge_block(""),
         examples=[], question="q", feedback="",
     )
@@ -267,6 +221,8 @@ def test_no_examples_leaves_the_zero_shot_prompt_untouched():
 
 def test_examples_are_replayed_before_the_real_question():
     messages = SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
         dialect="postgresql", schema="s", knowledge=knowledge_block(""),
         examples=example_messages(SHOTS), question="the real one", feedback="",
     )
@@ -281,9 +237,73 @@ def test_the_system_turn_carries_the_schema_and_names_the_examples():
     earlier turns are, or it may read them as prior user requests to revisit.
     """
     system = SQL_GENERATION_PROMPT.format_messages(
+            literals="",
+            task="",
         dialect="postgresql", schema="=== dim_store ===", knowledge=knowledge_block(""),
         examples=example_messages(SHOTS), question="q", feedback="",
     )[0].content
     assert "=== dim_store ===" in system
     assert "worked examples" in system.lower()
     assert "the question actually asked" in system.lower()
+
+
+# ---------------------------------------------------------------------------
+# The two blocks v4 adds to the generator's human turn
+# ---------------------------------------------------------------------------
+
+
+def test_the_literal_block_renders_nothing_when_no_literal_matched():
+    """Same contract as the knowledge block: an empty retrieval must leave no
+    orphan heading, or the model is shown a promise with nothing behind it.
+    """
+    assert literal_block("") == ""
+    assert literal_block("   ") == ""
+
+
+def test_the_literal_block_names_the_column_a_phrase_resolves_to():
+    rendered = literal_block('"dairy and eggs" -> dim_product.department_name = \'Dairy & Eggs\'')
+    assert "Literal values in this database" in rendered
+    assert "dim_product.department_name = 'Dairy & Eggs'" in rendered
+
+
+def test_the_task_block_renders_nothing_without_an_intent():
+    assert task_block("") == ""
+
+
+def test_the_task_block_carries_the_supervisors_framing():
+    assert task_block("This is a comparison; return both sides.") == (
+        "Task: This is a comparison; return both sides.\n\n"
+    )
+
+
+def test_the_generator_turn_carries_literals_and_task_alongside_the_question():
+    """All three blocks land in the same human turn, in a fixed order, so the
+    model reads the rules, then the values, then the task, then the question.
+    """
+    text = render(
+        SQL_GENERATION_PROMPT.format_messages(
+            dialect="postgresql",
+            schema="s",
+            knowledge=knowledge_block("a rule"),
+            literals=literal_block('"x" -> t.c = \'X\''),
+            task=task_block("This is a trend."),
+            examples=[],
+            question="how did sales trend?",
+            feedback="",
+        )
+    )
+    assert text.index("Knowledge base") < text.index("Literal values")
+    assert text.index("Literal values") < text.index("Task: This is a trend.")
+    assert text.index("Task: This is a trend.") < text.index("how did sales trend?")
+
+
+def test_the_supervisor_prompt_states_the_scope_it_screens_against():
+    """An out-of-domain refusal is only fair if the screener was told what the
+    domain is; otherwise it is guessing at the boundary it enforces.
+    """
+    text = render(
+        SUPERVISOR_PROMPT.format_messages(domain="retail sales for FY2024-FY2025", question="q")
+    )
+    assert "retail sales for FY2024-FY2025" in text
+    assert "injection" in text
+    assert "ambiguous" in text

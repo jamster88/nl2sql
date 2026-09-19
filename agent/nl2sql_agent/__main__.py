@@ -10,16 +10,26 @@ from typing import Any
 from .config import Settings
 from .graph import Nl2SqlAgent
 from .llm import LlmUnavailableError
+from .state import to_jsonable
 
 STEP_LABELS = {
+    "supervise": "screen",
+    "refuse": "refused",
+    "retrieve_schema": "tables",
+    "retrieve_literals": "literals",
     "retrieve_knowledge": "knowledge",
     "retrieve_examples": "examples",
-    "select_tables": "tables",
-    "fetch_schema": "schema",
+    "aggregate": "schema",
     "generate_sql": "sql",
-    "validate_sql": "validation",
+    "validate_static": "validation",
+    "planner_gate": "planner",
     "execute_query": "result",
+    "repair": "repair",
     "give_up": "gave up",
+    "visualise": "chart",
+    "narrate": "narrative",
+    "audit": "audit",
+    "finish": "answer",
 }
 
 
@@ -33,7 +43,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--base-url", default=settings.ollama_base_url, help="Ollama host URL")
     p.add_argument("--database-url", default=settings.database_url)
     p.add_argument("--max-rows", type=int, default=settings.max_rows)
-    p.add_argument("--max-attempts", type=int, default=settings.max_sql_attempts)
+    p.add_argument("--max-attempts", type=int, default=settings.max_attempts)
     p.add_argument("--sample-rows", type=int, default=settings.sample_rows)
     p.add_argument(
         "--reasoning",
@@ -76,7 +86,7 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     settings.ollama_base_url = args.base_url
     settings.database_url = args.database_url
     settings.max_rows = args.max_rows
-    settings.max_sql_attempts = args.max_attempts
+    settings.max_attempts = args.max_attempts
     settings.sample_rows = args.sample_rows
     settings.reasoning = args.reasoning
     settings.rag_enabled = args.rag
@@ -91,18 +101,28 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     return settings
 
 
-def format_rows(result: dict[str, Any]) -> str:
-    columns, rows = result["columns"], result["rows"]
+def format_rows(result: Any) -> str:
+    """The plain-text table for a terminal, from a QueryResult or a dict.
+
+    Both shapes are accepted because the benchmark and older callers still
+    hand over plain dictionaries, while the v4 pipeline carries a dataclass.
+    """
+    if result is None:
+        return "(no rows)"
+    if isinstance(result, dict):
+        columns, rows, truncated = result["columns"], result["rows"], result["truncated"]
+    else:
+        columns, rows, truncated = result.columns, result.rows, result.truncated
     if not rows:
         return "(no rows)"
-    cells = [columns] + [["NULL" if v is None else str(v) for v in row] for row in rows]
+    cells = [list(columns)] + [["NULL" if v is None else str(v) for v in row] for row in rows]
     widths = [max(len(row[i]) for row in cells) for i in range(len(columns))]
     lines = [
         " | ".join(value.ljust(widths[i]) for i, value in enumerate(cells[0])),
         "-+-".join("-" * w for w in widths),
     ]
     lines.extend(" | ".join(value.ljust(widths[i]) for i, value in enumerate(row)) for row in cells[1:])
-    if result["truncated"]:
+    if truncated:
         lines.append(f"... truncated at {len(rows)} rows")
     return "\n".join(lines)
 
@@ -112,17 +132,30 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
     if as_json:
         print(
             json.dumps(
-                {
-                    "question": question,
-                    "knowledge_chunks": state.get("knowledge_chunks", []),
-                    "retrieval_error": state.get("retrieval_error"),
-                    "example_pairs": state.get("example_pairs", []),
-                    "examples_error": state.get("examples_error"),
-                    "selected_tables": state.get("selected_tables", []),
-                    "sql": state.get("sql"),
-                    "error": state.get("error"),
-                    "result": state.get("result"),
-                },
+                to_jsonable(
+                    {
+                        "question": question,
+                        "verdict": state.get("verdict"),
+                        "intent": state.get("intent"),
+                        "knowledge_chunks": state.get("knowledge_chunks", []),
+                        "example_pairs": state.get("example_pairs", []),
+                        "literal_map": state.get("literal_map", []),
+                        "retrieval_errors": state.get("retrieval_errors", {}),
+                        "selected_tables": state.get("selected_tables", []),
+                        "sql": state.get("sql"),
+                        "attempts": state.get("attempts"),
+                        "plan_cost": state.get("plan_cost"),
+                        "attempt_history": state.get("attempt_history", []),
+                        "error": state.get("error"),
+                        "result": state.get("result"),
+                        "chart": state.get("chart"),
+                        "claims": state.get("claims", []),
+                        "narrative": state.get("narrative"),
+                        "audit": state.get("audit"),
+                        "answer": state.get("answer"),
+                        "trace": state.get("trace", []),
+                    }
+                ),
                 indent=2,
                 default=str,
             )
@@ -134,7 +167,16 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
         return 1
     if not quiet:
         print()
-    print(format_rows(state["result"]))
+    # The refusal and clarification paths never reach a result, so the answer
+    # is all there is to print.
+    if state.get("result") is None:
+        print(state.get("answer") or "(no answer)")
+        return 0
+    narrative = (state.get("narrative") or "").strip()
+    if narrative:
+        print(narrative)
+        print()
+    print(format_rows(state.get("result")))
     return 0
 
 

@@ -351,3 +351,29 @@ def test_the_context_window_is_set_explicitly(agent_profile_config: dict):
     env = agent_profile_config["services"]["agent"]["environment"]
     assert env["OLLAMA_NUM_CTX"] == "262144"
     assert env["OLLAMA_MODEL"] == "qwen3.8-256k"
+
+
+def test_every_v4_pipeline_stage_is_toggleable_from_the_environment(agent_profile_config: dict):
+    """The architecture's ablation plan is a set of environment flags, so a
+    configuration comparison is a compose variable rather than a rebuild.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    for flag in (
+        "SUPERVISOR_ENABLED", "LITERALS_ENABLED", "AUDIT_ENABLED",
+        "NARRATE_ENABLED", "SCHEMA_RETRIEVAL", "MAX_ATTEMPTS", "MAX_PLAN_COST",
+    ):
+        assert flag in env, f"{flag} is not passed to the agent container"
+    assert env["SCHEMA_RETRIEVAL"] == "vector"
+    assert env["MAX_ATTEMPTS"] == "4"
+
+
+def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={"MAX_ATTEMPTS": "2", "MAX_PLAN_COST": "50000", "SCHEMA_RETRIEVAL": "llm"},
+    )
+    env = config["services"]["agent"]["environment"]
+    assert env["MAX_ATTEMPTS"] == "2"
+    assert env["MAX_PLAN_COST"] == "50000"
+    assert env["SCHEMA_RETRIEVAL"] == "llm"

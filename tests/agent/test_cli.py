@@ -19,7 +19,7 @@ class StubAgent:
         self._state = state
         self.questions: list[str] = []
 
-    def run(self, question: str) -> dict:
+    def run(self, question: str, *, principal: str | None = None) -> dict:
         self.questions.append(question)
         return self._state
 
@@ -59,7 +59,7 @@ def test_settings_from_args_maps_every_field():
     assert settings.ollama_base_url == "http://h:11434"
     assert settings.database_url == "postgresql://x"
     assert settings.max_rows == 7
-    assert settings.max_sql_attempts == 2
+    assert settings.max_attempts == 2
     assert settings.sample_rows == 4
     assert settings.reasoning is True
 
@@ -160,7 +160,9 @@ def test_answer_json_mode_emits_full_state_and_error_flag(capsys):
     # Retrieval provenance travels with the answer, so a result can be traced
     # back to the chunks that shaped it.
     assert payload["knowledge_chunks"][0]["chunk_id"] == "biz:1"
-    assert payload["retrieval_error"] is None
+    # v3 carried a single retrieval_error; v4 has four retrievers that fail
+    # independently, so the provenance is a dict keyed by which one.
+    assert payload["retrieval_errors"] == {}
 
 
 def test_answer_json_mode_returns_one_on_error(capsys):
@@ -207,7 +209,7 @@ class _StubAgentFactory:
         self.on_progress = on_progress
         return self
 
-    def run(self, question: str) -> dict:
+    def run(self, question: str, *, principal: str | None = None) -> dict:
         self.questions.append(question)
         return self.state
 
@@ -231,10 +233,12 @@ def test_progress_lines_go_to_stderr_with_friendly_labels(monkeypatch, capsys):
     monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
     cli.main(["q"])
     factory.on_progress("retrieve_knowledge", "12 chunk(s)")
-    factory.on_progress("select_tables", "dim_store")
+    factory.on_progress("retrieve_schema", "dim_store")
+    factory.on_progress("planner_gate", "cost 1,024.00")
     err = capsys.readouterr().err
     assert "[knowledge] 12 chunk(s)" in err
     assert "[tables] dim_store" in err
+    assert "[planner] cost 1,024.00" in err
 
 
 @pytest.mark.parametrize("flag", ["--quiet", "--json"])

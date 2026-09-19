@@ -174,12 +174,52 @@ class StageTiming:
         return out
 
 
+def timing_from_trace(trace: Sequence[Any]) -> StageTiming:
+    """Per-agent timing read from the run's own trace.
+
+    Preferred over `StageTimer` for the v4 pipeline, and not merely more
+    precise: Stage 1's four retrievers are branches of one superstep, so the
+    gap between two of their progress callbacks is not either one's duration.
+    Each node times itself instead, and reports the result in `trace`.
+    """
+    timing = StageTiming()
+    for entry in trace or ():
+        node = getattr(entry, "node", None)
+        ms = getattr(entry, "ms", None)
+        if node is None and isinstance(entry, dict):
+            node, ms = entry.get("node"), entry.get("ms")
+        if node is not None:
+            timing.stages.append((str(node), float(ms or 0.0) / 1000.0))
+    return timing
+
+
+def model_calls_from_trace(trace: Sequence[Any]) -> dict[str, int]:
+    """How many model calls each agent made.
+
+    This is what makes the architecture's economic claim measurable: the
+    happy path should cost three calls, and the Repair Agent's classifier
+    should keep most retries from costing a fourth.
+    """
+    calls: dict[str, int] = {}
+    for entry in trace or ():
+        node = getattr(entry, "node", None)
+        count = getattr(entry, "model_calls", None)
+        if node is None and isinstance(entry, dict):
+            node, count = entry.get("node"), entry.get("model_calls")
+        if node is not None and count:
+            calls[str(node)] = calls.get(str(node), 0) + int(count)
+    return calls
+
+
 class StageTimer:
     """Wraps the agent's progress callback and records the gaps between calls.
 
     The graph calls back as each node *finishes*, so the elapsed time since the
     previous callback is that node's duration. The first gap is measured from
     when the run started rather than from process start.
+
+    Superseded by `timing_from_trace` where the run carries a trace, because
+    this cannot attribute time correctly across parallel branches.
     """
 
     def __init__(self, inner: Callable[[str, str], None] | None = None) -> None:
@@ -216,6 +256,11 @@ class QuestionResult:
     error: str | None = None
     examples: list[str] = field(default_factory=list)
     knowledge_chunks: int = 0
+    #: Model calls per agent, from the run's trace. Empty for a v3-shaped run.
+    model_calls: dict[str, int] = field(default_factory=dict)
+    #: Fraction of the narrative's numbers the Audit Checker traced to a cell.
+    #: None when nothing narrated, so it is never confused with zero.
+    narrative_score: float | None = None
 
     @property
     def correct(self) -> bool:

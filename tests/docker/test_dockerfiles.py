@@ -114,6 +114,14 @@ def test_init_db_sh_fails_fast(init_db_sh: str):
     assert "set -euo pipefail" in init_db_sh
 
 
+def test_init_db_sh_installs_pg_trgm_before_the_ddl_that_may_index_with_it(init_db_sh: str):
+    """Only a superuser can create an extension, and the agent connects as a
+    read-only role, so the image is the only place this can happen.
+    """
+    assert "CREATE EXTENSION IF NOT EXISTS pg_trgm" in init_db_sh
+    assert init_db_sh.index("pg_trgm") < init_db_sh.index('--file="$DDL_FILE"')
+
+
 def test_init_db_sh_loads_as_the_owner_and_only_then_creates_the_reader(init_db_sh: str):
     """The DDL and the COPY need the owner; the agent's role is created after
     the data is in, so it can be granted SELECT on tables that already exist.

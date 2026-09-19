@@ -6,9 +6,9 @@ from __future__ import annotations
 
 from nl2sql_agent.config import Settings
 from nl2sql_agent.database import QueryResult
-from nl2sql_agent.tools import SqlReview, build_tools
+from nl2sql_agent.tools import build_tools
 
-from .conftest import FakeDatabase, FakeKnowledgeBase, ScriptedLLM, make_chunk
+from .conftest import FakeDatabase, FakeKnowledgeBase, make_chunk
 
 
 def test_describe_all_tables_delegates_to_the_database(fake_db, scripted_llm):
@@ -22,68 +22,6 @@ def test_get_schema_and_data_passes_through_tables_and_sample_rows(fake_db, scri
     tools = build_tools(fake_db, scripted_llm, settings)
     tools["get_schema_and_data"].invoke({"tables": ["dim_store"]})
     assert fake_db.schema_and_samples_calls == [(["dim_store"], 7)]
-
-
-def test_validate_sql_rejects_unsafe_sql_before_touching_the_database(fake_db, scripted_llm):
-    tools = build_tools(fake_db, scripted_llm, Settings())
-    result = tools["validate_sql"].invoke(
-        {"sql": "DELETE FROM dim_store", "question": "q", "schema_context": "s"}
-    )
-    assert result["is_valid"] is False
-    assert "Only SELECT/WITH" in result["issues"][0]
-    assert fake_db.explain_calls == []
-    assert scripted_llm.structured_invocations == []
-
-
-def test_validate_sql_rejects_on_a_definitive_planner_error_without_asking_the_model(scripted_llm):
-    db = FakeDatabase(explain_error='relation "nope" does not exist')
-    tools = build_tools(db, scripted_llm, Settings())
-    result = tools["validate_sql"].invoke(
-        {"sql": "SELECT * FROM nope", "question": "q", "schema_context": "s"}
-    )
-    assert result["is_valid"] is False
-    assert "Database rejected the query" in result["issues"][0]
-    assert "nope" in result["issues"][0]
-    assert db.explain_calls == ["SELECT * FROM nope"]
-    assert scripted_llm.structured_invocations == []  # no point asking the model
-
-
-def test_validate_sql_accepts_when_planner_and_model_both_approve(fake_db):
-    llm = ScriptedLLM(sql_reviews=[SqlReview(is_valid=True, issues=[])])
-    tools = build_tools(fake_db, llm, Settings())
-    result = tools["validate_sql"].invoke(
-        {"sql": "SELECT * FROM dim_store", "question": "q", "schema_context": "s"}
-    )
-    assert result == {"is_valid": True, "issues": []}
-    assert fake_db.explain_calls == ["SELECT * FROM dim_store"]
-
-
-def test_validate_sql_surfaces_model_rejection_issues(fake_db):
-    llm = ScriptedLLM(sql_reviews=[SqlReview(is_valid=False, issues=["wrong join key"])])
-    tools = build_tools(fake_db, llm, Settings())
-    result = tools["validate_sql"].invoke(
-        {"sql": "SELECT * FROM dim_store", "question": "q", "schema_context": "s"}
-    )
-    assert result == {"is_valid": False, "issues": ["wrong join key"]}
-
-
-def test_validate_sql_passes_knowledge_into_the_review_prompt(fake_db):
-    llm = ScriptedLLM(sql_reviews=[SqlReview(is_valid=True, issues=[])])
-    tools = build_tools(fake_db, llm, Settings())
-    tools["validate_sql"].invoke(
-        {
-            "sql": "SELECT * FROM dim_store",
-            "question": "q",
-            "schema_context": "s",
-            "knowledge": "Never sum a pre-aggregated total.",
-        }
-    )
-    prompt = "\n".join(
-        getattr(m, "content", str(m))
-        for _schema, messages in llm.structured_invocations
-        for m in messages
-    )
-    assert "Never sum a pre-aggregated total." in prompt
 
 
 def test_search_knowledge_returns_context_tables_and_provenance(fake_db, scripted_llm):

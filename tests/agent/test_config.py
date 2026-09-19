@@ -33,7 +33,7 @@ def test_defaults_when_env_is_empty(monkeypatch):
     for var in (
         "OLLAMA_BASE_URL", "OLLAMA_MODEL", "OLLAMA_TEMPERATURE", "OLLAMA_REASONING",
         "OLLAMA_NUM_CTX", "DATABASE_URL", "DB_SCHEMA", "SAMPLE_ROWS", "MAX_ROWS",
-        "STATEMENT_TIMEOUT_MS", "MAX_SQL_ATTEMPTS", "RAG_ENABLED", "VECTOR_DB_URL",
+        "STATEMENT_TIMEOUT_MS", "MAX_ATTEMPTS", "MAX_SQL_ATTEMPTS", "RAG_ENABLED", "VECTOR_DB_URL",
         "EMBED_MODEL", "EMBED_BASE_URL", "RAG_TOP_K", "RAG_MAX_CONTEXT_CHARS",
     ):
         monkeypatch.delenv(var, raising=False)
@@ -49,7 +49,7 @@ def test_defaults_when_env_is_empty(monkeypatch):
     assert settings.sample_rows == 3
     assert settings.max_rows == 50
     assert settings.statement_timeout_ms == 30000
-    assert settings.max_sql_attempts == 3
+    assert settings.max_attempts == 4
     assert settings.rag_enabled is True
     assert settings.vector_db_url == DEFAULT_VECTOR_DB_URL
     assert settings.embed_model == DEFAULT_EMBED_MODEL
@@ -84,7 +84,7 @@ def test_env_overrides_every_field(monkeypatch):
     monkeypatch.setenv("SAMPLE_ROWS", "5")
     monkeypatch.setenv("MAX_ROWS", "10")
     monkeypatch.setenv("STATEMENT_TIMEOUT_MS", "5000")
-    monkeypatch.setenv("MAX_SQL_ATTEMPTS", "1")
+    monkeypatch.setenv("MAX_ATTEMPTS", "1")
     monkeypatch.setenv("RAG_ENABLED", "false")
     monkeypatch.setenv("VECTOR_DB_URL", "postgresql+psycopg://v:v@vhost/vectors")
     monkeypatch.setenv("EMBED_MODEL", "nomic-embed-text")
@@ -109,7 +109,7 @@ def test_env_overrides_every_field(monkeypatch):
     assert settings.sample_rows == 5
     assert settings.max_rows == 10
     assert settings.statement_timeout_ms == 5000
-    assert settings.max_sql_attempts == 1
+    assert settings.max_attempts == 1
 
 
 def test_env_bool_accepts_common_truthy_spellings(monkeypatch):

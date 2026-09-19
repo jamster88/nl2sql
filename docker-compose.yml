@@ -10,6 +10,8 @@ services:
         DB_NAME: ${POSTGRES_DB:-nl2sql_retail}
         DB_USER: ${POSTGRES_USER:-nl2sql}
         DB_PASSWORD: ${POSTGRES_PASSWORD:-nl2sql}
+        DB_READER: ${POSTGRES_READER_USER:-nl2sql_reader}
+        DB_READER_PASSWORD: ${POSTGRES_READER_PASSWORD:-nl2sql_reader}
     image: ${IMAGE_NAME:-nl2sql-retail-postgres}:${IMAGE_TAG:-latest}
     container_name: nl2sql-postgres
     restart: unless-stopped
@@ -92,7 +94,9 @@ services:
       chunkdb:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-nl2sql}:${POSTGRES_PASSWORD:-nl2sql}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
+      # The read-only role, not the owner: the agent only ever SELECTs.
+      # launch.sh / setup.sh create it on every start (docker/reader_role.sql).
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_READER_USER:-nl2sql_reader}:${POSTGRES_READER_PASSWORD:-nl2sql_reader}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.10.82:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8-256k}
       # 256k. Multi-shot puts the schema, the knowledge block and three

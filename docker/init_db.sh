@@ -2,12 +2,14 @@
 # Build-time database bootstrap.
 #
 # Initializes a Postgres cluster, applies ddl.sql, bulk-loads the generated
-# CSVs, then shuts down cleanly -- so the populated cluster is committed into
-# the image layer rather than created on first run.
+# CSVs, creates the agent's read-only role, then shuts down cleanly -- so the
+# populated cluster is committed into the image layer rather than created on
+# first run.
 set -euo pipefail
 
 DDL_FILE=${DDL_FILE:-/opt/nl2sql/ddl.sql}
 LOAD_SQL=${LOAD_SQL:-/csv/_load.sql}
+READER_SQL=${READER_SQL:-/opt/nl2sql/reader_role.sql}
 
 initdb -D "$PGDATA" \
   --username=postgres \
@@ -40,5 +42,11 @@ psql -v ON_ERROR_STOP=1 --username="${DB_USER}" --dbname="${DB_NAME}" --file="$D
 # no client round-trip.
 super --dbname="${DB_NAME}" --file="$LOAD_SQL"
 super --dbname="${DB_NAME}" --command="VACUUM ANALYZE"
+
+# The agent reads through this role; only the DDL and the COPY above run as
+# the owner.
+super --dbname="${DB_NAME}" \
+  -v reader="${DB_READER}" -v reader_password="${DB_READER_PASSWORD}" -v owner="${DB_USER}" \
+  --file="$READER_SQL"
 
 pg_ctl -D "$PGDATA" -m fast -w stop

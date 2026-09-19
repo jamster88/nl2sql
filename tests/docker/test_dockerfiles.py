@@ -40,6 +40,11 @@ def emit_load_sql_py() -> str:
     return (DOCKER_DIR / "emit_load_sql.py").read_text()
 
 
+@pytest.fixture(scope="module")
+def reader_role_sql() -> str:
+    return (DOCKER_DIR / "reader_role.sql").read_text()
+
+
 # ---------------------------------------------------------------------------
 # docker/Dockerfile (the seeded Postgres image)
 # ---------------------------------------------------------------------------
@@ -91,9 +96,13 @@ def test_declares_oci_image_labels_for_the_published_image(postgres_dockerfile: 
 
 def test_build_args_are_all_consumed_by_init_db_sh(postgres_dockerfile: str, init_db_sh: str):
     arg_names = set(re.findall(r"^ARG (\w+)=", postgres_dockerfile, re.MULTILINE))
-    assert {"DB_NAME", "DB_USER", "DB_PASSWORD"} <= arg_names
-    for name in ("DB_NAME", "DB_USER", "DB_PASSWORD"):
+    assert {"DB_NAME", "DB_USER", "DB_PASSWORD", "DB_READER", "DB_READER_PASSWORD"} <= arg_names
+    for name in ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_READER", "DB_READER_PASSWORD"):
         assert f"${{{name}}}" in init_db_sh, f"{name} is declared as a build ARG but never used in init_db.sh"
+
+
+def test_the_reader_role_sql_is_shipped_in_the_image(postgres_dockerfile: str):
+    assert "COPY docker/reader_role.sql /opt/nl2sql/reader_role.sql" in postgres_dockerfile
 
 
 # ---------------------------------------------------------------------------
@@ -105,10 +114,57 @@ def test_init_db_sh_fails_fast(init_db_sh: str):
     assert "set -euo pipefail" in init_db_sh
 
 
+def test_init_db_sh_loads_as_the_owner_and_only_then_creates_the_reader(init_db_sh: str):
+    """The DDL and the COPY need the owner; the agent's role is created after
+    the data is in, so it can be granted SELECT on tables that already exist.
+    """
+    ddl = init_db_sh.index('--file="$DDL_FILE"')
+    load = init_db_sh.index('--file="$LOAD_SQL"')
+    reader = init_db_sh.index('--file="$READER_SQL"')
+    assert ddl < load < reader
+    assert re.search(r'-v reader="\$\{DB_READER\}".*-v owner="\$\{DB_USER\}"', init_db_sh)
+
+
 def test_init_db_sh_shuts_the_cluster_down_cleanly_at_the_end(init_db_sh: str):
     non_empty_lines = [line for line in init_db_sh.splitlines() if line.strip() and not line.strip().startswith("#")]
     assert "pg_ctl" in non_empty_lines[-1]
     assert "stop" in non_empty_lines[-1]
+
+
+# ---------------------------------------------------------------------------
+# docker/reader_role.sql
+# ---------------------------------------------------------------------------
+
+
+def test_reader_role_sql_grants_select_and_nothing_else(reader_role_sql: str):
+    grants = re.findall(r"GRANT\s+(.+?)\s+(?:ON|TO)\b", reader_role_sql, re.IGNORECASE)
+    assert grants, "no GRANT statements found"
+    for privilege in grants:
+        assert privilege.upper() in {"SELECT", "CONNECT", "USAGE"}, privilege
+    for forbidden in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "ALL PRIVILEGES", "ALL TABLES TO"):
+        assert forbidden not in reader_role_sql.upper().replace("ALL TABLES IN SCHEMA", ""), forbidden
+
+
+def test_reader_role_sql_covers_tables_added_later(reader_role_sql: str):
+    assert re.search(r"ALTER DEFAULT PRIVILEGES FOR ROLE :\"owner\" IN SCHEMA public\s+GRANT SELECT ON TABLES",
+                     reader_role_sql)
+
+
+def test_reader_role_sql_is_safe_to_run_on_every_start(reader_role_sql: str):
+    """launch.sh runs it each time: creation is guarded, everything after
+    it is an ALTER or a GRANT, and nothing is dropped or revoked.
+    """
+    assert "WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'reader') \\gexec" in reader_role_sql
+    assert "\\set ON_ERROR_STOP on" in reader_role_sql
+    for forbidden in ("DROP ", "REVOKE "):
+        assert forbidden not in reader_role_sql.upper()
+
+
+def test_reader_role_is_a_plain_login_role_that_starts_read_only(reader_role_sql: str):
+    assert re.search(r"ALTER ROLE :\"reader\" WITH LOGIN PASSWORD :'reader_password'", reader_role_sql)
+    for attribute in ("NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS"):
+        assert attribute in reader_role_sql
+    assert "SET default_transaction_read_only = on" in reader_role_sql
 
 
 # ---------------------------------------------------------------------------

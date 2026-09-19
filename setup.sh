@@ -101,6 +101,30 @@ info() { printf '    %s\n' "$1"; }
 warn() { printf '    WARNING: %s\n' "$1" >&2; }
 die() { printf '\nERROR: %s\n' "$1" >&2; exit 1; }
 
+# --- Read-only role --------------------------------------------------------
+# The agent connects as a role that can SELECT and nothing else, not as the
+# owner that loaded the data. A volume created from an image that predates
+# that role keeps whatever roles it had, so the role is (re)created on every
+# start; docker/reader_role.sql is idempotent. Local connections inside the
+# container are trusted, which is why no superuser password is needed here.
+compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
+    local value="${!1:-}"
+    if [[ -z "$value" && -f .env ]]; then
+        value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
+    fi
+    printf '%s' "${value:-$2}"
+}
+
+ensure_reader_role() {
+    docker compose exec -T postgres psql -U postgres -q \
+        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -v ON_ERROR_STOP=1 \
+        -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
+        -v reader_password="$(compose_env POSTGRES_READER_PASSWORD nl2sql_reader)" \
+        -v owner="$(compose_env POSTGRES_USER nl2sql)" \
+        -f - < docker/reader_role.sql >/dev/null
+}
+
 # --- Prerequisites ---------------------------------------------------------
 step "Checking prerequisites"
 command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
@@ -220,6 +244,9 @@ rows=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-nl2sql}" \
     "SELECT count(*) FROM fact_pos_retail_sales" 2>/dev/null || echo "")
 [[ -n "$rows" ]] || die "the database is up but the dataset is missing. Try --reset."
 info "database ready with $rows sales rows"
+
+ensure_reader_role || die "could not create the agent's read-only role. Check 'docker compose logs postgres'."
+info "read-only role $(compose_env POSTGRES_READER_USER nl2sql_reader) ready for the agent"
 
 # --- Retrieval stores ------------------------------------------------------
 if [[ $WITH_RAG -eq 1 ]]; then

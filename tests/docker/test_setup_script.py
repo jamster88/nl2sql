@@ -437,3 +437,12 @@ def test_default_run_installs_the_trigram_extension(run_setup):
     result = run_setup()
     [call] = result.calls_matching("CREATE EXTENSION")
     assert "IF NOT EXISTS pg_trgm" in call
+
+
+def test_a_chat_model_tagged_latest_is_not_reported_as_missing(run_setup):
+    """Same fix as launch.sh: Ollama reports an untagged pull as
+    `name:latest`, and an exact match called a working host broken.
+    """
+    result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k:latest"},{"name":"bge-m3:latest"}'})
+    assert "is available at" in result.output
+    assert "does not have qwen3.8-256k" not in result.output

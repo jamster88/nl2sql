@@ -42,6 +42,11 @@ $ ./launch.sh
     retail dataset: 1291781 sales rows
     knowledge base: 53 embedded chunks
     worked examples: 45 golden pairs, 45 embedded questions
+    schema index: 20 DDL chunks (table selection needs no model call)
+
+==> Checking the multi-agent pipeline
+    literal matching: pg_trgm installed (trigram search)
+    least privilege: the agent's role holds SELECT and nothing else
 
 ==> Checking the models
     chat model qwen3.8-256k is available at http://192.168.10.82:11434
@@ -51,6 +56,21 @@ $ ./launch.sh
 
     docker compose run --rm agent "How many stores are there?"
 ```
+
+Then ask. That is the whole contract: one script, then one command per
+question.
+
+```bash
+docker compose run --rm agent "total net sales for dairy and eggs in FY2025"
+```
+
+Everything the script prints is something that fails *later* and looks like
+the agent being bad at its job. A container that is up but empty. A chat host
+that moved. An embedding model that is not the one the vectors were built
+with. A `.env` still pinning the previous agent image, so an upgrade silently
+has no effect. And the two the multi-agent pipeline added: the DDL-chunk
+collection its table selection reads instead of calling the model, and whether
+its database role has picked up a grant it should not have.
 
 `./launch.sh --no-rag` starts only the retail database; `--restart` recreates the
 containers; `-q` prints only problems. Run it with no `.env` present and it hands
@@ -156,6 +176,19 @@ produce an answer at all.
 ```bash
 docker pull mcfaddja/nl2sql-agent:v4
 ```
+
+To publish a new one, build both architectures in the same step so the tag
+stays multi-arch, as every earlier agent tag is:
+
+```bash
+docker login
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4 .
+```
+
+The image version label comes from `AGENT_VERSION` in
+[`agent/Dockerfile`](agent/Dockerfile), and a test pins it to
+`nl2sql_agent.__version__`, so the two cannot drift.
 
 | Tag | Use |
 |---|---|
@@ -509,8 +542,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 856 tests, no Docker or network needed
-pytest --run-docker     # all 1091, including ones that build and run containers
+pytest                  # 887 tests, no Docker or network needed
+pytest --run-docker     # all 1138, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -522,7 +555,7 @@ pytest --run-docker     # all 1091, including ones that build and run containers
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 235 tests behind `--run-docker` are the ones that need a working daemon:
+The 251 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than

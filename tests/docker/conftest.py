@@ -75,7 +75,13 @@ case "$1" in
             exec)
                 # Ordered most specific first: several of these run against the
                 # same service and are told apart only by the SQL.
-                if [[ "$*" == *reader=* ]]; then
+                if [[ "$*" == *"pg_extension"* ]]; then
+                    echo "${FAKE_TRGM_INSTALLED-1}"
+                elif [[ "$*" == *"role_table_grants"* ]]; then
+                    echo "${FAKE_READER_EXTRA_GRANTS-0}"
+                elif [[ "$*" == *ddl_index_embeddings* ]]; then
+                    echo "${FAKE_DDL_CHUNKS-20}"
+                elif [[ "$*" == *reader=* ]]; then
                     # docker/reader_role.sql, piped in as the superuser.
                     [[ -n "${FAKE_READER_ROLE_FAILS:-}" ]] && exit 1
                     exit 0

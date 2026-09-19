@@ -324,7 +324,12 @@ effective_url=${effective_url:-http://192.168.10.82:11434}
 effective_model=${effective_model:-qwen3.8-256k}
 
 if tags=$(curl -sf --max-time 5 "$effective_url/api/tags" 2>/dev/null); then
-    if printf '%s' "$tags" | grep -q "\"$effective_model\""; then
+# Ollama reports a model the user asked for as `name:latest` when they gave no
+# tag, so an exact match on the configured name reports a model that is
+# present and working as missing. The embedding check below has always matched
+# on the prefix for this reason; this one did not, and warned that "every
+# question will fail" about a host the benchmark had just scored 15/15 against.
+    if printf '%s' "$tags" | grep -q "\"$effective_model\(\"\|:\)"; then
         info "$effective_model is available at $effective_url"
     else
         warn "$effective_url is reachable but does not have $effective_model."

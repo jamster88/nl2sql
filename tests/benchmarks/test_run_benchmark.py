@@ -268,3 +268,48 @@ def test_the_comparison_table_lists_every_configuration(capsys):
     out = capsys.readouterr().out
     for name in ("schema-only", "knowledge", "multi-shot"):
         assert name in out
+
+
+# ---------------------------------------------------------------------------
+# The narrative score: whether the user was told the truth
+# ---------------------------------------------------------------------------
+
+
+class _Report:
+    def __init__(self, unsupported: list[str]) -> None:
+        self.unsupported_claims = unsupported
+
+
+def _state(claims: int, unsupported: list[str] | None = None) -> dict:
+    return {
+        "claims": [object()] * claims,
+        "audit": _Report(unsupported or []),
+    }
+
+
+def test_a_narrative_the_audit_traced_in_full_scores_one():
+    assert run_benchmark.narrative_score(_state(3)) == 1.0
+
+
+def test_a_dropped_claim_lowers_the_score():
+    """Execution accuracy says whether the SQL was right. This says whether
+    the answer's numbers could be traced back to a cell, which is a
+    different failure and one nothing in the v3 harness could see.
+    """
+    assert run_benchmark.narrative_score(_state(4, ["Sales rose 40%."])) == 0.75
+
+
+def test_a_narrative_where_nothing_survived_scores_zero():
+    assert run_benchmark.narrative_score(_state(2, ["a", "b"])) == 0.0
+
+
+def test_a_run_that_narrated_nothing_scores_none_rather_than_zero():
+    """A question with no narration is not a question narrated badly, and
+    averaging the two together would say it was.
+    """
+    assert run_benchmark.narrative_score({"claims": []}) is None
+    assert run_benchmark.narrative_score({}) is None
+
+
+def test_the_score_survives_a_run_with_no_audit_report():
+    assert run_benchmark.narrative_score({"claims": [object()]}) == 1.0

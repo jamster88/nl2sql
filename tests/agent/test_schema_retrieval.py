@@ -574,3 +574,79 @@ def test_live_selection_is_smaller_than_the_schema_it_came_from(
     assert selection.error is None
     assert "fact_pos_retail_sales" in selection.tables
     assert len(selection.tables) < len(live_database.table_names())
+
+
+# ---------------------------------------------------------------------------
+# close_and_cap: the entry point the Context Aggregator uses
+# ---------------------------------------------------------------------------
+
+
+def test_closing_over_a_given_table_set_makes_no_vector_search():
+    """The aggregator is the only place all three table proposals are known,
+    so it is the only place the closure can be applied to their union. Going
+    back through `select` there would pay for a second embedding call to
+    learn something already in state.
+    """
+    retriever = make_retriever(["dim_store"])
+    searches: list[str] = []
+    inner = retriever._knowledge_base.search
+    retriever._knowledge_base.search = lambda q, *a, **k: (searches.append(q), inner(q, *a, **k))[1]
+
+    selection = retriever.close_and_cap(["fact_ad_performance", "dim_ad_channel"])
+
+    assert searches == [], f"close_and_cap embedded the question: {searches}"
+    assert "dim_ad_placement" in selection.bridges
+    # And the counter really does catch a search, so the assertion above can fail.
+    retriever.select("anything")
+    assert searches == ["anything"]
+
+
+def test_closing_pulls_in_the_bridge_between_two_proposed_tables():
+    retriever = make_retriever([])
+    selection = retriever.close_and_cap(["fact_ad_performance", "dim_ad_channel"])
+    assert selection.bridges == ["dim_ad_placement"]
+    assert set(selection.tables) >= {"fact_ad_performance", "dim_ad_channel", "dim_ad_placement"}
+
+
+def test_closing_keeps_the_order_the_aggregator_proposed():
+    """The union arrives ranked -- vectors first, then the tables the
+    knowledge chunks and worked examples named -- and the cap drops from the
+    bottom, so the order carries meaning.
+    """
+    retriever = make_retriever([])
+    selection = retriever.close_and_cap(["dim_store", "dim_product", "dim_date"])
+    assert selection.tables[:3] == ["dim_store", "dim_product", "dim_date"]
+
+
+def test_closing_ignores_a_table_the_catalog_does_not_have():
+    retriever = make_retriever([])
+    selection = retriever.close_and_cap(["dim_store", "dim_storefront"])
+    assert "dim_storefront" not in selection.tables
+
+
+def test_closing_deduplicates_what_three_retrievers_proposed_twice():
+    """Every Stage 1 retriever may name the same table; the fan-in is where
+    that stops mattering.
+    """
+    retriever = make_retriever([])
+    selection = retriever.close_and_cap(["dim_store", "dim_store", "dim_product", "dim_store"])
+    assert selection.tables.count("dim_store") == 1
+
+
+def test_closing_applies_the_cap_and_says_what_it_dropped():
+    retriever = make_retriever([], max_tables=3)
+    selection = retriever.close_and_cap(
+        ["dim_store", "dim_product", "dim_date", "dim_vendor", "dim_promotion"]
+    )
+    assert len(selection.tables) <= 3
+    assert selection.dropped
+
+
+def test_closing_an_empty_set_falls_back_to_the_catalog():
+    """Every retriever failed. Schema-only is v1's behaviour and still
+    answers a good many questions, so it beats returning nothing.
+    """
+    retriever = make_retriever([], max_tables=4)
+    selection = retriever.close_and_cap([])
+    assert selection.tables
+    assert len(selection.tables) <= 4

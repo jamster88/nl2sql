@@ -1,0 +1,424 @@
+{
+  "version": "31.4.5",
+  "data": "<mxfile host=\"Electron\"><diagram name=\"Page-1\" id=\"V7pJo73xut1Gh34Glxmh\"><mxGraphModel dx=\"3516\" dy=\"1714\" grid=\"1\" gridSize=\"10\" guides=\"1\" tooltips=\"1\" connect=\"1\" arrows=\"1\" fold=\"1\" page=\"1\" pageScale=\"1\" pageWidth=\"850\" pageHeight=\"1100\" math=\"0\" shadow=\"0\"><root><mxCell id=\"0\"/><mxCell id=\"1\" parent=\"0\"/><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-13\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-1\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-12\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-1\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Supervisor Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Classifies Query&lt;br&gt;- Starts state machine\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"240\" y=\"160\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-6\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-12\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-14\"><mxGeometry relative=\"1\" as=\"geometry\"><mxPoint x=\"600\" y=\"240\" as=\"sourcePoint\"/><mxPoint x=\"600\" y=\"320\" as=\"targetPoint\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-7\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-6\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Pruned Schema Context\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"-0.0167\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-12\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Vector-RAG Schema Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Queries metadata vector db&lt;br&gt;- Computes cosine similarities&lt;div&gt;- Reranks&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"520\" y=\"160\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-16\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-14\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-15\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-14\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Fuzzy Match Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Trigram search on enums/IDs&lt;br&gt;&lt;div&gt;- Exposes raw litteral mappings&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"520\" y=\"320\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-20\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-15\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;\" target=\"Eb97LC0O7JKoOEKMlVtS-18\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-21\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-20\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Pruned DL + Valed Row Literals + Context Data\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.5954\" y=\"-17\" as=\"geometry\"><mxPoint x=\"-3\" y=\"-11\" as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-15\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Context Aggregator Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Merges state pieces\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"240\" y=\"320\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-17\" parent=\"1\" style=\"swimlane;startSize=0;align=left;spacingLeft=0;\" value=\"&#10;INTAKE &amp; DATA MAPPING STAGE (State: Context Gathering)\" vertex=\"1\"><mxGeometry height=\"320\" width=\"560\" x=\"200\" y=\"120\" as=\"geometry\"><mxRectangle height=\"40\" width=\"50\" x=\"200\" y=\"120\" as=\"alternateBounds\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-18\" parent=\"1\" style=\"swimlane;startSize=0;align=left;fontStyle=1\" value=\"&#10;SYNTHESIS &amp; STATISTICAL ANALYSIS STATE (State: Compilation)\" vertex=\"1\"><mxGeometry height=\"160\" width=\"440\" x=\"200\" y=\"560\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-19\" parent=\"Eb97LC0O7JKoOEKMlVtS-18\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u style=&quot;&quot;&gt;&lt;b&gt;SQL Generator Agent (&lt;/b&gt;LLM Reasoning Loop&lt;b&gt;)&lt;/b&gt;&lt;/u&gt;&lt;/font&gt;&lt;br&gt;- Assembles Few-Shot Golden Pairs based on schema similarity&lt;div&gt;-&amp;nbsp;Generates dialect-specific PostgreSQL source code&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"360\" x=\"40\" y=\"40\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-22\" parent=\"1\" style=\"swimlane;startSize=0;align=left;\" value=\"&#10;DECOUPLED VALIDATION &amp; REPAIR LOOP (State: Guardrails)\" vertex=\"1\"><mxGeometry height=\"880\" width=\"720\" x=\"200\" y=\"840\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-23\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;SQL Query Validator Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Non-executing AST Parser&lt;div&gt;- Regex Matcher (no write)&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"180\" y=\"40\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-28\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-25\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-31\"><mxGeometry relative=\"1\" as=\"geometry\"><mxPoint x=\"140\" y=\"280\" as=\"targetPoint\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-29\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-28\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Passed\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.35\" y=\"11\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-33\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-25\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-35\"><mxGeometry relative=\"1\" as=\"geometry\"><mxPoint x=\"420.04347826086973\" y=\"280\" as=\"targetPoint\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-34\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-33\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Regressed\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.3499\" y=\"-9\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-25\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"strokeWidth=2;html=1;shape=mxgraph.flowchart.decision;whiteSpace=wrap;\" value=\"Passed&lt;br&gt;or&lt;br&gt;Regressed\" vertex=\"1\"><mxGeometry height=\"120\" width=\"120\" x=\"220\" y=\"200\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-26\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-23\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0.5;entryY=0;entryDx=0;entryDy=0;entryPerimeter=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-25\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-46\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-31\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;\" target=\"Eb97LC0O7JKoOEKMlVtS-45\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-31\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;shapeInside=1;fixedSize=1;align=left;verticalAlign=top;spacingLeft=23;\" value=\"&lt;b&gt;&lt;u&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;Database Engine Pass&lt;/font&gt;&lt;/u&gt;&lt;/b&gt;&lt;br&gt;- EXPLAIN / ANALYZE run&lt;br&gt;- Costs / Timeout check\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"40\" y=\"400\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-37\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-35\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;\" target=\"Eb97LC0O7JKoOEKMlVtS-36\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-35\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;SQL Repair Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Analyzes AST error&lt;div&gt;- Passes analysis back to SQL Generator agent&lt;br&gt;- Increments retry counter&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"360\" x=\"320\" y=\"400\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-44\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-36\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;fontSize=12;fontStyle=1\" target=\"Eb97LC0O7JKoOEKMlVtS-43\" value=\"&amp;gt;= 4\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-36\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"strokeWidth=2;html=1;shape=mxgraph.flowchart.decision;whiteSpace=wrap;\" value=\"Retry Counter&lt;br&gt;&amp;lt; 4\" vertex=\"1\"><mxGeometry height=\"120\" width=\"120\" x=\"440\" y=\"560\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-43\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"strokeWidth=2;html=1;shape=mxgraph.flowchart.terminator;whiteSpace=wrap;fontStyle=1;fontSize=14;\" value=\"Send Error Stack\" vertex=\"1\"><mxGeometry height=\"80\" width=\"360\" x=\"320\" y=\"760\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-51\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-45\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;\" target=\"Eb97LC0O7JKoOEKMlVtS-50\" value=\"OK\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-45\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"strokeWidth=2;html=1;shape=mxgraph.flowchart.decision;whiteSpace=wrap;\" value=\"OK&lt;br&gt;or&lt;br&gt;FAIL\" vertex=\"1\"><mxGeometry height=\"120\" width=\"120\" x=\"80\" y=\"560\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-47\" edge=\"1\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" source=\"Eb97LC0O7JKoOEKMlVtS-45\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;entryPerimeter=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-43\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-48\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-47\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"FAIL\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"-0.0733\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-50\" parent=\"Eb97LC0O7JKoOEKMlVtS-22\" style=\"shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;shapeInside=1;fixedSize=1;align=center;verticalAlign=middle;spacingLeft=0;fontSize=14;fontStyle=1\" value=\"Execute\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"40\" y=\"760\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-24\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-19\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;\" target=\"Eb97LC0O7JKoOEKMlVtS-22\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-38\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-24\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Raw SQL String\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.331\" y=\"-20\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-52\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-36\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;exitPerimeter=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-18\"><mxGeometry relative=\"1\" as=\"geometry\"><Array as=\"points\"><mxPoint x=\"990\" y=\"1460\"/><mxPoint x=\"990\" y=\"640\"/></Array></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-53\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-52\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1\" value=\"&amp;lt; 4\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"-0.8975\" y=\"10\" as=\"geometry\"><mxPoint x=\"-14\" as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-54\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-52\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Pass in AST Error Analysis\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.8399\" y=\"15\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-55\" parent=\"1\" style=\"swimlane;startSize=0;align=left;\" value=\"&#10;PRESENTATION &amp; AUDIT LAYER (State: Formatting)\" vertex=\"1\"><mxGeometry height=\"160\" width=\"720\" x=\"200\" y=\"1840\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-56\" parent=\"Eb97LC0O7JKoOEKMlVtS-55\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Visual Formatting Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Formats rows to markdown tables&lt;br&gt;&lt;div&gt;- infers chart configuration schemas&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"360\" x=\"40\" y=\"40\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-61\" parent=\"Eb97LC0O7JKoOEKMlVtS-55\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Insight Audit Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;&lt;br&gt;- Audits math vs rows&lt;br&gt;&lt;div&gt;- Checks data leakage&lt;/div&gt;\" vertex=\"1\"><mxGeometry height=\"80\" width=\"200\" x=\"480\" y=\"40\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-57\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-50\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;\" target=\"Eb97LC0O7JKoOEKMlVtS-55\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-62\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-57\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Raw Result Set (Rows / Columns Payload)\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.3886\" y=\"-15\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-58\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Vector-RAG Schema Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;\" vertex=\"1\"><mxGeometry height=\"40\" width=\"200\" x=\"1120\" y=\"1840\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-59\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Fuzzy Match Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;\" vertex=\"1\"><mxGeometry height=\"40\" width=\"200\" x=\"1120\" y=\"2080\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-60\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Context Aggregator Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;\" vertex=\"1\"><mxGeometry height=\"40\" width=\"200\" x=\"1120\" y=\"1960\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-63\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u style=&quot;&quot;&gt;&lt;b&gt;SQL Generator Agent&lt;br&gt;&lt;/b&gt;&lt;/u&gt;&lt;/font&gt;\" vertex=\"1\"><mxGeometry height=\"40\" width=\"200\" x=\"1120\" y=\"1720\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-70\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-61\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-63\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-71\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-70\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Can Call\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.0895\" y=\"-1\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-72\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-61\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-58\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-73\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-72\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Can Call\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.576\" y=\"-5\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-74\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-61\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-60\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-75\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-74\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Can Call\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.5973\" y=\"1\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-76\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-61\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-59\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-77\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-76\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Can Call\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.0514\" y=\"1\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-78\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Vector-RAG Schema Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;\" vertex=\"1\"><mxGeometry height=\"40\" width=\"200\" x=\"-200\" y=\"1840\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-79\" parent=\"1\" style=\"rounded=0;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacingLeft=5;spacingTop=0;spacingRight=5;spacingBottom=0;\" value=\"&lt;b&gt;&lt;font style=&quot;font-size: 14px;&quot;&gt;&lt;u&gt;Context Aggregator Agent&lt;/u&gt;&lt;/font&gt;&lt;/b&gt;\" vertex=\"1\"><mxGeometry height=\"40\" width=\"200\" x=\"-200\" y=\"1960\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-80\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-56\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-78\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-82\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-80\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Can Call\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.0987\" y=\"10\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-81\" edge=\"1\" parent=\"1\" source=\"Eb97LC0O7JKoOEKMlVtS-56\" style=\"edgeStyle=orthogonalEdgeStyle;curved=1;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;entryX=1;entryY=0.5;entryDx=0;entryDy=0;\" target=\"Eb97LC0O7JKoOEKMlVtS-79\"><mxGeometry relative=\"1\" as=\"geometry\"/></mxCell><mxCell id=\"Eb97LC0O7JKoOEKMlVtS-83\" connectable=\"0\" parent=\"Eb97LC0O7JKoOEKMlVtS-81\" style=\"edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];\" value=\"Can Call\" vertex=\"1\"><mxGeometry relative=\"1\" x=\"0.0987\" y=\"-7\" as=\"geometry\"><mxPoint as=\"offset\"/></mxGeometry></mxCell></root></mxGraphModel></diagram></mxfile>",
+  "pages": [
+    {
+      "id": "V7pJo73xut1Gh34Glxmh",
+      "name": "Page-1",
+      "cells": [
+        {
+          "id": "1",
+          "type": "layer"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-13",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-1",
+          "target": "Eb97LC0O7JKoOEKMlVtS-12"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-1",
+          "type": "node",
+          "parent": "1",
+          "label": "Supervisor Agent\n- Classifies Query\n- Starts state machine",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Supervisor Agent</u></font></b><br>- Classifies Query<br>- Starts state machine"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-6",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-12",
+          "target": "Eb97LC0O7JKoOEKMlVtS-14"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-7",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-6",
+          "label": "Pruned Schema Context"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-12",
+          "type": "node",
+          "parent": "1",
+          "label": "Vector-RAG Schema Agent\n- Queries metadata vector db\n- Computes cosine similarities\n- Reranks",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Vector-RAG Schema Agent</u></font></b><br>- Queries metadata vector db<br>- Computes cosine similarities<div>- Reranks</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-16",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-14",
+          "target": "Eb97LC0O7JKoOEKMlVtS-15"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-14",
+          "type": "node",
+          "parent": "1",
+          "label": "Fuzzy Match Agent\n- Trigram search on enums/IDs\n- Exposes raw litteral mappings",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Fuzzy Match Agent</u></font></b><br>- Trigram search on enums/IDs<br><div>- Exposes raw litteral mappings</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-20",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-15",
+          "target": "Eb97LC0O7JKoOEKMlVtS-18"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-21",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-20",
+          "label": "Pruned DL + Valed Row Literals + Context Data"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-15",
+          "type": "node",
+          "parent": "1",
+          "label": "Context Aggregator Agent\n- Merges state pieces",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Context Aggregator Agent</u></font></b><br>- Merges state pieces"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-17",
+          "type": "node",
+          "parent": "1",
+          "label": "\nINTAKE & DATA MAPPING STAGE (State: Context Gathering)"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-18",
+          "type": "node",
+          "parent": "1",
+          "label": "\nSYNTHESIS & STATISTICAL ANALYSIS STATE (State: Compilation)"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-19",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-18",
+          "label": "SQL Generator Agent (LLM Reasoning Loop)\n- Assembles Few-Shot Golden Pairs based on schema similarity\n- Generates dialect-specific PostgreSQL source code",
+          "html": "<font style=\"font-size: 14px;\"><u style=\"\"><b>SQL Generator Agent (</b>LLM Reasoning Loop<b>)</b></u></font><br>- Assembles Few-Shot Golden Pairs based on schema similarity<div>-&nbsp;Generates dialect-specific PostgreSQL source code</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-22",
+          "type": "node",
+          "parent": "1",
+          "label": "\nDECOUPLED VALIDATION & REPAIR LOOP (State: Guardrails)"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-23",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "SQL Query Validator Agent\n- Non-executing AST Parser\n- Regex Matcher (no write)",
+          "html": "<b><font style=\"font-size: 14px;\"><u>SQL Query Validator Agent</u></font></b><br>- Non-executing AST Parser<div>- Regex Matcher (no write)</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-28",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-25",
+          "target": "Eb97LC0O7JKoOEKMlVtS-31"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-29",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-28",
+          "label": "Passed"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-33",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-25",
+          "target": "Eb97LC0O7JKoOEKMlVtS-35"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-34",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-33",
+          "label": "Regressed"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-25",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "Passed\nor\nRegressed",
+          "html": "Passed<br>or<br>Regressed"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-26",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-23",
+          "target": "Eb97LC0O7JKoOEKMlVtS-25"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-46",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-31",
+          "target": "Eb97LC0O7JKoOEKMlVtS-45"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-31",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "Database Engine Pass\n- EXPLAIN / ANALYZE run\n- Costs / Timeout check",
+          "html": "<b><u><font style=\"font-size: 14px;\">Database Engine Pass</font></u></b><br>- EXPLAIN / ANALYZE run<br>- Costs / Timeout check"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-37",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-35",
+          "target": "Eb97LC0O7JKoOEKMlVtS-36"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-35",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "SQL Repair Agent\n- Analyzes AST error\n- Passes analysis back to SQL Generator agent\n- Increments retry counter",
+          "html": "<b><font style=\"font-size: 14px;\"><u>SQL Repair Agent</u></font></b><br>- Analyzes AST error<div>- Passes analysis back to SQL Generator agent<br>- Increments retry counter</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-44",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-36",
+          "target": "Eb97LC0O7JKoOEKMlVtS-43",
+          "label": "&gt;= 4"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-36",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "Retry Counter\n< 4",
+          "html": "Retry Counter<br>&lt; 4"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-43",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "Send Error Stack"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-51",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-45",
+          "target": "Eb97LC0O7JKoOEKMlVtS-50",
+          "label": "OK"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-45",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "OK\nor\nFAIL",
+          "html": "OK<br>or<br>FAIL"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-47",
+          "type": "edge",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "source": "Eb97LC0O7JKoOEKMlVtS-45",
+          "target": "Eb97LC0O7JKoOEKMlVtS-43"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-48",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-47",
+          "label": "FAIL"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-50",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-22",
+          "label": "Execute"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-24",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-19",
+          "target": "Eb97LC0O7JKoOEKMlVtS-22"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-38",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-24",
+          "label": "Raw SQL String"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-52",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-36",
+          "target": "Eb97LC0O7JKoOEKMlVtS-18"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-53",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-52",
+          "label": "&lt; 4"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-54",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-52",
+          "label": "Pass in AST Error Analysis"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-55",
+          "type": "node",
+          "parent": "1",
+          "label": "\nPRESENTATION & AUDIT LAYER (State: Formatting)"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-56",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-55",
+          "label": "Visual Formatting Agent\n- Formats rows to markdown tables\n- infers chart configuration schemas",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Visual Formatting Agent</u></font></b><br>- Formats rows to markdown tables<br><div>- infers chart configuration schemas</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-61",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-55",
+          "label": "Insight Audit Agent\n- Audits math vs rows\n- Checks data leakage",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Insight Audit Agent</u></font></b><br>- Audits math vs rows<br><div>- Checks data leakage</div>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-57",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-50",
+          "target": "Eb97LC0O7JKoOEKMlVtS-55"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-62",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-57",
+          "label": "Raw Result Set (Rows / Columns Payload)"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-58",
+          "type": "node",
+          "parent": "1",
+          "label": "Vector-RAG Schema Agent",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Vector-RAG Schema Agent</u></font></b>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-59",
+          "type": "node",
+          "parent": "1",
+          "label": "Fuzzy Match Agent",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Fuzzy Match Agent</u></font></b>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-60",
+          "type": "node",
+          "parent": "1",
+          "label": "Context Aggregator Agent",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Context Aggregator Agent</u></font></b>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-63",
+          "type": "node",
+          "parent": "1",
+          "label": "SQL Generator Agent",
+          "html": "<font style=\"font-size: 14px;\"><u style=\"\"><b>SQL Generator Agent<br></b></u></font>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-70",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-61",
+          "target": "Eb97LC0O7JKoOEKMlVtS-63"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-71",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-70",
+          "label": "Can Call"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-72",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-61",
+          "target": "Eb97LC0O7JKoOEKMlVtS-58"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-73",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-72",
+          "label": "Can Call"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-74",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-61",
+          "target": "Eb97LC0O7JKoOEKMlVtS-60"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-75",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-74",
+          "label": "Can Call"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-76",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-61",
+          "target": "Eb97LC0O7JKoOEKMlVtS-59"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-77",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-76",
+          "label": "Can Call"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-78",
+          "type": "node",
+          "parent": "1",
+          "label": "Vector-RAG Schema Agent",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Vector-RAG Schema Agent</u></font></b>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-79",
+          "type": "node",
+          "parent": "1",
+          "label": "Context Aggregator Agent",
+          "html": "<b><font style=\"font-size: 14px;\"><u>Context Aggregator Agent</u></font></b>"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-80",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-56",
+          "target": "Eb97LC0O7JKoOEKMlVtS-78"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-82",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-80",
+          "label": "Can Call"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-81",
+          "type": "edge",
+          "parent": "1",
+          "source": "Eb97LC0O7JKoOEKMlVtS-56",
+          "target": "Eb97LC0O7JKoOEKMlVtS-79"
+        },
+        {
+          "id": "Eb97LC0O7JKoOEKMlVtS-83",
+          "type": "node",
+          "parent": "Eb97LC0O7JKoOEKMlVtS-81",
+          "label": "Can Call"
+        }
+      ]
+    }
+  ]
+}

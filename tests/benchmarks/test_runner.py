@@ -21,16 +21,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from benchmarks.runner import (  # noqa: E402
+from benchmarks.runner import (
+    # noqa: E402,
+    BenchmarkReport,
     CORRECT,
     ERROR,
     FAILED,
-    WRONG,
-    BenchmarkReport,
     QuestionResult,
-    StageTiming,
     StageTimer,
+    StageTiming,
+    WRONG,
+    model_calls_from_trace,
     result_matches,
+    timing_from_trace,
     values_match,
 )
 
@@ -326,3 +329,74 @@ def test_rounding_tolerance_does_not_absorb_a_real_mistake():
     assert not values_match(34.20, 98.81)
     assert not values_match(21.51, 0.2151)
     assert not values_match(48.61, 48.62)
+
+
+# ---------------------------------------------------------------------------
+# Per-agent timing, read from the run's own trace
+# ---------------------------------------------------------------------------
+
+
+class _Entry:
+    """Stands in for nl2sql_agent.state.TraceEntry without importing it."""
+
+    def __init__(self, node: str, ms: float = 0.0, model_calls: int = 0) -> None:
+        self.node = node
+        self.ms = ms
+        self.model_calls = model_calls
+
+
+def test_timing_is_read_from_the_trace_in_milliseconds():
+    """v4's nodes time themselves. The harness reports seconds, so the unit
+    has to change on the way in or every stage reads a thousand times slow.
+    """
+    timing = timing_from_trace([_Entry("generate_sql", 1500.0), _Entry("planner_gate", 12.5)])
+    assert timing.as_dict() == {"generate_sql": 1.5, "planner_gate": 0.0125}
+
+
+def test_a_node_that_ran_twice_is_summed_like_any_other_stage():
+    timing = timing_from_trace([_Entry("generate_sql", 1000.0), _Entry("generate_sql", 500.0)])
+    assert timing.seconds_for("generate_sql") == 1.5
+
+
+def test_trace_entries_may_arrive_as_plain_dictionaries():
+    """A trace read back from a JSON file has no dataclasses in it."""
+    timing = timing_from_trace([{"node": "narrate", "ms": 2000.0}])
+    assert timing.as_dict() == {"narrate": 2.0}
+
+
+def test_an_absent_or_empty_trace_yields_no_stages():
+    assert timing_from_trace([]).stages == []
+    assert timing_from_trace(None).stages == []
+
+
+def test_an_entry_without_a_duration_still_counts_as_a_stage_that_ran():
+    """Better a stage at zero than a stage missing from the breakdown."""
+    assert timing_from_trace([_Entry("visualise")]).as_dict() == {"visualise": 0.0}
+
+
+def test_model_calls_are_counted_per_agent():
+    """The architecture's economic claim: three calls on the happy path. A
+    number nothing counts is a number nobody can check.
+    """
+    calls = model_calls_from_trace(
+        [_Entry("supervise", model_calls=1), _Entry("generate_sql", model_calls=1),
+         _Entry("narrate", model_calls=1), _Entry("planner_gate")]
+    )
+    assert calls == {"supervise": 1, "generate_sql": 1, "narrate": 1}
+
+
+def test_a_node_that_called_the_model_twice_is_summed():
+    calls = model_calls_from_trace(
+        [_Entry("generate_sql", model_calls=1), _Entry("generate_sql", model_calls=1)]
+    )
+    assert calls == {"generate_sql": 2}
+
+
+def test_nodes_that_called_no_model_are_left_out_rather_than_recorded_as_zero():
+    """The interesting fact is which agents cost a call, and a table of
+    fourteen zeroes hides it."""
+    assert model_calls_from_trace([_Entry("validate_static"), _Entry("audit")]) == {}
+
+
+def test_model_calls_survive_a_trace_that_came_back_as_json():
+    assert model_calls_from_trace([{"node": "narrate", "model_calls": 2}]) == {"narrate": 2}

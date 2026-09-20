@@ -101,23 +101,32 @@ class KnowledgeBase:
         *,
         top_k: int = 4,
         collections: list[str] | None = None,
+        exclude_collections: list[str] | None = None,
         statement_timeout_ms: int = 15000,
     ) -> None:
         self._engine: Engine = create_engine(url, pool_pre_ping=True)
         self._embedder = embedder
         self._top_k = top_k
         self._configured_collections = collections
+        self._excluded_collections = set(exclude_collections or [])
         self._statement_timeout_ms = statement_timeout_ms
         self._cached_collections: list[str] | None = None
 
     def collections(self) -> list[str]:
-        """Every `<doc>_embeddings` table in the store.
+        """Every `<doc>_embeddings` table in the store, less any excluded.
 
         Discovered rather than hardcoded, so adding a knowledge document to the
         RAG pipeline makes it searchable here without a code change.
+
+        `exclude_collections` exists because the v4 pipeline splits this store
+        between two agents: the Schema Retriever owns the DDL chunks and the
+        Knowledge Retriever owns everything else. Without the exclusion the
+        knowledge budget would be spent re-describing tables whose full
+        definition the generator is already given.
         """
         if self._configured_collections is not None:
-            return [c for c in self._configured_collections if _SAFE_IDENTIFIER.match(c)]
+            names = [c for c in self._configured_collections if _SAFE_IDENTIFIER.match(c)]
+            return [c for c in names if c not in self._excluded_collections]
         if self._cached_collections is None:
             with self._engine.connect() as conn:
                 rows = conn.exec_driver_sql(
@@ -133,7 +142,7 @@ class KnowledgeBase:
                     (f"%{COLLECTION_SUFFIX}",),
                 ).fetchall()
             self._cached_collections = [r[0] for r in rows if _SAFE_IDENTIFIER.match(r[0])]
-        return list(self._cached_collections)
+        return [c for c in self._cached_collections if c not in self._excluded_collections]
 
     def embedding_models(self) -> set[str]:
         """Which model(s) the stored vectors were produced with."""

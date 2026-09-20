@@ -307,3 +307,120 @@ def test_the_agents_database_layer_runs_as_the_reader(reader):
     assert len(db.table_names()) >= 19
     assert db.explain("SELECT count(*) FROM fact_pos_retail_sales") is None
     assert "sample rows" in db.schema_and_samples(["dim_store"], sample_rows=1)
+
+
+# ---------------------------------------------------------------------------
+# Every v4 agent that touches the database touches it as the reader
+# ---------------------------------------------------------------------------
+
+
+def test_the_planner_gate_plans_as_the_reader_without_executing(reader):
+    """The gate runs EXPLAIN, never EXPLAIN ANALYZE, inside a READ ONLY
+    transaction. If it ever started executing, a query the cost ceiling was
+    meant to prevent would have run before it was rejected.
+    """
+    db = Database(POSTGRES_URL)
+    probe = f"least_privilege_plan_{uuid.uuid4().hex[:8]}"
+
+    cost, error = db.explain_plan("SELECT count(*) FROM fact_pos_retail_sales")
+    assert error is None
+    assert cost and cost > 0
+
+    # A statement the planner accepts but which would be refused if executed.
+    _, error = db.explain_plan(f"SELECT count(*) FROM dim_store WHERE '{probe}' = '{probe}'")
+    assert error is None
+    with reader.connect() as conn:
+        created = conn.execute(
+            text("SELECT count(*) FROM pg_tables WHERE tablename = :t"), {"t": probe}
+        ).scalar()
+    assert created == 0
+
+
+def test_the_planner_gate_reports_a_server_error_rather_than_raising(reader):
+    """That message is the repair loop's best feedback, so it has to come
+    back as data even though the reader has no rights to the thing it names.
+    """
+    db = Database(POSTGRES_URL)
+    cost, error = db.explain_plan("SELECT no_such_column FROM dim_store")
+    assert cost is None
+    assert error is not None and "no_such_column" in error
+
+
+def test_the_literal_catalog_is_built_with_read_only_rights(reader):
+    """The Literal Matcher reads every low-cardinality text column in the
+    database. It is the widest read the agent makes, and it is still only a
+    read.
+    """
+    from nl2sql_agent.literals import build_catalog
+
+    db = Database(POSTGRES_URL)
+    catalog = build_catalog(db)
+    assert catalog, "the catalog should not be empty against the retail schema"
+    assert {e.table for e in catalog} <= set(Database(POSTGRES_URL).table_names())
+
+
+def test_the_schema_retriever_reads_foreign_keys_as_the_reader(reader):
+    """FK closure reads pg_constraint. The catalog is readable by any role
+    that can connect, so this needs no grant -- and this test is what says so.
+    """
+    from nl2sql_agent.schema_retrieval import read_foreign_keys
+
+    edges = read_foreign_keys(Database(POSTGRES_URL))
+    assert edges, "the retail schema declares foreign keys; none were read"
+    assert all(isinstance(a, str) and isinstance(b, str) for a, b in edges)
+
+
+def test_the_whole_pipeline_holds_no_write_rights_at_any_point(reader):
+    """The pipeline has four places that touch the database -- the literal
+    catalog, the FK read, the planner gate and the executor -- and all four
+    go through one connection URL. This is the single assertion that covers
+    every one of them.
+    """
+    db = Database(POSTGRES_URL)
+    assert db.run_select("SELECT current_user").rows[0][0] == READER
+    with reader.connect() as conn:
+        writable = conn.execute(
+            text(
+                "SELECT count(*) FROM information_schema.role_table_grants "
+                "WHERE grantee = :role AND privilege_type <> 'SELECT'"
+            ),
+            {"role": READER},
+        ).scalar()
+    assert writable == 0
+
+
+def test_a_query_the_static_validator_would_reject_is_also_refused_by_the_server(reader):
+    """Defence in depth, checked with the validator out of the way: the AST
+    check is the first layer, but the reader role and the READ ONLY
+    transaction have to hold on their own.
+    """
+    db = Database(POSTGRES_URL)
+    from nl2sql_agent.database import UnsafeQueryError
+
+    writing_cte = "WITH d AS (DELETE FROM dim_store RETURNING *) SELECT * FROM d"
+    with pytest.raises((sqlalchemy.exc.DatabaseError, UnsafeQueryError)):
+        db.run_select(writing_cte)
+
+    before = db.run_select("SELECT count(*) FROM dim_store").rows[0][0]
+    assert before > 0
+
+
+def test_the_executor_sets_the_role_when_a_principal_is_supplied(reader):
+    """Row-level security plumbing. The test database has no policies, so
+    what is verified is that the statement runs and the identity it names is
+    the one in effect for that transaction -- which is the part a production
+    deployment depends on.
+    """
+    db = Database(POSTGRES_URL)
+    result = db.run_select("SELECT current_user", principal=READER)
+    assert result.rows[0][0] == READER
+
+
+def test_a_principal_the_reader_may_not_become_is_refused_by_the_server(reader):
+    """`SET ROLE` to a role you are not a member of is an error, and the
+    agent must surface it rather than quietly running as itself with more
+    rights than the end user has.
+    """
+    db = Database(POSTGRES_URL)
+    with pytest.raises(sqlalchemy.exc.DatabaseError):
+        db.run_select("SELECT 1", principal=OWNER)

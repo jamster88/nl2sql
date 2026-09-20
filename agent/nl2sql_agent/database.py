@@ -214,24 +214,91 @@ class Database:
 
     def explain(self, sql: str) -> str | None:
         """Plan the query without running it. Returns an error message or None."""
+        _, error = self.explain_plan(sql)
+        return error
+
+    def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
+        """Plan without executing; return the estimated total cost and any error.
+
+        This is the Planner Gate of the v4 architecture (section 6.2). It is
+        plain `EXPLAIN`, never `EXPLAIN ANALYZE`: ANALYZE *executes* the
+        statement to report real timings, so a gate built on it would run
+        every candidate query before the executor ran it again, and its
+        "timeout check" would be the full run.
+
+        Plain EXPLAIN plans in milliseconds and is worth far more than a
+        syntax check, because it reports every semantic error the parser
+        cannot: unknown column, type mismatch, an aggregate outside GROUP BY,
+        an ambiguous reference. Those are the common real mistakes, and the
+        message comes back verbatim for the Repair Agent to classify.
+
+        The cost is `Plan."Total Cost"` from the JSON plan, which is what the
+        cost ceiling compares against. Returns `(None, message)` on failure
+        and `(cost, None)` on success.
+        """
         cleaned = ensure_read_only(sql)
         try:
             with self._engine.connect() as conn:
                 with conn.begin():
                     conn.exec_driver_sql("SET TRANSACTION READ ONLY")
-                    conn.exec_driver_sql(f"EXPLAIN {cleaned}")
-            return None
-        except Exception as exc:  # surfaced to the model as validation feedback
-            return str(getattr(exc, "orig", exc)).strip()
+                    row = conn.exec_driver_sql(
+                        f"EXPLAIN (FORMAT JSON) {cleaned}"
+                    ).scalar()
+        except Exception as exc:  # surfaced to the Repair Agent as feedback
+            return None, str(getattr(exc, "orig", exc)).strip()
+        return _total_cost(row), None
 
-    def run_select(self, sql: str) -> QueryResult:
+    def run_select(self, sql: str, *, principal: str | None = None) -> QueryResult:
+        """Execute inside a READ ONLY transaction with a timeout and a row cap.
+
+        `principal` is the end-user identity: when one is supplied the
+        executor does `SET LOCAL ROLE`, so the database's row-level security
+        policies apply to that user rather than to the agent's own role. The
+        test system has no RLS policies, so this is plumbing for production
+        rather than a behaviour change here (section 8).
+        """
         cleaned = ensure_read_only(sql)
         with self._engine.connect() as conn:
             with conn.begin():
                 conn.exec_driver_sql("SET TRANSACTION READ ONLY")
                 conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
+                if principal:
+                    # Parameters are not allowed here, so the identifier is
+                    # quoted rather than interpolated raw.
+                    conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
                 cursor = conn.exec_driver_sql(cleaned)
                 columns = list(cursor.keys())
                 rows = cursor.fetchmany(self._max_rows + 1)
         truncated = len(rows) > self._max_rows
         return QueryResult(columns=columns, rows=rows[: self._max_rows], truncated=truncated)
+
+
+def _quote_identifier(name: str) -> str:
+    """Escape an identifier for use inside double quotes."""
+    return name.replace('"', '""')
+
+
+def _total_cost(plan: Any) -> float | None:
+    """`Plan."Total Cost"` out of an EXPLAIN (FORMAT JSON) payload.
+
+    psycopg may hand back the JSON already decoded or as text depending on the
+    column type it infers, so both are accepted. A plan that does not carry a
+    cost is not an error; the gate simply has nothing to compare.
+    """
+    if isinstance(plan, str):
+        import json
+
+        try:
+            plan = json.loads(plan)
+        except ValueError:
+            return None
+    if isinstance(plan, list) and plan:
+        plan = plan[0]
+    if isinstance(plan, dict):
+        node = plan.get("Plan")
+        if isinstance(node, dict) and "Total Cost" in node:
+            try:
+                return float(node["Total Cost"])
+            except (TypeError, ValueError):
+                return None
+    return None

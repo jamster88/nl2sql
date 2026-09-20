@@ -22,7 +22,7 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v3"
+AGENT_TAG="v4"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -113,6 +113,13 @@ compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shel
         value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
     fi
     printf '%s' "${value:-$2}"
+}
+
+ensure_extensions() {
+    docker compose exec -T postgres psql -U postgres -q \
+        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -v ON_ERROR_STOP=1 \
+        -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null
 }
 
 ensure_reader_role() {
@@ -245,6 +252,7 @@ rows=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-nl2sql}" \
 [[ -n "$rows" ]] || die "the database is up but the dataset is missing. Try --reset."
 info "database ready with $rows sales rows"
 
+ensure_extensions || warn "could not create pg_trgm; literal matching falls back to difflib."
 ensure_reader_role || die "could not create the agent's read-only role. Check 'docker compose logs postgres'."
 info "read-only role $(compose_env POSTGRES_READER_USER nl2sql_reader) ready for the agent"
 
@@ -316,7 +324,12 @@ effective_url=${effective_url:-http://192.168.10.82:11434}
 effective_model=${effective_model:-qwen3.8-256k}
 
 if tags=$(curl -sf --max-time 5 "$effective_url/api/tags" 2>/dev/null); then
-    if printf '%s' "$tags" | grep -q "\"$effective_model\""; then
+# Ollama reports a model the user asked for as `name:latest` when they gave no
+# tag, so an exact match on the configured name reports a model that is
+# present and working as missing. The embedding check below has always matched
+# on the prefix for this reason; this one did not, and warned that "every
+# question will fail" about a host the benchmark had just scored 15/15 against.
+    if printf '%s' "$tags" | grep -q "\"$effective_model\(\"\|:\)"; then
         info "$effective_model is available at $effective_url"
     else
         warn "$effective_url is reachable but does not have $effective_model."

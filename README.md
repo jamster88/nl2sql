@@ -15,7 +15,7 @@ the agent needs and leaves them ready:
 | `nl2sql-postgres` | The retail dataset, baked into the image |
 | `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
 | `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
-| `agent` | The v3 agent, run on demand per question |
+| `agent` | The v4 agent, run on demand per question |
 
 ### Two scripts
 
@@ -42,6 +42,11 @@ $ ./launch.sh
     retail dataset: 1291781 sales rows
     knowledge base: 53 embedded chunks
     worked examples: 45 golden pairs, 45 embedded questions
+    schema index: 20 DDL chunks (table selection needs no model call)
+
+==> Checking the multi-agent pipeline
+    literal matching: pg_trgm installed (trigram search)
+    least privilege: the agent's role holds SELECT and nothing else
 
 ==> Checking the models
     chat model qwen3.8-256k is available at http://192.168.10.82:11434
@@ -51,6 +56,21 @@ $ ./launch.sh
 
     docker compose run --rm agent "How many stores are there?"
 ```
+
+Then ask. That is the whole contract: one script, then one command per
+question.
+
+```bash
+docker compose run --rm agent "total net sales for dairy and eggs in FY2025"
+```
+
+Everything the script prints is something that fails *later* and looks like
+the agent being bad at its job. A container that is up but empty. A chat host
+that moved. An embedding model that is not the one the vectors were built
+with. A `.env` still pinning the previous agent image, so an upgrade silently
+has no effect. And the two the multi-agent pipeline added: the DDL-chunk
+collection its table selection reads instead of calling the model, and whether
+its database role has picked up a grant it should not have.
 
 `./launch.sh --no-rag` starts only the retail database; `--restart` recreates the
 containers; `-q` prints only problems. Run it with no `.env` present and it hands
@@ -84,7 +104,7 @@ discard an existing database volume and start from the image's data.
 
 Stop everything with `docker compose down`; both databases keep their data.
 
-## NL2SQL agent (v3, RAG + worked examples)
+## NL2SQL agent (v4, multi-agent)
 
 A LangChain/LangGraph agent that answers natural language questions by writing,
 validating, and running SQL against the Postgres container below. It uses any
@@ -108,6 +128,23 @@ diversified so three exemplars teach three patterns rather than one three times.
 The winners are replayed to the model as real conversation turns -- human asks,
 assistant answers with SQL -- in front of the actual question. Prose tells the
 model the rule; a worked example shows it applied.
+
+**v4 splits the work across agents and takes the model out of two of them.**
+The same retrieval runs, now as four parallel branches -- schema, literals,
+knowledge, worked examples -- joined by a context aggregator. Table selection
+became a vector search over the DDL chunks plus foreign-key closure, and
+validation became a `pglast` parse plus a plain `EXPLAIN` with a cost ceiling.
+Both had been model calls, and between them they cost 863 of v3's 1499
+benchmark seconds without writing any part of the answer. A literal matcher
+resolves phrases to real values, so "dairy and eggs" reaches the generator as
+`dim_product.department_name = 'Dairy & Eggs'`. After execution a formatter
+picks a chart from the result's shape, a narrator writes claims that each name
+the cells they came from, and a deterministic audit checks every number against
+those cells. Any failure -- parse, planner, runtime or audit -- routes to one
+repair agent and spends one shared retry budget.
+
+The design, and every place it departs from the three source documents, is in
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md).
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -137,12 +174,26 @@ produce an answer at all.
 ### Pulling the agent image
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v3
+docker pull mcfaddja/nl2sql-agent:v4
 ```
+
+To publish a new one, build both architectures in the same step so the tag
+stays multi-arch, as every earlier agent tag is:
+
+```bash
+docker login
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4 .
+```
+
+The image version label comes from `AGENT_VERSION` in
+[`agent/Dockerfile`](agent/Dockerfile), and a test pins it to
+`nl2sql_agent.__version__`, so the two cannot drift.
 
 | Tag | Use |
 |---|---|
-| `v3` | RAG plus the golden-pair ensemble. Pinned -- what `setup.sh` pulls. |
+| `v4` | The multi-agent pipeline. Pinned -- what `setup.sh` pulls. |
+| `v3` | RAG plus the golden-pair ensemble, one linear graph. Pinned. |
 | `v2` | Retrieval over the knowledge base only. Pinned. |
 | `v1` | The original schema-only agent, before retrieval. Pinned. |
 | `latest` | Moves to the newest publish (currently the same image as `v2`). |
@@ -158,6 +209,11 @@ turned off -- `v1` has no `retrieval` module and no `--rag` flags; `v2` has no
 
 `v2` also reads the v3 databases quite happily: it finds its knowledge
 collections by name and never looks at the golden-pair tables.
+
+`v4` needs one thing the earlier images did not: a `nl2sql_reader` role, and
+`pg_trgm` if literal matching is to use trigram search rather than falling
+back to `difflib`. Both are created by `setup.sh` and `launch.sh` on every
+start, so a `v1` retail image works with the `v4` agent.
 
 `v1` is what the comparison below is measured against, and it is a genuinely
 different image rather than `v2` with retrieval switched off -- it has no
@@ -204,6 +260,7 @@ All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
 | `schema-only` (v1) | 12/15 (80%) | 14/15 | 5 | 511s | 21.0s |
 | `knowledge` (v2) | **15/15 (100%)** | 15/15 | 0 | 1251s | 81.8s |
 | `multi-shot` (v3) | **15/15 (100%)** | 15/15 | 0 | 1499s | 100.5s |
+| multi-agent (v4) | **15/15 (100%)** | 15/15 | 3 | 910s | 61.2s |
 
 | | analysis | calendar | fan-out | grain | schema |
 |---|---|---|---|---|---|
@@ -235,6 +292,25 @@ take **1.2 seconds**; the rest is the model:
   retrieve_knowledge      1.1s
   retrieve_examples       0.1s
 ```
+
+**v4 spends a third less time for the same answers**, by deleting the two model
+calls that were not writing them. Validation became an AST parse and a plain
+`EXPLAIN`; table selection became a vector search over the DDL chunks plus
+foreign-key closure:
+
+```
+  v3  validate_sql   499.4s   ->   v4  validate_static + planner_gate   0.1s
+  v3  select_tables  363.9s   ->   v4  retrieve_schema                  1.2s
+```
+
+It spends some of that back on a narrator, about a quarter of the run, which
+the architecture did not anticipate. What it buys is a narrative whose every
+number has been checked against a cell of the result rather than asserted, and
+`NARRATE_ENABLED=false` removes it.
+
+The retries are not a regression either: v3 had none because its LLM validator
+passed everything it did not reject outright, while v4's planner catches three
+real errors and repairs them without a model call.
 
 `select_tables` and `validate_sql` together cost more than generation itself.
 Two model calls that do not write the answer take the majority of the time,
@@ -466,8 +542,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 573 tests, no Docker or network needed
-pytest --run-docker     # all 796, including ones that build and run containers
+pytest                  # 986 tests, no Docker or network needed
+pytest --run-docker     # all 1245, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -475,17 +551,41 @@ pytest --run-docker     # all 796, including ones that build and run containers
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in those two scripts is exercised by some test |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 223 tests behind `--run-docker` are the ones that need a working daemon:
+The 259 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Thirty-eight of those 187 also need the **embedding host**: a local Ollama
+### Coverage
+
+```bash
+coverage run --source=agent/nl2sql_agent,benchmarks -m pytest --run-docker
+coverage report --show-missing --skip-covered
+```
+
+**99% of the agent and the benchmark**, with nineteen statements uncovered and
+a reason for each: the `sys.path` bootstrap and `sys.exit(main())` that only
+run when the benchmark is invoked as a script rather than imported, and a
+handful of `except ValueError: continue` guards behind regexes that cannot
+produce the value they catch. They are defensive, and writing a test that
+reaches one would mean weakening the code that makes it unreachable.
+
+Two things the coverage report cannot see are covered another way. The shell
+scripts are not Python, so
+[`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py)
+reads them instead and asserts that every flag is parsed, documented and
+passed by some test, and that every `warn` and `die` message is asserted
+somewhere. A warning nobody triggers looks exactly like a warning that works,
+and these scripts are almost entirely warnings. `docker-compose.yml` is
+covered from both sides: nothing is set that the agent never reads, and
+nothing the agent reads is missing from it.
+
+Thirty-eight of those 259 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing. Start it with
 `ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.

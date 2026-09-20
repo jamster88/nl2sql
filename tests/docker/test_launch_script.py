@@ -91,6 +91,7 @@ def test_an_empty_retail_database_is_called_out(run_launch):
     result = run_launch(env={"FAKE_ROW_COUNT": "0"})
     assert "no sales rows" in result.output
     assert "--reset" in result.output
+    assert "connect and then answer nothing" in result.output
 
 
 def test_an_empty_knowledge_base_warns_that_retrieval_will_be_skipped(run_launch):
@@ -143,6 +144,9 @@ def test_an_unreachable_chat_host_warns_that_questions_will_fail(run_launch):
     result = run_launch(env={"FAKE_OLLAMA_DOWN": "1"})
     assert result.returncode == 0, "an unreachable model host is a warning, not a failure"
     assert "could not reach the chat host" in result.output
+    assert "Every question will fail until it is reachable" in result.output
+    # The embedding host is probed separately and is down too.
+    assert "Retrieval and worked examples will be skipped" in result.output
 
 
 def test_a_chat_host_without_the_model_is_distinguished_from_one_that_is_down(run_launch):
@@ -253,3 +257,92 @@ def test_a_role_that_cannot_be_created_warns_that_the_agent_cannot_connect(run_l
     assert result.returncode == 0
     assert "read-only role" in result.output
     assert "fail to connect" in result.output
+
+
+def test_it_installs_the_trigram_extension_the_literal_matcher_prefers(run_launch):
+    """Same reasoning as the reader role: the published image predates
+    pg_trgm and an existing volume keeps whatever extensions it had. The
+    agent falls back to difflib without it, so a failure warns rather than
+    stopping the launch.
+    """
+    result = run_launch()
+    [call] = result.calls_matching("CREATE EXTENSION")
+    assert "compose exec -T postgres psql -U postgres" in call
+    assert "IF NOT EXISTS pg_trgm" in call
+
+
+# ---------------------------------------------------------------------------
+# The v4 pipeline's own prerequisites
+# ---------------------------------------------------------------------------
+
+
+def test_it_reports_the_schema_index_table_selection_depends_on(run_launch):
+    """v4 picks tables from the DDL-chunk vectors instead of asking the
+    model. An empty collection is the failure that looks like bad table
+    selection rather than like a missing store.
+    """
+    result = run_launch()
+    assert "schema index: 20 DDL chunks" in result.output
+
+
+def test_a_missing_schema_index_warns_about_table_selection(run_launch):
+    result = run_launch(env={"FAKE_DDL_CHUNKS": "0"})
+    assert "no ddl_index_embeddings collection" in result.output
+    assert "Table selection falls back" in result.output
+
+
+def test_it_reports_which_scorer_literal_matching_will_use(run_launch):
+    assert "pg_trgm installed" in run_launch().output
+
+
+def test_a_missing_trigram_extension_warns_without_stopping(run_launch):
+    """The matcher falls back to difflib, so this costs precision and not
+    the run.
+    """
+    result = run_launch(env={"FAKE_TRGM_INSTALLED": "0"})
+    assert result.returncode == 0
+    assert "falls back to difflib" in result.output
+
+
+def test_it_confirms_the_agents_role_holds_select_and_nothing_else(run_launch):
+    assert "the agent's role holds SELECT and nothing else" in run_launch().output
+
+
+def test_a_role_that_gained_a_write_grant_is_called_out(run_launch):
+    """Least privilege is checked on every start, not only in the test
+    suite: a volume outlives the image that set the grants.
+    """
+    result = run_launch(env={"FAKE_READER_EXTRA_GRANTS": "3"})
+    assert "holds 3 non-SELECT grants" in result.output
+
+
+def test_an_env_pinning_an_older_agent_image_is_called_out(run_launch):
+    """The two-command flow would otherwise keep running the previous agent
+    after an upgrade, which looks like the new work having no effect.
+    """
+    result = run_launch(env_file="IMAGE_NAME=x\nAGENT_IMAGE_TAG=v3\n")
+    assert "pins the agent image at v3" in result.output
+    assert "running the older agent" in result.output
+
+
+def test_an_env_pinning_the_shipped_agent_image_says_nothing(run_launch):
+    result = run_launch(env_file="IMAGE_NAME=x\nAGENT_IMAGE_TAG=v4\n")
+    assert "pins the agent image" not in result.output
+
+
+def test_the_closing_lines_show_a_question_that_needs_the_literal_matcher(run_launch):
+    """The script's contract is two commands, and the second one should
+    demonstrate what this version added.
+    """
+    output = run_launch().output
+    assert 'docker compose run --rm agent "total net sales for dairy and eggs in FY2025"' in output
+
+
+def test_a_model_tagged_latest_is_not_reported_as_missing(run_launch):
+    """Ollama answers with `name:latest` when the user gave no tag. An exact
+    match warned that every question would fail about a host that was
+    serving the model perfectly well.
+    """
+    result = run_launch(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k:latest"},{"name":"bge-m3:latest"}'})
+    assert "is available at" in result.output
+    assert "does not have qwen3.8-256k" not in result.output

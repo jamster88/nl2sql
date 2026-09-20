@@ -90,7 +90,10 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
     for name, value in (
         ("OLLAMA_NUM_CTX", settings.num_ctx),
         ("MAX_ROWS", settings.max_rows),
-        ("MAX_SQL_ATTEMPTS", settings.max_sql_attempts),
+        ("MAX_ATTEMPTS", settings.max_attempts),
+        ("MAX_PLAN_COST", int(settings.max_plan_cost)),
+        ("MAX_TABLES", settings.max_tables),
+        ("SCHEMA_TOP_K", settings.schema_top_k),
         ("SAMPLE_ROWS", settings.sample_rows),
         ("STATEMENT_TIMEOUT_MS", settings.statement_timeout_ms),
         ("RAG_TOP_K", settings.rag_top_k),

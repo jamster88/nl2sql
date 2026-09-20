@@ -82,7 +82,7 @@ def test_default_run_pulls_all_four_images(run_setup):
     assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
     assert result.called("pull mcfaddja/nl2sql-rag-vectordb:v3")
     assert result.called("pull mcfaddja/nl2sql-rag-chunkdb:v3")
-    assert result.called("pull mcfaddja/nl2sql-agent:v3")
+    assert result.called("pull mcfaddja/nl2sql-agent:v4")
 
 
 def test_default_run_starts_every_database(run_setup):
@@ -97,7 +97,7 @@ def test_default_run_writes_env_pinning_every_image(run_setup):
     assert env["IMAGE_NAME"] == "mcfaddja/nl2sql-retail-postgres"
     assert env["IMAGE_TAG"] == "v1"
     assert env["AGENT_IMAGE_NAME"] == "mcfaddja/nl2sql-agent"
-    assert env["AGENT_IMAGE_TAG"] == "v3"
+    assert env["AGENT_IMAGE_TAG"] == "v4"
     assert env["VECTOR_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-vectordb"
     assert env["VECTOR_IMAGE_TAG"] == "v3"
     assert env["CONTEXT_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-chunkdb"
@@ -140,6 +140,20 @@ def test_image_and_tag_flags_are_honored(run_setup):
     assert result.called("pull example.org/pg:v9")
     assert result.called("pull example.org/vec:v4")
     assert result.called("pull example.org/agent:v3")
+
+
+def test_the_retrieval_image_flags_are_written_to_env(run_setup):
+    """Both stores can be pointed somewhere else -- at a fork, or at a tag
+    being tested -- without editing the compose file.
+    """
+    env = run_setup(
+        "--vector-image", "example.org/vec", "--vector-tag", "v9",
+        "--context-image", "example.org/ctx", "--context-tag", "v8",
+    ).env_file()
+    assert env["VECTOR_IMAGE_NAME"] == "example.org/vec"
+    assert env["VECTOR_IMAGE_TAG"] == "v9"
+    assert env["CONTEXT_IMAGE_NAME"] == "example.org/ctx"
+    assert env["CONTEXT_IMAGE_TAG"] == "v8"
 
 
 def test_model_and_host_flags_are_written_to_env(run_setup):
@@ -205,6 +219,7 @@ def test_a_failed_agent_pull_falls_back_to_building_from_source(run_setup):
     result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-agent"})
     assert result.returncode == 0
     assert "from source instead" in result.output
+    assert "which needs no registry access" in result.output
     assert result.called("compose build agent")
 
 
@@ -278,6 +293,9 @@ def test_an_existing_volume_warns_that_it_shadows_the_image(run_setup):
     result = run_setup(env={"FAKE_VOLUME_EXISTS": "1"})
     assert result.returncode == 0
     assert "takes precedence over the image" in result.output
+    # The warning is only useful if it also says what to do about it.
+    assert "what you will query" in result.output
+    assert "start from the image's dataset" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +313,7 @@ def test_a_missing_chat_model_warns_without_failing(run_setup):
     result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"bge-m3:latest"}'})
     assert result.returncode == 0
     assert "does not have qwen3.8-256k" in result.output
+    assert "re-run with --model" in result.output
 
 
 def test_a_missing_embedding_model_warns_with_the_pull_command(run_setup):
@@ -309,6 +328,7 @@ def test_an_unreachable_ollama_warns_without_failing(run_setup):
     assert result.returncode == 0
     assert "could not reach Ollama" in result.output
     assert "Retrieval will be skipped" in result.output
+    assert "re-run with --ollama-url URL" in result.output
 
 
 def test_the_embedding_host_is_probed_as_localhost_not_host_docker_internal(run_setup):
@@ -393,9 +413,13 @@ def test_a_failed_check_warns_but_leaves_setup_successful(run_setup):
 
 
 def test_a_check_that_returns_no_chunks_warns(run_setup):
+    """Reaching the store and getting nothing back is different from not
+    reaching it, and the guidance differs too: the agent still answers.
+    """
     result = run_setup(env={"FAKE_PROBE_CHUNKS": "0"})
     assert result.returncode == 0
     assert "returned nothing" in result.output
+    assert "just without retrieved context" in result.output
 
 
 def test_help_documents_the_no_verify_flag(run_setup):
@@ -431,3 +455,18 @@ def test_a_role_that_cannot_be_created_is_fatal(run_setup):
     assert result.returncode != 0
     assert "read-only role" in result.output
     assert "docker compose logs postgres" in result.output
+
+
+def test_default_run_installs_the_trigram_extension(run_setup):
+    result = run_setup()
+    [call] = result.calls_matching("CREATE EXTENSION")
+    assert "IF NOT EXISTS pg_trgm" in call
+
+
+def test_a_chat_model_tagged_latest_is_not_reported_as_missing(run_setup):
+    """Same fix as launch.sh: Ollama reports an untagged pull as
+    `name:latest`, and an exact match called a working host broken.
+    """
+    result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k:latest"},{"name":"bge-m3:latest"}'})
+    assert "is available at" in result.output
+    assert "does not have qwen3.8-256k" not in result.output

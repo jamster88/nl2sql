@@ -102,6 +102,14 @@ compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shel
     printf '%s' "${value:-$2}"
 }
 
+ensure_extensions() {
+    docker compose exec -T postgres psql -U postgres -q \
+        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -v ON_ERROR_STOP=1 \
+        -c "SET client_min_messages = warning" \
+        -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null 2>&1
+}
+
 ensure_reader_role() {
     docker compose exec -T postgres psql -U postgres -q \
         -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
@@ -123,6 +131,7 @@ if [[ $WITH_RAG -eq 1 ]]; then
 fi
 
 step "Making sure the agent's read-only role exists"
+ensure_extensions || warn "could not create pg_trgm; literal matching falls back to difflib."
 if ensure_reader_role; then
     info "role $(compose_env POSTGRES_READER_USER nl2sql_reader) can read every table and write none"
 else
@@ -176,6 +185,47 @@ if [[ $WITH_RAG -eq 1 ]]; then
         warn "the context store holds ${pairs:-0} golden pairs and the vector store"
         warn "${vectors:-0} of their embeddings. Multi-shot needs both; it will be skipped."
     fi
+
+    # The v4 Schema Retriever selects tables from this one collection instead
+    # of asking the model. Without it there is no vector ranking and the
+    # pipeline falls back to whatever the other retrievers named.
+    ddl=$(query vectordb VECTOR_DB_NAME "${VECTOR_DB_NAME:-nl2sql_vectors}" \
+        "SELECT count(*) FROM ddl_index_embeddings")
+    if [[ -n "$ddl" && "$ddl" != "0" ]]; then
+        info "schema index: $ddl DDL chunks (table selection needs no model call)"
+    else
+        warn "the vector store has no ddl_index_embeddings collection."
+        warn "Table selection falls back to the knowledge and example hints."
+    fi
+fi
+
+# --- The v4 pipeline's own prerequisites -----------------------------------
+# Two things the multi-agent pipeline needs that the stores above do not
+# cover: a trigram index for matching literals, and low-cardinality text
+# columns to build the literal catalog from. Neither is fatal -- the matcher
+# falls back to difflib, and without a catalog the generator spells literals
+# from the question as v3 did -- so both warn rather than stop.
+step "Checking the multi-agent pipeline"
+
+trgm=$(docker compose exec -T postgres psql -U postgres \
+    -d "$(compose_env POSTGRES_DB nl2sql_retail)" -tAc \
+    "SELECT count(*) FROM pg_extension WHERE extname = 'pg_trgm'" 2>/dev/null |
+    tr -d '[:space:]' || true)
+if [[ "$trgm" == "1" ]]; then
+    info "literal matching: pg_trgm installed (trigram search)"
+else
+    warn "pg_trgm is not installed; literal matching falls back to difflib."
+fi
+
+reader_ok=$(docker compose exec -T postgres psql -U postgres \
+    -d "$(compose_env POSTGRES_DB nl2sql_retail)" -tAc \
+    "SELECT count(*) FROM information_schema.role_table_grants
+      WHERE grantee = '$(compose_env POSTGRES_READER_USER nl2sql_reader)'
+        AND privilege_type <> 'SELECT'" 2>/dev/null | tr -d '[:space:]' || true)
+if [[ "$reader_ok" == "0" ]]; then
+    info "least privilege: the agent's role holds SELECT and nothing else"
+else
+    warn "the agent's role holds ${reader_ok:-?} non-SELECT grants; it should hold none."
 fi
 
 # --- Models ----------------------------------------------------------------
@@ -187,6 +237,17 @@ compose_value() {
         awk -v key="$1:" '$1 == key && !seen { print $2; seen = 1 }'
 }
 
+# An .env written by an earlier setup.sh still pins that release's image, so
+# the two-command flow would quietly keep running the old agent after an
+# upgrade -- the exact class of "up but not what you think" failure this
+# script exists to catch.
+pinned_agent=$(compose_env AGENT_IMAGE_TAG "")
+expected_agent=$(awk -F'"' '/^AGENT_TAG=/ {print $2; exit}' setup.sh)
+if [[ -n "$pinned_agent" && -n "$expected_agent" && "$pinned_agent" != "$expected_agent" ]]; then
+    warn ".env pins the agent image at $pinned_agent, but this checkout ships $expected_agent."
+    warn "You are running the older agent. Re-run ./setup.sh, or edit AGENT_IMAGE_TAG in .env."
+fi
+
 step "Checking the models"
 chat_url=$(compose_value OLLAMA_BASE_URL)
 chat_model=$(compose_value OLLAMA_MODEL)
@@ -194,7 +255,12 @@ chat_url=${chat_url:-http://192.168.10.82:11434}
 chat_model=${chat_model:-qwen3.8-256k}
 
 if tags=$(curl -sf --max-time 5 "$chat_url/api/tags" 2>/dev/null); then
-    if printf '%s' "$tags" | grep -q "\"$chat_model\""; then
+# Ollama reports a model the user asked for as `name:latest` when they gave no
+# tag, so an exact match on the configured name reports a model that is
+# present and working as missing. The embedding check below has always matched
+# on the prefix for this reason; this one did not, and warned that "every
+# question will fail" about a host the benchmark had just scored 15/15 against.
+    if printf '%s' "$tags" | grep -q "\"$chat_model\(\"\|:\)"; then
         info "chat model $chat_model is available at $chat_url"
     else
         warn "$chat_url is reachable but does not have $chat_model."
@@ -234,6 +300,11 @@ if [[ $QUIET -eq 0 ]]; then
 
     docker compose run --rm agent "What was the total gross profit for the Produce department in fiscal month 12 of FY2025?"
     docker compose run --rm agent --json "Which 3 promotions had the highest promo quantity sold?"
+
+    The literal matcher means a question need not spell a value the way the
+    database does, and the answer's numbers are checked against the rows:
+
+    docker compose run --rm agent "total net sales for dairy and eggs in FY2025"
 
     ./launch.sh --help     other options
     docker compose down    stop the databases

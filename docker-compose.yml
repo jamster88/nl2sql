@@ -116,6 +116,50 @@ services:
       # Replay the retrieved pairs as exemplar turns in front of the question.
       MULTI_SHOT_ENABLED: ${MULTI_SHOT_ENABLED:-true}
       EXAMPLES_RERANK: ${EXAMPLES_RERANK:-mmr}
+      # --- v4 multi-agent pipeline ------------------------------------
+      # Each stage the architecture makes optional is a flag, so an
+      # ablation is an environment change rather than a code change
+      # (arch4 section 11).
+      SUPERVISOR_ENABLED: ${SUPERVISOR_ENABLED:-true}
+      LITERALS_ENABLED: ${LITERALS_ENABLED:-true}
+      AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
+      NARRATE_ENABLED: ${NARRATE_ENABLED:-true}
+      # "vector" is the Schema Retriever (DDL-chunk vectors + FK closure);
+      # "llm" restores v3's table-selection model call for comparison.
+      SCHEMA_RETRIEVAL: ${SCHEMA_RETRIEVAL:-vector}
+      # One counter for every failure source: 4 generations, so one draft
+      # and three repairs.
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-4}
+      # Estimated-plan cost ceiling, calibrated against this dataset.
+      MAX_PLAN_COST: ${MAX_PLAN_COST:-1000000}
+      # --- forwarded, not overridden ----------------------------------
+      # Every remaining setting the agent reads, passed through empty so the
+      # image's own default stands unless the host sets one. config.py reads
+      # an empty value as unset for exactly this reason, which is what keeps
+      # these from having to repeat -- and drift from -- their defaults.
+      CLARIFY_ENABLED: ${CLARIFY_ENABLED:-}
+      DB_SCHEMA: ${DB_SCHEMA:-}
+      MAX_ROWS: ${MAX_ROWS:-}
+      MAX_TABLES: ${MAX_TABLES:-}
+      SCHEMA_TOP_K: ${SCHEMA_TOP_K:-}
+      LITERAL_MAX_DISTINCT: ${LITERAL_MAX_DISTINCT:-}
+      LITERAL_MIN_SCORE: ${LITERAL_MIN_SCORE:-}
+      SAMPLE_ROWS: ${SAMPLE_ROWS:-}
+      STATEMENT_TIMEOUT_MS: ${STATEMENT_TIMEOUT_MS:-}
+      OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-}
+      OLLAMA_REASONING: ${OLLAMA_REASONING:-}
+      RAG_MAX_CONTEXT_CHARS: ${RAG_MAX_CONTEXT_CHARS:-}
+      EXAMPLES_CANDIDATE_K: ${EXAMPLES_CANDIDATE_K:-}
+      EXAMPLES_FUSION: ${EXAMPLES_FUSION:-}
+      EXAMPLES_RRF_K: ${EXAMPLES_RRF_K:-}
+      EXAMPLES_RERANK_K: ${EXAMPLES_RERANK_K:-}
+      EXAMPLES_RERANK_LAMBDA: ${EXAMPLES_RERANK_LAMBDA:-}
+      EXAMPLES_GROUNDING_WEIGHT: ${EXAMPLES_GROUNDING_WEIGHT:-}
+      EXAMPLES_MAX_CONTEXT_CHARS: ${EXAMPLES_MAX_CONTEXT_CHARS:-}
+      EXAMPLE_WEIGHT_QUESTION: ${EXAMPLE_WEIGHT_QUESTION:-}
+      EXAMPLE_WEIGHT_KEYWORDS: ${EXAMPLE_WEIGHT_KEYWORDS:-}
+      EXAMPLE_WEIGHT_REASONING: ${EXAMPLE_WEIGHT_REASONING:-}
+      MAX_SQL_ATTEMPTS: ${MAX_SQL_ATTEMPTS:-}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     extra_hosts:

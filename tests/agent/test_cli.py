@@ -19,7 +19,7 @@ class StubAgent:
         self._state = state
         self.questions: list[str] = []
 
-    def run(self, question: str) -> dict:
+    def run(self, question: str, *, principal: str | None = None) -> dict:
         self.questions.append(question)
         return self._state
 
@@ -59,7 +59,7 @@ def test_settings_from_args_maps_every_field():
     assert settings.ollama_base_url == "http://h:11434"
     assert settings.database_url == "postgresql://x"
     assert settings.max_rows == 7
-    assert settings.max_sql_attempts == 2
+    assert settings.max_attempts == 2
     assert settings.sample_rows == 4
     assert settings.reasoning is True
 
@@ -160,7 +160,9 @@ def test_answer_json_mode_emits_full_state_and_error_flag(capsys):
     # Retrieval provenance travels with the answer, so a result can be traced
     # back to the chunks that shaped it.
     assert payload["knowledge_chunks"][0]["chunk_id"] == "biz:1"
-    assert payload["retrieval_error"] is None
+    # v3 carried a single retrieval_error; v4 has four retrievers that fail
+    # independently, so the provenance is a dict keyed by which one.
+    assert payload["retrieval_errors"] == {}
 
 
 def test_answer_json_mode_returns_one_on_error(capsys):
@@ -207,7 +209,7 @@ class _StubAgentFactory:
         self.on_progress = on_progress
         return self
 
-    def run(self, question: str) -> dict:
+    def run(self, question: str, *, principal: str | None = None) -> dict:
         self.questions.append(question)
         return self.state
 
@@ -231,10 +233,12 @@ def test_progress_lines_go_to_stderr_with_friendly_labels(monkeypatch, capsys):
     monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
     cli.main(["q"])
     factory.on_progress("retrieve_knowledge", "12 chunk(s)")
-    factory.on_progress("select_tables", "dim_store")
+    factory.on_progress("retrieve_schema", "dim_store")
+    factory.on_progress("planner_gate", "cost 1,024.00")
     err = capsys.readouterr().err
     assert "[knowledge] 12 chunk(s)" in err
     assert "[tables] dim_store" in err
+    assert "[planner] cost 1,024.00" in err
 
 
 @pytest.mark.parametrize("flag", ["--quiet", "--json"])
@@ -318,3 +322,53 @@ def test_the_module_entry_point_runs_when_executed_directly():
     finally:
         sys.argv = argv
     assert exit_info.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# Rendering the v4 state
+# ---------------------------------------------------------------------------
+
+
+def test_a_refusal_prints_the_answer_because_there_are_no_rows_to_print():
+    """The Supervisor stops the run before any SQL, so the answer is all
+    there is. Falling through to the table renderer would print "(no rows)"
+    and lose the explanation.
+    """
+    agent = StubAgent({"answer": "I can't answer that: it is outside this data.", "result": None})
+    assert cli.answer(agent, "q", as_json=False, quiet=True) == 0
+
+
+def test_a_run_with_neither_answer_nor_rows_says_so_rather_than_printing_nothing(capsys):
+    agent = StubAgent({"result": None})
+    cli.answer(agent, "q", as_json=False, quiet=True)
+    assert "(no answer)" in capsys.readouterr().out
+
+
+def test_the_narrative_is_printed_above_the_table(capsys):
+    """The sentence is the answer; the rows are the evidence for it."""
+    from nl2sql_agent.state import QueryResult
+
+    agent = StubAgent(
+        {
+            "narrative": "There are 10 stores.",
+            "result": QueryResult(columns=["n"], rows=[[10]]),
+        }
+    )
+    cli.answer(agent, "q", as_json=False, quiet=True)
+    out = capsys.readouterr().out
+    assert out.index("There are 10 stores.") < out.index("n")
+
+
+def test_a_result_dataclass_renders_the_same_table_as_a_dict():
+    """The benchmark and older callers hand over plain dictionaries; the v4
+    pipeline carries a dataclass. Both have to render.
+    """
+    from nl2sql_agent.state import QueryResult
+
+    as_dict = cli.format_rows({"columns": ["n"], "rows": [[10]], "truncated": False})
+    as_object = cli.format_rows(QueryResult(columns=["n"], rows=[[10]]))
+    assert as_dict == as_object
+
+
+def test_no_result_at_all_renders_as_no_rows():
+    assert cli.format_rows(None) == "(no rows)"

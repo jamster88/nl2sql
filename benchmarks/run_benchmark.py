@@ -44,7 +44,9 @@ from benchmarks.runner import (  # noqa: E402
     BenchmarkReport,
     QuestionResult,
     StageTimer,
+    model_calls_from_trace,
     result_matches,
+    timing_from_trace,
 )
 
 # The agent's own defaults are compose service names -- `postgres`, `vectordb`,
@@ -127,6 +129,21 @@ def reference_rows(database, question: BenchmarkQuestion) -> list[list]:
     return [list(row) for row in result.rows]
 
 
+def narrative_score(state) -> float | None:
+    """The fraction of the narrative's claims the audit traced back to a cell.
+
+    Execution accuracy says whether the SQL was right. This says whether the
+    user was told the truth about it, which is a different failure and one
+    nothing in the v3 benchmark could see.
+    """
+    claims = state.get("claims") or []
+    if not claims:
+        return None
+    report = state.get("audit")
+    unsupported = len(getattr(report, "unsupported_claims", []) or []) if report else 0
+    return round((len(claims) - unsupported) / len(claims), 4)
+
+
 def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer) -> QuestionResult:
     """Ask one question, score it, and record where the time went."""
     expected = reference_rows(database, question)
@@ -143,12 +160,21 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
         )
     wall = time.perf_counter() - started
 
+    # A v4 run times each node itself. Prefer that over the gaps between
+    # progress callbacks, which cannot attribute time across Stage 1's
+    # parallel branches -- the four retrievers overlap, so the gap after one
+    # of them is not its duration.
+    trace = state.get("trace") or []
+    timing = timing_from_trace(trace) if trace else timer.timing
+
     common = dict(
         question_id=question.id, category=question.category, question=question.question,
-        wall_seconds=wall, timing=timer.timing, sql=state.get("sql"),
+        wall_seconds=wall, timing=timing, sql=state.get("sql"),
         attempts=state.get("attempts", 0), expected_row_count=len(expected),
         examples=[p["pair_id"] for p in state.get("example_pairs", [])],
         knowledge_chunks=len(state.get("knowledge_chunks", [])),
+        model_calls=model_calls_from_trace(trace),
+        narrative_score=narrative_score(state),
     )
 
     if state.get("error"):
@@ -156,7 +182,21 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
         outcome = ERROR if state.get("sql") else FAILED
         return QuestionResult(outcome=outcome, error=state["error"][:400], **common)
 
-    rows = state["result"]["rows"]
+    result = state.get("result")
+    if result is None:
+        # No error and no rows means the Supervisor stopped the run before any
+        # SQL was written -- it judged the question out of scope, an
+        # injection, or too ambiguous to answer. That is a wrong answer for a
+        # benchmark question by definition, and it has to be scored as one
+        # rather than crash the run: a screen that refuses real questions is
+        # exactly the regression this number should catch.
+        verdict = state.get("verdict", "unknown")
+        return QuestionResult(
+            outcome=FAILED,
+            error=f"refused before generating SQL: verdict={verdict}",
+            **common,
+        )
+    rows = result["rows"] if isinstance(result, dict) else result.rows
     matched = result_matches(expected, rows, ordered=question.ordered)
     return QuestionResult(
         outcome=CORRECT if matched else WRONG, row_count=len(rows), **common
@@ -205,6 +245,14 @@ def print_report(report: BenchmarkReport) -> None:
         bar = "#" * correct + "." * (total - correct)
         print(f"    {category:<10} {correct}/{total}  {bar}")
 
+    scored = [r.narrative_score for r in report.results if r.narrative_score is not None]
+    if scored:
+        # Execution accuracy says whether the SQL was right. This says whether
+        # the user was told the truth about it, which nothing in the v3
+        # harness could see.
+        traced = sum(scored) / len(scored)
+        print(f"  narrative traced      {100 * traced:.1f}%  ({len(scored)} of {report.total} narrated)")
+
     missed = [r for r in report.results if not r.correct]
     if missed:
         print("\n  not correct")
@@ -218,6 +266,20 @@ def print_report(report: BenchmarkReport) -> None:
     print("\n  slowest")
     for result in report.slowest(3):
         print(f"    {result.question_id}  {result.wall_seconds:6.1f}s  {result.question[:52]}")
+
+    calls: dict[str, int] = {}
+    for result in report.results:
+        for node, n in (result.model_calls or {}).items():
+            calls[node] = calls.get(node, 0) + n
+    if calls:
+        # The architecture's economic claim, made checkable: three calls on
+        # the happy path, and a repair classifier that keeps most retries
+        # from costing a fourth.
+        total_calls = sum(calls.values())
+        per_question = total_calls / report.total if report.total else 0
+        breakdown = ", ".join(f"{node} {n}" for node, n in sorted(calls.items()))
+        print(f"\n  model calls          {total_calls} ({per_question:.1f} per question)")
+        print(f"    {breakdown}")
 
     totals = report.stage_totals()
     if totals:
@@ -275,6 +337,8 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "expected_rows": r.expected_row_count,
                         "examples": r.examples,
                         "knowledge_chunks": r.knowledge_chunks,
+                        "model_calls": r.model_calls,
+                        "narrative_score": r.narrative_score,
                         "sql": r.sql,
                         "error": r.error,
                     }

@@ -12,7 +12,8 @@ import pytest
 from nl2sql_agent.database import QueryResult
 from nl2sql_agent.examples import ExamplesUnavailableError, GoldenPair
 from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
-from nl2sql_agent.tools import SqlReview, TableSelection
+from nl2sql_agent.supervisor import Screening
+from nl2sql_agent.tools import TableSelection
 
 
 class FakeDatabase:
@@ -24,17 +25,23 @@ class FakeDatabase:
         tables: list[str] | None = None,
         dialect: str = "postgresql",
         explain_error: str | None = None,
+        plan_cost: float | None = 100.0,
         run_select_result: QueryResult | None = None,
         run_select_error: Exception | None = None,
     ) -> None:
         self._tables = tables if tables is not None else ["dim_store", "fact_pos_retail_sales"]
         self._dialect = dialect
         self.explain_error = explain_error
+        # The v4 Planner Gate reads a cost as well as an error, and a list
+        # lets a test script a different plan per attempt so the repair loop
+        # can be driven to a success.
+        self.plan_cost = plan_cost
         self.run_select_result = run_select_result or QueryResult(columns=["n"], rows=[(1,)], truncated=False)
         self.run_select_error = run_select_error
 
         self.explain_calls: list[str] = []
         self.run_select_calls: list[str] = []
+        self.run_select_principals: list[str | None] = []
         self.schema_and_samples_calls: list[tuple[list[str], int]] = []
 
     @property
@@ -55,7 +62,23 @@ class FakeDatabase:
         self.explain_calls.append(sql)
         return self.explain_error
 
-    def run_select(self, sql: str) -> QueryResult:
+    def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
+        """The v4 Planner Gate: (estimated cost, error message)."""
+        self.explain_calls.append(sql)
+        error = self._next(self.explain_error)
+        if error:
+            return None, error
+        return self._next(self.plan_cost), None
+
+    @staticmethod
+    def _next(value):
+        """Pop the next scripted value, or reuse a scalar for every call."""
+        if isinstance(value, list):
+            return value.pop(0) if value else None
+        return value
+
+    def run_select(self, sql: str, *, principal: str | None = None) -> QueryResult:
+        self.run_select_principals.append(principal)
         self.run_select_calls.append(sql)
         if self.run_select_error is not None:
             raise self.run_select_error
@@ -77,10 +100,22 @@ class _StructuredBinding:
             if self._llm.table_selection is None:
                 raise AssertionError("with_structured_output(TableSelection) invoked but no response scripted")
             return self._llm.table_selection
-        if self._schema is SqlReview:
-            if not self._llm.sql_reviews:
-                raise AssertionError("with_structured_output(SqlReview) invoked but no more responses scripted")
-            return self._llm.sql_reviews.pop(0)
+        if self._schema is Screening:
+            return self._llm.screening or Screening(verdict="proceed", intent="aggregate")
+        # The narrator's output model is matched structurally rather than by
+        # import, so this fake does not depend on the internal naming of the
+        # module it stands in front of.
+        if "claims" in getattr(self._schema, "model_fields", {}):
+            narration = self._llm.narration
+            if narration is None:
+                raise AssertionError("the narrator was invoked but no narration was scripted")
+            # A list scripts one narration per call, so the audit's single
+            # rewrite can be driven; a bare object answers every call.
+            if isinstance(narration, list):
+                if not narration:
+                    raise AssertionError("the narrator was invoked but no more narrations are scripted")
+                return narration.pop(0)
+            return narration
         raise AssertionError(f"unexpected structured_output schema: {self._schema}")
 
 
@@ -91,8 +126,8 @@ class ScriptedLLM:
       queued string from `sql_responses`, wrapped like a real AIMessage.
     - `.with_structured_output(TableSelection).invoke(...)` returns
       `table_selection`.
-    - `.with_structured_output(SqlReview).invoke(...)` returns the next
-      queued verdict from `sql_reviews`.
+    - `.with_structured_output(Screening).invoke(...)` returns `screening`.
+    - The narrator's claims model returns `narration`.
     """
 
     def __init__(
@@ -100,11 +135,13 @@ class ScriptedLLM:
         *,
         sql_responses: list[str] | None = None,
         table_selection: TableSelection | None = None,
-        sql_reviews: list[SqlReview] | None = None,
+        screening: Any = None,
+        narration: Any = None,
     ) -> None:
         self.sql_responses = list(sql_responses or [])
         self.table_selection = table_selection if table_selection is not None else TableSelection(tables=[])
-        self.sql_reviews = list(sql_reviews or [])
+        self.screening = screening
+        self.narration = narration
         self.plain_invocations: list[Any] = []
         self.structured_invocations: list[tuple[type, Any]] = []
 

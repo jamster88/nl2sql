@@ -16,6 +16,7 @@ file's own defaults, not whatever a developer's local .env happens to hold.
 from __future__ import annotations
 
 import json
+import re
 import os
 import subprocess
 from pathlib import Path
@@ -36,7 +37,13 @@ def _compose_config(tmp_path: Path, *, profile: str | None = None, env: dict | N
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
 
-    run_env = dict(os.environ)
+    # Start from an environment with nothing compose could substitute. The
+    # helper passes an empty --env-file for the same reason, but compose also
+    # reads the ambient environment, so a developer who exports EMBED_BASE_URL
+    # or MAX_TABLES in their shell would otherwise see these tests assert
+    # against their settings instead of the file's defaults.
+    substitutable = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", (REPO_ROOT / "docker-compose.yml").read_text()))
+    run_env = {k: v for k, v in os.environ.items() if k not in substitutable}
     if env:
         run_env.update(env)
 
@@ -351,3 +358,131 @@ def test_the_context_window_is_set_explicitly(agent_profile_config: dict):
     env = agent_profile_config["services"]["agent"]["environment"]
     assert env["OLLAMA_NUM_CTX"] == "262144"
     assert env["OLLAMA_MODEL"] == "qwen3.8-256k"
+
+
+def test_every_v4_pipeline_stage_is_toggleable_from_the_environment(agent_profile_config: dict):
+    """The architecture's ablation plan is a set of environment flags, so a
+    configuration comparison is a compose variable rather than a rebuild.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    for flag in (
+        "SUPERVISOR_ENABLED", "LITERALS_ENABLED", "AUDIT_ENABLED",
+        "NARRATE_ENABLED", "SCHEMA_RETRIEVAL", "MAX_ATTEMPTS", "MAX_PLAN_COST",
+    ):
+        assert flag in env, f"{flag} is not passed to the agent container"
+    assert env["SCHEMA_RETRIEVAL"] == "vector"
+    assert env["MAX_ATTEMPTS"] == "4"
+
+
+def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={"MAX_ATTEMPTS": "2", "MAX_PLAN_COST": "50000", "SCHEMA_RETRIEVAL": "llm"},
+    )
+    env = config["services"]["agent"]["environment"]
+    assert env["MAX_ATTEMPTS"] == "2"
+    assert env["MAX_PLAN_COST"] == "50000"
+    assert env["SCHEMA_RETRIEVAL"] == "llm"
+
+
+# ---------------------------------------------------------------------------
+# The compose environment and config.py, in both directions
+# ---------------------------------------------------------------------------
+
+
+def _settings_read() -> set[str]:
+    """Every environment variable config.py reads, by name."""
+    source = Path(REPO_ROOT / "agent" / "nl2sql_agent" / "config.py").read_text()
+    return set(re.findall(r'_env(?:_str|_bool|_int|_float)\(\s*"([A-Z_]+)"', source))
+
+
+def test_every_setting_the_agent_reads_can_be_set_through_compose(agent_profile_config: dict):
+    """The mirror of the test above, and the one that was missing. A knob the
+    README documents but compose never forwards cannot be set on the
+    containerised agent at all, which is the way almost everyone runs it.
+    """
+    env = set(agent_profile_config["services"]["agent"]["environment"])
+    missing = sorted(_settings_read() - env)
+    assert missing == [], f"config.py reads these, but compose never passes them: {missing}"
+
+
+def test_a_forwarded_setting_the_host_has_not_set_arrives_empty(agent_profile_config: dict):
+    """Which is the whole reason config.py treats empty as unset: compose has
+    to forward a variable to make it settable, and forwarding an unset one
+    yields an empty string.
+    """
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert env["MAX_TABLES"] == ""
+    assert env["SCHEMA_TOP_K"] == ""
+
+
+def test_a_forwarded_setting_the_host_did_set_reaches_the_container(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={"MAX_TABLES": "4", "LITERAL_MIN_SCORE": "0.8", "DB_SCHEMA": "analytics"},
+    )
+    env = config["services"]["agent"]["environment"]
+    assert env["MAX_TABLES"] == "4"
+    assert env["LITERAL_MIN_SCORE"] == "0.8"
+    assert env["DB_SCHEMA"] == "analytics"
+
+
+def test_forwarding_never_overrides_a_default(tmp_path_factory):
+    """An empty forwarded value has to leave the image's own default
+    standing, or every knob compose passes through would be silently reset.
+    """
+    from nl2sql_agent.config import Settings
+
+    config = _compose_config(tmp_path_factory.mktemp("compose"), profile="agent")
+    env = config["services"]["agent"]["environment"]
+    defaults = Settings()
+    for name, attribute in (
+        ("MAX_TABLES", "max_tables"),
+        ("SCHEMA_TOP_K", "schema_top_k"),
+        ("LITERAL_MIN_SCORE", "literal_min_score"),
+        ("MAX_ROWS", "max_rows"),
+        ("DB_SCHEMA", "db_schema"),
+    ):
+        assert env[name] == "", f"{name} should be forwarded empty, not pinned in compose"
+        assert getattr(defaults, attribute) is not None
+
+
+def test_the_context_store_volume_is_declared_and_project_scoped(agent_profile_config: dict):
+    """The third store arrived with v3 and its volume is the one least
+    likely to be noticed missing: the agent still answers without it, just
+    with no worked examples.
+    """
+    volumes = agent_profile_config["volumes"]
+    assert "chunkdata" in volumes
+    assert volumes["chunkdata"].get("name", "") in ("", "nl2sql_chunkdata")
+    [volume] = [v for v in agent_profile_config["services"]["chunkdb"]["volumes"]]
+    assert volume["source"] == "chunkdata"
+    assert volume["target"] == "/var/lib/pgdata"
+
+
+def test_the_resolved_config_does_not_depend_on_the_developers_shell(tmp_path_factory):
+    """Compose substitutes from the ambient environment as well as the env
+    file, so a variable exported in a shell would quietly change what these
+    tests assert against -- and pass or fail by accident on one machine.
+    """
+    with_ambient = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        profile="agent",
+        env={},
+    )
+    import os as _os
+
+    _os.environ["EMBED_BASE_URL"] = "http://somewhere-else:11434"
+    _os.environ["MAX_TABLES"] = "99"
+    try:
+        clean = _compose_config(tmp_path_factory.mktemp("compose"), profile="agent")
+    finally:
+        del _os.environ["EMBED_BASE_URL"]
+        del _os.environ["MAX_TABLES"]
+
+    assert clean["services"]["agent"]["environment"] == with_ambient["services"]["agent"]["environment"]
+    assert clean["services"]["agent"]["environment"]["EMBED_BASE_URL"].startswith(
+        "http://host.docker.internal"
+    )

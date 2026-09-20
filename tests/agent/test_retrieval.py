@@ -339,3 +339,62 @@ def test_build_embedder_configures_ollama_from_settings():
     assert embedder.base_url == "http://embedhost:11434"
     # Satisfies the Embedder protocol the KnowledgeBase depends on.
     assert hasattr(embedder, "embed_query")
+
+
+# ---------------------------------------------------------------------------
+# Excluding a collection: how v4 splits this store between two agents
+# ---------------------------------------------------------------------------
+
+
+def test_an_excluded_collection_is_left_out_of_discovery():
+    """v4 gives the DDL chunks to the Schema Retriever and everything else to
+    the Knowledge Retriever. Without the exclusion the knowledge budget is
+    spent re-describing tables whose full definition the generator already has.
+    """
+    engine = _FakeEngine({
+        "pg_class": [
+            ("ddl_index_embeddings",),
+            ("business_index_embeddings",),
+            ("data_dictionary_embeddings",),
+        ]
+    })
+    kb = _kb_with_engine(engine, exclude_collections=["ddl_index_embeddings"])
+    assert kb.collections() == ["business_index_embeddings", "data_dictionary_embeddings"]
+
+
+def test_an_excluded_collection_is_left_out_of_a_configured_list_too():
+    """Both ways of naming collections have to honour the exclusion, or the
+    two agents overlap whenever a caller pins the list.
+    """
+    engine = _FakeEngine({})
+    kb = _kb_with_engine(
+        engine,
+        collections=["ddl_index_embeddings", "business_index_embeddings"],
+        exclude_collections=["ddl_index_embeddings"],
+    )
+    assert kb.collections() == ["business_index_embeddings"]
+
+
+def test_excluding_nothing_leaves_every_collection_searchable():
+    engine = _FakeEngine({"pg_class": [("a_embeddings",), ("b_embeddings",)]})
+    assert _kb_with_engine(engine).collections() == ["a_embeddings", "b_embeddings"]
+
+
+def test_the_exclusion_does_not_defeat_discovery_caching():
+    engine = _FakeEngine({"pg_class": [("a_embeddings",), ("ddl_index_embeddings",)]})
+    kb = _kb_with_engine(engine, exclude_collections=["ddl_index_embeddings"])
+    assert kb.collections() == ["a_embeddings"]
+    assert kb.collections() == ["a_embeddings"]
+    assert len(engine.calls) == 1
+
+
+def test_searching_never_touches_an_excluded_collection():
+    """The real guarantee: not merely absent from the listing, but never
+    queried, so the two retrievers cannot return each other's chunks.
+    """
+    engine = _FakeEngine({"pg_class": [("ddl_index_embeddings",), ("business_index_embeddings",)]})
+    kb = _kb_with_engine(engine, exclude_collections=["ddl_index_embeddings"])
+    kb.search("anything")
+    queried = " ".join(sql for sql, _ in engine.calls)
+    assert "business_index_embeddings" in queried
+    assert "ddl_index_embeddings" not in queried

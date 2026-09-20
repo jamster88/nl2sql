@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent/nl2sql_agent/ ./nl2sql_agent/
 
-ARG AGENT_VERSION=3.0.0
+ARG AGENT_VERSION=4.0.0
 ENV AGENT_VERSION=${AGENT_VERSION}
 
 LABEL org.opencontainers.image.title="nl2sql RAG agent" \

@@ -1,5 +1,13 @@
-"""The tools the pipeline calls: the four from basic_agent_steps.md plus
-knowledge-base retrieval.
+"""The tools the pipeline calls: catalog and schema reads, and the two
+retrievers.
+
+v4 removed the `validate_sql` tool that lived here. It wrapped a model call
+that reviewed generated SQL, and the benchmark showed it cost 499 of 1499
+seconds and was the only component in 45 runs that ever turned a correct
+answer into no answer at all. Validation is deterministic now -- an AST parse
+in `validate.py` and a planner call in `database.py` -- and the semantic
+judgement it was reaching for happens after execution, in `present.audit`,
+where there are real rows to look at.
 
 They are LangChain tools rather than plain functions so they can also be bound
 to a tool-calling model later; the graph invokes them directly at fixed points.
@@ -14,10 +22,9 @@ from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 
 from .config import Settings
-from .database import Database, UnsafeQueryError, ensure_read_only
+from .database import Database
 from .examples import ExamplesUnavailableError, GoldenPairLibrary, format_examples
 from .examples import tables_mentioned as example_tables
-from .prompts import SQL_VALIDATION_PROMPT, knowledge_block
 from .retrieval import KnowledgeBase, KnowledgeUnavailableError, format_chunks, tables_mentioned
 
 
@@ -25,15 +32,6 @@ class TableSelection(BaseModel):
     """Tables required to answer a question."""
 
     tables: list[str] = Field(description="Names of the required tables")
-
-
-class SqlReview(BaseModel):
-    """Verdict on whether a query is valid and answers the question."""
-
-    is_valid: bool = Field(description="True if the query is correct and runnable")
-    issues: list[str] = Field(
-        default_factory=list, description="Specific problems that must be fixed"
-    )
 
 
 def build_tools(
@@ -116,31 +114,6 @@ def build_tools(
         }
 
     @tool
-    def validate_sql(sql: str, question: str, schema_context: str, knowledge: str = "") -> dict[str, Any]:
-        """Check a SQL query for safety, planner errors, and semantic correctness."""
-        try:
-            cleaned = ensure_read_only(sql)
-        except UnsafeQueryError as exc:
-            return {"is_valid": False, "issues": [str(exc)]}
-
-        engine_error = db.explain(cleaned)
-        if engine_error:
-            # A planner error is definitive -- no point asking the model.
-            return {"is_valid": False, "issues": [f"Database rejected the query: {engine_error}"]}
-
-        review = llm.with_structured_output(SqlReview).invoke(
-            SQL_VALIDATION_PROMPT.format_messages(
-                dialect=db.dialect,
-                schema=schema_context,
-                knowledge=knowledge_block(knowledge),
-                question=question,
-                sql=cleaned,
-                engine_feedback="The database planner accepted this query.\n\n",
-            )
-        )
-        return {"is_valid": review.is_valid, "issues": review.issues}
-
-    @tool
     def execute_query(sql: str) -> dict[str, Any]:
         """Run a read-only query and return its rows as structured output."""
         result = db.run_select(sql)
@@ -156,6 +129,5 @@ def build_tools(
         "get_schema_and_data": get_schema_and_data,
         "search_knowledge": search_knowledge,
         "search_examples": search_examples,
-        "validate_sql": validate_sql,
         "execute_query": execute_query,
     }

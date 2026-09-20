@@ -322,3 +322,53 @@ def test_the_module_entry_point_runs_when_executed_directly():
     finally:
         sys.argv = argv
     assert exit_info.value.code == 0
+
+
+# ---------------------------------------------------------------------------
+# Rendering the v4 state
+# ---------------------------------------------------------------------------
+
+
+def test_a_refusal_prints_the_answer_because_there_are_no_rows_to_print():
+    """The Supervisor stops the run before any SQL, so the answer is all
+    there is. Falling through to the table renderer would print "(no rows)"
+    and lose the explanation.
+    """
+    agent = StubAgent({"answer": "I can't answer that: it is outside this data.", "result": None})
+    assert cli.answer(agent, "q", as_json=False, quiet=True) == 0
+
+
+def test_a_run_with_neither_answer_nor_rows_says_so_rather_than_printing_nothing(capsys):
+    agent = StubAgent({"result": None})
+    cli.answer(agent, "q", as_json=False, quiet=True)
+    assert "(no answer)" in capsys.readouterr().out
+
+
+def test_the_narrative_is_printed_above_the_table(capsys):
+    """The sentence is the answer; the rows are the evidence for it."""
+    from nl2sql_agent.state import QueryResult
+
+    agent = StubAgent(
+        {
+            "narrative": "There are 10 stores.",
+            "result": QueryResult(columns=["n"], rows=[[10]]),
+        }
+    )
+    cli.answer(agent, "q", as_json=False, quiet=True)
+    out = capsys.readouterr().out
+    assert out.index("There are 10 stores.") < out.index("n")
+
+
+def test_a_result_dataclass_renders_the_same_table_as_a_dict():
+    """The benchmark and older callers hand over plain dictionaries; the v4
+    pipeline carries a dataclass. Both have to render.
+    """
+    from nl2sql_agent.state import QueryResult
+
+    as_dict = cli.format_rows({"columns": ["n"], "rows": [[10]], "truncated": False})
+    as_object = cli.format_rows(QueryResult(columns=["n"], rows=[[10]]))
+    assert as_dict == as_object
+
+
+def test_no_result_at_all_renders_as_no_rows():
+    assert cli.format_rows(None) == "(no rows)"

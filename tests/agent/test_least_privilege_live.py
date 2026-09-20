@@ -403,3 +403,24 @@ def test_a_query_the_static_validator_would_reject_is_also_refused_by_the_server
 
     before = db.run_select("SELECT count(*) FROM dim_store").rows[0][0]
     assert before > 0
+
+
+def test_the_executor_sets_the_role_when_a_principal_is_supplied(reader):
+    """Row-level security plumbing. The test database has no policies, so
+    what is verified is that the statement runs and the identity it names is
+    the one in effect for that transaction -- which is the part a production
+    deployment depends on.
+    """
+    db = Database(POSTGRES_URL)
+    result = db.run_select("SELECT current_user", principal=READER)
+    assert result.rows[0][0] == READER
+
+
+def test_a_principal_the_reader_may_not_become_is_refused_by_the_server(reader):
+    """`SET ROLE` to a role you are not a member of is an error, and the
+    agent must surface it rather than quietly running as itself with more
+    rights than the end user has.
+    """
+    db = Database(POSTGRES_URL)
+    with pytest.raises(sqlalchemy.exc.DatabaseError):
+        db.run_select("SELECT 1", principal=OWNER)

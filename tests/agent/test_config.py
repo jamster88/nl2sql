@@ -122,3 +122,68 @@ def test_env_bool_treats_anything_else_as_false(monkeypatch):
     for value in ("0", "false", "no", "off", "garbage", ""):
         monkeypatch.setenv("OLLAMA_REASONING", value)
         assert Settings.from_env().reasoning is False, value
+
+
+# ---------------------------------------------------------------------------
+# An empty environment value means unset, not blank
+# ---------------------------------------------------------------------------
+
+
+def test_an_empty_string_setting_falls_back_to_its_default(monkeypatch):
+    """Compose forwards a variable the host never set as an empty string.
+    Without this rule the containerised agent would run with a model that
+    has no name and a schema-retrieval mode that is neither option.
+    """
+    for name in ("OLLAMA_MODEL", "SCHEMA_RETRIEVAL", "DB_SCHEMA", "DATABASE_URL"):
+        monkeypatch.setenv(name, "")
+    settings = Settings.from_env()
+    assert settings.ollama_model == DEFAULT_OLLAMA_MODEL
+    assert settings.schema_retrieval == "vector"
+    assert settings.db_schema == "public"
+    assert settings.database_url == DEFAULT_DATABASE_URL
+
+
+def test_an_empty_numeric_setting_falls_back_to_its_default(monkeypatch):
+    for name in ("MAX_TABLES", "SCHEMA_TOP_K", "MAX_ROWS", "MAX_ATTEMPTS"):
+        monkeypatch.setenv(name, "")
+    monkeypatch.setenv("LITERAL_MIN_SCORE", "")
+    monkeypatch.setenv("MAX_PLAN_COST", "")
+    settings = Settings.from_env()
+    assert settings.max_tables == 10
+    assert settings.schema_top_k == 6
+    assert settings.max_rows == 50
+    assert settings.max_attempts == 4
+    assert settings.literal_min_score == 0.6
+    assert settings.max_plan_cost == 1_000_000.0
+
+
+def test_an_empty_boolean_setting_falls_back_rather_than_reading_as_false(monkeypatch):
+    """The subtlest of the three: an empty value used to read as False, so
+    forwarding `SUPERVISOR_ENABLED` would have silently disabled the only
+    injection screen on every containerised run.
+    """
+    for name in ("SUPERVISOR_ENABLED", "AUDIT_ENABLED", "NARRATE_ENABLED", "RAG_ENABLED"):
+        monkeypatch.setenv(name, "")
+    settings = Settings.from_env()
+    assert settings.supervisor_enabled is True
+    assert settings.audit_enabled is True
+    assert settings.narrate_enabled is True
+    assert settings.rag_enabled is True
+
+
+def test_whitespace_around_a_value_is_trimmed(monkeypatch):
+    monkeypatch.setenv("MAX_TABLES", "  7 ")
+    monkeypatch.setenv("SCHEMA_RETRIEVAL", " llm ")
+    monkeypatch.setenv("SUPERVISOR_ENABLED", " off ")
+    settings = Settings.from_env()
+    assert settings.max_tables == 7
+    assert settings.schema_retrieval == "llm"
+    assert settings.supervisor_enabled is False
+
+
+def test_a_whitespace_only_value_is_treated_as_unset(monkeypatch):
+    monkeypatch.setenv("MAX_TABLES", "   ")
+    monkeypatch.setenv("OLLAMA_MODEL", "\t")
+    settings = Settings.from_env()
+    assert settings.max_tables == 10
+    assert settings.ollama_model == DEFAULT_OLLAMA_MODEL

@@ -399,3 +399,23 @@ def test_independent_problems_are_all_reported_in_one_pass():
     assert "data-modifying" in text
     assert "pg_sleep" in text
     assert "dim_vendor" in text
+
+
+def test_a_syntax_error_deep_in_a_long_query_is_quoted_with_ellipses():
+    """The window is what the Repair Agent shows the generator. On a long
+    query it has to say the text was clipped, or the generator reads the
+    fragment as the whole statement.
+    """
+    padding = ", ".join(f"col_{i}" for i in range(60))
+    issues = validate(f"SELECT {padding} FROM dim_store WHERE AND x = 1")
+    assert len(issues) == 1
+    message = issues[0].message
+    assert "Syntax error at character" in message
+    assert ">>>" in message
+    assert message.count("...") >= 1, message
+
+
+def test_a_syntax_error_near_the_start_is_not_prefixed_with_an_ellipsis():
+    issues = validate("SELECT FROM")
+    assert issues
+    assert "Here: ..." not in issues[0].message

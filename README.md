@@ -542,8 +542,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 887 tests, no Docker or network needed
-pytest --run-docker     # all 1138, including ones that build and run containers
+pytest                  # 986 tests, no Docker or network needed
+pytest --run-docker     # all 1245, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -551,17 +551,41 @@ pytest --run-docker     # all 1138, including ones that build and run containers
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in those two scripts is exercised by some test |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 251 tests behind `--run-docker` are the ones that need a working daemon:
+The 259 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Thirty-eight of those 187 also need the **embedding host**: a local Ollama
+### Coverage
+
+```bash
+coverage run --source=agent/nl2sql_agent,benchmarks -m pytest --run-docker
+coverage report --show-missing --skip-covered
+```
+
+**99% of the agent and the benchmark**, with nineteen statements uncovered and
+a reason for each: the `sys.path` bootstrap and `sys.exit(main())` that only
+run when the benchmark is invoked as a script rather than imported, and a
+handful of `except ValueError: continue` guards behind regexes that cannot
+produce the value they catch. They are defensive, and writing a test that
+reaches one would mean weakening the code that makes it unreachable.
+
+Two things the coverage report cannot see are covered another way. The shell
+scripts are not Python, so
+[`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py)
+reads them instead and asserts that every flag is parsed, documented and
+passed by some test, and that every `warn` and `die` message is asserted
+somewhere. A warning nobody triggers looks exactly like a warning that works,
+and these scripts are almost entirely warnings. `docker-compose.yml` is
+covered from both sides: nothing is set that the agent never reads, and
+nothing the agent reads is missing from it.
+
+Thirty-eight of those 259 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing. Start it with
 `ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.

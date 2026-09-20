@@ -517,3 +517,95 @@ def test_the_scorer_reflects_whether_pg_trgm_is_actually_installed(live_catalog,
     expected = "pg_trgm" if trigram_available(live_db) else "difflib"
     assert matcher.scorer == expected
     assert matcher.match("sales for dairy and eggs")
+
+
+# ---------------------------------------------------------------------------
+# The edges of the catalog and the matcher
+# ---------------------------------------------------------------------------
+
+
+def test_a_catalog_entry_names_its_column_the_way_the_prompt_does():
+    entry = CatalogEntry(table="dim_product", column="department_name", value="Dairy & Eggs")
+    assert entry.qualified_column == "dim_product.department_name"
+
+
+def test_a_schema_where_every_text_column_is_too_wide_yields_no_catalog():
+    """Not an error: a database of free text simply has no literals worth
+    offering, and the generator spells them from the question as v3 did.
+    """
+
+    class _WideOnly:
+        class _Engine:
+            def connect(self):
+                return _WideOnly._Conn()
+
+        class _Conn:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def execute(self, statement, *args):
+                sql = str(statement)
+                if "information_schema.columns" in sql or "pg_attribute" in sql:
+                    return _Rows([_Row(table_name="t", column_name="c", data_type="text")])
+                if "distinct" in sql.lower():
+                    return _Rows([_Row(table_name="t", column_name="c", distinct_count=99999)])
+                return _Rows([])
+
+        _engine = _Engine()
+
+    class _Row:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    class _Rows(list):
+        def all(self):
+            return list(self)
+
+    assert build_catalog(_WideOnly(), max_distinct=500) == []
+
+
+def test_asking_for_trigram_without_a_database_is_refused_rather_than_ignored():
+    """`word_similarity` runs inside Postgres, so a matcher told to use it
+    with nowhere to run it is a configuration error, not a fallback.
+    """
+    with pytest.raises(ValueError, match="needs a database"):
+        LiteralMatcher([], use_trigram=True)
+
+
+def test_trigram_can_be_switched_off_explicitly_even_with_a_database():
+    matcher = LiteralMatcher([], use_trigram=False, database=object())
+    assert matcher.scorer == "difflib"
+
+
+def test_an_empty_candidate_matches_nothing():
+    catalog = [CatalogEntry(table="dim_product", column="department_name", value="Produce")]
+    assert LiteralMatcher(catalog).match("") == []
+
+
+def test_a_question_full_of_phrases_stops_at_the_candidate_cap():
+    """Candidate extraction runs against every catalogued value, so an
+    unbounded question would turn one call into an unbounded amount of work.
+    """
+    from nl2sql_agent.literals import _MAX_CANDIDATES
+
+    question = " ".join(f'"Phrase Number {i}"' for i in range(180))
+    assert len(extract_candidates(question)) == _MAX_CANDIDATES
+
+
+def test_a_match_below_the_floor_is_refused_before_the_anchor_is_considered():
+    catalog = [CatalogEntry(table="t", column="c", value="Produce")]
+    assert LiteralMatcher(catalog, min_score=0.99).match("produse") == []
+
+
+def test_a_near_miss_against_an_empty_string_is_never_a_match():
+    """`SequenceMatcher` scores two empty strings as a perfect match, which
+    would make every blank candidate resolve to the first catalogued value.
+    """
+    from nl2sql_agent.literals import _near_miss
+
+    assert _near_miss("", "produce") is False
+    assert _near_miss("produce", "") is False
+    assert _near_miss("produse", "produce") is True

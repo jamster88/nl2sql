@@ -91,6 +91,7 @@ def test_an_empty_retail_database_is_called_out(run_launch):
     result = run_launch(env={"FAKE_ROW_COUNT": "0"})
     assert "no sales rows" in result.output
     assert "--reset" in result.output
+    assert "connect and then answer nothing" in result.output
 
 
 def test_an_empty_knowledge_base_warns_that_retrieval_will_be_skipped(run_launch):
@@ -143,6 +144,9 @@ def test_an_unreachable_chat_host_warns_that_questions_will_fail(run_launch):
     result = run_launch(env={"FAKE_OLLAMA_DOWN": "1"})
     assert result.returncode == 0, "an unreachable model host is a warning, not a failure"
     assert "could not reach the chat host" in result.output
+    assert "Every question will fail until it is reachable" in result.output
+    # The embedding host is probed separately and is down too.
+    assert "Retrieval and worked examples will be skipped" in result.output
 
 
 def test_a_chat_host_without_the_model_is_distinguished_from_one_that_is_down(run_launch):

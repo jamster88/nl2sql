@@ -29,6 +29,7 @@ from decimal import Decimal
 import pytest
 from nl2sql_agent.present import (
     CellRef,
+    ChartSpec,
     FormulaError,
     NarratedClaim,
     Narrative,
@@ -36,6 +37,7 @@ from nl2sql_agent.present import (
     audit_issue,
     check_claim,
     choose_chart,
+    describe_chart,
     evaluate_formula,
     narrate,
     redact,
@@ -738,3 +740,170 @@ def test_the_audit_passes_the_question_through_to_every_claim():
     claims = [Claim(text="In fiscal month 12 it was 34.20%.", value=34.2, cells=[(0, "pct")])]
     assert audit(claims, result, question="gross margin in fiscal month 12?").passed
     assert not audit(claims, result, question="gross margin?").passed
+
+
+# ---------------------------------------------------------------------------
+# The safe formula evaluator, refusal by refusal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("formula", "reason"),
+    [
+        ("", "empty"),
+        ("   ", "empty"),
+        ("cells[0] +", "not a valid expression"),
+        ("-" * 80 + "cells[0]", "too complex"),
+        ("cells[0] + " + " + ".join(["1"] * 200), "longer than"),
+        ("x[0]", "only cells"),
+        ("cells[a]", "literal integer"),
+        ("round(cells[0], ndigits=2)", "keyword arguments"),
+        ("min()", "could not be applied"),
+    ],
+)
+def test_a_formula_the_checker_cannot_trust_is_refused_by_name(formula: str, reason: str):
+    """Each refusal says which rule it broke, because the message goes into
+    the retry prompt and "invalid" teaches the narrator nothing.
+    """
+    with pytest.raises(FormulaError, match=reason):
+        evaluate_formula(formula, [10.0, 5.0])
+
+
+def test_a_negated_cell_is_evaluated():
+    """Unary minus is how a claim says a gap runs the other way."""
+    assert evaluate_formula("-cells[0]", [4.0]) == -4.0
+    assert evaluate_formula("+cells[0]", [4.0]) == 4.0
+
+
+def test_addition_and_the_named_functions_all_work():
+    assert evaluate_formula("cells[0] + cells[1]", [1.5, 2.5]) == 4.0
+    assert evaluate_formula("min(cells)", [3.0, 1.0]) == 1.0
+    assert evaluate_formula("max(cells)", [3.0, 1.0]) == 3.0
+
+
+# ---------------------------------------------------------------------------
+# Rendering the pieces that have nothing to render
+# ---------------------------------------------------------------------------
+
+
+def test_a_null_cell_renders_as_null_rather_than_none():
+    """`None` in a markdown table reads as a Python object escaping into the
+    answer.
+    """
+    table = render_table(QueryResult(columns=["dept", "total"], rows=[["Produce", None]]))
+    assert "NULL" in table
+    assert "None" not in table
+
+
+def test_an_empty_result_renders_no_table_at_all():
+    assert render_table(QueryResult()) == ""
+
+
+def test_a_grouped_chart_names_its_series_when_it_has_one():
+    spec = ChartSpec(kind="grouped_bar", x="dept", y=["fy24", "fy25"], series="year")
+    assert "series = year" in describe_chart(spec)
+
+
+def test_a_narration_the_model_declined_to_write_is_an_empty_claim_list():
+    """A model that returns nothing is not an error; the answer falls back
+    to the table, which is what v3 always showed.
+    """
+
+    class _Silent:
+        def with_structured_output(self, schema):
+            class _B:
+                def invoke(self, messages):
+                    return None
+
+            return _B()
+
+    assert narrate(_Silent(), "q", QueryResult(columns=["n"], rows=[[1]])) == []
+
+
+# ---------------------------------------------------------------------------
+# Numbers that look like numbers but are not
+# ---------------------------------------------------------------------------
+
+
+def test_a_claim_computing_over_a_cell_that_is_not_a_number_is_dropped():
+    result = QueryResult(columns=["dept", "total"], rows=[["Produce", 10.0]])
+    claim = Claim(
+        text="The difference is 5.",
+        value=5.0,
+        cells=[(0, "dept"), (0, "total")],
+        formula="cells[1] - cells[0]",
+    )
+    reason = check_claim(claim, result)
+    assert reason is not None
+    assert "not a number" in reason
+
+
+def test_a_date_in_a_cited_row_backs_a_date_in_the_sentence():
+    """A row whose cell is a date legitimises the date in the prose without
+    the narrator having to cite it as a value.
+    """
+    result = QueryResult(columns=["week", "total"], rows=[["2025-03-14", 10.0]])
+    claim = Claim(text="In the week of 2025-03-14 the total was 10.", value=10.0,
+                  cells=[(0, "total")])
+    assert check_claim(claim, result) is None
+
+
+def test_a_cell_that_cannot_be_read_as_a_number_is_simply_not_backing():
+    result = QueryResult(columns=["note", "total"], rows=[["n/a", 10.0]])
+    claim = Claim(text="The total was 10.", value=10.0, cells=[(0, "total")])
+    assert check_claim(claim, result) is None
+
+
+def test_a_real_formula_is_kept_while_the_words_models_use_for_none_are_not():
+    """The field is optional, and a model asked for an optional string often
+    writes "none" rather than leaving it out. Treating that as a formula
+    would drop every claim that has no arithmetic in it.
+    """
+    from nl2sql_agent.present import _clean_formula
+
+    for spelling in ("null", "None", "n/a", "NA", "", "   "):
+        assert _clean_formula(spelling) is None, spelling
+    assert _clean_formula(None) is None
+    assert _clean_formula(" cells[0] * 2 ") == "cells[0] * 2"
+
+    # And the cleaning really is applied to what the narrator returns.
+    result = QueryResult(columns=["n"], rows=[[10.0]])
+    llm = ScriptedLLM(
+        narration=Narrative(
+            claims=[NarratedClaim(
+                text="The count is 10.", value=10.0,
+                cells=[CellRef(row=0, column="n")], formula="none",
+            )]
+        )
+    )
+    [claim] = narrate(llm, "how many?", result)
+    assert claim.formula is None
+    assert check_claim(claim, result) is None
+
+
+def test_a_refusal_inside_a_function_argument_is_not_reported_as_an_arity_error():
+    """`min(cells[99])` fails on the index, and saying "min() could not be
+    applied" would send the narrator looking at the wrong thing.
+    """
+    with pytest.raises(FormulaError, match="outside the 1 cited cells"):
+        evaluate_formula("min(cells[99])", [1.0])
+
+
+def test_a_date_cell_backs_the_numbers_inside_it():
+    """A row whose cell is a real date, not a string, still legitimises the
+    year and month the sentence repeats from it.
+    """
+    from datetime import date
+
+    result = QueryResult(columns=["day", "total"], rows=[[date(2025, 3, 14), 10.0]])
+    claim = Claim(text="On 2025-03-14 the total was 10.", value=10.0, cells=[(0, "total")])
+    assert check_claim(claim, result) is None
+
+
+def test_an_empty_question_is_treated_as_one_that_implied_rows():
+    """The semantic check needs a default, and "no rows" is more often a bug
+    than an answer.
+    """
+    empty = QueryResult(columns=["n"], rows=[])
+    assert audit([], empty, question="").semantic_issue
+    assert audit([], empty, question="are there any stores in Alabama?").semantic_issue is None

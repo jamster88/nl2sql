@@ -650,3 +650,39 @@ def test_closing_an_empty_set_falls_back_to_the_catalog():
     selection = retriever.close_and_cap([])
     assert selection.tables
     assert len(selection.tables) <= 4
+
+
+def test_two_tables_with_no_join_path_between_them_need_no_bridge():
+    """An unreachable pair is not an error: the question may legitimately
+    want two unrelated tables, and inventing a path would add noise.
+    """
+    retriever = make_retriever([], edges=[("dim_store", "dim_geography")])
+    selection = retriever.close_and_cap(["dim_store", "dim_product"])
+    assert selection.bridges == []
+    assert set(selection.tables) == {"dim_store", "dim_product"}
+
+
+def test_a_self_referencing_foreign_key_is_not_an_edge():
+    """A table that references itself cannot bridge anything, and treating
+    it as an edge would make every BFS visit it twice.
+    """
+    retriever = make_retriever(
+        [], edges=[("dim_product", "dim_product"), ("dim_product", "dim_store")]
+    )
+    selection = retriever.close_and_cap(["dim_product", "dim_store"])
+    assert selection.bridges == []
+
+
+def test_a_foreign_key_to_a_table_outside_the_catalog_is_ignored():
+    retriever = make_retriever([], edges=[("dim_store", "some_other_schema_table")])
+    selection = retriever.close_and_cap(["dim_store"])
+    assert selection.tables == ["dim_store"]
+
+
+def test_asking_for_no_ranked_tables_returns_none_without_embedding():
+    """`SCHEMA_TOP_K=0` is the configuration that leaves table selection
+    entirely to the knowledge and example hints.
+    """
+    retriever = make_retriever(["dim_store", "dim_product"], top_k=0)
+    selection = retriever.select("anything")
+    assert selection.tables == sorted(RETAIL_TABLES)

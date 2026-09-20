@@ -165,6 +165,20 @@ audit could trace back to the result.
 
 ## Configuration
 
+Every setting is an environment variable, most with a CLI override. Every one
+of them is also forwarded by `docker-compose.yml`, so a setting works the same
+way whether the agent runs in the container or on the host:
+
+```bash
+MAX_TABLES=6 docker compose run --rm agent "how many stores are there?"
+```
+
+A variable the host has not set arrives as an empty string, which is read as
+unset rather than as a blank value -- otherwise forwarding a setting would
+override its own default with nothing. A test checks the correspondence in
+both directions: nothing is forwarded that the agent never reads, and nothing
+the agent reads is missing from compose.
+
 Every setting is an environment variable with a CLI override:
 
 | Variable | Flag | Default |

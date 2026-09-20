@@ -21,8 +21,9 @@ from nl2sql_agent.database import QueryResult as DbRows
 from nl2sql_agent.graph import Nl2SqlAgent
 from nl2sql_agent.present import CellRef, NarratedClaim, Narrative
 from nl2sql_agent.schema_retrieval import SchemaRetriever
+from nl2sql_agent.state import Shot
 from nl2sql_agent.supervisor import Screening
-from nl2sql_agent.tools import build_tools
+from nl2sql_agent.tools import TableSelection, build_tools
 
 from .conftest import (
     FakeDatabase,
@@ -43,6 +44,7 @@ def make_agent(
     example_library: FakeGoldenPairLibrary | None = None,
     *,
     schema_retriever: SchemaRetriever | None = "unset",  # type: ignore[assignment]
+    literal_matcher=None,
     on_progress=None,
     **settings_kwargs,
 ) -> Nl2SqlAgent:
@@ -64,10 +66,14 @@ def make_agent(
         knowledge_base=knowledge_base,
         example_library=example_library,
         schema_retriever=schema_retriever,
-        literal_matcher=None,
+        literal_matcher=literal_matcher,
         on_progress=on_progress,
     )
     agent.db = db
+    # `Nl2SqlAgent` falls back to building its own when the argument is falsy,
+    # so an explicit None has to be applied after construction; otherwise a
+    # test asking for no retriever gets a real one pointed at a dead port.
+    agent.schema_retriever = schema_retriever
     if schema_retriever is not None:
         schema_retriever._database = db
     agent.tools = build_tools(db, llm, settings, knowledge_base, example_library)
@@ -562,3 +568,212 @@ def test_a_narration_rewrite_does_not_spend_the_sql_retry_budget():
 
     assert state["attempts"] == 1
     assert state["attempt_history"] == []
+
+
+# ---------------------------------------------------------------------------
+# Construction: every stage the architecture makes optional can be switched off
+# ---------------------------------------------------------------------------
+
+
+def test_disabling_retrieval_builds_no_stores_at_all():
+    """`--no-rag` is the v1 configuration: no knowledge base, no schema
+    vectors, and nothing that needs an embedding host to be reachable.
+    """
+    settings = Settings(
+        database_url="postgresql+psycopg://u:p@127.0.0.1:1/db",
+        rag_enabled=False,
+        examples_enabled=False,
+        literals_enabled=False,
+    )
+    agent = Nl2SqlAgent(settings, llm=ScriptedLLM(), on_progress=None)
+    assert agent.knowledge_base is None
+    assert agent.example_library is None
+    assert agent.schema_retriever is None
+
+
+def test_the_schema_retriever_is_not_built_for_the_llm_ablation():
+    """`SCHEMA_RETRIEVAL=llm` restores v3's model call, so the vector
+    retriever would be dead weight and an unnecessary store connection.
+    """
+    settings = Settings(
+        database_url="postgresql+psycopg://u:p@127.0.0.1:1/db", schema_retrieval="llm"
+    )
+    assert Nl2SqlAgent(settings, llm=ScriptedLLM()).schema_retriever is None
+
+
+def test_the_llm_ablation_really_asks_the_model_which_tables_to_use():
+    """The setting has to do what it says or the comparison it exists for is
+    a lie. This is the call v4 removed, reachable on purpose.
+    """
+    db = FakeDatabase(tables=TABLES)
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    llm.table_selection = TableSelection(tables=["dim_store", "dim_product"])
+    state = make_agent(db, llm, schema_retriever=None, schema_retrieval="llm").run("q")
+
+    assert state["schema_tables"] == ["dim_store", "dim_product"]
+    assert [e.model_calls for e in state["trace"] if e.node == "retrieve_schema"] == [1]
+    assert state["result"] is not None
+
+
+def test_the_llm_ablation_degrades_when_the_model_cannot_answer():
+    db = FakeDatabase(tables=TABLES)
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    llm.table_selection = None  # with_structured_output then raises
+    state = make_agent(db, llm, schema_retriever=None, schema_retrieval="llm").run("q")
+
+    assert state["retrieval_errors"]["schema"]
+    assert state["result"] is not None
+
+
+def test_a_schema_retriever_that_could_not_reach_its_store_is_recorded():
+    db = FakeDatabase(tables=TABLES)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(error="vector store unreachable"), db, foreign_keys=lambda: []
+    )
+    state = make_agent(db, scripted(["SELECT 1 AS n FROM dim_store"]), schema_retriever=retriever).run("q")
+
+    assert "unreachable" in state["retrieval_errors"]["schema"]
+    assert state["result"] is not None
+
+
+def test_no_schema_retriever_still_caps_the_tables_the_others_proposed():
+    db = FakeDatabase(tables=TABLES + ["dim_promotion", "dim_vendor"])
+    kb = FakeKnowledgeBase(chunks=[make_chunk(meta={"table": "dim_promotion"})])
+    # The SQL names no table, so the cap is the only thing under test here
+    # rather than which table happened to survive it.
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n"]), kb, schema_retriever=None, max_tables=1
+    ).run("q")
+    assert state["selected_tables"] == ["dim_promotion"]
+
+
+def test_with_nothing_retrievable_the_whole_catalog_is_offered():
+    """Schema-only is v1's behaviour and answers a good many questions, so it
+    beats handing the generator nothing.
+    """
+    db = FakeDatabase(tables=TABLES)
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM dim_store"]), schema_retriever=None
+    ).run("q")
+    assert set(state["selected_tables"]) == set(TABLES)
+
+
+def test_a_bridge_table_is_named_in_the_progress_line(progress_log):
+    """The aggregator's detail is how a reader sees the closure working; a
+    bridge added silently looks like the vector search having found it.
+    """
+    db = FakeDatabase(tables=["fact_ad_performance", "dim_ad_placement", "dim_ad_channel"])
+    # The vector ranking sees only the fact; the knowledge chunk names the
+    # channel. Neither knows they cannot be joined without the placement
+    # table, and the aggregator is the first place both are known.
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": "fact_ad_performance"})]),
+        db,
+        foreign_keys=lambda: [
+            ("fact_ad_performance", "dim_ad_placement"),
+            ("dim_ad_placement", "dim_ad_channel"),
+        ],
+    )
+    knowledge = FakeKnowledgeBase(chunks=[make_chunk(meta={"table": "dim_ad_channel"})])
+    make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_ad_performance"]), knowledge,
+        schema_retriever=retriever, on_progress=progress_log,
+    ).run("ad performance by channel")
+
+    aggregate = [detail for step, detail in progress_log.log if step == "aggregate"]
+    assert "bridge: dim_ad_placement" in aggregate[0]
+
+
+# ---------------------------------------------------------------------------
+# The literal matcher, built lazily from the live database
+# ---------------------------------------------------------------------------
+
+
+def test_literal_matching_can_be_switched_off():
+    db = FakeDatabase(tables=TABLES)
+    state = make_agent(db, scripted(["SELECT 1 AS n FROM dim_store"]), literals_enabled=False).run("q")
+    assert state["literal_map"] == []
+
+
+def test_a_catalog_that_cannot_be_built_costs_the_literals_and_nothing_else():
+    """Building it reads every low-cardinality text column, which is the
+    widest read the agent makes. A database that refuses it should cost the
+    literal map, not the answer.
+    """
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(db, scripted(["SELECT 1 AS n FROM dim_store"]), literals_enabled=True)
+    agent._literal_matcher = None
+    agent._literal_catalog_built = False
+    state = agent.run("q")
+    assert state["literal_map"] == []
+    assert state["result"] is not None
+
+
+def test_a_matcher_that_raises_mid_question_is_recorded_and_skipped():
+    class _Exploding:
+        def match(self, question, **kwargs):
+            raise RuntimeError("trigram index vanished")
+
+    db = FakeDatabase(tables=TABLES)
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM dim_store"]), literal_matcher=_Exploding()
+    ).run("q")
+    assert "trigram index vanished" in state["retrieval_errors"]["literals"]
+    assert state["result"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Presentation with nothing to present
+# ---------------------------------------------------------------------------
+
+
+def test_a_narrator_that_fails_costs_the_narrative_and_not_the_rows():
+    class _Exploding(ScriptedLLM):
+        def with_structured_output(self, schema):
+            if "claims" in getattr(schema, "model_fields", {}):
+                raise RuntimeError("the model host went away")
+            return super().with_structured_output(schema)
+
+    db = FakeDatabase(tables=TABLES)
+    llm = _Exploding(
+        sql_responses=["SELECT count(*) AS n FROM dim_store"],
+        screening=Screening(verdict="proceed", intent="aggregate"),
+    )
+    state = make_agent(db, llm).run("q")
+
+    assert "went away" in state["retrieval_errors"]["narrator"]
+    assert state["result"].rows == [[1]]
+    assert state["answer"]
+
+
+def test_presentation_does_nothing_when_execution_produced_no_result():
+    """The give-up path ends the run before Stage 4, but the nodes are
+    written to be callable with an empty state so a partial run cannot
+    raise on the way out.
+    """
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(db, scripted(["SELECT 1 AS n FROM dim_store"]))
+    empty = {"question": "q", "intent": "aggregate", "result": None, "claims": []}
+
+    assert agent._visualise(empty)["chart"] is None
+    assert agent._audit(empty)["audit"].passed is True
+    assert agent._route_after_audit({}) == "finish"
+
+
+def test_the_audit_can_be_switched_off_for_a_run_that_only_wants_rows():
+    db = FakeDatabase(tables=TABLES)
+    state = make_agent(db, scripted(["SELECT count(*) AS n FROM dim_store"]), audit_enabled=False).run("q")
+    assert state["audit"].passed is True
+    assert state["result"] is not None
+
+
+def test_an_exemplar_that_is_already_a_dictionary_is_passed_through():
+    """The example retriever hands over `Shot` objects, but a caller
+    constructing state by hand -- a test, or a replay from JSON -- has plain
+    dictionaries, and the prompt builder takes one shape.
+    """
+    from nl2sql_agent.graph import _shot_dict
+
+    as_dict = {"pair_id": "Q1", "question": "q", "reasoning_target": "r", "sql_code": "SELECT 1"}
+    assert _shot_dict(as_dict) is as_dict
+    assert _shot_dict(Shot(**as_dict)) == as_dict

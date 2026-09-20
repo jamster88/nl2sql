@@ -353,3 +353,62 @@ def test_no_issues_means_no_work_and_no_model_call():
     llm = ScriptedLLM()
     assert repair_hint([], llm=llm) == ([], 0)
     assert llm.plain_invocations == []
+
+
+# ---------------------------------------------------------------------------
+# Syntax errors, in each of the shapes Postgres and pglast report them
+# ---------------------------------------------------------------------------
+
+
+def test_a_syntax_error_reported_only_as_at_or_near_still_becomes_a_hint():
+    """Postgres reports some syntax errors with a token and no position and
+    no LINE echo. Falling through to the model for those would spend a call
+    on the most recognisable error there is.
+    """
+    hint = classify(Issue(source=PLANNER, message='syntax error at or near "FROM"'))
+    assert hint is not None
+    assert '"FROM"' in hint
+
+
+def test_a_syntax_error_with_no_position_at_all_still_says_what_to_do():
+    hint = classify(Issue(source=STATIC, message="Syntax error: the statement did not parse"))
+    assert hint is not None
+    assert "SELECT" in hint
+
+
+def test_an_unknown_table_with_no_near_match_names_the_tables_in_scope():
+    """`difflib` finds nothing when the hallucinated name resembles nothing
+    real, and "that table does not exist" without a list is a dead end.
+    """
+    hint = classify(
+        Issue(source=PLANNER, message='relation "zzzz_nothing_like_it" does not exist'),
+        allowed_tables=["dim_store", "dim_product", "fact_pos_retail_sales"],
+    )
+    assert hint is not None
+    assert "dim_store" in hint
+
+
+def test_an_unknown_table_with_no_scope_at_all_still_gives_direction():
+    hint = classify(
+        Issue(source=PLANNER, message='relation "whatever" does not exist'), allowed_tables=[]
+    )
+    assert hint is not None
+    assert "schema block" in hint
+
+
+def test_a_postgres_position_is_read_as_a_one_based_offset():
+    """Postgres reports POSITION as 1-based and pglast reports an index as
+    0-based. Quoting the wrong character is worse than quoting none.
+    """
+    hint = classify(Issue(source=PLANNER, message='syntax error at end of input\nPOSITION: 15'))
+    assert hint is not None
+
+
+def test_an_empty_message_does_not_become_a_repeat_warning():
+    """The repeat check keys on the message text; an empty key would make
+    every unlabelled failure look like the same failure recurring.
+    """
+    from nl2sql_agent.repair import _repeat_prefix
+
+    assert _repeat_prefix("", ()) == ""
+    assert _repeat_prefix("   ", ()) == ""

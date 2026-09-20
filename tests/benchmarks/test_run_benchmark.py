@@ -313,3 +313,214 @@ def test_a_run_that_narrated_nothing_scores_none_rather_than_zero():
 
 def test_the_score_survives_a_run_with_no_audit_report():
     assert run_benchmark.narrative_score({"claims": [object()]}) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# The driver: run_configuration and main
+# ---------------------------------------------------------------------------
+
+
+def _settings():
+    """Only the fields `run_configuration` reads before the agent is built."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        database_url="postgresql+psycopg://u:p@127.0.0.1:1/db",
+        db_schema="public",
+        statement_timeout_ms=30000,
+        max_rows=50,
+    )
+
+
+class _StubAgent:
+    """An agent that answers every question with the same canned state."""
+
+    def __init__(self, state: dict) -> None:
+        self._state = state
+        self.asked: list[str] = []
+
+    def run(self, question: str, **kwargs) -> dict:
+        self.asked.append(question)
+        return dict(self._state)
+
+
+def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None):
+    """Run `main` with the agent, the database and the reference rows faked."""
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "reference_rows", lambda db, q: expected_rows or [[10]])
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+
+    class _FakeDatabase:
+        def __init__(self, *a, **k) -> None:
+            pass
+
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+
+    monkeypatch.setattr(db_module, "Database", _FakeDatabase)
+    agents: list[_StubAgent] = []
+
+    def _build(settings, **kwargs):
+        agent = _StubAgent(state)
+        agents.append(agent)
+        return agent
+
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", _build)
+    code = rb.main(argv)
+    return code, agents
+
+
+def test_a_run_where_every_answer_is_right_exits_zero(monkeypatch, capsys):
+    """CI gates on the exit code, so it has to mean what it says."""
+    code, agents = _drive(
+        monkeypatch,
+        {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False},
+         "attempts": 1},
+        argv=["--only", "B01"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "execution accuracy   1/1" in out
+    assert agents[0].asked == ["How many stores are there?"]
+
+
+def test_a_wrong_answer_exits_non_zero_and_is_named(monkeypatch, capsys):
+    code, _ = _drive(
+        monkeypatch,
+        {"sql": "SELECT 1", "result": {"rows": [[999]], "columns": ["n"], "truncated": False},
+         "attempts": 1},
+        argv=["--only", "B01"],
+    )
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "not correct" in out
+    assert "B01" in out
+
+
+def test_an_agent_that_gave_up_is_reported_as_failed(monkeypatch, capsys):
+    code, _ = _drive(
+        monkeypatch, {"error": "Could not produce a valid query", "attempts": 4},
+        argv=["--only", "B01"],
+    )
+    assert code == 1
+    assert "FAILED" in capsys.readouterr().out
+
+
+def test_a_refusal_is_scored_rather_than_crashing_the_run(monkeypatch, capsys):
+    """No error and no rows means the Supervisor stopped before any SQL. A
+    screen that refuses real questions has to show up as lost accuracy.
+    """
+    code, _ = _drive(
+        monkeypatch, {"verdict": "out_of_domain", "attempts": 0}, argv=["--only", "B01"]
+    )
+    assert code == 1
+    assert "refused before generating SQL" in capsys.readouterr().out
+
+
+def test_comparing_configurations_runs_each_one_and_prints_the_table(monkeypatch, capsys):
+    code, agents = _drive(
+        monkeypatch,
+        {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False},
+         "attempts": 1},
+        argv=["--only", "B01", "--compare"],
+    )
+    out = capsys.readouterr().out
+    assert code == 0
+    assert len(agents) == 3, "one agent per configuration"
+    assert "comparison" in out
+    for configuration in ("schema-only", "knowledge", "multi-shot"):
+        assert configuration in out
+
+
+def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "results.json"
+    _drive(
+        monkeypatch,
+        {
+            "sql": "SELECT 1",
+            "result": {"rows": [[10]], "columns": ["n"], "truncated": False},
+            "attempts": 1,
+            "trace": [{"node": "generate_sql", "ms": 1500.0, "model_calls": 1}],
+            "claims": [object()],
+        },
+        argv=["--only", "B01", "--json", str(out_path)],
+    )
+    assert f"wrote {out_path}" in capsys.readouterr().out
+    payload = json.loads(out_path.read_text())
+    [result] = payload["configurations"][0]["results"]
+    assert result["id"] == "B01"
+    assert result["model_calls"] == {"generate_sql": 1}
+    assert result["narrative_score"] == 1.0
+    assert payload["configurations"][0]["stage_totals"]["generate_sql"] == 1.5
+
+
+def test_verbose_puts_each_agent_step_on_stderr(monkeypatch, capsys):
+    """Progress belongs on stderr so the report on stdout stays pipeable."""
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "reference_rows", lambda db, q: [[10]])
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+
+    monkeypatch.setattr(db_module, "Database", lambda *a, **k: None)
+
+    def _build(settings, *, on_progress=None, **kwargs):
+        on_progress("generate_sql", "SELECT 1")
+        return _StubAgent(
+            {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False},
+             "attempts": 1}
+        )
+
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", _build)
+    rb.main(["--only", "B01", "-v"])
+    assert "[generate_sql] SELECT 1" in capsys.readouterr().err
+
+
+def test_an_unreachable_model_host_stops_the_run_with_a_clean_message(monkeypatch, capsys):
+    """A benchmark that reported 0/15 because Ollama was down would look
+    exactly like a catastrophic regression.
+    """
+    import benchmarks.run_benchmark as rb
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+    from nl2sql_agent.llm import LlmUnavailableError
+
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    monkeypatch.setattr(db_module, "Database", lambda *a, **k: None)
+
+    def _explode(settings, **kwargs):
+        raise LlmUnavailableError("Cannot reach Ollama at http://127.0.0.1:1")
+
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", _explode)
+    with pytest.raises(SystemExit, match="Cannot reach Ollama"):
+        rb.main(["--only", "B01"])
+
+
+def test_naming_a_question_that_does_not_exist_says_which_one():
+    """A typo in an id would otherwise run the whole set, or none of it,
+    with no indication which.
+    """
+    with pytest.raises(SystemExit, match="no such question"):
+        run_benchmark.main(["--only", "B99_does_not_exist"])
+
+
+def test_a_category_with_no_questions_stops_rather_than_reporting_a_perfect_score():
+    """An empty run would otherwise print 0/0 and exit zero, which reads as
+    everything having passed.
+    """
+    import benchmarks.run_benchmark as rb
+
+    args = rb.parse_args([])
+    args.category = "no-such-category"
+    with pytest.raises(SystemExit, match="no questions selected"):
+        rb.select(args)
+
+
+def test_the_database_url_flag_overrides_the_settings(monkeypatch):
+    import benchmarks.run_benchmark as rb
+
+    args = rb.parse_args(["--database-url", "postgresql+psycopg://u:p@elsewhere/db"])
+    settings = rb.build_settings(args, "multi-shot")
+    assert settings.database_url == "postgresql+psycopg://u:p@elsewhere/db"

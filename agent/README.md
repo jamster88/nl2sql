@@ -257,6 +257,7 @@ Every setting is an environment variable with a CLI override:
 | `OLLAMA_REASONING` | `--reasoning` / `--no-reasoning` | off |
 | `OLLAMA_TEMPERATURE` | -- | 0.0 |
 | `OLLAMA_NUM_CTX` | -- | 262144 (256k) |
+| `OLLAMA_CONNECT_TIMEOUT` | -- | 5.0 seconds to decide the host is not there. Not a limit on answering |
 | `DATABASE_URL` | `--database-url` | the compose Postgres, as the read-only `nl2sql_reader` role |
 | `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |

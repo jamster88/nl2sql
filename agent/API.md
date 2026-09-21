@@ -177,6 +177,12 @@ only in a browser; the server warns about it at startup.
 responses: a wedged process should be restarted, a database that has not
 finished starting should just be waited for.
 
+`/readyz` is meant to be polled, so it answers quickly even when a dependency
+is missing: the agent's chat host is probed with a bounded timeout
+(`OLLAMA_CONNECT_TIMEOUT`, 5 seconds) rather than left to the operating
+system, which takes about three minutes to give up on a host that is routed
+and silent.
+
 `/v1/meta` is worth fetching on start-up. It tells a client what it may ask
 about (`tables`, `scope`), what it must respect (`limits.max_rows`), and what
 to render (`pipeline.narrate` false means there is no paragraph to show,

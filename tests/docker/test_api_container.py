@@ -109,6 +109,92 @@ class Container:
         )
 
 
+NETWORK_PREFIX = "nl2sql-test-"
+CONTAINER_PREFIXES = ("nl2sql-api-test-", "nl2sql-apitest-")
+
+
+def _remove_network(name: str) -> bool:
+    """Remove a test network, taking anything still attached off it first.
+
+    Fixture teardown runs in reverse order of setup, so this can be asked to
+    clean up while a container another fixture made is still attached -- and
+    `docker network rm` refuses that.
+
+    Leaking one is not a tidiness problem. Docker allocates network subnets
+    from 172.16/12 and then, once those sixteen /16s are gone, from
+    192.168/16 in /20s. Enough leaked networks and a bridge is handed a range
+    covering real LAN addresses, at which point every container on the
+    machine routes those addresses into the bridge instead of out to the
+    network -- and a host that is up and pingable from the desktop becomes
+    unreachable from inside any container, with nothing to point at.
+    """
+    for _ in range(3):
+        attached = subprocess.run(
+            ["docker", "network", "inspect", name,
+             "--format", "{{range .Containers}}{{.Name}} {{end}}"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if attached.returncode != 0:
+            return True  # already gone
+        for container in attached.stdout.split():
+            subprocess.run(
+                ["docker", "network", "disconnect", "-f", name, container],
+                capture_output=True, timeout=30,
+            )
+        if subprocess.run(["docker", "network", "rm", name],
+                          capture_output=True, timeout=60).returncode == 0:
+            return True
+        time.sleep(1)
+    return False
+
+
+def _strays(kind: str, prefixes: tuple[str, ...]) -> list[str]:
+    listing = subprocess.run(
+        ["docker", kind, "ls", "-a" if kind == "container" else "--no-trunc",
+         "--format", "{{.Name}}" if kind == "network" else "{{.Names}}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    return [
+        name for name in listing.stdout.split()
+        if any(name.startswith(prefix) for prefix in prefixes)
+    ]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _leaves_no_docker_objects_behind(docker_daemon_available: bool):
+    """Clean up before, and fail loudly after.
+
+    Before, because an interrupted run leaves containers and networks behind
+    and the next run should not inherit them. After, because a leak here
+    breaks LAN routing for every container on the machine -- it has happened,
+    and the symptom looks like a host being down rather than like a test.
+    """
+    if not docker_daemon_available:
+        yield
+        return
+
+    for name in _strays("container", CONTAINER_PREFIXES):
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
+    for name in _strays("network", (NETWORK_PREFIX,)):
+        _remove_network(name)
+
+    yield
+
+    leaked_containers = _strays("container", CONTAINER_PREFIXES)
+    for name in leaked_containers:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=60)
+    leaked_networks = _strays("network", (NETWORK_PREFIX,))
+    for name in leaked_networks:
+        _remove_network(name)
+
+    assert not leaked_networks, (
+        f"these test networks were left behind: {leaked_networks}. Leaked networks "
+        "eventually take subnets that shadow real LAN addresses, and every "
+        "container on this machine then loses its route to them."
+    )
+    assert not leaked_containers, f"these test containers were left behind: {leaked_containers}"
+
+
 @pytest.fixture
 def docker_network(docker_daemon_available: bool):
     """A private network, so two containers can find each other by name."""
@@ -117,14 +203,14 @@ def docker_network(docker_daemon_available: bool):
     created: list[str] = []
 
     def _make() -> str:
-        name = f"nl2sql-test-{uuid.uuid4().hex[:8]}"
+        name = f"{NETWORK_PREFIX}{uuid.uuid4().hex[:8]}"
         subprocess.run(["docker", "network", "create", name], check=True, capture_output=True, timeout=30)
         created.append(name)
         return name
 
     yield _make
     for name in created:
-        subprocess.run(["docker", "network", "rm", name], capture_output=True, timeout=60)
+        assert _remove_network(name), f"could not remove the test network {name}"
 
 
 @pytest.fixture
@@ -317,6 +403,31 @@ def test_readiness_says_which_dependency_is_missing(run_api, tmp_path):
     assert body["ready"] is False
     assert body["checks"]["agent"]["ok"] is False
     assert body["checks"]["database"]["ok"] is False
+
+
+def test_readiness_answers_promptly_even_when_the_chat_host_is_a_black_hole(run_api, tmp_path):
+    """The failure that made `/readyz` unusable. A refused connection answers
+    at once; a host that is routed and silent does not, and the model
+    validation had no timeout of its own -- so the probe blocked for just
+    under three minutes and an orchestrator gave up on the container instead
+    of on the dependency.
+
+    192.0.2.1 is TEST-NET-1 (RFC 5737): routable, reserved, answered by
+    nothing, which is the shape of a machine that is off.
+    """
+    api = run_api(env={"OLLAMA_BASE_URL": "http://192.0.2.1:11434",
+                       "OLLAMA_CONNECT_TIMEOUT": "3"})
+    cert = api.certificate(tmp_path / "c.crt")
+
+    started = time.monotonic()
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        api.get("/readyz", cert)
+    elapsed = time.monotonic() - started
+
+    assert raised.value.code == 503
+    assert elapsed < 30, f"/readyz took {elapsed:.0f}s; the timeout is not reaching the container"
+    detail = json.load(raised.value)["checks"]["agent"]["detail"]
+    assert "192.0.2.1" in detail and "timeout" in detail.lower()
 
 
 def test_a_token_locks_the_api_down_inside_the_container(run_api, tmp_path):

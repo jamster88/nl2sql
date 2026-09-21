@@ -615,8 +615,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 1215 tests, no Docker or network needed
-pytest --run-docker     # all 1527, including ones that build and run containers
+pytest                  # 1220 tests, no Docker or network needed
+pytest --run-docker     # all 1533, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -629,13 +629,13 @@ pytest --run-docker     # all 1527, including ones that build and run containers
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 312 tests behind `--run-docker` are the ones that need a working daemon:
+The 313 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
-Thirty-eight of those 312 also need the **embedding host**: a local Ollama
+Thirty-eight of those 313 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing. Start it with
 `ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.
@@ -655,7 +655,7 @@ pytest --run-docker \
 ```
 
 **100% of all four packages** -- the agent (including its REST server), the
-benchmark, the RAG pipeline and the data generator -- 4,769 statements with
+benchmark, the RAG pipeline and the data generator -- 4,782 statements with
 none missed.
 
 Exactly one statement is excluded, and the reason is written beside it: a

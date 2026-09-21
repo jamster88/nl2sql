@@ -33,7 +33,9 @@ die()  { printf '\nERROR: %s\n' "$1" >&2; exit 2; }
 # --insecure because someone said so. Trusting the generated certificate as a
 # CA file is better than --insecure even in development -- it still proves
 # the connection reached the server holding that key.
-CURL_TLS=()
+# Assigned by exactly one of the branches below, never declared empty: an
+# empty array expanded under `set -u` aborts on bash 3.2, and a variable that
+# is only ever set to something real cannot be expanded empty by mistake.
 if [[ -n "${API_CACERT:-}" && -f "${API_CACERT}" ]]; then
     CURL_TLS=(--cacert "${API_CACERT}")
     TRUST="the CA file at ${API_CACERT}"
@@ -47,8 +49,13 @@ else
     die "no way to verify the server: mount a CA at API_CACERT, mount its certificate at /etc/nl2sql/tls/server.crt, or set API_INSECURE=true"
 fi
 
-AUTH=()
-[[ -n "${API_TOKEN:-}" ]] && AUTH=(-H "Authorization: Bearer ${API_TOKEN}")
+# Seeded with a header rather than left empty: under `set -u`, bash 3.2 --
+# which is what macOS still ships -- treats "${AUTH[@]}" on an empty array as
+# an unbound variable and aborts. The container has bash 5 and would never
+# have shown it, and the header earns its place by naming this client in the
+# API's access log.
+AUTH=(-H "X-Client: nl2sql-apitest")
+[[ -n "${API_TOKEN:-}" ]] && AUTH+=(-H "Authorization: Bearer ${API_TOKEN}")
 
 api() {  # api METHOD PATH [curl args...]
     local method="$1" path="$2"; shift 2
@@ -77,16 +84,11 @@ for attempt in $(seq 1 30); do
 done
 [[ -n "${health:-}" ]] || die "no response from ${BASE_URL}/healthz after 60s"
 
-if [[ "$BASE_URL" == https://* ]]; then
-    # Proves the transport, not just the answer: a plain-HTTP server on the
-    # same port would have failed the request above, but this says so.
-    if curl -sS --max-time 10 "${CURL_TLS[@]}" -o /dev/null -w '%{ssl_verify_result}' \
-        "${BASE_URL}/healthz" >/dev/null 2>&1; then
-        pass "TLS handshake completed"
-    else
-        fail "TLS handshake did not complete"
-    fi
-fi
+# Reporting the transport, not testing it: the request above already went
+# through this same handshake under these same trust settings, and a failure
+# there exits 2 long before here. A second probe could only ever agree with
+# it, so this says what happened rather than pretending to check again.
+[[ "$BASE_URL" == https://* ]] && pass "TLS handshake completed"
 
 jq -e '.status == "ok"' <<<"$health" >/dev/null \
     && pass "GET /healthz -> $(jq -r '.version' <<<"$health")" \
@@ -109,7 +111,10 @@ openapi_status=$(status_of GET /openapi.json)
     || fail "GET /openapi.json -> $openapi_status"
 
 meta=$(api GET /v1/meta)
-if table_count=$(jq -e '.tables | length' <<<"$meta" 2>/dev/null); then
+# `length > 0`, not `length`: jq counts a missing `.tables` as 0 and reports
+# success, so an error body would have been announced as "ok -- 0 tables".
+# A server with nothing in scope is not one a client can use either way.
+if table_count=$(jq -e '.tables | length > 0 and length' <<<"$meta" 2>/dev/null); then
     pass "GET /v1/meta -> ${table_count} tables, model $(jq -r '.model' <<<"$meta")"
     jq -e '.limits.max_rows > 0' <<<"$meta" >/dev/null \
         && pass "the limits a client has to respect are published" \
@@ -137,67 +142,73 @@ created=$(api POST /v1/questions \
     -d "$(jq -nc --arg q "$QUESTION" '{question: $q, metadata: {client: "apitest"}}')")
 
 job_id=$(jq -r '.id // empty' <<<"$created")
-[[ -n "$job_id" ]] || die "POST /v1/questions returned no job: $created"
-pass "POST /v1/questions -> job $job_id ($(jq -r '.status' <<<"$created"))"
-
-# --- 6. Watch it happen ----------------------------------------------------
-# The progress stream is what a GUI draws while the minute passes, so it is
-# checked the way a GUI consumes it: read events until one of them is `done`.
-step "Streaming progress"
-events=$(curl -sS --max-time "$WAIT_SECONDS" --no-buffer "${CURL_TLS[@]}" "${AUTH[@]}" \
-    -H 'Accept: text/event-stream' \
-    "${BASE_URL}/v1/questions/${job_id}/events" 2>/dev/null |
-    while IFS= read -r line; do
-        printf '%s\n' "$line"
-        [[ "$line" == "event: done" ]] && break
-    done)
-
-steps=$(grep -c '^event: progress$' <<<"$events" || true)
-if [[ "${steps:-0}" -gt 0 ]]; then
-    pass "the stream carried ${steps} pipeline step(s)"
-    # The `data: ` prefix has to come off before jq sees it; an SSE frame is
-    # not JSON, the field it carries is.
-    printf '%s\n' "$events" | sed -n 's/^data: \({"seq".*\)/\1/p' |
-        jq -r '"        " + (.seq|tostring) + ". " + .label + " -- " + (.detail | split("\n")[0])' |
-        head -20
+if [[ -z "$job_id" ]]; then
+    # A failed check, not a dead service: the API answered, it just would not
+    # take this question -- a missing token is the usual reason. Exiting 2
+    # here would tell a CI job to retry something that will never succeed.
+    fail "POST /v1/questions returned no job: $(jq -c '.error // .' <<<"$created" 2>/dev/null || printf '%s' "$created")"
 else
-    fail "the event stream carried no progress events"
+    pass "POST /v1/questions -> job $job_id ($(jq -r '.status' <<<"$created"))"
+
+    # --- 6. Watch it happen ------------------------------------------------
+    # The progress stream is what a GUI draws while the minute passes, so it
+    # is checked the way a GUI consumes it: read events until one is `done`.
+    step "Streaming progress"
+    events=$(curl -sS --max-time "$WAIT_SECONDS" --no-buffer "${CURL_TLS[@]}" "${AUTH[@]}" \
+        -H 'Accept: text/event-stream' \
+        "${BASE_URL}/v1/questions/${job_id}/events" 2>/dev/null |
+        while IFS= read -r line; do
+            printf '%s\n' "$line"
+            [[ "$line" == "event: done" ]] && break
+        done)
+
+    steps=$(grep -c '^event: progress$' <<<"$events" || true)
+    if [[ "${steps:-0}" -gt 0 ]]; then
+        pass "the stream carried ${steps} pipeline step(s)"
+        # The `data: ` prefix has to come off before jq sees it; an SSE frame
+        # is not JSON, the field it carries is.
+        printf '%s\n' "$events" | sed -n 's/^data: \({"seq".*\)/\1/p' |
+            jq -r '"        " + (.seq|tostring) + ". " + .label + " -- " + (.detail | split("\n")[0])' |
+            head -20
+    else
+        fail "the event stream carried no progress events"
+    fi
+    grep -q '^event: done$' <<<"$events" \
+        && pass "the stream ended with a done event" \
+        || fail "the stream never reported the job finished"
+
+    # --- 7. Collect the answer ---------------------------------------------
+    step "Collecting the answer"
+    job=$(api GET "/v1/questions/${job_id}?wait=${WAIT_SECONDS}" --max-time $((WAIT_SECONDS + 30)))
+    state=$(jq -r '.status' <<<"$job")
+    case "$state" in
+        succeeded)
+            pass "the job succeeded in $(jq -r '.duration_ms' <<<"$job") ms"
+            jq -e '.answer.sql | length > 0' <<<"$job" >/dev/null \
+                && pass "the answer carries the SQL that produced it" \
+                || fail "the answer has no SQL"
+            jq -e '.answer.result.columns | length > 0' <<<"$job" >/dev/null \
+                && pass "the answer carries $(jq -r '.answer.result.row_count' <<<"$job") row(s)" \
+                || fail "the answer has no rows"
+            printf '\n    question: %s\n' "$(jq -r '.question' <<<"$job")"
+            printf '    sql:      %s\n' "$(jq -r '.answer.sql' <<<"$job" | tr '\n' ' ' | cut -c1-160)"
+            printf '    answer:   %s\n' "$(jq -r '.answer.narrative // .answer.answer' <<<"$job" | head -3)"
+            ;;
+        failed)
+            fail "the job failed: $(jq -r '.error' <<<"$job")"
+            ;;
+        *)
+            fail "the job is still $state after ${WAIT_SECONDS}s"
+            ;;
+    esac
+
+    # --- 8. Housekeeping ---------------------------------------------------
+    step "Cleaning up"
+    deleted=$(status_of DELETE "/v1/questions/${job_id}")
+    [[ "$deleted" == "204" ]] \
+        && pass "DELETE /v1/questions/${job_id} -> 204" \
+        || fail "DELETE /v1/questions/${job_id} -> $deleted"
 fi
-grep -q '^event: done$' <<<"$events" \
-    && pass "the stream ended with a done event" \
-    || fail "the stream never reported the job finished"
-
-# --- 7. Collect the answer -------------------------------------------------
-step "Collecting the answer"
-job=$(api GET "/v1/questions/${job_id}?wait=${WAIT_SECONDS}" --max-time $((WAIT_SECONDS + 30)))
-state=$(jq -r '.status' <<<"$job")
-case "$state" in
-    succeeded)
-        pass "the job succeeded in $(jq -r '.duration_ms' <<<"$job") ms"
-        jq -e '.answer.sql | length > 0' <<<"$job" >/dev/null \
-            && pass "the answer carries the SQL that produced it" \
-            || fail "the answer has no SQL"
-        jq -e '.answer.result.columns | length > 0' <<<"$job" >/dev/null \
-            && pass "the answer carries $(jq -r '.answer.result.row_count' <<<"$job") row(s)" \
-            || fail "the answer has no rows"
-        printf '\n    question: %s\n' "$(jq -r '.question' <<<"$job")"
-        printf '    sql:      %s\n' "$(jq -r '.answer.sql' <<<"$job" | tr '\n' ' ' | cut -c1-160)"
-        printf '    answer:   %s\n' "$(jq -r '.answer.narrative // .answer.answer' <<<"$job" | head -3)"
-        ;;
-    failed)
-        fail "the job failed: $(jq -r '.error' <<<"$job")"
-        ;;
-    *)
-        fail "the job is still $state after ${WAIT_SECONDS}s"
-        ;;
-esac
-
-# --- 8. Housekeeping -------------------------------------------------------
-step "Cleaning up"
-deleted=$(status_of DELETE "/v1/questions/${job_id}")
-[[ "$deleted" == "204" ]] \
-    && pass "DELETE /v1/questions/${job_id} -> 204" \
-    || fail "DELETE /v1/questions/${job_id} -> $deleted"
 
 printf '\n==> %d passed, %d failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]] || exit 1

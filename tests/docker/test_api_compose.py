@@ -234,6 +234,44 @@ def test_the_test_client_is_given_the_same_token_as_the_server(tmp_path_factory)
     assert config["services"]["apitest"]["environment"]["API_TOKEN"] == "s3cret"
 
 
+def _smoke_reads() -> set[str]:
+    """Every environment variable the smoke script consults, by name."""
+    source = (REPO_ROOT / "docker" / "apitest" / "smoke.sh").read_text()
+    return set(re.findall(r"\$\{(API[A-Z_]*|APITEST[A-Z_]*)[:\-}]", source))
+
+
+def test_every_variable_the_smoke_script_reads_can_be_set_through_compose(config: dict):
+    """Its whole interface is environmental -- it takes no flags -- so a
+    variable compose does not forward cannot be set on the container at all.
+    """
+    read = _smoke_reads()
+    assert read, "no environment variables found in smoke.sh -- the regex needs updating"
+    missing = sorted(read - set(config["services"]["apitest"]["environment"]))
+    assert missing == [], f"smoke.sh reads these, but compose never passes them: {missing}"
+
+
+def test_every_variable_compose_sets_on_the_test_client_is_one_it_reads(config: dict):
+    """The mirror: a variable that quietly does nothing is worse than one
+    that is missing, because it looks configured.
+    """
+    read = _smoke_reads()
+    for name in config["services"]["apitest"]["environment"]:
+        assert name in read, f"compose sets {name} on apitest, which smoke.sh never reads"
+
+
+def test_the_question_the_test_client_asks_can_be_changed_without_an_argument(tmp_path_factory):
+    """`docker compose run --rm apitest "<question>"` is the documented way,
+    but a CI job setting one variable should not have to pass an argument.
+    """
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"),
+        env={"APITEST_QUESTION": "total net sales in FY2025", "APITEST_WAIT_SECONDS": "30"},
+    )
+    env = config["services"]["apitest"]["environment"]
+    assert env["APITEST_QUESTION"] == "total net sales in FY2025"
+    assert env["APITEST_WAIT_SECONDS"] == "30"
+
+
 # ---------------------------------------------------------------------------
 # The smoke script itself
 # ---------------------------------------------------------------------------

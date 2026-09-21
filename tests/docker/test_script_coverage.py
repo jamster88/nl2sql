@@ -24,8 +24,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = ("setup.sh", "launch.sh")
+SMOKE = "docker/apitest/smoke.sh"
+#: The API's smoke script is driven from tests/api/, against a real server
+#: rather than a fake Docker, so its assertions live there.
 TEST_SOURCES = "".join(
-    p.read_text() for p in (REPO_ROOT / "tests" / "docker").glob("test_*.py")
+    path.read_text()
+    for directory in ("docker", "api")
+    for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
 )
 
 
@@ -189,6 +194,62 @@ def test_both_scripts_create_what_the_v4_agent_needs_that_the_image_may_not_have
         source = _source(script)
         assert "reader_role.sql" in source, f"{script} never creates the agent's role"
         assert "pg_trgm" in source, f"{script} never creates the trigram extension"
+
+
+# ---------------------------------------------------------------------------
+# The API's smoke script
+# ---------------------------------------------------------------------------
+#
+# Not in SCRIPTS above: it takes no flags and has no usage text, because it is
+# not run by hand -- compose runs it, and its whole interface is the six
+# environment variables compose sets. What it shares with the other two is
+# that it is a script full of checks, and a check nothing has ever seen fail
+# is a check that might not be able to.
+
+
+def test_every_check_the_smoke_script_can_fail_is_exercised_by_a_test():
+    """A `fail` that has never fired is a branch that has never run, and the
+    whole point of this container is that its failures are trustworthy.
+    """
+    unasserted = [m for m in _messages(_source(SMOKE), "fail") if not _asserted(m)]
+    assert unasserted == [], f"smoke.sh failures no test triggers: {unasserted}"
+
+
+def test_every_fatal_error_in_the_smoke_script_is_exercised_by_a_test():
+    unasserted = [m for m in _messages(_source(SMOKE), "die") if not _asserted(m)]
+    assert unasserted == [], f"smoke.sh fatal messages no test triggers: {unasserted}"
+
+
+def test_the_smoke_script_is_syntactically_valid_and_fails_fast():
+    result = subprocess.run(
+        ["bash", "-n", str(REPO_ROOT / SMOKE)], capture_output=True, text=True
+    )
+    assert result.returncode == 0, result.stderr
+    assert "set -uo pipefail" in _source(SMOKE)
+
+
+def test_the_smoke_script_expands_no_array_that_could_be_empty():
+    """Under `set -u`, bash 3.2 -- which is what macOS ships -- aborts on
+    "${arr[@]}" when `arr` is empty. The container has bash 5 and would never
+    have shown it, so this is checked by reading rather than by running.
+    """
+    source = _source(SMOKE)
+    for name in re.findall(r"^(\w+)=\(\)$", source, re.MULTILINE):
+        assert f'"${{{name}[@]}}"' not in source, (
+            f"{name} is initialised empty and expanded unguarded; bash 3.2 aborts on that"
+        )
+
+
+def test_every_environment_variable_the_smoke_script_reads_is_documented():
+    """Its interface is entirely environmental, so an undocumented variable
+    is a setting nobody can discover.
+    """
+    source = _source(SMOKE)
+    read = set(re.findall(r"\$\{(API[A-Z_]*|APITEST[A-Z_]*)[:\-}]", source))
+    assert read, "no environment variables found in smoke.sh -- the regex needs updating"
+    api_doc = (REPO_ROOT / "agent" / "API.md").read_text()
+    for name in sorted(read):
+        assert f"`{name}`" in api_doc, f"smoke.sh reads {name}, which API.md never mentions"
 
 
 def test_the_helper_that_reads_compose_values_is_shared_by_both_scripts():

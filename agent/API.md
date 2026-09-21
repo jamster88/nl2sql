@@ -444,6 +444,17 @@ every endpoint, streams the progress of a real question, and exits `1` on a
 failed check or `2` when the API was never reachable at all, so a CI job can
 tell a retry apart from a defect.
 
+It is configured entirely from the environment, which is what compose sets:
+
+| Variable | Default | What |
+| --- | --- | --- |
+| `API_BASE_URL` | `https://nl2sql-api:8443` | The API to drive |
+| `API_TOKEN` | *(none)* | Presented as a bearer token when set |
+| `API_CACERT` | *(none)* | A CA file to verify against; tried first |
+| `API_INSECURE` | `true` in compose | Allow `--insecure` as a last resort. With this false and nothing to verify against, it refuses to run |
+| `APITEST_QUESTION` | `How many stores are there?` | The question to ask, unless one is given as an argument |
+| `APITEST_WAIT_SECONDS` | `240` | How long to wait for the answer |
+
 For the automated suite:
 
     pytest tests/api                       # the whole HTTP surface, offline

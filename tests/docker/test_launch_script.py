@@ -397,6 +397,17 @@ def test_an_api_container_that_never_comes_up_is_reported(run_launch):
     assert "Check what it said: docker compose --profile api logs api" in result.output
 
 
+def test_an_api_container_that_is_up_but_never_healthy_is_waited_out_then_reported(run_launch):
+    """A container that is running and failing its healthcheck is different
+    from one that exited: nothing has crashed, so the poll has to run out
+    rather than give up at the first look. This is the path that takes the
+    full wait, and the only one that reaches the end of the loop.
+    """
+    result = run_launch("--api", env={"FAKE_API_HEALTH": "starting", "FAKE_API_RUNNING": "true"})
+    assert "the REST API container did not become healthy" in result.output
+    assert "Check what it said: docker compose --profile api logs api" in result.output
+
+
 def test_an_agent_image_that_predates_the_api_says_so_instead(run_launch):
     """The exact failure a pinned .env produces after an upgrade: the image
     starts, Python cannot find the module, and the message would otherwise

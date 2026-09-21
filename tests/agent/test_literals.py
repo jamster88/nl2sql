@@ -609,3 +609,41 @@ def test_a_near_miss_against_an_empty_string_is_never_a_match():
     assert _near_miss("", "produce") is False
     assert _near_miss("produce", "") is False
     assert _near_miss("produse", "produce") is True
+
+
+# ---------------------------------------------------------------------------
+# The two floors in the matcher
+# ---------------------------------------------------------------------------
+
+
+def test_a_score_under_the_floor_is_rejected_whatever_else_it_shares():
+    """`_keep` checks the floor first for a reason: a candidate can share a
+    content word with the indexed value and still be a different thing
+    ("sales region" against "sales"), so the word test is a reason to keep
+    something already close enough, never a way around the threshold.
+    """
+    from nl2sql_agent.literals import LiteralMatcher, _Indexed, normalize
+
+    matcher = LiteralMatcher([], min_score=0.6)
+    indexed = _Indexed(
+        entry=CatalogEntry(table="dim_product", column="department", value="Produce"),
+        norm=normalize("Produce"),
+        words={"produce"},
+    )
+    assert matcher._keep("Produce", indexed, 0.95) is True
+    assert matcher._keep("Produce", indexed, 0.30) is False
+
+
+def test_an_empty_candidate_matches_nothing_rather_than_everything():
+    """`SequenceMatcher` against an empty string scores 0 with everything,
+    which is harmless -- but the loop is over every catalogued value, and a
+    phrase that normalises to nothing is worth skipping before paying for it.
+    """
+    from nl2sql_agent.literals import LiteralMatcher
+
+    matcher = LiteralMatcher(
+        [CatalogEntry(table="dim_product", column="department", value="Produce")],
+        min_score=0.6,
+    )
+    assert matcher._score_difflib("") == {}
+    assert matcher._score_difflib("produse") != {}

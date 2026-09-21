@@ -345,3 +345,81 @@ def test_retrieval_module_is_shipped_in_the_image(agent_dockerfile: str):
     """
     assert "COPY agent/nl2sql_agent/ ./nl2sql_agent/" in agent_dockerfile
     assert (DOCKER_DIR.parent / "agent" / "nl2sql_agent" / "retrieval.py").exists()
+
+
+# ---------------------------------------------------------------------------
+# The REST API in the agent image, and the outside client
+# ---------------------------------------------------------------------------
+
+
+def test_the_api_package_travels_with_the_image(agent_dockerfile: str):
+    """One image, two entrypoints. The directory-wide COPY is what carries
+    the api package too, so the thing serving a GUI is the thing that was
+    benchmarked rather than a second build.
+    """
+    assert "COPY agent/nl2sql_agent/ ./nl2sql_agent/" in agent_dockerfile
+    api_dir = DOCKER_DIR.parent / "agent" / "nl2sql_agent" / "api"
+    assert (api_dir / "__main__.py").exists(), "the api package has no module entry point"
+    assert (api_dir / "app.py").exists()
+
+
+def test_the_image_installs_what_the_api_needs(agent_dockerfile: str):
+    """An image built before these were added starts and then fails on the
+    first import, which is the failure launch.sh has a branch for.
+    """
+    requirements = (DOCKER_DIR.parent / "agent" / "requirements.txt").read_text()
+    for package in ("fastapi", "uvicorn", "cryptography"):
+        assert package in requirements, f"{package} is not installed in the image"
+    assert "COPY agent/requirements.txt" in agent_dockerfile
+
+
+def test_the_image_prepares_somewhere_to_keep_the_certificate(agent_dockerfile: str):
+    """The server writes itself one on first start, and compose mounts a
+    volume over this path so it survives a restart.
+    """
+    from nl2sql_agent.api.settings import DEFAULT_TLS_DIR
+
+    assert f"mkdir -p {DEFAULT_TLS_DIR}" in agent_dockerfile
+    assert DEFAULT_TLS_DIR in agent_dockerfile
+
+
+def test_the_exposed_port_is_the_one_the_server_defaults_to(agent_dockerfile: str):
+    from nl2sql_agent.api.settings import DEFAULT_PORT
+
+    assert f"EXPOSE {DEFAULT_PORT}" in agent_dockerfile
+
+
+def test_the_cli_is_still_the_default_way_in(agent_dockerfile: str):
+    """Adding a server must not change what `docker compose run --rm agent
+    "<question>"` does; the api service overrides the command instead.
+    """
+    assert 'ENTRYPOINT ["python", "-m", "nl2sql_agent"]' in agent_dockerfile
+    directives = [
+        line for line in agent_dockerfile.splitlines()
+        if line.startswith(("ENTRYPOINT", "CMD"))
+    ]
+    assert directives and not any("nl2sql_agent.api" in line for line in directives), (
+        f"the image starts a server by default: {directives}"
+    )
+
+
+def test_the_outside_client_image_carries_only_curl_and_jq():
+    """It is credible as an outside client precisely because it shares no
+    runtime with what it is testing.
+    """
+    dockerfile = (DOCKER_DIR / "apitest" / "Dockerfile").read_text()
+    assert re.search(r"^FROM alpine", dockerfile, re.MULTILINE)
+    assert "curl" in dockerfile and "jq" in dockerfile
+    assert "COPY agent/" not in dockerfile
+    assert "pip install" not in dockerfile
+    assert 'ENTRYPOINT ["/usr/local/bin/smoke.sh"]' in dockerfile
+
+
+def test_the_outside_client_can_be_handed_a_certificate_to_trust():
+    """compose mounts the API's volume here; the test suite copies a file in
+    with `docker cp`, which needs the directory to already exist.
+    """
+    from nl2sql_agent.api.settings import DEFAULT_TLS_DIR
+
+    dockerfile = (DOCKER_DIR / "apitest" / "Dockerfile").read_text()
+    assert f"mkdir -p {DEFAULT_TLS_DIR}" in dockerfile

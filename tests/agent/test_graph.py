@@ -722,6 +722,68 @@ def test_a_matcher_that_raises_mid_question_is_recorded_and_skipped():
     assert state["result"] is not None
 
 
+def test_the_catalog_is_built_once_and_its_matches_reach_the_state(monkeypatch):
+    """The lazy build and the successful path, which the failure tests above
+    step around. Building reads every low-cardinality text column, so it
+    happens once per process however many questions arrive -- and under the
+    REST server several of those arrive at the same time.
+    """
+    from nl2sql_agent import graph as graph_module
+    from nl2sql_agent.literals import CatalogEntry
+
+    builds: list[str] = []
+
+    def fake_build_catalog(database, *, max_distinct, schema):
+        builds.append(schema)
+        return [CatalogEntry("dim_product", "department_name", "Produce")]
+
+    monkeypatch.setattr(graph_module, "build_catalog", fake_build_catalog)
+
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(
+        db, scripted(["SELECT 1 AS n FROM dim_store"] * 2), literals_enabled=True
+    )
+    agent._literal_matcher = None
+    agent._literal_catalog_built = False
+
+    first = agent.run("how much produse did we sell?")
+    [match] = first["literal_map"]
+    assert (match.phrase, match.value) == ("produse", "Produce")
+    assert match.table == "dim_product" and match.column == "department_name"
+
+    agent.run("how much produse did we sell?")
+    assert builds == ["public"], "the catalog was rebuilt for the second question"
+
+
+def test_a_question_with_nothing_to_resolve_says_so_rather_than_failing(monkeypatch):
+    """The progress line is the only place a user sees the matcher work, so
+    "no literals matched" has to be a sentence rather than an empty one.
+    """
+    from nl2sql_agent import graph as graph_module
+    from nl2sql_agent.literals import CatalogEntry
+
+    monkeypatch.setattr(
+        graph_module,
+        "build_catalog",
+        lambda database, **kwargs: [CatalogEntry("dim_product", "department_name", "Produce")],
+    )
+
+    db = FakeDatabase(tables=TABLES)
+    log: list[tuple[str, str]] = []
+    agent = make_agent(
+        db,
+        scripted(["SELECT 1 AS n FROM dim_store"]),
+        literals_enabled=True,
+        on_progress=lambda step, detail: log.append((step, detail)),
+    )
+    agent._literal_matcher = None
+    agent._literal_catalog_built = False
+
+    state = agent.run("how many stores are there?")
+    assert state["literal_map"] == []
+    assert ("retrieve_literals", "no literals matched") in log
+
+
 # ---------------------------------------------------------------------------
 # Presentation with nothing to present
 # ---------------------------------------------------------------------------

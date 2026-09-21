@@ -220,12 +220,17 @@ the deployment.
 changes with the architecture; `models.py` is what other people's code is
 compiled against. `translate.py` is the only module that knows both.
 
-Tested in [`tests/api/`](../tests/api) without Docker -- including
-[`test_live_tls.py`](../tests/api/test_live_tls.py), which binds a real
-socket with the real certificate and talks to it with the standard library --
-and in [`tests/docker/test_api_container.py`](../tests/docker/test_api_container.py)
-against the packaged container, reached by a curl-only image over verified
-TLS.
+Tested in [`tests/api/`](../tests/api) without Docker. Two of those tests run
+what would otherwise need a container:
+[`test_live_tls.py`](../tests/api/test_live_tls.py) binds a real socket with
+the real certificate and talks to it with the standard library, and
+[`test_smoke_script.py`](../tests/api/test_smoke_script.py) runs
+[`docker/apitest/smoke.sh`](../docker/apitest/smoke.sh) -- bash, curl and jq
+-- against a live server, which is how a shell script with no Python in it
+gets its branches covered.
+[`tests/docker/test_api_container.py`](../tests/docker/test_api_container.py)
+then does it again against the packaged container, reached by a curl-only
+image over verified TLS.
 
 ## Configuration
 

@@ -54,12 +54,24 @@ case "$1" in
             echo "${FAKE_VECTOR_HEALTH:-healthy}"
         elif [[ "$*" == *nl2sql-chunkdb* ]]; then
             echo "${FAKE_CONTEXT_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-api* && "$*" == *Running* ]]; then
+            echo "${FAKE_API_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-api* ]]; then
+            echo "${FAKE_API_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi
         exit 0 ;;
     compose)
         shift
+        # Matched on the whole argument list rather than $1: these are
+        # invoked with a --profile in front of the subcommand.
+        if [[ "$*" == *" logs "* || "$*" == *" logs" ]]; then
+            # What the API container said, for the branch that tells an image
+            # without the REST API apart from any other startup failure.
+            printf '%s\n' "${FAKE_API_LOGS:-}"
+            exit 0
+        fi
         case "$1" in
             version) echo "2.99.0"; exit 0 ;;
             build|up|down) exit 0 ;;

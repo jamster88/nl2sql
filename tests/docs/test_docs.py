@@ -21,7 +21,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 AGENT_DIR = REPO_ROOT / "agent"
 
-DOCS = ("README.md", "agent/README.md", "agent/USAGE.md", "data_gen/README.md")
+DOCS = ("README.md", "agent/README.md", "agent/USAGE.md", "agent/API.md", "data_gen/README.md")
 
 
 @pytest.fixture(scope="module")
@@ -37,6 +37,11 @@ def agent_readme() -> str:
 @pytest.fixture(scope="module")
 def agent_usage() -> str:
     return (AGENT_DIR / "USAGE.md").read_text()
+
+
+@pytest.fixture(scope="module")
+def agent_api_doc() -> str:
+    return (AGENT_DIR / "API.md").read_text()
 
 
 @pytest.fixture(scope="module")
@@ -110,6 +115,104 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
     ):
         row = _table_row(agent_readme, name)
         assert value in row, f"README says {name} defaults to something other than {value!r}: {row!r}"
+
+
+# ---------------------------------------------------------------------------
+# The REST API's surface
+# ---------------------------------------------------------------------------
+
+
+def test_every_api_setting_is_documented(agent_api_doc: str):
+    """API.md is the contract a GUI is written against, and its settings
+    table is where anyone finds out a knob exists. Same relationship as
+    config.py and the agent README's table, checked the same way.
+    """
+    source = (AGENT_DIR / "nl2sql_agent" / "api" / "settings.py").read_text()
+    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    assert names, "no environment variables found in api/settings.py -- the regex needs updating"
+    for name in sorted(names):
+        assert f"`{name}`" in agent_api_doc, f"{name} is read by the server but absent from API.md"
+
+
+def test_the_documented_api_defaults_are_the_real_defaults(agent_api_doc: str):
+    from nl2sql_agent.api.settings import ApiSettings
+
+    def rows(name: str) -> list[str]:
+        """Every table row mentioning the setting, not just the first.
+
+        `API_JOB_TTL_SECONDS` is named in the error table as well as the
+        settings one, and the first match is not the row with the default in
+        it.
+        """
+        return [line for line in agent_api_doc.splitlines() if f"`{name}`" in line]
+
+    settings = ApiSettings()
+    for name, value in (
+        ("API_PORT", settings.port),
+        ("API_TLS_DAYS", settings.tls_days),
+        ("API_MAX_CONCURRENCY", settings.max_concurrency),
+        ("API_JOB_TTL_SECONDS", settings.job_ttl_seconds),
+        ("API_MAX_JOBS", settings.max_jobs),
+        ("API_KEEPALIVE_SECONDS", settings.keepalive_seconds),
+        ("API_TLS_CERT_FILE", settings.tls_cert_file),
+        ("API_TLS_KEY_FILE", settings.tls_key_file),
+    ):
+        found = rows(name)
+        # `15` and `15.0` are the same default; the table reads better
+        # without the trailing zero and the dataclass needs the float.
+        spellings = {str(value)}
+        if isinstance(value, float):
+            spellings.add(f"{value:g}")
+        assert any(any(s in row for s in spellings) for row in found), (
+            f"API.md never says {name} defaults to {value}: {found!r}"
+        )
+
+
+def test_every_route_the_server_serves_is_documented(agent_api_doc: str):
+    """A route absent from the table is a route nobody knows to call, however
+    well it works.
+    """
+    from nl2sql_agent.api.app import create_app
+    from nl2sql_agent.api.settings import ApiSettings
+    from nl2sql_agent.config import Settings
+
+    app = create_app(settings=Settings(), api_settings=ApiSettings(token=None))
+    documented = agent_api_doc
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if not path.startswith(("/v1", "/healthz", "/readyz")):
+            continue
+        assert path in documented, f"the server serves {path}, which API.md never mentions"
+
+
+def test_every_error_code_the_server_can_return_is_documented(agent_api_doc: str):
+    """A client branches on these. One that is returned but undocumented is
+    one nobody handles.
+    """
+    source = (AGENT_DIR / "nl2sql_agent" / "api" / "app.py").read_text()
+    codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
+    codes |= set(re.findall(r'_error_response\(\s*\n?\s*\d+,\s*\n?\s*"([a-z_]+)"', source))
+    assert codes, "no error codes found in app.py -- the regex needs updating"
+    for code in sorted(codes):
+        assert f"`{code}`" in agent_api_doc, f"the server returns {code!r}, which API.md never lists"
+
+
+def test_the_api_flag_is_documented_where_someone_would_look(root_readme: str, agent_usage: str):
+    """It opens a port, which is the kind of thing that should not be
+    discoverable only by reading the script.
+    """
+    for doc in (root_readme, agent_usage):
+        assert "./launch.sh --api" in doc
+
+
+def test_the_switch_that_refuses_the_development_certificate_is_documented(
+    agent_api_doc: str, root_readme: str
+):
+    """The whole point of shipping a dummy certificate is that it can be
+    taken away. Someone deploying this has to be able to find out how.
+    """
+    assert "API_TLS_ALLOW_SELF_SIGNED=false" in agent_api_doc
+    assert "API_TLS_ALLOW_SELF_SIGNED=false" in root_readme
 
 
 def test_the_documented_version_is_the_packaged_one(agent_readme: str, root_readme: str):

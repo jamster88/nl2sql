@@ -40,7 +40,9 @@ an environment change rather than a code change.
 
 from __future__ import annotations
 
+import threading
 import time
+from contextvars import ContextVar
 from typing import Any, Callable
 
 from langchain_core.language_models import BaseChatModel
@@ -82,6 +84,16 @@ from .validate import validate as validate_sql_statically
 
 ProgressFn = Callable[[str, str], None]
 
+#: The progress callback belonging to the run happening in this context.
+#:
+#: One agent answers one question at a time from the CLI, so a callback set
+#: on the instance was enough. The REST server answers several at once
+#: through the same agent, and an instance attribute would send one caller's
+#: progress to another caller's stream. A context variable is per-run, and
+#: LangGraph copies the context into the threads it fans stage 1 out across,
+#: so the four concurrent retrievers report to the right run too.
+_progress: ContextVar[ProgressFn | None] = ContextVar("nl2sql_progress", default=None)
+
 #: LangGraph stops a run that exceeds this many supersteps. The loop is about
 #: six nodes deep per attempt, so the default of 25 would abort a run that was
 #: still inside its own retry budget -- a failure that looks like a hang.
@@ -95,6 +107,35 @@ MAX_NARRATION_RETRIES = 1
 #: Keys a node returns for the tracer rather than for the state.
 _DETAIL = "_detail"
 _MODEL_CALLS = "_model_calls"
+
+#: A short human label per node, for anything that shows progress to a
+#: person: the CLI's stderr lines and the REST server's event stream both
+#: read it from here. It lives beside the node registration below so a node
+#: added without a label is a visible omission rather than a raw graph name
+#: leaking into a user interface.
+STEP_LABELS = {
+    "supervise": "screen",
+    "refuse": "refused",
+    "retrieve_schema": "tables",
+    "retrieve_literals": "literals",
+    "retrieve_knowledge": "knowledge",
+    "retrieve_examples": "examples",
+    "aggregate": "schema",
+    "generate_sql": "sql",
+    "validate_static": "validation",
+    "planner_gate": "planner",
+    "execute_query": "result",
+    "repair": "repair",
+    "give_up": "gave up",
+    "visualise": "chart",
+    "narrate": "narrative",
+    "audit": "audit",
+    "finish": "answer",
+}
+
+
+def step_label(step: str) -> str:
+    return STEP_LABELS.get(step, step)
 
 
 class Nl2SqlAgent:
@@ -124,6 +165,7 @@ class Nl2SqlAgent:
         self.schema_retriever = schema_retriever or self._build_schema_retriever(settings)
         self._literal_matcher = literal_matcher
         self._literal_catalog_built = literal_matcher is not None
+        self._literal_lock = threading.Lock()
         self.tools = build_tools(
             self.db, self.llm, settings, self.knowledge_base, self.example_library
         )
@@ -199,33 +241,56 @@ class Nl2SqlAgent:
         """
         if not self.settings.literals_enabled:
             return None
-        if not self._literal_catalog_built:
-            self._literal_catalog_built = True
-            try:
-                catalog = build_catalog(
-                    self.db,
-                    max_distinct=self.settings.literal_max_distinct,
-                    schema=self.settings.db_schema,
-                )
-                # Handing over the database lets the matcher use pg_trgm when
-                # the extension is installed; it falls back to difflib on its
-                # own when it is not, so this is quality, not capability.
-                self._literal_matcher = LiteralMatcher(
-                    catalog,
-                    min_score=self.settings.literal_min_score,
-                    database=self.db,
-                )
-            except Exception:
-                self._literal_matcher = None
-        return self._literal_matcher
+        # Under the REST server several questions are in flight at once, and
+        # the first two would otherwise race: one sets the built flag and
+        # starts reading every text column, the other sees the flag and
+        # returns the matcher that is not there yet.
+        with self._literal_lock:
+            if not self._literal_catalog_built:
+                self._literal_catalog_built = True
+                try:
+                    catalog = build_catalog(
+                        self.db,
+                        max_distinct=self.settings.literal_max_distinct,
+                        schema=self.settings.db_schema,
+                    )
+                    # Handing over the database lets the matcher use pg_trgm
+                    # when the extension is installed; it falls back to
+                    # difflib on its own when it is not, so this is quality,
+                    # not capability.
+                    self._literal_matcher = LiteralMatcher(
+                        catalog,
+                        min_score=self.settings.literal_min_score,
+                        database=self.db,
+                    )
+                except Exception:
+                    self._literal_matcher = None
+            return self._literal_matcher
 
     # --- running ------------------------------------------------------------
 
-    def run(self, question: str, *, principal: str | None = None) -> AgentState:
-        return self._graph.invoke(
-            new_state(question, principal=principal),
-            config={"recursion_limit": RECURSION_LIMIT},
-        )
+    def run(
+        self,
+        question: str,
+        *,
+        principal: str | None = None,
+        on_progress: ProgressFn | None = None,
+    ) -> AgentState:
+        """Answer one question.
+
+        `on_progress` overrides the callback given to the constructor for
+        this run only, which is what lets one agent serve several callers at
+        once without their progress lines crossing.
+        """
+        token = _progress.set(on_progress) if on_progress is not None else None
+        try:
+            return self._graph.invoke(
+                new_state(question, principal=principal),
+                config={"recursion_limit": RECURSION_LIMIT},
+            )
+        finally:
+            if token is not None:
+                _progress.reset(token)
 
     def _traced(self, name: str, fn: Callable[[AgentState], dict]) -> Callable[[AgentState], dict]:
         """Wrap a node so it reports its own cost.
@@ -249,7 +314,7 @@ class Nl2SqlAgent:
                     detail=detail,
                 )
             ]
-            self._on_progress(name, detail)
+            (_progress.get() or self._on_progress)(name, detail)
             return update
 
         return node

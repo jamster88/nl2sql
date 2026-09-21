@@ -777,3 +777,62 @@ def test_an_exemplar_that_is_already_a_dictionary_is_passed_through():
     as_dict = {"pair_id": "Q1", "question": "q", "reasoning_target": "r", "sql_code": "SELECT 1"}
     assert _shot_dict(as_dict) is as_dict
     assert _shot_dict(Shot(**as_dict)) == as_dict
+
+
+# ---------------------------------------------------------------------------
+# One agent, several questions at once
+# ---------------------------------------------------------------------------
+
+
+def test_a_run_can_be_given_its_own_progress_callback():
+    """The CLI sets one callback for the life of the agent. The REST server
+    cannot: it answers several questions through one agent, and each caller
+    is watching its own stream.
+    """
+    db = FakeDatabase(tables=TABLES)
+    constructor_log: list[str] = []
+    agent = make_agent(
+        db,
+        scripted(["SELECT count(*) AS n FROM dim_store"] * 2),
+        on_progress=lambda step, detail: constructor_log.append(step),
+    )
+
+    run_log: list[str] = []
+    agent.run("q", on_progress=lambda step, detail: run_log.append(step))
+
+    assert run_log and constructor_log == [], "the per-run callback was not used"
+    # And the instance callback is still there for the next run that wants it.
+    agent.run("q")
+    assert constructor_log
+
+
+def test_two_concurrent_runs_never_cross_their_progress():
+    """Stage 1 fans its four retrievers across threads, so this is also the
+    test that the per-run callback survives that fan-out: 14 nodes report,
+    and every one of them reports to the run it belongs to.
+    """
+    import threading
+
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(db, scripted(["SELECT count(*) AS n FROM dim_store"] * 40))
+
+    logs: dict[str, list[str]] = {"a": [], "b": []}
+    errors: list[BaseException] = []
+
+    def go(key: str) -> None:
+        try:
+            agent.run("how many stores?", on_progress=lambda s, _d: logs[key].append(s))
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go, args=(key,)) for key in logs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert errors == []
+    for key, log in logs.items():
+        assert "retrieve_schema" in log, f"{key} lost the fan-out nodes"
+        assert len(log) == len(set(log)), f"{key} saw a node twice -- the other run's"
+    assert len(logs["a"]) == len(logs["b"])

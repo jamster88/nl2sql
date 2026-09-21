@@ -9,11 +9,19 @@ no Docker daemon and no network.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _shipped_tag(name: str) -> str:
+    """The image tag this checkout of setup.sh pins, e.g. AGENT_TAG."""
+    match = re.search(rf'^{name}="([^"]+)"', (REPO_ROOT / "setup.sh").read_text(), re.MULTILINE)
+    assert match, f"setup.sh no longer defines {name}"
+    return match.group(1)
 
 
 @pytest.fixture(scope="module")
@@ -93,11 +101,15 @@ def test_default_run_starts_every_database(run_setup):
 
 
 def test_default_run_writes_env_pinning_every_image(run_setup):
+    """The tag is read back out of the script rather than repeated here: the
+    property is that what .env pins is what setup.sh ships, and hard-coding
+    the value made this fail on every release instead of on a real defect.
+    """
     env = run_setup().env_file()
     assert env["IMAGE_NAME"] == "mcfaddja/nl2sql-retail-postgres"
     assert env["IMAGE_TAG"] == "v1"
     assert env["AGENT_IMAGE_NAME"] == "mcfaddja/nl2sql-agent"
-    assert env["AGENT_IMAGE_TAG"] == "v4"
+    assert env["AGENT_IMAGE_TAG"] == _shipped_tag("AGENT_TAG")
     assert env["VECTOR_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-vectordb"
     assert env["VECTOR_IMAGE_TAG"] == "v3"
     assert env["CONTEXT_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-chunkdb"

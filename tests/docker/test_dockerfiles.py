@@ -315,13 +315,21 @@ def test_package_version_matches_the_dockerfile(agent_dockerfile: str):
     assert _agent_version_from_dockerfile(agent_dockerfile) == __version__
 
 
-def test_published_tag_in_setup_matches_the_package_major_version(agent_dockerfile: str):
+def test_published_tag_in_setup_names_a_version_this_package_actually_is(agent_dockerfile: str):
+    """The tag is `v` and as many version components as the release needed to
+    be told apart: `v4` while there was one 4.x, `v4_1` once 4.1 shipped
+    something 4.0 could not do. Whatever its depth, it has to be a prefix of
+    `__version__`, or `setup.sh` pulls an image that is not this checkout.
+    """
     from nl2sql_agent import __version__
 
     setup_sh = (DOCKER_DIR.parent / "setup.sh").read_text()
-    match = re.search(r'^AGENT_TAG="(v\d+)"', setup_sh, re.MULTILINE)
-    assert match, "setup.sh no longer pins an agent tag"
-    assert match.group(1) == f"v{__version__.split('.')[0]}"
+    match = re.search(r'^AGENT_TAG="v([\d_]+)"', setup_sh, re.MULTILINE)
+    assert match, "setup.sh no longer pins an agent tag of the form vN or vN_M"
+    tagged = match.group(1).split("_")
+    assert tagged == __version__.split(".")[: len(tagged)], (
+        f"setup.sh pulls v{match.group(1)}, but this package is {__version__}"
+    )
 
 
 def test_setup_defaults_point_at_the_published_repositories(agent_dockerfile: str):

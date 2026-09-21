@@ -10,7 +10,12 @@ happens to be running on the developer's machine.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 pytestmark = pytest.mark.docker
 
@@ -326,7 +331,13 @@ def test_an_env_pinning_an_older_agent_image_is_called_out(run_launch):
 
 
 def test_an_env_pinning_the_shipped_agent_image_says_nothing(run_launch):
-    result = run_launch(env_file="IMAGE_NAME=x\nAGENT_IMAGE_TAG=v4\n")
+    """Read out of setup.sh rather than written here, so bumping a release
+    does not fail this test for a reason that is not a defect.
+    """
+    shipped = re.search(
+        r'^AGENT_TAG="([^"]+)"', (REPO_ROOT / "setup.sh").read_text(), re.MULTILINE
+    ).group(1)
+    result = run_launch(env_file=f"IMAGE_NAME=x\nAGENT_IMAGE_TAG={shipped}\n")
     assert "pins the agent image" not in result.output
 
 
@@ -346,3 +357,91 @@ def test_a_model_tagged_latest_is_not_reported_as_missing(run_launch):
     result = run_launch(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k:latest"},{"name":"bge-m3:latest"}'})
     assert "is available at" in result.output
     assert "does not have qwen3.8-256k" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# The REST API (--api)
+# ---------------------------------------------------------------------------
+
+
+def test_the_api_is_not_started_unless_it_is_asked_for(run_launch):
+    """A port nobody asked to have opened should not be opened, so the
+    default run leaves the API alone.
+    """
+    result = run_launch()
+    assert not result.called("up -d api")
+    assert "REST API" not in result.output
+
+
+def test_the_api_flag_starts_the_api_service(run_launch):
+    result = run_launch("--api")
+    assert result.called("--profile api up -d api")
+    assert "REST API is healthy at https://localhost:8443" in result.output
+
+
+def test_the_api_flag_prints_where_the_openapi_document_is(run_launch):
+    """The document is the client library. Anyone wiring up a GUI needs the
+    URL more than they need anything else the script prints.
+    """
+    assert "OpenAPI document: https://localhost:8443/openapi.json" in run_launch("--api").output
+
+
+def test_the_api_port_follows_what_compose_will_use(run_launch):
+    result = run_launch("--api", env_file="IMAGE_NAME=x\nAPI_PORT=9443\n")
+    assert "https://localhost:9443" in result.output
+
+
+def test_an_api_container_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--api", env={"FAKE_API_HEALTH": "starting", "FAKE_API_RUNNING": "false"})
+    assert "the REST API container did not become healthy" in result.output
+    assert "Check what it said: docker compose --profile api logs api" in result.output
+
+
+def test_an_agent_image_that_predates_the_api_says_so_instead(run_launch):
+    """The exact failure a pinned .env produces after an upgrade: the image
+    starts, Python cannot find the module, and the message would otherwise
+    be "did not become healthy".
+    """
+    result = run_launch(
+        "--api",
+        env={
+            "FAKE_API_HEALTH": "starting",
+            "FAKE_API_RUNNING": "false",
+            "FAKE_API_LOGS": "ModuleNotFoundError: No module named 'fastapi'",
+        },
+    )
+    assert "The pinned agent image has no REST API in it" in result.output
+    assert "Build it here instead: docker compose --profile api build api" in result.output
+
+
+def test_turning_tls_off_is_called_out_as_clear_text(run_launch):
+    result = run_launch("--api", env_file="IMAGE_NAME=x\nAPI_TLS_ENABLED=false\n")
+    assert "the API serves plain HTTP: questions, SQL" in result.output
+    assert "cross the network in clear text" in result.output
+    assert "http://localhost:8443" in result.output
+
+
+def test_an_api_with_no_token_warns_before_it_is_exposed(run_launch):
+    result = run_launch("--api")
+    assert "no API_TOKEN is set" in result.output
+    assert "Set API_TOKEN in .env before exposing this off this machine" in result.output
+
+
+def test_a_token_in_the_env_silences_that_warning(run_launch):
+    result = run_launch("--api", env_file="IMAGE_NAME=x\nAPI_TOKEN=s3cret\n")
+    assert "no API_TOKEN is set" not in result.output
+
+
+def test_the_closing_lines_show_how_to_trust_the_development_certificate(run_launch):
+    """Self-signed means every client refuses it until it is trusted, and
+    copying it out is the one step nobody guesses.
+    """
+    output = run_launch("--api").output
+    assert "cp api:/etc/nl2sql/tls/server.crt" in output
+    assert 'curl --cacert ./nl2sql-api.crt "https://localhost:8443/v1/meta"' in output
+
+
+def test_the_closing_lines_point_at_the_outside_client_and_the_contract(run_launch):
+    output = run_launch("--api").output
+    assert "docker compose --profile api run --rm apitest" in output
+    assert "agent/API.md" in output

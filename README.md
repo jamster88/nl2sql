@@ -16,6 +16,7 @@ the agent needs and leaves them ready:
 | `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
 | `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
 | `agent` | The v4 agent, run on demand per question |
+| `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
 
 ### Two scripts
 
@@ -28,6 +29,14 @@ Afterwards, in both cases:
 
 ```bash
 docker compose run --rm agent "<your question>"
+```
+
+Or, for a GUI rather than a terminal, start the same agent as a REST server
+over TLS -- see [Connecting a GUI](#connecting-a-gui):
+
+```bash
+./launch.sh --api
+curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
 ```
 
 They fail in different ways, which is why they are separate. Setup fails when an
@@ -174,7 +183,7 @@ produce an answer at all.
 ### Pulling the agent image
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v4
+docker pull mcfaddja/nl2sql-agent:v4_1
 ```
 
 To publish a new one, build both architectures in the same step so the tag
@@ -183,7 +192,7 @@ stays multi-arch, as every earlier agent tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_1 .
 ```
 
 The image version label comes from `AGENT_VERSION` in
@@ -192,7 +201,8 @@ The image version label comes from `AGENT_VERSION` in
 
 | Tag | Use |
 |---|---|
-| `v4` | The multi-agent pipeline. Pinned -- what `setup.sh` pulls. |
+| `v4_1` | The multi-agent pipeline plus the REST API. Pinned -- what `setup.sh` pulls. |
+| `v4` | The multi-agent pipeline, CLI only. Pinned; `./launch.sh --api` cannot run against it, and says so. |
 | `v3` | RAG plus the golden-pair ensemble, one linear graph. Pinned. |
 | `v2` | Retrieval over the knowledge base only. Pinned. |
 | `v1` | The original schema-only agent, before retrieval. Pinned. |
@@ -236,6 +246,69 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + B
 | `nl2sql-rag-vectordb:v3` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each |
 | `nl2sql-rag-chunkdb:v3` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
+
+## Connecting a GUI
+
+The agent also answers over HTTPS, so a front end can be written in anything.
+There is no client library here and there is not meant to be one: the
+interface is JSON over HTTP with an OpenAPI document the server generates
+itself, and a TypeScript, Python, Java or Go client is generated from that
+rather than written by hand.
+
+```bash
+./launch.sh --api
+docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+
+curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-api.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
+     -H 'Content-Type: application/json' \
+     -d '{"question": "How many stores are there?"}'
+```
+
+It is the *same image* as the agent, started as a server instead of a command
+(`python -m nl2sql_agent.api`), so the pipeline answering a GUI is the
+pipeline that was benchmarked.
+
+**A question is a resource, not a request.** Answering takes about a minute,
+which no GUI can hold a connection open for while showing nothing. `POST
+/v1/questions` returns a job immediately; the client polls it, streams its
+progress, or asks the server to hold the connection with `?wait=`. All three
+return the same document, so waiting is an optimisation rather than a second
+contract.
+
+**Progress is the pipeline, not an animation.** `GET
+/v1/questions/{id}/events` is a Server-Sent Event stream carrying the graph's
+own nodes as they happen -- screening, schema, literals, SQL, the plan gate,
+execution, the narrator, the audit -- and it resumes from `Last-Event-ID`
+after a dropped connection.
+
+**TLS is on by default.** The container has no certificate to be given, so on
+first start it writes itself a self-signed one covering `localhost` and the
+compose service name, and keeps it in a volume so a restart presents the same
+certificate. That is a development convenience, and
+`API_TLS_ALLOW_SELF_SIGNED=false` takes it away: the server then refuses to
+start behind a self-signed certificate at all -- it will not generate one and
+will not load one it finds -- so a deployment meant to have a real chain fails
+at startup instead of quietly serving the throwaway one.
+
+Set `API_TOKEN` to require a bearer token, and `API_CORS_ORIGINS` to the
+GUI's origin when a browser calls it directly.
+
+To try the whole thing from outside, with no Python and no shared code:
+
+```bash
+docker compose --profile api run --rm apitest
+```
+
+`apitest` is an Alpine image holding curl and jq. It verifies the
+certificate, walks every endpoint, streams a real question's progress, and
+exits `1` on a failed check or `2` when the API was never reachable -- so CI
+can tell a retry apart from a defect. It is also the shortest complete
+reference for writing a client.
+
+[`agent/API.md`](agent/API.md) is the contract: every endpoint, the response
+shapes, the event stream, the error codes, the settings, and worked client
+snippets for TypeScript/React, Python and Java.
 
 ## Benchmark
 
@@ -542,20 +615,21 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 986 tests, no Docker or network needed
-pytest --run-docker     # all 1245, including ones that build and run containers
+pytest                  # 1171 tests, no Docker or network needed
+pytest --run-docker     # all 1479, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
+| [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, and a real uvicorn bound to a loopback port over real TLS |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in those two scripts is exercised by some test |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in those two scripts is exercised by some test, and the API container reached over TLS by a curl-only container with nothing of this project in it |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 259 tests behind `--run-docker` are the ones that need a working daemon:
+The 308 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
@@ -585,7 +659,7 @@ and these scripts are almost entirely warnings. `docker-compose.yml` is
 covered from both sides: nothing is set that the agent never reads, and
 nothing the agent reads is missing from it.
 
-Thirty-eight of those 259 also need the **embedding host**: a local Ollama
+Thirty-eight of those 308 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing. Start it with
 `ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.

@@ -12,6 +12,12 @@ cannot tell a model: fiscal-calendar semantics, which columns are
 pre-aggregated, and which joins fan out. That context is what lets it answer
 questions v1 got confidently wrong (see [Why retrieval](#why-retrieval)).
 
+**v4.1 adds a REST interface.** The same image also runs as an HTTPS server
+(`python -m nl2sql_agent.api`) so a GUI -- in any language, with no client
+library from here -- can ask questions and watch the pipeline work. The
+contract is [`API.md`](API.md); how it is built is
+[Serving it over HTTP](#serving-it-over-http) below.
+
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
 
@@ -33,6 +39,13 @@ health check. The agent is behind a compose profile, so a plain
 
 Output goes to two streams: progress lines on stderr, the result table on
 stdout, so `... > answer.txt` captures just the answer.
+
+Or over the network, for something with a screen:
+
+```bash
+../launch.sh --api
+curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+```
 
 ## The pipeline
 
@@ -162,6 +175,57 @@ none of it.
 Re-measure with `python benchmarks/run_benchmark.py`, which now reports
 per-agent timing, model calls per node, and the fraction of the narrative the
 audit could trace back to the result.
+
+## Serving it over HTTP
+
+[`nl2sql_agent/api/`](nl2sql_agent/api) is the REST interface. It is a
+separate package from the pipeline, imported only when the server runs, so
+`python -m nl2sql_agent` costs nothing for it. The wire contract, the
+endpoints and every setting are in [`API.md`](API.md); this is how it is put
+together and why.
+
+| Module | What it owns |
+|---|---|
+| [`settings.py`](nl2sql_agent/api/settings.py) | Everything about the socket, none of it about the pipeline. Same empty-is-unset discipline as `config.py`, for the same compose reason |
+| [`tls.py`](nl2sql_agent/api/tls.py) | Generates the development certificate, reads one off disk, and enforces `API_TLS_ALLOW_SELF_SIGNED` |
+| [`models.py`](nl2sql_agent/api/models.py) | The published request and response shapes -- what becomes `/openapi.json` |
+| [`jobs.py`](nl2sql_agent/api/jobs.py) | Questions in flight: a bounded thread pool, numbered progress events, and the resumable stream over them |
+| [`translate.py`](nl2sql_agent/api/translate.py) | The seam between `state.py` and `models.py`, so a field renamed inside the graph breaks one file |
+| [`app.py`](nl2sql_agent/api/app.py) | The routes, the authentication, the error shape, CORS |
+| [`server.py`](nl2sql_agent/api/server.py) | Flags, the certificate decision, the startup banner, uvicorn |
+
+Four decisions worth knowing about:
+
+**A question is a resource.** Answering takes about a minute, so `POST
+/v1/questions` returns a job and the client polls, streams, or asks the
+server to hold the connection. All three are the same document at the same
+URL, which is what keeps the simple client simple without giving the patient
+one a different contract to implement.
+
+**Progress is the graph.** `Nl2SqlAgent.run` takes an `on_progress` callback
+per run, carried in a `ContextVar` rather than set on the instance -- one
+agent now answers several questions at once, and an instance attribute would
+put one caller's progress on another caller's stream. LangGraph copies the
+context into the threads it fans stage 1 across, so the four concurrent
+retrievers report to the right run too.
+
+**TLS is the default and the development certificate is removable.** The
+container writes itself a self-signed certificate on first start because
+there is no way to hand it a real one from `docker compose up`.
+`API_TLS_ALLOW_SELF_SIGNED=false` refuses to start behind one at all --
+neither generating nor loading -- so the convenience cannot quietly become
+the deployment.
+
+**The translation layer is separate on purpose.** `state.py` is internal and
+changes with the architecture; `models.py` is what other people's code is
+compiled against. `translate.py` is the only module that knows both.
+
+Tested in [`tests/api/`](../tests/api) without Docker -- including
+[`test_live_tls.py`](../tests/api/test_live_tls.py), which binds a real
+socket with the real certificate and talks to it with the standard library --
+and in [`tests/docker/test_api_container.py`](../tests/docker/test_api_container.py)
+against the packaged container, reached by a curl-only image over verified
+TLS.
 
 ## Configuration
 

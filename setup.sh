@@ -22,7 +22,7 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v4"
+AGENT_TAG="v4_1"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -418,5 +418,12 @@ cat <<EOF
     A question that needs the knowledge base to get right:
 
     docker compose run --rm agent "What is our overall market share in fiscal year 2024?"
+
+    Connecting a GUI instead of a terminal? The same image also serves a
+    REST API over TLS. ./launch.sh --api starts it, and agent/API.md is the
+    contract a client is written against:
+
+    ./launch.sh --api
+    docker compose --profile api run --rm apitest
 
 EOF

@@ -400,3 +400,32 @@ def test_nodes_that_called_no_model_are_left_out_rather_than_recorded_as_zero():
 
 def test_model_calls_survive_a_trace_that_came_back_as_json():
     assert model_calls_from_trace([{"node": "narrate", "model_calls": 2}]) == {"narrate": 2}
+
+
+def test_a_pathologically_wide_result_falls_back_to_the_reference_column_order():
+    """The search is over column assignments, which is factorial in the width
+    of the agent's result. Nothing the benchmark asks returns more than a few
+    columns, but a `SELECT *` on a wide fact table would, and the scorer must
+    not become the slow part of a run that is already a minute a question.
+    """
+    import math
+
+    from benchmarks.runner import MAX_COLUMN_ASSIGNMENTS
+
+    # 8 columns offered, 5 wanted: 6,720 assignments, over the cap.
+    assert math.perm(8, 5) > MAX_COLUMN_ASSIGNMENTS
+
+    expected = [[1, 2, 3, 4, 5]]
+    leading = [[1, 2, 3, 4, 5, 6, 7, 8]]
+    assert result_matches(expected, leading) is True
+
+    # Past the cap it stops searching, so the same values behind three
+    # padding columns are no longer found. That is the trade the cap makes,
+    # and it is worth pinning: it is a refusal to guess, not a wrong answer.
+    trailing = [[0, 0, 0, 1, 2, 3, 4, 5]]
+    assert result_matches(expected, trailing) is False
+
+    # One column narrower and the search runs, so the shape above is not
+    # simply unmatchable.
+    assert math.perm(7, 5) <= MAX_COLUMN_ASSIGNMENTS
+    assert result_matches([[1, 2, 3, 4, 5]], [[0, 0, 1, 2, 3, 4, 5]]) is True

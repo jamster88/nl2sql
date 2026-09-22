@@ -524,3 +524,58 @@ def test_the_database_url_flag_overrides_the_settings(monkeypatch):
     args = rb.parse_args(["--database-url", "postgresql+psycopg://u:p@elsewhere/db"])
     settings = rb.build_settings(args, "multi-shot")
     assert settings.database_url == "postgresql+psycopg://u:p@elsewhere/db"
+
+
+# ---------------------------------------------------------------------------
+# Running it as a script
+# ---------------------------------------------------------------------------
+
+
+def test_the_script_puts_the_repository_on_the_path_for_itself():
+    """`python benchmarks/run_benchmark.py` is how this is actually invoked,
+    and then nothing has arranged the imports: `benchmarks` and `agent` are
+    not on `sys.path` and the first import fails. The bootstrap at the top of
+    the file is the fix, and under pytest it never runs -- conftest has
+    already done the same job -- so it is exercised here with the path put
+    back the way a bare interpreter leaves it.
+    """
+    import runpy
+
+    script = REPO_ROOT / "benchmarks" / "run_benchmark.py"
+    stripped = {str(REPO_ROOT), str(REPO_ROOT / "agent")}
+    # Every occurrence, not the first: pytest inserts the rootdir and so does
+    # this module, so removing one entry leaves the bootstrap still satisfied
+    # and half of it unexercised.
+    saved_path = list(sys.path)
+    saved_modules = {
+        name: sys.modules.pop(name)
+        for name in list(sys.modules)
+        if name == "benchmarks" or name.startswith("benchmarks.")
+    }
+    sys.path[:] = [p for p in sys.path if p not in stripped]
+    try:
+        namespace = runpy.run_path(str(script), run_name="not_main")
+        assert str(REPO_ROOT) in sys.path
+        assert str(REPO_ROOT / "agent") in sys.path
+    finally:
+        sys.path[:] = saved_path
+        sys.modules.update(saved_modules)
+
+    assert callable(namespace["main"])
+
+
+def test_running_it_as_a_script_calls_main_and_exits_with_its_code():
+    """The `if __name__ == "__main__"` line: one statement, and the one that
+    decides whether a CI job sees a failing benchmark as a failure.
+    """
+    import runpy
+
+    script = REPO_ROOT / "benchmarks" / "run_benchmark.py"
+    saved_argv = sys.argv
+    sys.argv = ["run_benchmark.py", "--help"]
+    try:
+        with pytest.raises(SystemExit) as raised:
+            runpy.run_path(str(script), run_name="__main__")
+    finally:
+        sys.argv = saved_argv
+    assert raised.value.code == 0

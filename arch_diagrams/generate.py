@@ -28,6 +28,7 @@ drew.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 W = 1300
@@ -1512,14 +1513,29 @@ def build_v4():
                     "\n".join(parts), y + 34, nodes, extra_colors=(GREEN,))
 
 
-def main() -> None:
-    here = Path(__file__).resolve().parent
-    for name, build in (("arch_v1.svg", build_v1), ("arch_v2.svg", build_v2),
-                        ("arch_v3.svg", build_v3), ("arch_v4.svg", build_v4)):
-        svg = build()
+#: What `main` writes, in the order the versions came.
+DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
+            ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"))
+
+
+def main(output_dir: Path | None = None) -> None:
+    """Render every diagram beside this file, or into `output_dir`.
+
+    The argument exists so a test can render somewhere disposable: without
+    it, exercising this function means writing into the working tree, and a
+    test that edits the files another test checks is a test that can hide a
+    failure.
+    """
+    here = output_dir or Path(__file__).resolve().parent
+    here.mkdir(parents=True, exist_ok=True)
+    for name, builder in DIAGRAMS:
+        svg = globals()[builder]()
         (here / name).write_text(svg)
         print(f"{name}: {len(svg) / 1024:.1f} KB")
 
 
 if __name__ == "__main__":
-    main()
+    # An optional destination, so the diagrams can be rendered somewhere
+    # other than the working tree -- which is what lets the tests run this
+    # entry point without editing the files another test checks.
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else None)

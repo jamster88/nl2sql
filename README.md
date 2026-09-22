@@ -16,6 +16,7 @@ the agent needs and leaves them ready:
 | `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
 | `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
 | `agent` | The v4 agent, run on demand per question |
+| `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
 
 ### Two scripts
 
@@ -28,6 +29,14 @@ Afterwards, in both cases:
 
 ```bash
 docker compose run --rm agent "<your question>"
+```
+
+Or, for a GUI rather than a terminal, start the same agent as a REST server
+over TLS -- see [Connecting a GUI](#connecting-a-gui):
+
+```bash
+./launch.sh --api
+curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
 ```
 
 They fail in different ways, which is why they are separate. Setup fails when an
@@ -174,7 +183,7 @@ produce an answer at all.
 ### Pulling the agent image
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v4
+docker pull mcfaddja/nl2sql-agent:v4_1
 ```
 
 To publish a new one, build both architectures in the same step so the tag
@@ -183,7 +192,7 @@ stays multi-arch, as every earlier agent tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_1 .
 ```
 
 The image version label comes from `AGENT_VERSION` in
@@ -192,7 +201,8 @@ The image version label comes from `AGENT_VERSION` in
 
 | Tag | Use |
 |---|---|
-| `v4` | The multi-agent pipeline. Pinned -- what `setup.sh` pulls. |
+| `v4_1` | The multi-agent pipeline plus the REST API. Pinned -- what `setup.sh` pulls. |
+| `v4` | The multi-agent pipeline, CLI only. Pinned; `./launch.sh --api` cannot run against it, and says so. |
 | `v3` | RAG plus the golden-pair ensemble, one linear graph. Pinned. |
 | `v2` | Retrieval over the knowledge base only. Pinned. |
 | `v1` | The original schema-only agent, before retrieval. Pinned. |
@@ -236,6 +246,69 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + B
 | `nl2sql-rag-vectordb:v3` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each |
 | `nl2sql-rag-chunkdb:v3` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
+
+## Connecting a GUI
+
+The agent also answers over HTTPS, so a front end can be written in anything.
+There is no client library here and there is not meant to be one: the
+interface is JSON over HTTP with an OpenAPI document the server generates
+itself, and a TypeScript, Python, Java or Go client is generated from that
+rather than written by hand.
+
+```bash
+./launch.sh --api
+docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+
+curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-api.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
+     -H 'Content-Type: application/json' \
+     -d '{"question": "How many stores are there?"}'
+```
+
+It is the *same image* as the agent, started as a server instead of a command
+(`python -m nl2sql_agent.api`), so the pipeline answering a GUI is the
+pipeline that was benchmarked.
+
+**A question is a resource, not a request.** Answering takes about a minute,
+which no GUI can hold a connection open for while showing nothing. `POST
+/v1/questions` returns a job immediately; the client polls it, streams its
+progress, or asks the server to hold the connection with `?wait=`. All three
+return the same document, so waiting is an optimisation rather than a second
+contract.
+
+**Progress is the pipeline, not an animation.** `GET
+/v1/questions/{id}/events` is a Server-Sent Event stream carrying the graph's
+own nodes as they happen -- screening, schema, literals, SQL, the plan gate,
+execution, the narrator, the audit -- and it resumes from `Last-Event-ID`
+after a dropped connection.
+
+**TLS is on by default.** The container has no certificate to be given, so on
+first start it writes itself a self-signed one covering `localhost` and the
+compose service name, and keeps it in a volume so a restart presents the same
+certificate. That is a development convenience, and
+`API_TLS_ALLOW_SELF_SIGNED=false` takes it away: the server then refuses to
+start behind a self-signed certificate at all -- it will not generate one and
+will not load one it finds -- so a deployment meant to have a real chain fails
+at startup instead of quietly serving the throwaway one.
+
+Set `API_TOKEN` to require a bearer token, and `API_CORS_ORIGINS` to the
+GUI's origin when a browser calls it directly.
+
+To try the whole thing from outside, with no Python and no shared code:
+
+```bash
+docker compose --profile api run --rm apitest
+```
+
+`apitest` is an Alpine image holding curl and jq. It verifies the
+certificate, walks every endpoint, streams a real question's progress, and
+exits `1` on a failed check or `2` when the API was never reachable -- so CI
+can tell a retry apart from a defect. It is also the shortest complete
+reference for writing a client.
+
+[`agent/API.md`](agent/API.md) is the contract: every endpoint, the response
+shapes, the event stream, the error codes, the settings, and worked client
+snippets for TypeScript/React, Python and Java.
 
 ## Benchmark
 
@@ -542,76 +615,127 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 986 tests, no Docker or network needed
-pytest --run-docker     # all 1245, including ones that build and run containers
+pytest                  # 1244 tests, no Docker or network needed
+pytest --run-docker     # all 1566, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
-| [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, and both loader scripts |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in those two scripts is exercised by some test |
+| [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
+| [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, and both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in all three shell scripts is exercised by some test, and the API container reached over TLS by a curl-only container with nothing of this project in it |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 259 tests behind `--run-docker` are the ones that need a working daemon:
+The 322 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent image and run it, resolve the real compose file, and query
 the three live databases. Everything else runs offline in about 20 seconds --
 `setup.sh` included, since it is exercised against fake binaries rather than
 real Docker.
 
+Twenty-eight of those 322 also need the **embedding host**: a local Ollama
+serving `bge-m3`, the model both vector stores were built with. Without it they
+skip with that as the stated reason rather than failing -- the rest of the
+suite still passes, which is the property that matters. Start it with
+`ollama serve` (and `ollama pull bge-m3` once) to run everything. To re-count
+after a change:
+
+```bash
+EMBED_BASE_URL=http://127.0.0.1:9 pytest --run-docker   # whatever skips needs it
+```
+
+The 67 database-backed tests in [`tests/rag/`](tests/rag) need the two stores
+but **not** the embedding model: they exercise the storage layer with
+synthetic vectors, which makes the distances predictable rather than merely
+plausible. Each one runs against a throwaway database created and dropped
+around it, so the published golden pairs and embeddings in the running
+containers are never touched.
+
 ### Coverage
 
 ```bash
-coverage run --source=agent/nl2sql_agent,benchmarks -m pytest --run-docker
-coverage report --show-missing --skip-covered
+COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
+  coverage run --rcfile=.coveragerc -m pytest --run-docker
+coverage combine && coverage report --show-missing --skip-covered
 ```
 
-**99% of the agent and the benchmark**, with nineteen statements uncovered and
-a reason for each: the `sys.path` bootstrap and `sys.exit(main())` that only
-run when the benchmark is invoked as a script rather than imported, and a
-handful of `except ValueError: continue` guards behind regexes that cannot
-produce the value they catch. They are defensive, and writing a test that
-reaches one would mean weakening the code that makes it unreachable.
-
-Two things the coverage report cannot see are covered another way. The shell
-scripts are not Python, so
-[`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py)
-reads them instead and asserts that every flag is parsed, documented and
-passed by some test, and that every `warn` and `die` message is asserted
-somewhere. A warning nobody triggers looks exactly like a warning that works,
-and these scripts are almost entirely warnings. `docker-compose.yml` is
-covered from both sides: nothing is set that the agent never reads, and
-nothing the agent reads is missing from it.
-
-Thirty-eight of those 259 also need the **embedding host**: a local Ollama
-serving `bge-m3`, the model both vector stores were built with. Without it they
-skip with that as the stated reason rather than failing. Start it with
-`ollama serve` (and `ollama pull bge-m3` once) to run the whole suite.
-
-The 148 tests in [`tests/rag/`](tests/rag) need the databases but **not** the
-embedding model: they exercise the storage layer with synthetic vectors, which
-makes the distances predictable rather than merely plausible. Each one runs
-against a throwaway database created and dropped around it, so the published
-golden pairs and embeddings in the running containers are never touched.
-
-Coverage is **100%** of all three packages -- the agent, the data generator and
-the RAG pipeline -- measured with `--run-docker`:
-
-```bash
-pytest --run-docker --cov=agent/nl2sql_agent --cov=rag/ragproc --cov=data_gen/datagen
-```
+**100% of every Python file in the repository** -- 5,587 statements, none
+missed. Not four packages with the scripts left out: the agent and its REST
+server, the benchmark, the RAG pipeline and its four loader scripts, the data
+generator and its CLI, the chunker, the architecture-diagram generator, and
+the build-time SQL emitter.
 
 Exactly one statement is excluded, and the reason is written beside it: a
-defensive `continue` in `facts.py` that is unreachable by construction, because
-the loop runs to `max(k)` and the basket whose `k` equals that maximum always
-satisfies the condition the guard tests. It is kept in case the loop bounds ever
-change.
+defensive `continue` in `facts.py` that is unreachable by construction,
+because the loop runs to `max(k)` and the basket whose `k` equals that maximum
+always satisfies the condition the guard tests. It is kept in case the loop
+bounds ever change.
 
-Getting the RAG pipeline there turned up a real defect. `vector_store.search()`
-bound its query vector as a Python list, which Postgres reads as
-`double precision[]` -- a type with no `<=>` operator at all, so the function
-raised for every caller. It had only ever been reached from a README example.
-The fix is the same text-literal cast the agent-side retrievers use, and the
-regression is pinned by a test.
+`COVERAGE_PROCESS_START` is not incidental. Several things here are tested the
+way they are *used* -- as scripts, in their own process. `generate_data.py` is
+run by `docker/Dockerfile`, `emit_load_sql.py` during the image build, the RAG
+loaders by hand. Their tests invoke them the same way, with `subprocess.run`,
+and without [`.coveragerc`](.coveragerc) turning on subprocess measurement the
+report shows **0%** for a file with nine tests on it -- which is worse than no
+number, because it sends someone off to write tests that already exist.
+Switching it on moved five files from "untested" to 100% without a line of new
+test code.
+
+Getting the rest there deletes code as often as it adds tests. The last few
+statements turned up a re-raise that could never fire (none of the five
+whitelisted formula functions raises the exception it caught), two
+`except ValueError` guards behind a regex that only matches valid floats, and
+two properties on the API's agent holder that nothing read. A line no test can
+reach is usually a line that cannot happen, and deleting it is the honest fix.
+
+What was left after that was real: the `main()` of both RAG loaders -- the only
+way the golden pairs reach either store -- the base `SemanticChunker` that
+`MarkdownSemanticChunker` inherits from, and the entry points of the diagram
+generator and both loaders. Those have tests now, against throwaway databases
+and stub embedders.
+
+#### The parts a coverage report cannot see
+
+Three shell scripts and a compose file, none of them Python. They are covered
+by reading and by running, not by a report:
+
+* **`setup.sh` and `launch.sh`** are run against fake `docker`, `curl` and
+  `sleep` binaries, once per scenario they can take.
+  [`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py)
+  then asserts structurally that every flag is parsed, documented and passed
+  by some test, and that every `warn` and `die` message is asserted somewhere.
+  A warning nobody triggers looks exactly like a warning that works, and these
+  scripts are almost entirely warnings. Measured by `xtrace`, that reaches 94%
+  and 93% of their lines; the remainder is lines bash cannot report at all --
+  function headers, `case` labels, and multi-line command substitutions.
+* **`docker/apitest/smoke.sh`**, the outside client, is run *for real* by
+  [`tests/api/test_smoke_script.py`](tests/api/test_smoke_script.py): bash,
+  curl and jq against a live HTTPS server built from `create_app` with a
+  scripted pipeline. No Docker and no model, so every one of its paths runs on
+  an ordinary `pytest` -- each of the three ways it decides to trust the
+  server, a server that is up but not ready, a question that fails, a stream
+  that carries nothing, and the refusals that make its two exit codes mean
+  something. 89% of its lines by `xtrace`, the rest being the same
+  bash-unreportable shapes.
+* **`docker-compose.yml`** is checked in both directions for every service
+  that takes settings: nothing is set that the code never reads, and nothing
+  the code reads is missing from it. That holds for the agent's own settings
+  against `config.py`, the API's against `api/settings.py`, and the smoke
+  script's against the script itself.
+
+Running the scripts rather than only reading them is what earns its keep.
+Doing it turned up three defects in one pass: the smoke script aborted under
+`set -u` on bash 3.2 -- which is what macOS ships, and invisible inside its
+own Alpine container; an unauthorised client exited `2`, the code that means
+"the API was never there, retry", when the API was answering perfectly well;
+and a missing `.tables` was counted as zero and announced as a pass, so an
+error body read as a healthy server with nothing in it.
+
+Getting the RAG pipeline to 100% turned up a real defect the same way.
+`vector_store.search()` bound its query vector as a Python list, which
+Postgres reads as `double precision[]` -- a type with no `<=>` operator at all,
+so the function raised for every caller. It had only ever been reached from a
+README example. The fix is the same text-literal cast the agent-side
+retrievers use, and the regression is pinned by a test.

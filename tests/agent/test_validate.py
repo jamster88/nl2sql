@@ -419,3 +419,24 @@ def test_a_syntax_error_near_the_start_is_not_prefixed_with_an_ellipsis():
     issues = validate("SELECT FROM")
     assert issues
     assert "Here: ..." not in issues[0].message
+
+
+def test_a_syntax_error_far_from_the_end_quotes_both_sides_with_ellipses():
+    """The message is what the Repair Agent turns into "quote the characters
+    around position n", so the window has to say when it is a window. A short
+    statement's error runs to the end and never shows the trailing ellipsis,
+    which is why this one is deliberately long on both sides.
+    """
+    from nl2sql_agent.validate import _ERROR_CONTEXT
+
+    padding = ", ".join(f"c{i}" for i in range(60))
+    sql = f"SELECT {padding} FROM t WHERE ) AND {padding} FROM t"
+    [issue] = [i for i in validate(sql) if "Syntax error" in i.message]
+
+    assert issue.message.startswith("Syntax error at character")
+    assert "..." in issue.message.split("Here: ")[1][:4], "no leading ellipsis"
+    assert issue.message.endswith("..."), "no trailing ellipsis"
+    assert ">>>" in issue.message
+    # The window is the configured one, plus the marker and the two ellipses.
+    quoted = issue.message.split("Here: ")[1]
+    assert len(quoted) <= 2 * _ERROR_CONTEXT + len(">>>") + 6

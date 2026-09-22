@@ -145,3 +145,235 @@ def test_embedding_an_empty_context_store_says_to_run_the_loader_first(embedder,
 class _FakeConn:
     def close(self) -> None:
         pass
+
+
+# ---------------------------------------------------------------------------
+# What the scripts actually do, against a throwaway database
+# ---------------------------------------------------------------------------
+#
+# Everything above is argument handling and the dry-run path, which is the
+# half that can be checked offline. This is the other half: the writes. They
+# are the only way the golden pairs reach either store, so "the flags parse"
+# is not much of a guarantee on its own.
+
+
+def read(conn, statement: str):
+    """Read, then end the transaction before anything else needs the table.
+
+    Each script opens its *own* connection, and loading takes an ACCESS
+    EXCLUSIVE lock to add the generated tsvector column. A `SELECT` left
+    open on the fixture's connection holds that lock off indefinitely, and
+    the two sit waiting for each other until something kills the run -- which
+    is exactly what happened while these tests were being written.
+    """
+    try:
+        return conn.execute(statement).fetchall()
+    finally:
+        conn.commit()
+
+
+@pytest.mark.docker
+def test_the_loader_writes_every_pair_and_builds_the_keyword_index(loader, chunk_conn, capsys):
+    """One call, and the context store holds the corpus the ensemble's
+    keyword retriever runs against.
+    """
+    from ragproc import golden_pairs as gp
+
+    assert loader.main(["--db-url", chunk_conn.scratch_url]) == 0
+    output = capsys.readouterr().out
+
+    [(written,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TABLE}")
+    assert written == 45, f"the context store holds {written} pairs"
+    assert f"{written} rows written" in output
+    assert "0 stale rows removed" in output
+
+    # The keyword half of the ensemble reads these three, not the pairs.
+    [(terms,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TERMS_TABLE}")
+    [(docs,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.DOCS_TABLE}")
+    assert terms > 0 and docs == written, "the BM25 index was never built"
+    assert "distinct terms" in output
+
+
+@pytest.mark.docker
+def test_loading_twice_updates_rather_than_duplicates(loader, chunk_conn):
+    """Re-running is how a corrected question gets in, so it has to be an
+    upsert. A second insert would double every row and quietly halve every
+    BM25 score.
+    """
+    from ragproc import golden_pairs as gp
+
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    [(first,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TABLE}")
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    [(second,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TABLE}")
+    assert first == second == 45
+
+
+@pytest.mark.docker
+def test_the_loaders_probe_ranks_pairs_by_keyword_overlap(loader, chunk_conn, capsys):
+    """`--probe` is how someone checks the index is worth anything without
+    starting the agent, so it has to return ranked rows rather than just not
+    fail.
+    """
+    assert loader.main(["--db-url", chunk_conn.scratch_url, "--probe", "gross margin by department"]) == 0
+    output = capsys.readouterr().out
+    assert "BM25 probe 'gross margin by department'" in output
+    assert "(no keyword overlap)" not in output
+
+
+@pytest.mark.docker
+def test_a_probe_that_matches_nothing_says_so_rather_than_printing_nothing(loader, chunk_conn, capsys):
+    assert loader.main(
+        ["--db-url", chunk_conn.scratch_url, "--probe", "zzzzqqqq nonexistent lexeme"]
+    ) == 0
+    assert "(no keyword overlap)" in capsys.readouterr().out
+
+
+class _FakeEmbedder:
+    """Deterministic vectors, so the distances below are arithmetic.
+
+    The storage tests in this directory work the same way: a real embedding
+    model makes the numbers plausible, a synthetic one makes them checkable.
+    """
+
+    model_name = "fake-embed"
+    dimension = 8
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts):
+        self.calls.append(list(texts))
+        return [[float((len(t) + i) % 7) for i in range(self.dimension)] for t in texts]
+
+
+@pytest.mark.docker
+def test_the_embedder_writes_one_vector_table_per_field(
+    loader, embedder, chunk_conn, vector_conn, monkeypatch, capsys
+):
+    """Two tables, not one: the ensemble scores question similarity and
+    reasoning-target similarity separately and weights them differently, and
+    it cannot do that if they share a table.
+    """
+    from ragproc import golden_vectors as gv
+
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    fake = _FakeEmbedder()
+    monkeypatch.setattr(embedder, "build_embedder", lambda *a, **k: fake)
+
+    assert embedder.main(
+        ["--chunk-db-url", chunk_conn.scratch_url, "--vector-db-url", vector_conn.scratch_url]
+    ) == 0
+    output = capsys.readouterr().out
+
+    assert "45 golden pairs in the context store" in output
+    for field in embedder.FIELDS:
+        stored = gv.current_state(vector_conn, field)
+        vector_conn.commit()
+        assert len(stored) == 45, f"{field} has {len(stored)} vectors"
+        assert field in output
+
+
+@pytest.mark.docker
+def test_only_the_named_field_is_embedded_when_one_is_chosen(
+    loader, embedder, chunk_conn, vector_conn, monkeypatch
+):
+    from ragproc import golden_vectors as gv
+
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    monkeypatch.setattr(embedder, "build_embedder", lambda *a, **k: _FakeEmbedder())
+    embedder.main([
+        "--chunk-db-url", chunk_conn.scratch_url,
+        "--vector-db-url", vector_conn.scratch_url,
+        "--field", "question",
+    ])
+    question = gv.current_state(vector_conn, "question")
+    vector_conn.commit()
+    assert len(question) == 45
+    assert gv.current_state(vector_conn, "reasoning_target") == {}
+    vector_conn.commit()
+
+
+@pytest.mark.docker
+def test_re_running_the_embedder_embeds_nothing_that_has_not_changed(
+    loader, embedder, chunk_conn, vector_conn, monkeypatch, capsys
+):
+    """Embedding is the expensive step -- 90 model calls against a host that
+    is usually someone else's machine. Being incremental is the difference
+    between re-running it casually and not re-running it at all.
+    """
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    fake = _FakeEmbedder()
+    monkeypatch.setattr(embedder, "build_embedder", lambda *a, **k: fake)
+    args = ["--chunk-db-url", chunk_conn.scratch_url, "--vector-db-url", vector_conn.scratch_url]
+
+    embedder.main(args)
+    after_first = len(fake.calls)
+    capsys.readouterr()
+
+    embedder.main(args)
+    assert len(fake.calls) == after_first, "it re-embedded rows nothing had changed"
+    assert "0 embedded, 45 already current" in capsys.readouterr().out
+
+    embedder.main([*args, "--force"])
+    assert len(fake.calls) > after_first, "--force embedded nothing"
+
+
+@pytest.mark.docker
+def test_the_embedders_probe_reports_the_nearest_pairs(
+    loader, embedder, chunk_conn, vector_conn, monkeypatch, capsys
+):
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    monkeypatch.setattr(embedder, "build_embedder", lambda *a, **k: _FakeEmbedder())
+    embedder.main([
+        "--chunk-db-url", chunk_conn.scratch_url,
+        "--vector-db-url", vector_conn.scratch_url,
+        "--probe", "gross margin by department",
+    ])
+    output = capsys.readouterr().out
+    assert "nearest by question for 'gross margin by department'" in output
+    assert "nearest by reasoning_target" in output
+
+
+@pytest.mark.docker
+def test_an_embedder_that_cannot_answer_is_checked_before_any_writing(
+    loader, embedder, chunk_conn, vector_conn, monkeypatch
+):
+    """`check()` exists so an unreachable Ollama fails before the script has
+    opened the vector store and started a transaction it cannot finish.
+    """
+
+    class _Unreachable(_FakeEmbedder):
+        def check(self):
+            raise RuntimeError("cannot reach ollama")
+
+    loader.main(["--db-url", chunk_conn.scratch_url])
+    monkeypatch.setattr(embedder, "build_embedder", lambda *a, **k: _Unreachable())
+    with pytest.raises(RuntimeError, match="cannot reach ollama"):
+        embedder.main([
+            "--chunk-db-url", chunk_conn.scratch_url,
+            "--vector-db-url", vector_conn.scratch_url,
+        ])
+
+
+# ---------------------------------------------------------------------------
+# As scripts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("script", ["05_load_golden_pairs.py", "06_embed_golden_pairs.py"])
+def test_each_script_exits_with_the_code_its_main_returns(script: str):
+    """`python rag/05_load_golden_pairs.py` is how rag/README.md says to run
+    these, and the line that carries the exit code out is the one a pipeline
+    stops on.
+    """
+    import runpy
+
+    saved = sys.argv
+    sys.argv = [script, "--help"]
+    try:
+        with pytest.raises(SystemExit) as raised:
+            runpy.run_path(str(RAG_DIR / script), run_name="__main__")
+    finally:
+        sys.argv = saved
+    assert raised.value.code == 0

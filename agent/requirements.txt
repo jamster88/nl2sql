@@ -5,3 +5,11 @@ langgraph==1.2.11
 SQLAlchemy==2.0.54
 psycopg[binary]==3.3.5
 pglast==8.4
+# --- REST API (nl2sql_agent.api) -------------------------------------------
+# The same image serves the CLI and the HTTP API; these are only imported by
+# the api package, so `python -m nl2sql_agent` costs nothing for them.
+fastapi==0.141.1
+uvicorn==0.53.0
+# Generates and inspects the server's TLS certificate. Used instead of the
+# openssl binary, which the slim Python image does not promise to carry.
+cryptography==50.0.1

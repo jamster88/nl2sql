@@ -907,3 +907,58 @@ def test_an_empty_question_is_treated_as_one_that_implied_rows():
     empty = QueryResult(columns=["n"], rows=[])
     assert audit([], empty, question="").semantic_issue
     assert audit([], empty, question="are there any stores in Alabama?").semantic_issue is None
+
+
+# ---------------------------------------------------------------------------
+# The two escapes in the stray-number rule
+# ---------------------------------------------------------------------------
+
+
+def test_a_year_in_the_sentence_is_not_an_invented_number():
+    """A year is a period name, not a figure the reader has to check. It is
+    almost never a cell of the result -- FY2025 is a filter, not a projection
+    -- so without this the audit would reject the natural phrasing of nearly
+    every answer this database is asked for.
+    """
+    result = QueryResult(columns=["net_sales"], rows=[[719279.97]])
+    claim = Claim(
+        text="Net sales in fiscal year 2025 were 719279.97.",
+        value=719279.97,
+        cells=[(0, "net_sales")],
+    )
+    assert check_claim(claim, result) is None
+
+
+def test_a_number_outside_the_year_range_is_still_checked():
+    """The escape is a range, not "any four-digit number": 4321 buys nothing
+    and would let a real invention through.
+    """
+    result = QueryResult(columns=["net_sales"], rows=[[719279.97]])
+    claim = Claim(
+        text="Net sales were 719279.97, up from 4321 the year before.",
+        value=719279.97,
+        cells=[(0, "net_sales")],
+    )
+    assert "4321" in (check_claim(claim, result) or "")
+
+
+def test_a_cited_row_that_is_not_in_the_result_backs_no_numbers():
+    """`_backing_numbers` is reached with cells a language model chose, and
+    it is part of the audit -- the one component whose whole job is to fail
+    safely. `check_claim` rejects an out-of-range row before this runs, so
+    the guard is what keeps that ordering from being load-bearing.
+    """
+    from nl2sql_agent.present import _backing_numbers
+
+    result = QueryResult(columns=["n"], rows=[[42]])
+    claim = Claim(text="The count is 42.", value=None, cells=[(0, "n"), (7, "n")])
+    assert _backing_numbers(claim, result) == [42.0]
+
+
+def test_check_claim_rejects_the_out_of_range_row_before_it_gets_that_far():
+    """Which is the message the narrator's retry is given, and the reason the
+    guard above never fires in a real run.
+    """
+    result = QueryResult(columns=["n"], rows=[[42]])
+    claim = Claim(text="The count is 42.", cells=[(7, "n")])
+    assert "not in the result" in (check_claim(claim, result) or "")

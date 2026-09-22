@@ -87,6 +87,12 @@ class Settings:
     # schema, the knowledge block and three worked SQL examples are all in the
     # same window.
     num_ctx: int = DEFAULT_NUM_CTX
+    # How long to wait for the Ollama host to answer at all before deciding
+    # it is not there. This is a reachability bound, not a generation one --
+    # a question still takes as long as it takes. It exists because a routed
+    # but silent host otherwise holds the connection until the operating
+    # system gives up, which makes `/readyz` block for minutes.
+    ollama_connect_timeout: float = 5.0
 
     database_url: str = DEFAULT_DATABASE_URL
     db_schema: str = "public"
@@ -198,6 +204,7 @@ class Settings:
             temperature=_env_float("OLLAMA_TEMPERATURE", 0.0),
             reasoning=_env_bool("OLLAMA_REASONING", False),
             num_ctx=_env_int("OLLAMA_NUM_CTX", DEFAULT_NUM_CTX),
+            ollama_connect_timeout=_env_float("OLLAMA_CONNECT_TIMEOUT", 5.0),
             database_url=_env_str("DATABASE_URL", DEFAULT_DATABASE_URL),
             db_schema=_env_str("DB_SCHEMA", "public"),
             rag_enabled=_env_bool("RAG_ENABLED", True),

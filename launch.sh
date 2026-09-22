@@ -5,6 +5,11 @@
 #     ./launch.sh
 #     docker compose run --rm agent "How many stores are there?"
 #
+# Or, for a GUI to talk to instead of a terminal:
+#
+#     ./launch.sh --api
+#     curl --cacert <cert> https://localhost:8443/v1/meta
+#
 # This is the every-time script. setup.sh is the first-time one: it pulls the
 # images and writes the .env that pins them. launch.sh assumes that has already
 # happened and just starts what is down, then checks that each piece actually
@@ -23,6 +28,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 WITH_RAG=1
+WITH_API=0
 RESTART=0
 QUIET=0
 
@@ -37,6 +43,8 @@ Usage: ./launch.sh [options]
 
       --no-rag     Start only the retail database; the agent answers from the
                    schema alone, with neither knowledge nor worked examples
+      --api        Also start the REST API, so a GUI (or curl, or anything
+                   that speaks HTTPS) can ask questions instead of a terminal
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -48,6 +56,7 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-rag) WITH_RAG=0; shift ;;
+        --api) WITH_API=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -290,6 +299,56 @@ if [[ $WITH_RAG -eq 1 ]]; then
     fi
 fi
 
+# --- The REST API ----------------------------------------------------------
+# The same image as the agent, started as a server instead of a command. It
+# is opt-in because most people ask questions from a terminal, and a port
+# that nobody asked to be opened should not be.
+api_port=$(compose_env API_PORT 8443)
+api_scheme=https
+api_token=$(compose_env API_TOKEN "")
+case "$(compose_env API_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|False) api_scheme=http ;;
+esac
+
+start_api() {
+    docker compose --profile api up -d api >/dev/null 2>&1 || return 1
+    local status=""
+    for _ in $(seq 1 60); do
+        status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-api 2>/dev/null || echo starting)
+        [[ "$status" == "healthy" ]] && return 0
+        # A container that has already exited will never become healthy, and
+        # waiting two more minutes to find that out hides the reason.
+        [[ "$(docker inspect --format '{{.State.Running}}' nl2sql-api 2>/dev/null || echo true)" == "false" ]] && return 1
+        sleep 2
+    done
+    return 1
+}
+
+if [[ $WITH_API -eq 1 ]]; then
+    step "Starting the REST API"
+    if start_api; then
+        info "REST API is healthy at $api_scheme://localhost:$api_port"
+        info "OpenAPI document: $api_scheme://localhost:$api_port/openapi.json"
+    else
+        warn "the REST API container did not become healthy."
+        if docker compose --profile api logs api 2>/dev/null | grep -q "No module named"; then
+            warn "The pinned agent image has no REST API in it -- it predates this"
+            warn "checkout. Build it here instead: docker compose --profile api build api"
+        else
+            warn "Check what it said: docker compose --profile api logs api"
+        fi
+    fi
+
+    if [[ "$api_scheme" == "http" ]]; then
+        warn "API_TLS_ENABLED is off, so the API serves plain HTTP: questions, SQL"
+        warn "and rows all cross the network in clear text."
+    fi
+    if [[ -z "$api_token" ]]; then
+        warn "no API_TOKEN is set, so anything that can reach port $api_port may ask"
+        warn "questions. Set API_TOKEN in .env before exposing this off this machine."
+    fi
+fi
+
 # --- Ready -----------------------------------------------------------------
 if [[ $QUIET -eq 0 ]]; then
     cat <<EOF
@@ -309,4 +368,24 @@ if [[ $QUIET -eq 0 ]]; then
     ./launch.sh --help     other options
     docker compose down    stop the databases
 EOF
+    if [[ $WITH_API -eq 1 ]]; then
+        cat <<EOF
+
+==> The REST API is up. Point a GUI at it, or try it from here:
+
+    # the development certificate is self-signed, so copy it out and trust it
+    docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+
+    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/meta"
+    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
+         -H 'Content-Type: application/json' \\
+         -d '{"question": "How many stores are there?"}'
+
+    # or drive the whole API from an outside container, with nothing but curl
+    docker compose --profile api run --rm apitest
+
+    Browse it at $api_scheme://localhost:$api_port/docs
+    agent/API.md is the contract a GUI is written against.
+EOF
+    fi
 fi

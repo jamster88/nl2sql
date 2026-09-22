@@ -202,6 +202,49 @@ works in a shell pipeline. Pull out just the SQL with
 `... --json | jq -r .sql`, or see which knowledge shaped an answer with
 `... --json | jq -r '.knowledge_chunks[].heading_path'`.
 
+## Asking over the network instead
+
+Everything above is the terminal. The same agent also answers over HTTPS, for
+a GUI or anything else that is not a shell:
+
+```bash
+./launch.sh --api
+```
+
+That starts the `api` service -- the same image, run as
+`python -m nl2sql_agent.api` -- and checks it came up. It prints the URL, the
+OpenAPI document's address, and warns if TLS is off or no token is set.
+
+The server writes itself a self-signed certificate on first start, so a
+client has to be told to trust it:
+
+```bash
+docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+
+curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-api.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
+     -H 'Content-Type: application/json' \
+     -d '{"question": "How many stores are there?"}'
+```
+
+Or drive the whole thing from a container with nothing of this project in it:
+
+```bash
+docker compose --profile api run --rm apitest
+docker compose --profile api run --rm apitest "total net sales for produce in FY2025"
+```
+
+A question takes about a minute, so `POST /v1/questions` without `?wait=`
+returns a job straight away and `GET /v1/questions/{id}/events` streams the
+pipeline's progress as it happens. [`API.md`](API.md) is the full contract --
+every endpoint, the response shapes, the error codes, the settings, and
+client snippets for TypeScript, Python and Java.
+
+Two settings are worth knowing before this leaves your own machine:
+`API_TOKEN` requires a bearer token on every question, and
+`API_TLS_ALLOW_SELF_SIGNED=false` makes the server refuse to start unless a
+real certificate has been mounted over the development one.
+
 ## The knowledge base
 
 Retrieval is on by default. It searches the embedded contents of

@@ -8,29 +8,9 @@ import sys
 from typing import Any
 
 from .config import Settings
-from .graph import Nl2SqlAgent
+from .graph import STEP_LABELS, Nl2SqlAgent
 from .llm import LlmUnavailableError
 from .state import to_jsonable
-
-STEP_LABELS = {
-    "supervise": "screen",
-    "refuse": "refused",
-    "retrieve_schema": "tables",
-    "retrieve_literals": "literals",
-    "retrieve_knowledge": "knowledge",
-    "retrieve_examples": "examples",
-    "aggregate": "schema",
-    "generate_sql": "sql",
-    "validate_static": "validation",
-    "planner_gate": "planner",
-    "execute_query": "result",
-    "repair": "repair",
-    "give_up": "gave up",
-    "visualise": "chart",
-    "narrate": "narrative",
-    "audit": "audit",
-    "finish": "answer",
-}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

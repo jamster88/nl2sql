@@ -686,3 +686,25 @@ def test_asking_for_no_ranked_tables_returns_none_without_embedding():
     retriever = make_retriever(["dim_store", "dim_product"], top_k=0)
     selection = retriever.select("anything")
     assert selection.tables == sorted(RETAIL_TABLES)
+
+
+def test_two_tables_with_no_join_path_between_them_need_no_bridge():
+    """Closure is over whatever the four retrievers proposed, and nothing
+    guarantees those tables are connected: a schema can hold unrelated
+    subject areas, and a knowledge chunk can name one while the vectors rank
+    the other. With no path there is no intermediate to require, and the
+    search has to say so rather than walk a graph that never reaches the goal.
+    """
+    from nl2sql_agent.schema_retrieval import _required_intermediates
+
+    graph = {
+        "fact_sales": {"dim_store"},
+        "dim_store": {"fact_sales"},
+        # A second component, joined to nothing above.
+        "fact_web_events": {"dim_session"},
+        "dim_session": {"fact_web_events"},
+    }
+    assert _required_intermediates(graph, "fact_sales", "dim_session") == []
+    assert _required_intermediates(graph, "fact_sales", "not_a_table_at_all") == []
+    # The reachable pair still works, so this is not "the graph is broken".
+    assert _required_intermediates(graph, "fact_sales", "dim_store") == []

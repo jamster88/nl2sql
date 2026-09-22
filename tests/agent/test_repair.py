@@ -412,3 +412,29 @@ def test_an_empty_message_does_not_become_a_repeat_warning():
 
     assert _repeat_prefix("", ()) == ""
     assert _repeat_prefix("   ", ()) == ""
+
+
+def test_a_group_by_complaint_with_no_column_in_it_still_says_what_to_do():
+    """Postgres usually names the offending column, but the wording is not a
+    contract -- an older server, a translated locale, or a wrapped driver
+    message can arrive without it. The hint is the point, so it survives the
+    column name going missing.
+    """
+    issue = Issue(source=RUNTIME, message="ERROR: must appear in the GROUP BY clause")
+    hint = classify(issue, schema="", allowed_tables=["dim_store"], history=[])
+    assert hint is not None
+    assert "GROUP BY" in hint and "aggregate" in hint
+    assert "`" not in hint, "it invented a column name"
+
+
+def test_a_planner_message_that_merely_mentions_cost_is_not_a_cost_rejection():
+    """`_plan_cost` matches the gate's own rejection, not any text with the
+    word in it -- a runtime error quoting a cost would otherwise be answered
+    with "make the query cheaper", which is not the problem.
+    """
+    mentions = Issue(source=PLANNER, message="could not read the plan cost from EXPLAIN output")
+    assert classify(mentions, schema="", allowed_tables=[], history=[]) is None
+
+    rejection = Issue(source=PLANNER, message="estimated cost 4,200,000 exceeds the ceiling")
+    hint = classify(rejection, schema="", allowed_tables=[], history=[])
+    assert hint is not None and "4,200,000" in hint

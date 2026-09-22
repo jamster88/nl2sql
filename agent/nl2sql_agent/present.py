@@ -540,8 +540,6 @@ def evaluate_formula(formula: str, cells: Sequence[float]) -> float:
                 args.append(value_of(arg))
         try:
             return float(_FORMULA_FUNCTIONS[func.id](*args))
-        except FormulaError:
-            raise
         except Exception as exc:  # a wrong arity or type is the model's error
             raise FormulaError(f"{func.id}() could not be applied: {exc}") from exc
 
@@ -615,13 +613,9 @@ def _question_numbers(question: str) -> list[float]:
     Echoing the question is not inventing a number. The risk this rule exists
     for is a figure the reader has no way to check, and the reader wrote these.
     """
-    numbers: list[float] = []
-    for match in _NUMBER_TOKEN.finditer(question or ""):
-        try:
-            numbers.append(float(match.group(1).replace(",", "")))
-        except ValueError:
-            continue
-    return numbers
+    # `_NUMBER_TOKEN` captures `-?\d[\d,]*(\.\d+)?`, which is a valid float
+    # once its commas are gone, so this parse cannot fail.
+    return [float(m.group(1).replace(",", "")) for m in _NUMBER_TOKEN.finditer(question or "")]
 
 
 def _stray_numbers(claim: Claim, result: QueryResult, question: str = "") -> list[str]:
@@ -635,10 +629,8 @@ def _stray_numbers(claim: Claim, result: QueryResult, question: str = "") -> lis
         start, end = match.span(1)
         if any(lo <= start < hi for lo, hi in skip):
             continue
-        try:
-            spoken = float(match.group(1).replace(",", ""))
-        except ValueError:
-            continue
+        # Always parses: see the note in `_question_numbers`.
+        spoken = float(match.group(1).replace(",", ""))
         if _ORDINAL_SUFFIX.match(text[end : end + 3]):
             continue
         if start in counted and spoken <= result.row_count:

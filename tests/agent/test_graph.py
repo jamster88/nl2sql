@@ -722,6 +722,68 @@ def test_a_matcher_that_raises_mid_question_is_recorded_and_skipped():
     assert state["result"] is not None
 
 
+def test_the_catalog_is_built_once_and_its_matches_reach_the_state(monkeypatch):
+    """The lazy build and the successful path, which the failure tests above
+    step around. Building reads every low-cardinality text column, so it
+    happens once per process however many questions arrive -- and under the
+    REST server several of those arrive at the same time.
+    """
+    from nl2sql_agent import graph as graph_module
+    from nl2sql_agent.literals import CatalogEntry
+
+    builds: list[str] = []
+
+    def fake_build_catalog(database, *, max_distinct, schema):
+        builds.append(schema)
+        return [CatalogEntry("dim_product", "department_name", "Produce")]
+
+    monkeypatch.setattr(graph_module, "build_catalog", fake_build_catalog)
+
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(
+        db, scripted(["SELECT 1 AS n FROM dim_store"] * 2), literals_enabled=True
+    )
+    agent._literal_matcher = None
+    agent._literal_catalog_built = False
+
+    first = agent.run("how much produse did we sell?")
+    [match] = first["literal_map"]
+    assert (match.phrase, match.value) == ("produse", "Produce")
+    assert match.table == "dim_product" and match.column == "department_name"
+
+    agent.run("how much produse did we sell?")
+    assert builds == ["public"], "the catalog was rebuilt for the second question"
+
+
+def test_a_question_with_nothing_to_resolve_says_so_rather_than_failing(monkeypatch):
+    """The progress line is the only place a user sees the matcher work, so
+    "no literals matched" has to be a sentence rather than an empty one.
+    """
+    from nl2sql_agent import graph as graph_module
+    from nl2sql_agent.literals import CatalogEntry
+
+    monkeypatch.setattr(
+        graph_module,
+        "build_catalog",
+        lambda database, **kwargs: [CatalogEntry("dim_product", "department_name", "Produce")],
+    )
+
+    db = FakeDatabase(tables=TABLES)
+    log: list[tuple[str, str]] = []
+    agent = make_agent(
+        db,
+        scripted(["SELECT 1 AS n FROM dim_store"]),
+        literals_enabled=True,
+        on_progress=lambda step, detail: log.append((step, detail)),
+    )
+    agent._literal_matcher = None
+    agent._literal_catalog_built = False
+
+    state = agent.run("how many stores are there?")
+    assert state["literal_map"] == []
+    assert ("retrieve_literals", "no literals matched") in log
+
+
 # ---------------------------------------------------------------------------
 # Presentation with nothing to present
 # ---------------------------------------------------------------------------
@@ -777,3 +839,62 @@ def test_an_exemplar_that_is_already_a_dictionary_is_passed_through():
     as_dict = {"pair_id": "Q1", "question": "q", "reasoning_target": "r", "sql_code": "SELECT 1"}
     assert _shot_dict(as_dict) is as_dict
     assert _shot_dict(Shot(**as_dict)) == as_dict
+
+
+# ---------------------------------------------------------------------------
+# One agent, several questions at once
+# ---------------------------------------------------------------------------
+
+
+def test_a_run_can_be_given_its_own_progress_callback():
+    """The CLI sets one callback for the life of the agent. The REST server
+    cannot: it answers several questions through one agent, and each caller
+    is watching its own stream.
+    """
+    db = FakeDatabase(tables=TABLES)
+    constructor_log: list[str] = []
+    agent = make_agent(
+        db,
+        scripted(["SELECT count(*) AS n FROM dim_store"] * 2),
+        on_progress=lambda step, detail: constructor_log.append(step),
+    )
+
+    run_log: list[str] = []
+    agent.run("q", on_progress=lambda step, detail: run_log.append(step))
+
+    assert run_log and constructor_log == [], "the per-run callback was not used"
+    # And the instance callback is still there for the next run that wants it.
+    agent.run("q")
+    assert constructor_log
+
+
+def test_two_concurrent_runs_never_cross_their_progress():
+    """Stage 1 fans its four retrievers across threads, so this is also the
+    test that the per-run callback survives that fan-out: 14 nodes report,
+    and every one of them reports to the run it belongs to.
+    """
+    import threading
+
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(db, scripted(["SELECT count(*) AS n FROM dim_store"] * 40))
+
+    logs: dict[str, list[str]] = {"a": [], "b": []}
+    errors: list[BaseException] = []
+
+    def go(key: str) -> None:
+        try:
+            agent.run("how many stores?", on_progress=lambda s, _d: logs[key].append(s))
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=go, args=(key,)) for key in logs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert errors == []
+    for key, log in logs.items():
+        assert "retrieve_schema" in log, f"{key} lost the fan-out nodes"
+        assert len(log) == len(set(log)), f"{key} saw a node twice -- the other run's"
+    assert len(logs["a"]) == len(logs["b"])

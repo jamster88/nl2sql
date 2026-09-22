@@ -22,7 +22,9 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v4_1"
+AGENT_TAG="v4_2"
+GUI_IMAGE="mcfaddja/nl2sql-gui"
+GUI_TAG="v4_2"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -34,6 +36,11 @@ EMBED_MODEL_NAME=""
 POSTGRES_PORT=""
 BUILD_POSTGRES=0
 BUILD_AGENT=0
+# The GUI is opt-in: most people ask questions from a terminal, and pulling
+# an image for a container that is never started is a download nobody asked
+# for. `./launch.sh --gui` still works without this -- it builds the image
+# from this checkout instead, which is slower but needs no registry.
+WITH_GUI=0
 WITH_RAG=1
 VERIFY=1
 RESET=0
@@ -50,8 +57,12 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v3)
+      --agent-tag TAG    Agent image tag to pull (default: v4_2)
       --build-agent      Build the agent image from source instead of pulling
+      --gui              Also pull and pin the web interface, so ./launch.sh
+                         --gui starts it instead of building it here
+      --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
+      --gui-tag TAG      GUI image tag to pull (default: v4_2)
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3)
       --context-image N  Context store image (default: mcfaddja/nl2sql-rag-chunkdb)
@@ -81,6 +92,9 @@ while [[ $# -gt 0 ]]; do
         --agent-image) AGENT_IMAGE="$2"; shift 2 ;;
         --agent-tag) AGENT_TAG="$2"; shift 2 ;;
         --build-agent) BUILD_AGENT=1; shift ;;
+        --gui) WITH_GUI=1; shift ;;
+        --gui-image) GUI_IMAGE="$2"; WITH_GUI=1; shift 2 ;;
+        --gui-tag) GUI_TAG="$2"; WITH_GUI=1; shift 2 ;;
         --vector-image) VECTOR_IMAGE="$2"; shift 2 ;;
         --vector-tag) VECTOR_TAG="$2"; shift 2 ;;
         --context-image) CONTEXT_IMAGE="$2"; shift 2 ;;
@@ -208,6 +222,12 @@ fi
     echo "IMAGE_TAG=$POSTGRES_TAG"
     echo "AGENT_IMAGE_NAME=$AGENT_IMAGE"
     echo "AGENT_IMAGE_TAG=$AGENT_TAG"
+    # Only pinned when it was asked for. Left unset, compose falls back to
+    # nl2sql-gui:latest and builds it from this checkout on first start.
+    if [[ $WITH_GUI -eq 1 ]]; then
+        echo "GUI_IMAGE_NAME=$GUI_IMAGE"
+        echo "GUI_IMAGE_TAG=$GUI_TAG"
+    fi
     echo "VECTOR_IMAGE_NAME=$VECTOR_IMAGE"
     echo "VECTOR_IMAGE_TAG=$VECTOR_TAG"
     echo "CONTEXT_IMAGE_NAME=$CONTEXT_IMAGE"
@@ -231,6 +251,18 @@ else
         warn "could not pull $AGENT_IMAGE:$AGENT_TAG (private repo, or not logged in);"
         warn "building it from source instead, which needs no registry access."
         docker compose build agent
+    fi
+fi
+
+# --- GUI image -------------------------------------------------------------
+# Pulled rather than built when asked for, the same way as the agent. Compose
+# builds a service that has a `build:` section whenever its image is missing,
+# so pulling it here is what makes the published image the one that runs.
+if [[ $WITH_GUI -eq 1 ]]; then
+    step "Pulling $GUI_IMAGE:$GUI_TAG (the web interface)"
+    if ! docker pull "$GUI_IMAGE:$GUI_TAG"; then
+        warn "could not pull $GUI_IMAGE:$GUI_TAG (private repo, or not logged in);"
+        warn "./launch.sh --gui will build it from source instead."
     fi
 fi
 
@@ -419,9 +451,12 @@ cat <<EOF
 
     docker compose run --rm agent "What is our overall market share in fiscal year 2024?"
 
-    Connecting a GUI instead of a terminal? The same image also serves a
-    REST API over TLS. ./launch.sh --api starts it, and agent/API.md is the
-    contract a client is written against:
+    Rather use a browser? There is a web interface:
+
+    ./launch.sh --gui                        # http://localhost:8080
+
+    Or connect a GUI of your own: the same image serves a REST API over TLS,
+    and agent/API.md is the contract a client is written against:
 
     ./launch.sh --api
     docker compose --profile api run --rm apitest

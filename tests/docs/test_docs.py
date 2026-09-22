@@ -268,7 +268,7 @@ def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_rea
     """setup.sh pins a tag per image; if the README's tag tables do not list
     it, the default nobody passes is also the one nobody has read about.
     """
-    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE"):
+    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE"):
         image = re.search(rf'^{var}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         tag = re.search(rf'^{var.replace("_IMAGE", "_TAG")}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         assert f"{image}:{tag}" in root_readme, f"README never shows {image}:{tag}"
@@ -280,7 +280,7 @@ def test_the_pre_rag_agent_tag_is_documented(root_readme: str):
     that exists on Docker Hub but in no document is a tag nobody will find.
     """
     assert "mcfaddja/nl2sql-agent:v1" in root_readme or re.search(
-        r"\|\s*`v1`\s*\|", root_readme.split("Pulling the agent image")[1].split("##")[0]
+        r"\|\s*`v1`\s*\|", root_readme.split("### Pulling the images")[1].split("\n## ")[0]
     ), "README does not document the published v1 agent tag"
 
 
@@ -309,24 +309,31 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     first thing a contributor checks a run against, so a wrong one reads as a
     broken checkout.
     """
-    total = _collected("--run-docker")
+    total = _collected("--run-docker", "--run-node")
     docker_only = _collected("--run-docker", "-m", "docker")
-    offline = total - docker_only
+    node_only = _collected("--run-node", "-m", "node")
+    offline = total - docker_only - node_only
 
-    quoted_offline = int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1))
-    quoted_total = int(re.search(r"pytest --run-docker\s+#\s*all (\d+)", root_readme).group(1))
-    quoted_docker = int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1))
+    quoted = _quoted_counts(root_readme)
 
-    assert quoted_offline == offline, f"README says {quoted_offline} offline tests, there are {offline}"
-    assert quoted_total == total, f"README says {quoted_total} total, there are {total}"
-    assert quoted_docker == docker_only, f"README says {quoted_docker} docker tests, there are {docker_only}"
+    assert quoted["offline"] == offline, f"README says {quoted['offline']} offline tests, there are {offline}"
+    assert quoted["total"] == total, f"README says {quoted['total']} total, there are {total}"
+    assert quoted["docker"] == docker_only, f"README says {quoted['docker']} docker tests, there are {docker_only}"
+    assert quoted["node"] == node_only, f"README says {quoted['node']} node tests, there are {node_only}"
+
+
+def _quoted_counts(root_readme: str) -> dict[str, int]:
+    return {
+        "offline": int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1)),
+        "total": int(re.search(r"--run-node\s+#\s*all (\d+)", root_readme).group(1)),
+        "docker": int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1)),
+        "node": int(re.search(r"The (\d+) behind `--run-node`", root_readme).group(1)),
+    }
 
 
 def test_the_quoted_counts_are_internally_consistent(root_readme: str):
-    offline = int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1))
-    total = int(re.search(r"pytest --run-docker\s+#\s*all (\d+)", root_readme).group(1))
-    docker_only = int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1))
-    assert offline + docker_only == total
+    quoted = _quoted_counts(root_readme)
+    assert quoted["offline"] + quoted["docker"] + quoted["node"] == quoted["total"]
 
 
 # ---------------------------------------------------------------------------

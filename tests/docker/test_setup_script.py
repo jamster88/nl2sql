@@ -235,6 +235,52 @@ def test_a_failed_agent_pull_falls_back_to_building_from_source(run_setup):
     assert result.called("compose build agent")
 
 
+# ---------------------------------------------------------------------------
+# GUI image: opt-in, pinned only when asked for
+# ---------------------------------------------------------------------------
+
+
+def test_the_gui_image_is_not_pulled_unless_it_is_asked_for(run_setup):
+    """Most people ask questions from a terminal. An image for a container
+    that is never started is a download nobody asked for.
+    """
+    result = run_setup()
+    assert not result.called("pull mcfaddja/nl2sql-gui")
+    assert "GUI_IMAGE_NAME" not in result.env_file()
+
+
+def test_the_gui_flag_pulls_and_pins_it(run_setup):
+    """Pinning is what makes the published image the one that runs: compose
+    builds a service with a `build:` section whenever its image is missing.
+    """
+    result = run_setup("--gui")
+    assert result.called("pull mcfaddja/nl2sql-gui:v4_2")
+    assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
+    assert result.env_file()["GUI_IMAGE_TAG"] == "v4_2"
+
+
+def test_naming_a_gui_image_or_tag_implies_the_flag(run_setup):
+    """Asking for a particular GUI image and then not getting one would be a
+    silent no-op, which is the worst kind of flag.
+    """
+    result = run_setup("--gui-tag", "v9_9")
+    assert result.called("pull mcfaddja/nl2sql-gui:v9_9")
+    assert result.env_file()["GUI_IMAGE_TAG"] == "v9_9"
+
+    result = run_setup("--gui-image", "example.com/other-gui")
+    assert result.called("pull example.com/other-gui:v4_2")
+    assert result.env_file()["GUI_IMAGE_NAME"] == "example.com/other-gui"
+
+
+def test_a_failed_gui_pull_is_not_fatal(run_setup):
+    """There is a Dockerfile right here, so a registry nobody can reach costs
+    a build rather than the whole setup.
+    """
+    result = run_setup("--gui", env={"FAKE_FAIL_PULL": "nl2sql-gui"})
+    assert result.returncode == 0
+    assert "will build it from source instead" in result.output
+
+
 def test_a_failed_vector_pull_is_fatal_with_actionable_guidance(run_setup):
     """The knowledge base image is the one thing v2 cannot synthesize locally,
     so the failure has to name both ways forward: authenticate, or opt out.

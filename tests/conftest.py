@@ -2,8 +2,8 @@
 
 Puts data_gen/ and agent/ on sys.path so `import datagen` and
 `import nl2sql_agent` work without either package being installed, and wires
-up the --run-docker opt-in for tests that build/run real containers or talk
-to a live service.
+up the --run-docker and --run-node opt-ins for tests that build/run real
+containers, talk to a live service, or need a JavaScript toolchain.
 """
 
 from __future__ import annotations
@@ -29,19 +29,31 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="also run tests marked 'docker' (builds/runs real containers, or "
         "connects to a live service; slower and environment-dependent)",
     )
+    parser.addoption(
+        "--run-node",
+        action="store_true",
+        default=False,
+        help="also run tests marked 'node' (runs the GUI's own test suite, "
+        "which needs npm and a populated gui/node_modules)",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--run-docker"):
-        return
-    skip_docker = pytest.mark.skip(reason="needs --run-docker")
-    for item in items:
-        # Note: `"docker" in item.keywords` would also match anything merely
-        # collected under a directory/module with "docker" in its name (pytest
-        # keywords include path components for -k matching) -- we only want
-        # items carrying the actual @pytest.mark.docker marker.
-        if item.get_closest_marker("docker") is not None:
-            item.add_marker(skip_docker)
+    # Two opt-ins rather than one because the two needs are different: a
+    # clone with Docker but no npm should still be able to run every
+    # container test, and a GUI developer with npm and no Docker daemon
+    # should still be able to run the GUI's suite.
+    for name in ("docker", "node"):
+        if config.getoption(f"--run-{name}"):
+            continue
+        skip = pytest.mark.skip(reason=f"needs --run-{name}")
+        for item in items:
+            # Note: `name in item.keywords` would also match anything merely
+            # collected under a directory/module with that word in its name
+            # (pytest keywords include path components for -k matching) -- we
+            # only want items carrying the actual marker.
+            if item.get_closest_marker(name) is not None:
+                item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

@@ -5,3 +5,9 @@ output
 __pycache__
 *.pyc
 .DS_Store
+
+# The GUI's build inputs and outputs. node_modules alone is tens of
+# thousands of files, and the image installs its own from the lockfile.
+gui/node_modules
+gui/dist
+gui/coverage

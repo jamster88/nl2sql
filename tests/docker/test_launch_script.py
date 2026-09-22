@@ -456,3 +456,72 @@ def test_the_closing_lines_point_at_the_outside_client_and_the_contract(run_laun
     output = run_launch("--api").output
     assert "docker compose --profile api run --rm apitest" in output
     assert "agent/API.md" in output
+
+
+# ---------------------------------------------------------------------------
+# The web interface (--gui)
+# ---------------------------------------------------------------------------
+
+
+def test_the_gui_is_not_started_unless_it_is_asked_for(run_launch):
+    result = run_launch()
+    assert not result.called("up -d gui")
+    assert "web interface" not in result.output
+
+
+def test_the_gui_flag_starts_it_with_both_profiles(run_launch):
+    """The gui service depends on the api service, which lives in another
+    profile, and compose will not start what no active profile names.
+    """
+    result = run_launch("--gui")
+    assert result.called("--profile api --profile gui up -d gui")
+    assert "GUI is healthy at http://localhost:8080" in result.output
+
+
+def test_asking_for_the_gui_asks_for_the_api_behind_it(run_launch):
+    """A page whose API is not running is a page that loads and then fails,
+    which reads as the application being broken rather than as absent.
+    """
+    result = run_launch("--gui")
+    assert result.called("--profile api up -d api")
+    assert "REST API is healthy" in result.output
+
+
+def test_the_api_alone_does_not_drag_the_gui_in(run_launch):
+    result = run_launch("--api")
+    assert not result.called("up -d gui")
+
+
+def test_the_gui_port_follows_what_compose_will_use(run_launch):
+    result = run_launch("--gui", env_file="IMAGE_NAME=x\nGUI_PORT=9080\n")
+    assert "GUI is healthy at http://localhost:9080" in result.output
+
+
+def test_a_gui_container_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--gui", env={"FAKE_GUI_HEALTH": "starting", "FAKE_GUI_RUNNING": "false"})
+    assert "the GUI container did not become healthy" in result.output
+    assert "docker compose --profile api --profile gui logs gui" in result.output
+
+
+def test_a_gui_container_that_is_up_but_never_healthy_is_waited_out_then_reported(run_launch):
+    result = run_launch(
+        "--gui",
+        env={"FAKE_GUI_HEALTH": "starting", "FAKE_GUI_RUNNING": "true"},
+        timeout=180,
+    )
+    assert "the GUI container did not become healthy" in result.output
+
+
+def test_the_closing_lines_say_where_to_open_it(run_launch):
+    output = run_launch("--gui").output
+    assert "open http://localhost:8080" in output
+    assert "gui/README.md" in output
+
+
+def test_the_closing_lines_say_what_the_browser_is_spared(run_launch):
+    """The reason the GUI ships with a proxy rather than CORS settings, said
+    once where someone deploying it will read it.
+    """
+    output = run_launch("--gui").output
+    assert "holds the API token and" in output
+    assert "verifies the API's certificate" in output

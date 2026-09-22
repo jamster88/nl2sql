@@ -17,6 +17,11 @@ the agent needs and leaves them ready:
 | `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
 | `agent` | The v4 agent, run on demand per question |
 | `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
+| `nl2sql-gui` | The web interface, and the proxy in front of the API, with `--gui` |
+
+The agent and the GUI are published images (`v4_2`); the rest are built or
+pulled by `setup.sh` as well. [Pulling the images](#pulling-the-images) has
+the tags.
 
 ### Two scripts
 
@@ -31,8 +36,16 @@ Afterwards, in both cases:
 docker compose run --rm agent "<your question>"
 ```
 
-Or, for a GUI rather than a terminal, start the same agent as a REST server
-over TLS -- see [Connecting a GUI](#connecting-a-gui):
+Or in a browser -- see [The web interface](#the-web-interface):
+
+```bash
+./launch.sh --gui
+open http://localhost:8080
+```
+
+Or as a REST server for something else to talk to, which is the same agent
+started as a server instead of a command -- see
+[Connecting a GUI](#connecting-a-gui):
 
 ```bash
 ./launch.sh --api
@@ -180,28 +193,49 @@ wrote a correct query, rejected it three times in its own validation step, and
 gave up -- the only question in the whole run where any configuration failed to
 produce an answer at all.
 
-### Pulling the agent image
+### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v4_1
+docker pull mcfaddja/nl2sql-agent:v4_2     # the agent, and the REST API
+docker pull mcfaddja/nl2sql-gui:v4_2       # the web interface
 ```
 
-To publish a new one, build both architectures in the same step so the tag
-stays multi-arch, as every earlier agent tag is:
+`setup.sh` pulls the agent for you and pins it in `.env`. The GUI is opt-in,
+because most people ask questions from a terminal and an image for a
+container that is never started is a download nobody asked for:
+
+```bash
+./setup.sh --gui        # pulls and pins it too, so ./launch.sh --gui runs it
+./setup.sh              # leaves it out; ./launch.sh --gui builds it here
+```
+
+Both work. The difference is that compose builds a service whose image is
+missing, so without the pin the first `./launch.sh --gui` spends a couple of
+minutes running `npm ci` inside a container.
+
+To publish new ones, build both architectures in the same step so the tags
+stay multi-arch, as every earlier tag is:
 
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_1 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_2 .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_2 .
 ```
 
-The image version label comes from `AGENT_VERSION` in
-[`agent/Dockerfile`](agent/Dockerfile), and a test pins it to
-`nl2sql_agent.__version__`, so the two cannot drift.
+The agent's version label comes from `AGENT_VERSION` in
+[`agent/Dockerfile`](agent/Dockerfile) and the GUI's from
+[`gui/package.json`](gui/package.json); tests pin both to
+`nl2sql_agent.__version__`, and pin the two published tags to each other, so
+none of them can drift. They are built from one checkout and only ever tested
+together, so "which GUI goes with which API" should not be a question anyone
+has to ask.
 
 | Tag | Use |
 |---|---|
-| `v4_1` | The multi-agent pipeline plus the REST API. Pinned -- what `setup.sh` pulls. |
+| `v4_2` | The multi-agent pipeline, the REST API, and the web interface. Pinned -- what `setup.sh` pulls. |
+| `v4_1` | The same pipeline and REST API, before the GUI. Pinned. |
 | `v4` | The multi-agent pipeline, CLI only. Pinned; `./launch.sh --api` cannot run against it, and says so. |
 | `v3` | RAG plus the golden-pair ensemble, one linear graph. Pinned. |
 | `v2` | Retrieval over the knowledge base only. Pinned. |
@@ -246,6 +280,62 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + B
 | `nl2sql-rag-vectordb:v3` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each |
 | `nl2sql-rag-chunkdb:v3` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
+
+## The web interface
+
+```bash
+./launch.sh --gui
+open http://localhost:8080
+```
+
+A React and TypeScript front end, built to static files and served by nginx.
+Ask a question, watch the pipeline work through it, read the answer with its
+chart and its rows, and say whether it was right.
+
+It imports nothing from the agent. It speaks the same JSON over HTTPS that
+any other client would, which is the point: it is a demonstration that the
+API is framework-agnostic rather than a privileged special case. Everything
+it does, the four snippets in [`agent/API.md`](agent/API.md) do too.
+
+**The minute a question takes is filled with what the agent is doing.** The
+progress stream carries the graph's own node names -- screening the question,
+matching literals, reading the schema, writing SQL, checking the plan,
+running it, narrating, auditing -- so the user watches work rather than an
+animation, and the nodes still to come are listed greyed because `/v1/meta`
+says which ones this server runs.
+
+**The answer arrives with its working.** The sentence, then the chart the
+Visual Formatter asked for, then the rows. Folded away beneath: the SQL and
+how many attempts it took, the phrases matched to database values, and how
+long each node took. Hovering a claim highlights the exact cells it was read
+from -- the audit ties every sentence to the rows that support it, and this
+is the clearest thing that makes possible.
+
+**A refusal is rendered as a refusal.** `verdict` is not `proceed` for an
+out-of-scope or unsafe question, and there is no table because no query ran;
+showing an empty grid would report a failure that did not happen. An
+ambiguous question comes back with a clarification, which is a question for
+the user, so it goes where the answer would.
+
+**Feedback is two buttons.** Yes or no, per answer, kept in the browser and
+shown back in the answer and in the session list. This version does nothing
+else with it -- but the store behind it is an interface with one
+implementation, so the version that sends it somewhere is a new
+implementation and one line, rather than a change to every component.
+
+The container also holds the API token and verifies the API's certificate, so
+the browser sees neither. That is not a requirement of the API -- it answers
+a browser directly when `API_CORS_ORIGINS` names the origin -- but a
+self-signed certificate blocks `EventSource` with no warning to click, and
+[`gui/README.md`](gui/README.md) explains the three problems one same-origin
+hop removes.
+
+For development against a running API:
+
+```bash
+./launch.sh --api
+cd gui && npm install && npm run dev      # http://localhost:5173
+```
 
 ## Connecting a GUI
 
@@ -308,7 +398,9 @@ reference for writing a client.
 
 [`agent/API.md`](agent/API.md) is the contract: every endpoint, the response
 shapes, the event stream, the error codes, the settings, and worked client
-snippets for TypeScript/React, Python and Java.
+snippets for TypeScript/React, Python and Java. [`gui/`](gui) is a complete
+client written against it, if a working example is more useful than a
+snippet.
 
 ## Benchmark
 
@@ -615,8 +707,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                  # 1244 tests, no Docker or network needed
-pytest --run-docker     # all 1566, including ones that build and run containers
+pytest                             # 1319 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 1687, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -625,17 +717,22 @@ pytest --run-docker     # all 1566, including ones that build and run containers
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, and both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in all three shell scripts is exercised by some test, and the API container reached over TLS by a curl-only container with nothing of this project in it |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in all three shell scripts is exercised by some test, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 269-test suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 322 tests behind `--run-docker` are the ones that need a working daemon:
-they build the agent image and run it, resolve the real compose file, and query
-the three live databases. Everything else runs offline in about 20 seconds --
-`setup.sh` included, since it is exercised against fake binaries rather than
-real Docker.
+The 357 tests behind `--run-docker` are the ones that need a working daemon:
+they build the agent and GUI images and run them, resolve the real compose
+file, and query the three live databases. The 11 behind `--run-node` need npm,
+and run the GUI's own suite. Two flags rather than one because the two needs
+are different -- a clone with Docker but no npm should still be able to run
+every container test, and a GUI developer with npm and no Docker daemon
+should still be able to run the interface's. Everything else runs offline in
+about 20 seconds -- `setup.sh` included, since it is exercised against fake
+binaries rather than real Docker.
 
-Twenty-eight of those 322 also need the **embedding host**: a local Ollama
+Twenty-eight of those 357 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -695,6 +792,35 @@ way the golden pairs reach either store -- the base `SemanticChunker` that
 `MarkdownSemanticChunker` inherits from, and the entry points of the diagram
 generator and both loaders. Those have tests now, against throwaway databases
 and stub embedders.
+
+The web interface is measured separately, because it is a different language
+with a different runner, and to the same standard:
+
+```bash
+cd gui && npm test
+```
+
+**100% of statements, branches, functions and lines** across 269 tests, with
+only `main.tsx` excluded -- it mounts React onto a DOM element that exists
+only in a browser, and a test pins the exclusion list so nothing else joins
+it. The thresholds are in [`gui/vitest.config.ts`](gui/vitest.config.ts) and
+fail the run rather than printing a number, and `pytest --run-node` runs the
+whole thing from the Python suite so it cannot go stale unnoticed.
+
+Getting there deleted code in the same way. Four guards came out that no
+input could reach: a poll that re-checked a flag every caller had already
+checked, a stream reconnect guarded three times over, and two index lookups
+written as `?? []` to satisfy `noUncheckedIndexedAccess` on a list built from
+the very keys being looked up. The third of those was replaced by carrying
+the map's entries instead of a list of labels beside it, which removed the
+possibility rather than the check.
+
+One of the branches that would not cover turned out to be a real bug. The
+guard against a stale answer compared job ids, and job ids are only known
+*after* the POST returns -- so two questions in flight at once could have the
+first one's answer overwrite the second's. Counting attempts instead fixed
+it, and the test that could not be written before now drives exactly that
+race.
 
 #### The parts a coverage report cannot see
 

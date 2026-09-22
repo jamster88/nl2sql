@@ -202,10 +202,24 @@ works in a shell pipeline. Pull out just the SQL with
 `... --json | jq -r .sql`, or see which knowledge shaped an answer with
 `... --json | jq -r '.knowledge_chunks[].heading_path'`.
 
+## Asking in a browser instead
+
+Everything above is the terminal. There is also a web interface:
+
+```bash
+./launch.sh --gui
+open http://localhost:8080
+```
+
+It asks the same questions of the same pipeline, shows the agent's own
+pipeline steps while it works, draws whatever chart the Visual Formatter
+asked for, and takes a yes/no verdict on the answer.
+[`gui/README.md`](../gui/README.md) explains how it is put together.
+
 ## Asking over the network instead
 
-Everything above is the terminal. The same agent also answers over HTTPS, for
-a GUI or anything else that is not a shell:
+The same agent also answers over HTTPS, for a GUI of your own or anything
+else that is not a shell:
 
 ```bash
 ./launch.sh --api
@@ -238,7 +252,8 @@ A question takes about a minute, so `POST /v1/questions` without `?wait=`
 returns a job straight away and `GET /v1/questions/{id}/events` streams the
 pipeline's progress as it happens. [`API.md`](API.md) is the full contract --
 every endpoint, the response shapes, the error codes, the settings, and
-client snippets for TypeScript, Python and Java.
+client snippets for TypeScript, Python and Java, with [`gui/`](../gui) as a
+worked example at full size.
 
 Two settings are worth knowing before this leaves your own machine:
 `API_TOKEN` requires a bearer token on every question, and

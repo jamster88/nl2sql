@@ -1,0 +1,67 @@
+#!/bin/sh
+# The two decisions nginx cannot make for itself, made before its templates
+# are substituted.
+#
+# Sourced rather than executed -- hence `.envsh`, which the nginx image's
+# entrypoint treats differently -- because the first of the two exports a
+# variable that the envsubst step after it has to see.
+
+set -eu
+
+# 1. The Authorization header.
+#
+#    The point of the indirection is the empty case: nginx drops a header
+#    whose value is the empty string, so a deployment with no token sends no
+#    Authorization header at all rather than sending "Bearer " with nothing
+#    after it.
+if [ -n "${API_TOKEN:-}" ]; then
+    export API_AUTH_HEADER="Bearer ${API_TOKEN}"
+else
+    export API_AUTH_HEADER=""
+fi
+
+# 2. Whether there is a certificate to verify.
+#
+#    `proxy_ssl_trusted_certificate` is read while nginx parses its config,
+#    so naming a file that is not there stops the container from starting --
+#    with a BIO error that says nothing about why. That is the right
+#    outcome for an HTTPS upstream, where a proxy that cannot verify its
+#    upstream should not quietly stop verifying it; the message is just
+#    worth replacing with one that says what to do.
+#
+#    It is the wrong outcome behind API_TLS_ENABLED=false, where the API
+#    serves plain HTTP and there is no certificate anywhere. So the block is
+#    written here from the upstream's own scheme rather than being fixed in
+#    the template.
+#    The destination is overridable only so this script can be run against a
+#    temporary directory by the test suite. Nothing sets it in the image.
+tls_conf="${NGINX_UPSTREAM_TLS_CONF:-/etc/nginx/nl2sql-upstream-tls.conf}"
+
+case "${API_UPSTREAM}" in
+    https://*)
+        if [ ! -r "${API_CACERT}" ]; then
+            echo "nl2sql-gui: API_UPSTREAM is ${API_UPSTREAM} but there is no readable" >&2
+            echo "  certificate at API_CACERT=${API_CACERT} to verify it against." >&2
+            echo "  Under compose this file comes from the apitls volume, which the API" >&2
+            echo "  writes on its first start -- so this usually means the API has not" >&2
+            echo "  started yet, or the volume is not mounted." >&2
+            exit 1
+        fi
+        cat > "$tls_conf" <<EOF
+# Written by 10-nl2sql-config.envsh because API_UPSTREAM is HTTPS.
+proxy_ssl_verify on;
+proxy_ssl_verify_depth 3;
+proxy_ssl_trusted_certificate ${API_CACERT};
+proxy_ssl_server_name on;
+proxy_ssl_name ${API_SSL_NAME};
+EOF
+        ;;
+    *)
+        cat > "$tls_conf" <<EOF
+# Written by 10-nl2sql-config.envsh. API_UPSTREAM is ${API_UPSTREAM} -- plain
+# HTTP, so there is no certificate to verify. Everything the browser asks
+# crosses to the API in clear text; that is only right behind something that
+# terminates TLS itself.
+EOF
+        ;;
+esac

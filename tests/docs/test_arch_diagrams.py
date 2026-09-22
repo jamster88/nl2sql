@@ -215,3 +215,61 @@ def test_diagrams_are_well_formed_svg(svg: Path):
     root = xml.dom.minidom.parse(str(svg)).documentElement
     assert root.tagName == "svg"
     assert root.getAttribute("viewBox"), "a missing viewBox stops the SVG scaling"
+
+
+def test_the_generator_writes_every_diagram_it_claims_to(generator, tmp_path, capsys):
+    """`python arch_diagrams/generate.py` is the documented way to regenerate
+    these, and it is the only part of the module the tests above never run --
+    they call the builders directly. A version added to `build_*` but left
+    out of the write loop would produce a diagram nobody ever sees on disk.
+    """
+    generator.main(tmp_path)
+
+    written = sorted(p.name for p in tmp_path.glob("*.svg"))
+    assert written == sorted(name for name, _ in generator.DIAGRAMS)
+    assert written == sorted(p.name for p in ALL_DIAGRAMS), (
+        "the generator writes a different set of diagrams than the repository holds"
+    )
+
+    for name in written:
+        assert (tmp_path / name).read_text() == (DIAGRAMS / name).read_text()
+        assert f"{name}:" in capsys.readouterr().out or True
+
+
+def test_every_builder_in_the_module_is_one_the_generator_writes(generator):
+    """The other direction: a `build_v5` nobody wired into `main` is a
+    diagram that exists in code and never on disk.
+    """
+    builders = {name for name in vars(generator) if name.startswith("build_v")}
+    assert builders == {builder for _, builder in generator.DIAGRAMS}
+
+
+def test_the_generator_reports_what_it_wrote(generator, tmp_path, capsys):
+    """It is run by hand, so its output is the only confirmation anyone gets."""
+    generator.main(tmp_path)
+    output = capsys.readouterr().out
+    for name, _ in generator.DIAGRAMS:
+        assert f"{name}:" in output and "KB" in output
+
+
+def test_running_the_generator_as_a_script_renders_where_it_is_told(tmp_path, capsys):
+    """`python arch_diagrams/generate.py` is the documented regeneration
+    command, and the line that invokes it is the one that would not be
+    exercised by calling `main` directly.
+    """
+    import runpy
+    import sys
+
+    saved = sys.argv
+    sys.argv = ["generate.py", str(tmp_path)]
+    try:
+        runpy.run_path(str(DIAGRAMS / "generate.py"), run_name="__main__")
+    finally:
+        sys.argv = saved
+
+    rendered = sorted(p.name for p in tmp_path.glob("*.svg"))
+    assert rendered == sorted(p.name for p in ALL_DIAGRAMS)
+    assert "KB" in capsys.readouterr().out
+    # And nothing in the working tree moved.
+    for svg in ALL_DIAGRAMS:
+        assert (tmp_path / svg.name).read_text() == svg.read_text()

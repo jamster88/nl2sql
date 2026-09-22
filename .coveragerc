@@ -1,0 +1,43 @@
+# Coverage configuration.
+#
+# `parallel` and the `COVERAGE_PROCESS_START` hook exist for one reason:
+# several things in this repository are tested the way they are *used* --
+# as scripts, in their own process. `generate_data.py` is run by
+# `docker/Dockerfile`, `emit_load_sql.py` during the image build, and the RAG
+# loaders by hand from `rag/README.md`. Their tests invoke them the same way,
+# with `subprocess.run`, and without this coverage sees none of that and
+# reports 0% for a file with nine tests on it -- which is worse than no
+# number at all, because it sends someone off to write tests that exist.
+#
+# With it, each subprocess writes its own data file and `coverage combine`
+# merges them. Run it as:
+#
+#     COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
+#       coverage run --rcfile=.coveragerc -m pytest --run-docker
+#     coverage combine && coverage report --show-missing --skip-covered
+#
+# `COVERAGE_FILE` has to be absolute. Subprocesses inherit it, and some of
+# them run with a different working directory -- `generate_data.py` runs from
+# `data_gen/` -- so a relative one scatters per-process data files through the
+# tree instead of collecting them where `coverage combine` will look.
+[run]
+parallel = true
+omit =
+    */.venv/*
+    */site-packages/*
+    */tests/*
+    */__pycache__/*
+
+[report]
+# The repository's own code, wherever it lives. Deliberately not a list of
+# packages: half of what ships here is a script rather than an importable
+# module, and those are the ones most likely to go untested.
+include =
+    agent/nl2sql_agent/*
+    benchmarks/*
+    rag/*
+    data_gen/*
+    chunking/*
+    arch_diagrams/*
+    docker/*
+    multi-agent_arch_specs/*

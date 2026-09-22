@@ -12,6 +12,8 @@ basic_agent_steps.md
 data_gen/detailed_data_dictionary.md
 data_gen/index_descriptions.md
 .coverage
+# Per-process data files from a subprocess-measuring run (see .coveragerc).
+.coverage.*
 .pytest_cache/
 context_questions/RAW/
 context_questions/example_question_table_translation.txt

@@ -446,3 +446,75 @@ def test_launch_does_not_pull_images(launch_sh: str):
     would make every start a download.
     """
     assert "docker pull" not in launch_sh
+
+
+# ---------------------------------------------------------------------------
+# Coverage measures what is actually here
+# ---------------------------------------------------------------------------
+
+
+def _coverage_config() -> "configparser.ConfigParser":
+    import configparser
+
+    parser = configparser.ConfigParser()
+    parser.read(REPO_ROOT / ".coveragerc")
+    return parser
+
+
+def test_coverage_is_configured_to_follow_scripts_into_their_own_process():
+    """Several things here are tested the way they are used -- as scripts,
+    with `subprocess.run`. Without this, coverage reports 0% for files with
+    nine tests on them, which is worse than no number: it sends someone off
+    to write tests that already exist.
+    """
+    assert _coverage_config().getboolean("run", "parallel") is True
+
+
+def test_the_documented_coverage_command_turns_subprocess_measurement_on(root_readme: str):
+    """The configuration alone does nothing -- the hook only fires when
+    `COVERAGE_PROCESS_START` names the file. A documented command without it
+    quietly measures less than it claims to.
+    """
+    block = root_readme.split("### Coverage")[1].split("```")[1]
+    assert "COVERAGE_PROCESS_START=$PWD/.coveragerc" in block
+    # Absolute, because a subprocess with a different working directory
+    # would otherwise scatter its data files through the tree.
+    assert "COVERAGE_FILE=$PWD/.coverage" in block
+    assert "coverage combine" in root_readme.split("### Coverage")[1]
+
+
+def test_every_directory_that_holds_code_is_measured():
+    """The guard against the failure this section exists for: a top-level
+    directory full of Python that no coverage run ever looks at. It is not
+    hypothetical -- four of the eight here were outside the reported set
+    until they were added, and two of them had no tests at all.
+    """
+    include = _coverage_config().get("report", "include").split()
+    measured = {pattern.split("/")[0] for pattern in include}
+
+    holds_code = set()
+    for path in REPO_ROOT.rglob("*.py"):
+        relative = path.relative_to(REPO_ROOT)
+        top = relative.parts[0]
+        if top in {"tests", ".venv", ".git"} or "__pycache__" in relative.parts:
+            continue
+        holds_code.add(top)
+
+    missing = sorted(holds_code - measured)
+    assert missing == [], f"these hold Python that no coverage run measures: {missing}"
+
+
+def test_the_coverage_data_files_cannot_be_committed_by_accident():
+    """A subprocess-measuring run writes one data file per process. They are
+    noise, and a `git add -A` after a coverage run would sweep them in.
+    """
+    ignored = (REPO_ROOT / ".gitignore").read_text()
+    assert ".coverage.*" in ignored
+
+
+def test_the_readme_quotes_the_real_number_of_database_backed_rag_tests(root_readme: str):
+    """It said 148 for a while, having been written when that was true. The
+    three headline counts above are pinned; this one was not, and drifted.
+    """
+    quoted = int(re.search(r"The (\d+) database-backed tests", root_readme).group(1))
+    assert quoted == _collected("--run-docker", "-m", "docker", "tests/rag")

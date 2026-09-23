@@ -325,8 +325,12 @@ def test_an_https_upstream_with_no_certificate_refuses_to_start(config_envsh: Pa
     result = _source(config_envsh, env)
 
     assert result.returncode != 0
-    assert "no readable" in result.stderr
-    assert "apitls volume" in result.stderr
+    assert "there is no readable" in result.stderr
+    assert "certificate at API_CACERT" in result.stderr
+    # The likeliest cause, named: under compose the file comes from the
+    # volume the API writes on its first start.
+    assert "comes from the apitls volume, which the API" in result.stderr
+    assert "started yet, or the volume is not mounted" in result.stderr
 
 
 def test_a_plain_http_upstream_needs_no_certificate(config_envsh: Path, tmp_path: Path):

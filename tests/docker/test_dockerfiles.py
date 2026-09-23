@@ -12,6 +12,7 @@ in docker/Dockerfile actually being consumed by init_db.sh.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -423,3 +424,89 @@ def test_the_outside_client_can_be_handed_a_certificate_to_trust():
 
     dockerfile = (DOCKER_DIR / "apitest" / "Dockerfile").read_text()
     assert f"mkdir -p {DEFAULT_TLS_DIR}" in dockerfile
+
+
+# ---------------------------------------------------------------------------
+# docker/init_db.sh, actually run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.docker
+def test_init_db_sh_builds_a_working_cluster(tmp_path, docker_daemon_available: bool):
+    """The one script in this repository that was only ever read.
+
+    Everything above asserts its *shape* -- that pg_trgm comes before the
+    DDL, that the reader role is created last, that it shuts down cleanly.
+    None of that proves it runs, and it cannot be run in the sandbox the
+    other scripts use, because faking `initdb`, `pg_ctl` and `psql` would
+    leave nothing real being tested.
+
+    It can be run for real, though, against the stock image it is built on:
+    every path it takes is exercised with a two-row dataset instead of a
+    million, in about the time the fakes would have taken. What that proves
+    is what the structural tests cannot -- that the cluster it leaves behind
+    starts, holds the data, and answers as the read-only role.
+    """
+    if not docker_daemon_available:
+        pytest.skip("no working docker daemon")
+
+    base = re.search(r"^ARG POSTGRES_IMAGE=(\S+)", (DOCKER_DIR / "Dockerfile").read_text(), re.MULTILINE)
+    assert base, "docker/Dockerfile no longer pins a Postgres base image"
+
+    work = tmp_path / "bootstrap"
+    work.mkdir()
+    (work / "init_db.sh").write_text((DOCKER_DIR / "init_db.sh").read_text())
+    (work / "reader_role.sql").write_text((DOCKER_DIR / "reader_role.sql").read_text())
+    (work / "ddl.sql").write_text("CREATE TABLE dim_store (store_key int primary key, name text);\n")
+    (work / "load.sql").write_text(
+        "COPY dim_store FROM '/tmp/work/stores.csv' WITH (FORMAT csv, HEADER true);\n"
+    )
+    (work / "stores.csv").write_text("store_key,name\n1,Corner Fresh Grocers\n2,Thrift & Table\n")
+
+    # The script runs, the server stops, and then the cluster is started
+    # again from scratch -- which is what the image does on first run, and
+    # the only way to show the shutdown left something usable behind.
+    # `load.sql` does a server-side COPY, so the CSV has to be readable at
+    # the path it names from inside the container.
+    script = (
+        "set -e\n"
+        "cp -r /work /tmp/work\n"
+        "export PGDATA=/tmp/pgdata DDL_FILE=/tmp/work/ddl.sql"
+        " LOAD_SQL=/tmp/work/load.sql READER_SQL=/tmp/work/reader_role.sql\n"
+        "bash /tmp/work/init_db.sh\n"
+        # Start it again from the cluster the script shut down. This is what
+        # the image does on first run, and the only way to show the
+        # shutdown left something usable behind.
+        "pg_ctl -D $PGDATA -w -o \"-c listen_addresses=''\" start\n"
+        "psql -U nl2sql_reader -d testdb -tAc \"SELECT 'rows=' || count(*) FROM dim_store\"\n"
+        "psql -U nl2sql_reader -d testdb -tAc \"SELECT name FROM dim_store WHERE store_key = 2\"\n"
+        "if psql -U nl2sql_reader -d testdb -tAc 'CREATE TABLE nope (x int)' 2>/dev/null; then\n"
+        "  echo 'READER COULD WRITE'\n"
+        "else\n"
+        "  echo 'reader refused a write'\n"
+        "fi\n"
+        "psql -U postgres -d testdb -tAc "
+        "\"SELECT 'pg_trgm=' || count(*) FROM pg_extension WHERE extname = 'pg_trgm'\"\n"
+        "pg_ctl -D $PGDATA -m fast -w stop >/dev/null\n"
+    )
+
+    result = subprocess.run(
+        [
+            "docker", "run", "--rm",
+            "-v", f"{work}:/work:ro",
+            "-e", "DB_NAME=testdb", "-e", "DB_USER=nl2sql", "-e", "DB_PASSWORD=secret",
+            "-e", "DB_READER=nl2sql_reader", "-e", "DB_READER_PASSWORD=reader_secret",
+            "--user", "postgres",
+            base.group(1), "bash", "-c", script,
+        ],
+        capture_output=True, text=True, timeout=600,
+    )
+    assert result.returncode == 0, f"{result.stdout}\n{result.stderr}"
+
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert "rows=2" in lines, f"the two rows did not survive the shutdown:\n{result.stdout}"
+    assert "Thrift & Table" in lines
+    assert "reader refused a write" in lines, "the read-only role could create a table"
+    assert "READER COULD WRITE" not in result.stdout
+    # Installed by the script, not by the base image.
+    assert "pg_trgm=1" in lines, f"pg_trgm was not installed:\n{result.stdout}"

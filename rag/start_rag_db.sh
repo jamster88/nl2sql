@@ -6,7 +6,9 @@
 # for it to be healthy, and prints what is inside so you can see the
 # embeddings are actually there.
 #
-# Usage: ./start_rag_db.sh [--image REPO:TAG]
+# Usage: ./start_rag_db.sh [-i|--image REPO:TAG]
+#
+# Any flag is passed straight through to 03_start_vector_db.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 

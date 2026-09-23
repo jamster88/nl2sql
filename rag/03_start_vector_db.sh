@@ -13,10 +13,10 @@ while [[ $# -gt 0 ]]; do
         -i|--image) PULL_IMAGE="$2"; shift 2 ;;
         -h|--help)
             cat <<'EOF'
-Usage: ./03_start_vector_db.sh [--image REPO:TAG]
+Usage: ./03_start_vector_db.sh [-i|--image REPO:TAG]
 
-  --image REPO:TAG   Pull a published vector-store image instead of building
-                     locally (its embeddings come with it).
+  -i, --image REPO:TAG   Pull a published vector-store image instead of
+                     building locally (its embeddings come with it).
 EOF
             exit 0 ;;
         *) die "unknown option: $1" ;;

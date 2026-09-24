@@ -204,11 +204,11 @@ works in a shell pipeline. Pull out just the SQL with
 
 ## Asking in a browser instead
 
-Everything above is the terminal. There is also a web interface:
+Everything above is the terminal. There is also a web interface, and one
+command that brings up everything it needs and opens it:
 
 ```bash
-./launch.sh --gui
-open http://localhost:8080
+./start.sh
 ```
 
 It asks the same questions of the same pipeline, shows the agent's own

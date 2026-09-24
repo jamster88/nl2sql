@@ -3,12 +3,22 @@
 ## Quick start
 
 ```bash
+./start.sh
+```
+
+That is the whole thing. [`start.sh`](start.sh) pulls what is missing, starts
+every container, waits until the page answers, and opens it in your browser
+at <http://localhost:8080>. First run is a few minutes and about 3 GB of
+images; afterwards it is seconds.
+
+Prefer a terminal?
+
+```bash
 ./setup.sh
 docker compose run --rm agent "How many stores are there?"
 ```
 
-That is the whole setup. [`setup.sh`](setup.sh) brings up the four containers
-the agent needs and leaves them ready:
+Either way the same containers come up:
 
 | Container | What it holds |
 |---|---|
@@ -23,14 +33,27 @@ The agent and the GUI are published images (`v4_2`); the rest are built or
 pulled by `setup.sh` as well. [Pulling the images](#pulling-the-images) has
 the tags.
 
-### Two scripts
+### Three scripts
 
 | | When | What it does |
 |---|---|---|
+| [`./start.sh`](start.sh) | You just want to use it | Runs the two below, waits for the page, opens your browser |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
 | [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
 
-Afterwards, in both cases:
+`start.sh` adds nothing of its own -- it runs the other two and opens a
+browser. Use them directly when you want the parts separately: a terminal
+session with no API, a different agent tag, no knowledge base.
+
+```bash
+./start.sh --no-browser    # everything up, prints the URL instead
+./start.sh --no-rag        # schema-only, like v1
+./start.sh --restart       # recreate the containers
+./start.sh --quiet         # only print problems
+BROWSER=firefox ./start.sh # open it with something in particular
+```
+
+Afterwards, whichever route you took:
 
 ```bash
 docker compose run --rm agent "<your question>"
@@ -39,7 +62,7 @@ docker compose run --rm agent "<your question>"
 Or in a browser -- see [The web interface](#the-web-interface):
 
 ```bash
-./launch.sh --gui
+./launch.sh --gui          # without the browser step
 open http://localhost:8080
 ```
 
@@ -52,10 +75,10 @@ started as a server instead of a command -- see
 curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
 ```
 
-They fail in different ways, which is why they are separate. Setup fails when an
-image will not pull. Launch catches the things that go wrong later: a container
-that is up but empty, a chat host that has moved, an embedding model that is not
-the one the vectors were built with. None of those stop the stack from starting,
+Setup and launch fail in different ways, which is why they are separate.
+Setup fails when an image will not pull. Launch catches the things that go
+wrong later: a container that is up but empty, a chat host that has moved, an
+embedding model that is not the one the vectors were built with. None of those stop the stack from starting,
 and all of them make the agent look bad at its job rather than broken.
 
 ```
@@ -284,8 +307,7 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + B
 ## The web interface
 
 ```bash
-./launch.sh --gui
-open http://localhost:8080
+./start.sh
 ```
 
 A React and TypeScript front end, built to static files and served by nginx.
@@ -329,6 +351,14 @@ a browser directly when `API_CORS_ORIGINS` names the origin -- but a
 self-signed certificate blocks `EventSource` with no warning to click, and
 [`gui/README.md`](gui/README.md) explains the three problems one same-origin
 hop removes.
+
+`start.sh` waits until the page actually answers before opening it. That is
+not the same as waiting for the container to call itself healthy: nginx
+reports healthy as soon as it is up, which is a moment before it has read the
+configuration written for it at start-up, and a browser opened on the health
+check alone lands on a connection error often enough to matter. On a machine
+with no desktop it prints the URL and carries on, which is not a failure --
+`--no-browser` asks for that deliberately, and `BROWSER` picks what opens it.
 
 For development against a running API:
 
@@ -707,8 +737,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1469 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 1840, including ones that build and run containers
+pytest                             # 1512 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 1883, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -717,7 +747,7 @@ pytest --run-docker --run-node     # all 1840, including ones that build and run
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in all three shell scripts is exercised by some test, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in all ten shell scripts is exercised by some test, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 269-test suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
@@ -824,20 +854,29 @@ race.
 
 #### The parts a coverage report cannot see
 
-Nine shell scripts, two compose files, six Dockerfiles and an nginx template,
+Ten shell scripts, two compose files, six Dockerfiles and an nginx template,
 none of them Python. They are covered by reading and by running, not by a
 report:
 
-* **`setup.sh` and `launch.sh`** are run against fake `docker`, `curl` and
-  `sleep` binaries, once per scenario they can take.
+* **`start.sh`, `setup.sh` and `launch.sh`** are run against fake `docker`,
+  `curl`, `sleep` and browser binaries, once per scenario they can take.
   [`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py)
   then asserts structurally that every flag is parsed, documented and passed
   by some test, and that every `warn` and `die` message is asserted somewhere.
   A warning nobody triggers looks exactly like a warning that works, and these
-  scripts are almost entirely warnings. Measured by `xtrace`, 92% and 96% of
-  their lines; the remainder is lines bash cannot report at all -- function
-  headers, `case` labels, and the continuation lines of a command split across
-  several.
+  scripts are almost entirely warnings. Measured by `xtrace`: `setup.sh` 92%,
+  `launch.sh` 96%, `start.sh` 97%. The remainder is lines bash cannot report
+  at all -- function headers, `case` labels, and the continuation lines of a
+  command split across several -- with one real exception, named below.
+
+  `start.sh` picks a browser opener from `uname`, so three of its four
+  platform branches can never run on the machine the suite runs on. A fake
+  `uname` covers them anyway, which is the point: an opener that is wrong for
+  Linux is invisible from a Mac until someone on Linux runs it. The single
+  line no test reaches is the one that detects WSL by reading
+  `/proc/version` -- that file cannot be faked from outside the kernel, and
+  contorting the script to make it injectable would be a worse trade than
+  leaving one line unrun.
 * **The seven scripts in [`rag/`](rag)** -- the only way the knowledge base is
   built and published -- get the same treatment in
   [`tests/rag/test_rag_scripts.py`](tests/rag/test_rag_scripts.py), and reach

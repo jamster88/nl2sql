@@ -34,7 +34,9 @@ read_env() {  # read_env KEY DEFAULT -- reflects whatever setup.sh wrote to .env
 }
 
 case "$1" in
-    info) exit 0 ;;
+    info)
+        [[ -n "${FAKE_NO_DAEMON:-}" ]] && exit 1
+        exit 0 ;;
     version) echo "99.9.9"; exit 0 ;;
     pull)
         if [[ -n "${FAKE_FAIL_PULL:-}" && "$*" == *"$FAKE_FAIL_PULL"* ]]; then
@@ -77,7 +79,9 @@ case "$1" in
             exit 0
         fi
         case "$1" in
-            version) echo "2.99.0"; exit 0 ;;
+            version)
+                [[ -n "${FAKE_NO_COMPOSE:-}" ]] && exit 1
+                echo "2.99.0"; exit 0 ;;
             build|up|down) exit 0 ;;
             run)
                 # The end-of-setup retrieval probe, run inside the agent image.
@@ -131,6 +135,10 @@ FAKE_CURL = r"""#!/usr/bin/env bash
 for arg in "$@"; do
     case "$arg" in http*) printf 'curl %s\n' "$arg" >> "$FAKE_LOG" ;; esac
 done
+# start.sh polls the web interface with curl before opening a browser at
+# it; this is how a test makes that poll time out without also taking the
+# Ollama probe down.
+if [[ -n "${FAKE_GUI_DOWN:-}" && "$*" == *":${FAKE_GUI_PORT:-8080}"* ]]; then exit 7; fi
 if [[ -n "${FAKE_OLLAMA_DOWN:-}" ]]; then exit 7; fi
 
 # Assigned on its own line rather than inline as ${VAR:-default}: brace
@@ -139,12 +147,52 @@ models="${FAKE_OLLAMA_MODELS:-}"
 if [[ -z "$models" ]]; then
     models='{"name":"qwen3.8-256k"},{"name":"bge-m3:latest"}'
 fi
-printf '{"models":[%s]}\n' "$models"
+
+# Honour -o, as the real curl does. Without this a caller that asked for the
+# body to go to a file still got it on stdout, which is invisible until
+# something is checked for saying nothing.
+out=""
+prev=""
+for arg in "$@"; do
+    # Bundled short flags too: real curl takes the argument after -sfo.
+    case "$prev" in -o|--output|-[a-zA-Z]*o) out="$arg" ;; esac
+    prev="$arg"
+done
+if [[ -n "$out" ]]; then
+    printf '{"models":[%s]}\n' "$models" > "$out"
+else
+    printf '{"models":[%s]}\n' "$models"
+fi
 """
 
 # setup.sh polls health with `sleep 2` up to 60 times; a real sleep would make
 # the failure-path tests take minutes.
 FAKE_SLEEP = "#!/usr/bin/env bash\nexit 0\n"
+
+#: Stands in for whichever of `open`, `xdg-open`, `wslview` and friends the
+#: machine running the tests would actually have. All of them are installed
+#: into the sandbox, so the platform branch start.sh takes is the one that
+#: gets exercised rather than one chosen by the test.
+FAKE_BROWSER = r"""#!/usr/bin/env bash
+printf 'browser %s %s\n' "$(basename "$0")" "$*" >> "$FAKE_LOG"
+exit ${FAKE_BROWSER_EXIT:-0}
+"""
+
+#: `uname -s` decides which opener start.sh reaches for, so on a Mac the
+#: Linux and Windows branches would never run. This defers to the real one
+#: unless a test says otherwise, so nothing else in the sandbox changes.
+FAKE_UNAME = r"""#!/usr/bin/env bash
+if [[ -n "${FAKE_UNAME_S:-}" && "$*" == "-s" ]]; then
+    printf '%s\n' "$FAKE_UNAME_S"
+    exit 0
+fi
+exec /usr/bin/uname "$@"
+"""
+
+BROWSER_OPENERS = (
+    "open", "xdg-open", "wslview", "explorer.exe", "gio", "x-www-browser",
+    "sensible-browser", "start",
+)
 
 
 @dataclass
@@ -176,6 +224,13 @@ class SetupRun:
 
     def calls_matching(self, fragment: str) -> list[str]:
         return [call for call in self.calls if fragment in call]
+
+    def index_of(self, fragment: str) -> int:
+        """Where a call appears, so ordering can be asserted."""
+        for index, call in enumerate(self.calls):
+            if fragment in call:
+                return index
+        raise AssertionError(f"no call matching {fragment!r} in:\n" + "\n".join(self.calls))
 
 
 def _copy_reader_role_sql(workdir: Path) -> None:
@@ -280,6 +335,98 @@ def run_launch(tmp_path: Path):
 
         result = subprocess.run(
             ["bash", str(workdir / "launch.sh"), *args],
+            cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
+        )
+        return SetupRun(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            calls=log.read_text().splitlines(),
+            workdir=workdir,
+        )
+
+    return _run
+
+
+@pytest.fixture
+def run_start(tmp_path: Path):
+    """Run start.sh in the sandbox the other two scripts get, plus a browser.
+
+    start.sh runs the real `setup.sh` and `launch.sh` rather than stubs of
+    them: its whole job is orchestrating those two and the browser, and
+    against stubs there would be nothing left to be wrong. The fake `docker`
+    underneath is what keeps that affordable.
+
+    The browser openers are fakes installed ahead of everything else on
+    PATH, because the real ones are there too: `/usr/bin/open` exists on
+    every Mac, and a fixture that does not shadow it opens tabs on the
+    developer's desktop every time the suite runs.
+    """
+
+    workdir = tmp_path / "repo"
+    workdir.mkdir()
+    for name in ("start.sh", "launch.sh", "setup.sh", "docker-compose.yml"):
+        shutil.copy(REPO_ROOT / name, workdir / name)
+        os.chmod(workdir / name, 0o755)
+    _copy_reader_role_sql(workdir)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, body in (
+        ("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP),
+        ("uname", FAKE_UNAME),
+    ):
+        path = bin_dir / name
+        path.write_text(body)
+        os.chmod(path, 0o755)
+
+    browser_dir = tmp_path / "browsers"
+    browser_dir.mkdir()
+    for name in BROWSER_OPENERS:
+        path = browser_dir / name
+        path.write_text(FAKE_BROWSER)
+        os.chmod(path, 0o755)
+
+    log = tmp_path / "calls.log"
+    log.touch()
+
+    DEFAULT_ENV_FILE = (
+        "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
+        "IMAGE_TAG=v1\n"
+        "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
+        "AGENT_IMAGE_TAG=v4_2\n"
+        "GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
+        "GUI_IMAGE_TAG=v4_2\n"
+        "VECTOR_IMAGE_NAME=mcfaddja/nl2sql-rag-vectordb\n"
+        "VECTOR_IMAGE_TAG=v3\n"
+        "CONTEXT_IMAGE_NAME=mcfaddja/nl2sql-rag-chunkdb\n"
+        "CONTEXT_IMAGE_TAG=v3\n"
+        "RAG_ENABLED=true\n"
+    )
+
+    def _run(*args: str, env: dict | None = None, env_file: str | None = DEFAULT_ENV_FILE,
+             timeout: int = 120) -> SetupRun:
+        dotenv = workdir / ".env"
+        if env_file is None:
+            dotenv.unlink(missing_ok=True)
+        else:
+            dotenv.write_text(env_file)
+
+        run_env = dict(os.environ)
+        # The browser fakes go *first* so they shadow the real ones. Without
+        # that, /usr/bin/open exists on every Mac and a test run opens tabs
+        # on the developer's desktop -- which is exactly what happened the
+        # first time this fixture was written.
+        run_env["PATH"] = f"{browser_dir}:{bin_dir}:{run_env['PATH']}"
+        run_env["FAKE_LOG"] = str(log)
+        # Otherwise the developer's own setting picks the opener and the
+        # platform branch under test never runs.
+        run_env.pop("BROWSER", None)
+        if env:
+            run_env.update(env)
+
+        result = subprocess.run(
+            ["bash", str(workdir / "start.sh"), *args],
             cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
         )
         return SetupRun(

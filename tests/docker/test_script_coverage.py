@@ -25,8 +25,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-#: The two commands almost everyone runs. Both carry a `usage()` function.
-SCRIPTS = ("setup.sh", "launch.sh")
+#: The front door and the two commands it runs. All three carry a `usage()`
+#: function, and all three are held to every rule below.
+SCRIPTS = ("start.sh", "setup.sh", "launch.sh")
+
+#: The two that do the work. start.sh delegates to them and creates nothing
+#: itself, so the rules about what a start must guarantee apply to these.
+WORKERS = ("setup.sh", "launch.sh")
 
 #: The RAG pipeline's own scripts -- the only way the knowledge base is built
 #: and published. Same shape of risk as the two above (flags, guard clauses
@@ -289,10 +294,23 @@ def test_the_sourced_library_does_not_change_its_callers_shell():
 
 @pytest.mark.parametrize("script", SCRIPTS)
 def test_the_script_runs_from_its_own_directory(script: str):
-    """Both are documented as `./setup.sh` from anywhere, and both read
-    files relative to the repository.
+    """All three are documented as `./name.sh` from anywhere, and all three
+    read files relative to the repository.
     """
     assert 'cd "$(dirname "$0")"' in _source(script)
+
+
+def test_the_front_door_only_delegates():
+    """start.sh is the one command someone new runs, and its value is that
+    there is nothing in it to go wrong separately: every decision it makes
+    is one of the other two scripts', which have their own tests. A
+    `docker compose up` appearing here would be a third place for the stack
+    to be started slightly differently.
+    """
+    source = _source("start.sh")
+    assert "./setup.sh" in source and "./launch.sh" in source
+    assert "docker compose up" not in source
+    assert "docker compose run" not in source
 
 
 def test_launch_ends_by_showing_the_command_the_user_runs_next():
@@ -309,9 +327,9 @@ def test_setup_ends_by_showing_the_command_the_user_runs_next():
 def test_both_scripts_create_what_the_v4_agent_needs_that_the_image_may_not_have():
     """An existing volume outlives the image that made it, so neither the
     reader role nor the trigram extension can be assumed. Both scripts
-    create both, every start.
+    create both, every start -- start.sh inherits it by running them.
     """
-    for script in SCRIPTS:
+    for script in WORKERS:
         source = _source(script)
         assert "reader_role.sql" in source, f"{script} never creates the agent's role"
         assert "pg_trgm" in source, f"{script} never creates the trigram extension"

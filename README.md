@@ -737,8 +737,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1600 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 1911, including ones that build and run containers
+pytest                             # 1601 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 1912, including ones that build and run containers
 ```
 
 | Directory | Covers |

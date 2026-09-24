@@ -449,9 +449,51 @@ def test_without_a_token_nothing_under_v1_answers(secured):
     assert secured.post("/v1/questions", json={"question": "q"}).status_code == 401
 
 
+#: The routes that answer before anything is authenticated: the ones an
+#: orchestrator calls to decide whether this container is alive, and the
+#: self-describing ones a developer opens in a browser. Everything else has
+#: to refuse. `app.py` carried this as a constant once; nothing consulted
+#: it, so it could not have caught a route that drifted out of the set --
+#: which is the whole reason it is here, in a test, instead.
+OPEN_BY_DESIGN = {
+    "/",
+    "/healthz",
+    "/readyz",
+    "/openapi.json",
+    "/docs",
+    "/docs/oauth2-redirect",
+    "/redoc",
+}
+
+
 def test_the_probes_stay_open_so_an_orchestrator_can_use_them(secured):
     for path in ("/", "/healthz", "/readyz", "/openapi.json"):
         assert secured.get(path).status_code in (200, 503), path
+
+
+def test_every_other_route_refuses_an_anonymous_caller(secured):
+    """Read off the running app, not off a list kept by hand.
+
+    A route added without `dependencies=guarded` is a route that answers
+    before the caller has proved anything. The only way to notice is to ask
+    the app what routes it has, so a new one is refused by default and
+    opening it deliberately means editing OPEN_BY_DESIGN above.
+    """
+    checked = 0
+    for route in secured.app.routes:
+        path = getattr(route, "path", None)
+        methods = (getattr(route, "methods", None) or set()) - {"HEAD", "OPTIONS"}
+        if not path or not methods or path in OPEN_BY_DESIGN:
+            continue
+        for method in sorted(methods):
+            response = secured.request(
+                method,
+                path.replace("{job_id}", "x"),
+                json={"question": "q"} if method == "POST" else None,
+            )
+            assert response.status_code == 401, f"{method} {path} answered anonymously"
+            checked += 1
+    assert checked, "no guarded routes found -- the route walk is not working"
 
 
 def test_a_bearer_token_is_accepted(secured):

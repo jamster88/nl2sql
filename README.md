@@ -737,8 +737,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1601 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 1912, including ones that build and run containers
+pytest                             # 1631 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 1942, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -747,7 +747,7 @@ pytest --run-docker --run-node     # all 1912, including ones that build and run
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in all eleven shell scripts is exercised by some test, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 269-test suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
@@ -790,7 +790,7 @@ COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
 coverage combine && coverage report --show-missing --skip-covered
 ```
 
-**100% of every Python file in the repository** -- 5,587 statements, none
+**100% of every Python file in the repository** -- 5,586 statements, none
 missed. Not four packages with the scripts left out: the agent and its REST
 server, the benchmark, the RAG pipeline and its four loader scripts, the data
 generator and its CLI, the chunker, the architecture-diagram generator, and
@@ -856,10 +856,10 @@ race.
 
 #### The parts a coverage report cannot see
 
-Eleven shell scripts, two compose files, six Dockerfiles and an nginx
-template, none of them Python. They are covered by reading and by running --
-and, since nothing in coverage.py can see a shell script, by a measurement of
-their own:
+Twelve shell scripts, an nginx entrypoint fragment, two compose files, seven
+Dockerfiles and an nginx template, none of them Python. They are covered by
+reading and by running -- and, since nothing in coverage.py can see a shell
+script, by a measurement of their own:
 
 * **Every one of them runs, and all of them reach 100%.**
 
@@ -870,9 +870,19 @@ their own:
   `start.sh`, `setup.sh` and `launch.sh` are driven against fake `docker`,
   `curl`, `sleep`, `uname`, `grep` and browser binaries; the seven scripts in
   [`rag/`](rag) the same way; `docker/apitest/smoke.sh` against a real HTTPS
-  server; and `gui/10-nl2sql-config.envsh` as the nginx entrypoint sources
-  it. That tool re-runs those suites with `bash -x` on and counts which
-  commands the traces mention -- **640 of 640**.
+  server; `docker/init_db.sh` -- which otherwise runs only inside `docker
+  build` -- against fake `initdb`, `pg_ctl` and `psql`; and
+  `gui/10-nl2sql-config.envsh` as the nginx entrypoint sources it. That tool
+  re-runs those suites with `bash -x` on and counts which commands the traces
+  mention -- **657 of 657**.
+
+  An inventory test compares those lists against `git ls-files`, because the
+  lists are written by hand and a script that joins none of them is not
+  reported as uncovered -- it is simply absent, which reads exactly like a
+  script that passes. `docker/init_db.sh` sat in that blind spot: tracked,
+  shell, and in no list, so the measurement said 100% of eleven scripts while
+  a twelfth had never been run by anything. The same check now covers the
+  Dockerfiles and both compose files.
 
   It counts *commands*, not lines, because bash does not report lines
   individually and does not even report them consistently: a

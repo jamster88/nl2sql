@@ -186,9 +186,12 @@ def test_every_route_the_server_serves_is_documented(agent_api_doc: str):
 
     app = create_app(settings=Settings(), api_settings=ApiSettings(token=None))
     documented = agent_api_doc
+    #: FastAPI's own OAuth2 redirect helper. Plumbing for the docs page, not
+    #: a route a client calls, and nothing here serves OAuth2 anyway.
+    internal = {"/docs/oauth2-redirect"}
     for route in app.routes:
         path = getattr(route, "path", "")
-        if not path.startswith(("/v1", "/healthz", "/readyz")):
+        if not path or path in internal:
             continue
         assert path in documented, f"the server serves {path}, which API.md never mentions"
 
@@ -544,6 +547,33 @@ def test_every_directory_that_holds_code_is_measured():
 
     missing = sorted(holds_code - measured)
     assert missing == [], f"these hold Python that no coverage run measures: {missing}"
+
+
+def test_no_test_file_defines_the_same_test_name_twice():
+    """Python keeps the last definition and discards the first silently, so a
+    duplicated name is a test that exists, reads correctly, is counted by the
+    collector -- and never runs.
+
+    Not hypothetical: test_schema_retrieval.py had two different tests called
+    `test_two_tables_with_no_join_path_between_them_need_no_bridge`, and the
+    one covering `close_and_cap` had been dead for as long as both existed.
+    Nothing reported it, because a shadowed test does not fail; it is absent.
+    """
+    import ast
+
+    shadowed = []
+    for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
+        seen: set[str] = set()
+        for node in ast.walk(ast.parse(path.read_text())):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test"):
+                continue
+            if node.name in seen:
+                shadowed.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno} {node.name}")
+            seen.add(node.name)
+
+    assert shadowed == [], "these tests are shadowed and never run: " + ", ".join(shadowed)
 
 
 def test_the_coverage_data_files_cannot_be_committed_by_accident():

@@ -652,7 +652,7 @@ def test_closing_an_empty_set_falls_back_to_the_catalog():
     assert len(selection.tables) <= 4
 
 
-def test_two_tables_with_no_join_path_between_them_need_no_bridge():
+def test_close_and_cap_returns_no_bridge_for_an_unreachable_pair():
     """An unreachable pair is not an error: the question may legitimately
     want two unrelated tables, and inventing a path would add noise.
     """
@@ -688,7 +688,7 @@ def test_asking_for_no_ranked_tables_returns_none_without_embedding():
     assert selection.tables == sorted(RETAIL_TABLES)
 
 
-def test_two_tables_with_no_join_path_between_them_need_no_bridge():
+def test_required_intermediates_is_empty_across_disconnected_components():
     """Closure is over whatever the four retrievers proposed, and nothing
     guarantees those tables are connected: a schema can hold unrelated
     subject areas, and a knowledge chunk can name one while the vectors rank

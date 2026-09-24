@@ -52,6 +52,9 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # Sourced by the nginx image's entrypoint rather than executed, and by
     # `sh` rather than bash, so it is traced the same way it runs.
     "gui/10-nl2sql-config.envsh": ("tests/gui/test_gui_project.py",),
+    # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
+    # running it for real would mean building the dataset image.
+    "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),
 }
 
 #: Lines bash never attributes a line number to, so counting them as missed

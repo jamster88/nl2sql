@@ -93,6 +93,30 @@ def test_readiness_repeats_the_configuration_warnings(make_client):
     assert "clear text" in warnings and "No API_TOKEN" in warnings
 
 
+def test_a_reachable_model_and_an_unreachable_database_is_not_ready(make_client, fake_agent):
+    """The half-failure the other readiness tests miss. The agent constructs,
+    so Ollama answered, and only then does Postgres refuse -- which is the
+    ordinary shape of a restart, and the one an orchestrator has to be able
+    to wait out rather than restart the container over.
+    """
+
+    def refuse() -> list[str]:
+        raise OSError("connection to server at 127.0.0.1 port 5432 refused")
+
+    fake_agent.db.table_names = refuse
+    client = make_client(agent_factory=lambda: fake_agent)
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    checks = response.json()["checks"]
+    assert checks["database"]["ok"] is False
+    assert "OSError" in checks["database"]["detail"]
+    assert "port 5432 refused" in checks["database"]["detail"]
+    # The model is reported as fine, so the detail says which half broke.
+    assert checks["llm"]["ok"] is True
+    assert checks["agent"]["ok"] is True
+
+
 def test_a_database_that_is_up_but_empty_is_not_ready(make_client, fake_agent):
     """The failure this repository has already seen twice: a container that
     is healthy and holds nothing.

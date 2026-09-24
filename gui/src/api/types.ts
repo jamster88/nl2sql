@@ -180,6 +180,12 @@ export interface Meta {
   pipeline: Pipeline;
   tls: Record<string, unknown>;
   authentication: "none" | "bearer";
+  /**
+   * Whether this server accepts feedback. False when it has no staging
+   * database configured, in which case the verdict buttons are not drawn --
+   * a button whose every click fails is worse than no button.
+   */
+  feedback: boolean;
 }
 
 /** What `/healthz` answers: the process is up. It checks nothing else. */
@@ -214,4 +220,35 @@ export interface AskRequest {
   question: string;
   principal?: string;
   metadata?: Record<string, string>;
+}
+
+/** Was the answer right? The whole of the required input. */
+export type Verdict = "yes" | "no";
+
+/**
+ * What a user says about an answer.
+ *
+ * Only these two fields go over the wire. The question, the SQL and the
+ * result shape are taken from the job by the server -- it still has it,
+ * since a vote happens while the answer is on screen -- so a client cannot
+ * submit a snapshot describing an answer the agent never gave.
+ */
+export interface FeedbackRequest {
+  verdict: Verdict;
+  comment: string;
+}
+
+/**
+ * The receipt for a recorded verdict.
+ *
+ * `state` is what the review service has made of it, and is always
+ * `pending` at capture time: the role the API writes as cannot see any
+ * other state, let alone create one.
+ */
+export interface FeedbackModel {
+  id: string;
+  job_id: string;
+  verdict: Verdict;
+  comment: string;
+  state: "pending";
 }

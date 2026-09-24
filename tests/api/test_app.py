@@ -198,6 +198,7 @@ def test_the_openapi_document_describes_every_route(client):
     assert set(document["paths"]) == {
         "/", "/healthz", "/readyz", "/v1/meta",
         "/v1/questions", "/v1/questions/{job_id}", "/v1/questions/{job_id}/events",
+        "/v1/questions/{job_id}/feedback",
     }
     assert document["info"]["version"] == __version__
 

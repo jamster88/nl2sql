@@ -9,13 +9,25 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
-import type { FeedbackRecord, FeedbackStore, Verdict } from "./store";
+import type { ApiFeedbackStore } from "./apiStore";
+import type { FeedbackRecord, FeedbackStore, SyncState, Verdict } from "./store";
 
 export interface UseFeedback {
   verdict: Verdict | undefined;
   record: FeedbackRecord | undefined;
+  sync: SyncState | undefined;
+  error: string | undefined;
   vote: (verdict: Verdict) => void;
   withdraw: () => void;
+  /** Undefined when the store does not send anywhere, so no box is drawn. */
+  comment: ((text: string) => void) | undefined;
+  /** Undefined for the same reason: nothing local can fail to send. */
+  retry: (() => void) | undefined;
+}
+
+/** Whether this store is the one that POSTs, without asking the caller. */
+function sends(store: FeedbackStore): store is ApiFeedbackStore {
+  return typeof (store as Partial<ApiFeedbackStore>).setWithComment === "function";
 }
 
 export function useFeedbackRecords(store: FeedbackStore): FeedbackRecord[] {
@@ -49,5 +61,31 @@ export function useFeedback(
     if (jobId !== undefined) store.clear(jobId);
   }, [store, jobId]);
 
-  return { verdict: record?.verdict, record, vote, withdraw };
+  const comment = useCallback(
+    (text: string) => {
+      if (jobId === undefined) return;
+      const verdict = store.get(jobId)?.verdict;
+      // A comment without a verdict has nothing to attach to: the staging
+      // row is keyed on the job and its verdict is NOT NULL, so there is
+      // no row to amend until one has been voted on.
+      if (verdict === undefined || !sends(store)) return;
+      store.setWithComment(jobId, question, verdict, text);
+    },
+    [store, jobId, question],
+  );
+
+  const retry = useCallback(() => {
+    if (jobId !== undefined && sends(store)) store.retry(jobId);
+  }, [store, jobId]);
+
+  return {
+    verdict: record?.verdict,
+    record,
+    sync: record?.sync,
+    error: record?.error,
+    vote,
+    withdraw,
+    comment: sends(store) ? comment : undefined,
+    retry: sends(store) ? retry : undefined,
+  };
 }

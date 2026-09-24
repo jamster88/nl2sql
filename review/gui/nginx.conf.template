@@ -1,0 +1,73 @@
+# The review GUI's own server, and the hop that makes a browser's life simple.
+#
+# The same three problems the web GUI's proxy solves, with one difference
+# that matters more here: the token this hop holds can rewrite the golden
+# question set. Keeping it on this side of the hop is not a convenience,
+# it is the reason a reviewer's browser never has to hold it.
+#
+# There is no event stream behind this one, so the buffering and timeout
+# gymnastics the web GUI needs are absent. What is here instead is a long
+# read timeout on the promote route alone, because promotion runs the two
+# RAG loaders and embedding 46 pairs is not a sub-second operation.
+
+server {
+    listen ${REVIEW_GUI_PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    # One page, so any path that is not a file is still the page.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # --- the review service ----------------------------------------------
+
+    location ~ ^/(v1|healthz|readyz|openapi\.json) {
+        # Resolved per request rather than once at start-up, for the same
+        # reason as the web GUI: a literal upstream is looked up while nginx
+        # parses its config and then cached for the life of the process,
+        # which means refusing to start before the service is up and talking
+        # to a stale address after it restarts.
+        resolver ${REVIEW_GUI_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${REVIEW_UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Empty when no token is configured, and nginx omits a header whose
+        # value is empty -- so the unauthenticated deployment sends nothing
+        # rather than the word "Bearer" on its own.
+        proxy_set_header Authorization "${REVIEW_AUTH_HEADER}";
+        proxy_set_header Connection "";
+
+        # Verified rather than skipped: this hop crosses a container network.
+        # Included rather than written here because the directives are wrong
+        # when REVIEW_UPSTREAM is plain HTTP and there is no certificate to
+        # name -- see 10-nl2sql-review-config.envsh.
+        include /etc/nginx/nl2sql-review-upstream-tls.conf;
+
+        # Long enough for a promotion, which runs both RAG loaders and
+        # re-embeds. The service caps itself at REVIEW_RELOAD_TIMEOUT_SECONDS;
+        # this has to outlast that or the proxy cuts off a promotion that is
+        # still writing.
+        proxy_read_timeout ${REVIEW_READ_TIMEOUT};
+        proxy_send_timeout ${REVIEW_READ_TIMEOUT};
+    }
+}

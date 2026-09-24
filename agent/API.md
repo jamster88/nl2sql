@@ -24,6 +24,7 @@ the pipeline answering a GUI is the pipeline that was benchmarked.
 - [Endpoints](#endpoints)
 - [The answer](#the-answer)
 - [Progress events](#progress-events)
+- [Feedback](#feedback)
 - [Errors](#errors)
 - [Writing a client](#writing-a-client)
 - [Configuration](#configuration)
@@ -173,6 +174,8 @@ only in a browser; the server warns about it at startup.
 | `GET` | `/v1/questions/{job_id}` | yes | One question. `?wait=<seconds>` to block |
 | `GET` | `/v1/questions/{job_id}/events` | yes | Progress, as Server-Sent Events |
 | `DELETE` | `/v1/questions/{job_id}` | yes | Cancel a queued question, forget a finished one |
+| `POST` | `/v1/questions/{job_id}/feedback` | yes | Say whether the answer was right |
+| `DELETE` | `/v1/questions/{job_id}/feedback` | yes | Withdraw a verdict |
 
 `/healthz` and `/readyz` are separate because the failures want different
 responses: a wedged process should be restarted, a database that has not
@@ -280,6 +283,76 @@ data: { ...the whole finished job... }
 
 ---
 
+## Feedback
+
+A verdict on an answer, recorded in a staging database where it waits to be
+reviewed and possibly promoted into the golden question set the agent is
+measured against.
+
+```http
+POST /v1/questions/{job_id}/feedback
+Content-Type: application/json
+
+{"verdict": "no", "comment": "the fiscal month is off by one"}
+```
+
+```json
+{
+  "id": "1d9b162b-c3b8-4940-829f-cf4629542404",
+  "job_id": "a0be5c6bff6442bb9a4ff300eaa67fdc",
+  "verdict": "no",
+  "comment": "the fiscal month is off by one",
+  "state": "pending"
+}
+```
+
+`verdict` is the whole of the required input: `"yes"` or `"no"`. `comment` is
+optional free text for whoever reviews it.
+
+**The question, the SQL and the result shape are not sent.** They are taken
+from the job, which the server still has -- a vote happens while the answer
+is on screen. A client that supplied its own snapshot could supply one that
+never matched the job, and the staging table would then hold evidence of an
+answer this server never gave.
+
+They are taken *now* rather than looked up later because there is no later:
+a job is forgotten after `API_JOB_TTL_SECONDS`, and a verdict holding only a
+job id would be pointing at nothing within the hour. The SQL in particular is
+the entire reason a "yes" is worth keeping -- it is the candidate a golden
+question/SQL pair gets built from.
+
+Four rules are worth knowing:
+
+* **The job has to be finished.** `409 job_running` otherwise. There is
+  nothing to have an opinion about yet, and a snapshot of a half-finished run
+  is the one thing a golden pair must never be built from. A *failed* job can
+  be judged, and a "no" on one is among the most useful feedback there is.
+* **Voting again replaces the verdict**, until somebody has reviewed it.
+  After that the vote stands and the second one is refused with `409
+  already_reviewed` -- the earlier opinion was recorded and is still there.
+* **`DELETE` withdraws it**, on the same terms and for the same reason: a
+  verdict that cannot be taken back is a verdict people stop giving. It needs
+  no job to still exist, because the verdict outlives the job.
+* **`503 feedback_unavailable` when the server has no staging database.** The
+  routes still exist and still appear in the OpenAPI document, so a generated
+  client does not change shape depending on the server it met. `/v1/meta`
+  carries `feedback: true|false` so a GUI can decide whether to draw the
+  buttons at all.
+
+### What the server can do with it
+
+This process writes one row and can do nothing else with it. It connects as
+`nl2sql_feedback_writer`, a role that may insert a submission, replace one
+that is still pending, delete one that is still pending, and read back three
+of its columns. Rows a curator has accepted, rejected or promoted are
+invisible to it -- by a row-level security policy, so the guarantee does not
+rest on the SQL in this package being careful.
+
+Everything else -- reading the queue, editing a draft pair, writing the
+golden question document -- belongs to a separate service on a separate port
+with a separate token. See [`review/README.md`](../review/README.md).
+
+
 ## Errors
 
 One shape, whatever failed:
@@ -297,6 +370,8 @@ Branch on `code`; the message is for a person.
 | `not_found` | 404 | No such job. Finished jobs are kept `API_JOB_TTL_SECONDS` |
 | `job_running` | 409 | A question in flight cannot be interrupted |
 | `principal_not_allowed` | 400 | `principal` was sent to a server started without `API_ALLOW_PRINCIPAL` |
+| `already_reviewed` | 409 | A verdict has been acted on and no longer belongs to the voter |
+| `feedback_unavailable` | 503 | No staging database is configured (`API_FEEDBACK_DB_URL`) |
 | `unavailable` | 503 | The server is shutting down |
 
 A question the pipeline could not answer is **not** an HTTP error: the job
@@ -430,6 +505,16 @@ an unset variable through as an empty string, and empty is read as absent.
 | `API_TOKEN` | *(none)* | Require this bearer token on `/v1` |
 | `API_CORS_ORIGINS` | `*` | Browser origins allowed to call it |
 | `API_ALLOW_PRINCIPAL` | `false` | Let callers choose the database role rows are read as (`SET LOCAL ROLE`, for row-level security). Only with something authenticating them in front |
+
+### Feedback
+
+| Variable | Default | What |
+| --- | --- | --- |
+| `API_FEEDBACK_DB_URL` | *(none)* | The staging database a verdict is written to, as `nl2sql_feedback_writer`. Unset means the feedback routes answer `503` and everything else works |
+
+This is the only write credential this process holds, and the role it names
+can see nothing a curator has already judged. The review service creates that
+role and resets its grants on every start.
 
 ### Work
 

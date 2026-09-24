@@ -64,6 +64,19 @@ case "$1" in
             echo "${FAKE_GUI_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-gui* ]]; then
             echo "${FAKE_GUI_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-feedbackdb* ]]; then
+            echo "${FAKE_FEEDBACK_HEALTH:-healthy}"
+        # The review GUI's container name contains the review service's, so
+        # the longer name is matched first or every review-gui inspect would
+        # be answered as the service.
+        elif [[ "$*" == *nl2sql-review-gui* && "$*" == *Running* ]]; then
+            echo "${FAKE_REVIEW_GUI_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-review-gui* ]]; then
+            echo "${FAKE_REVIEW_GUI_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-review* && "$*" == *Running* ]]; then
+            echo "${FAKE_REVIEW_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-review* ]]; then
+            echo "${FAKE_REVIEW_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi

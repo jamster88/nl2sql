@@ -28,6 +28,9 @@ Either way the same containers come up:
 | `agent` | The v4 agent, run on demand per question |
 | `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
 | `nl2sql-gui` | The web interface, and the proxy in front of the API, with `--gui` |
+| `nl2sql-feedbackdb` | Verdicts from the web interface, waiting to be reviewed, with `--feedback` |
+| `nl2sql-review` | The service that turns reviewed feedback into golden questions, with `--review` |
+| `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 
 The agent and the GUI are published images (`v4_2`); the rest are built or
 pulled by `setup.sh` as well. [Pulling the images](#pulling-the-images) has
@@ -64,6 +67,15 @@ Or in a browser -- see [The web interface](#the-web-interface):
 ```bash
 ./launch.sh --gui          # without the browser step
 open http://localhost:8080
+```
+
+Or with the feedback system, which keeps the verdicts people give in the web
+interface and lets them be turned into golden questions -- see
+[Feedback](#feedback):
+
+```bash
+./launch.sh --review       # staging database, review service, review interface
+open http://localhost:8081
 ```
 
 Or as a REST server for something else to talk to, which is the same agent
@@ -366,6 +378,77 @@ For development against a running API:
 ./launch.sh --api
 cd gui && npm install && npm run dev      # http://localhost:5173
 ```
+
+## Feedback
+
+The web interface asks whether an answer was right. This is where those
+answers go.
+
+```bash
+./launch.sh --review
+open http://localhost:8081
+```
+
+Without it, a verdict stays in the browser and nothing is lost -- the buttons
+still work, the verdict is still shown, and `/v1/meta` tells the page not to
+claim it was sent anywhere. With it, a verdict is staged, reviewed, and
+possibly promoted into the golden question set.
+
+### Why bother
+
+The 45 golden pairs in
+[`context_questions/translated_questions.md`](context_questions/translated_questions.md)
+are the best-understood thing in this repository. The agent retrieves worked
+examples from them, the benchmark scores against them, and every question
+they *don't* cover is a gap that only shows up as an answer somebody
+disagrees with. A thumbs-down in the web interface is the cheapest possible
+report of such a gap; the work is turning it into a pair.
+
+### What happens to a verdict
+
+| | |
+|---|---|
+| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
+| **Staged** | In `nl2sql-feedbackdb`, its own Postgres, in its own volume. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
+| **Reviewed** | In a second web interface: what was asked, what the agent answered, what the user thought, and a form for building a golden pair out of it |
+| **Promoted** | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
+
+### The three fields nobody can guess
+
+A vote gives you a question and some SQL. A golden pair also needs
+`keywords`, a `reasoning_target` and a `result` -- which words someone would
+search for, where generated SQL typically goes wrong on this question, and
+what coming back looks like. Those are judgements about what the question
+*tests*, and the review form leaves them empty rather than guessing: a
+reviewer skimming a pre-filled form approves it, and the BM25 index fills up
+with keywords nobody chose.
+
+### Promotion writes a file you commit
+
+Not a row in a database. The golden set has one source of truth and it is the
+markdown document; the context store and both vector tables are built from
+it, and the loader **deletes rows whose pair is no longer in the document**.
+A pair written straight into the database is erased the next time anyone
+reloads.
+
+So a promotion appends to the tracked file, which means it shows up in
+`git diff`, reads like any other edit, and is committed by a person. Before
+writing anything, the rendered pair is parsed back with the loader's own
+parser and every field compared to what went in -- because that parser is one
+regular expression over the whole file, and a pair that does not match it is
+not reported as malformed, it is simply not seen.
+
+### Who can do what
+
+The internet-facing process can add a verdict and nothing else. It connects
+to the staging database as a role that cannot read a submission back, cannot
+change a review, and cannot see any row a curator has already judged -- by a
+row-level security policy, not by the SQL in the API being careful. The
+powers that matter belong to a separate service, on a separate port, behind a
+separate token.
+
+[`review/README.md`](review/README.md) has the whole of it.
+
 
 ## Connecting a GUI
 
@@ -737,8 +820,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1631 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 1942, including ones that build and run containers
+pytest                             # 1979 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 2368, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -748,14 +831,15 @@ pytest --run-docker --run-node     # all 1942, including ones that build and run
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
-| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 269-test suite run from here |
+| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 306-test suite run from here |
+| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 93-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 300 tests behind `--run-docker` are the ones that need a working daemon:
+The 366 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent and GUI images and run them, resolve the real compose
-file, and query the three live databases. The 11 behind `--run-node` need npm,
-and run the GUI's own suite. Two flags rather than one because the two needs
+file, and query the four live databases. The 23 behind `--run-node` need npm,
+and run the two GUIs' own suites. Two flags rather than one because the two needs
 are different -- a clone with Docker but no npm should still be able to run
 every container test, and a GUI developer with npm and no Docker daemon
 should still be able to run the interface's. Everything else runs offline in
@@ -764,7 +848,7 @@ binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
 without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 300 also need the **embedding host**: a local Ollama
+Twenty-eight of those 366 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -790,11 +874,11 @@ COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
 coverage combine && coverage report --show-missing --skip-covered
 ```
 
-**100% of every Python file in the repository** -- 5,586 statements, none
+**100% of every Python file in the repository** -- 6,617 statements, none
 missed. Not four packages with the scripts left out: the agent and its REST
-server, the benchmark, the RAG pipeline and its four loader scripts, the data
-generator and its CLI, the chunker, the architecture-diagram generator, and
-the build-time SQL emitter.
+server, the feedback review service, the benchmark, the RAG pipeline and its
+four loader scripts, the data generator and its CLI, the chunker, the
+architecture-diagram generator, and the build-time SQL emitter.
 
 Exactly one statement is excluded, and the reason is written beside it: a
 defensive `continue` in `facts.py` that is unreachable by construction,
@@ -825,19 +909,24 @@ way the golden pairs reach either store -- the base `SemanticChunker` that
 generator and both loaders. Those have tests now, against throwaway databases
 and stub embedders.
 
-The web interface is measured separately, because it is a different language
-with a different runner, and to the same standard:
+Both web interfaces are measured separately, because they are a different
+language with a different runner, and to the same standard:
 
 ```bash
-cd gui && npm test
+cd gui && npm test           # the web interface
+cd review/gui && npm test    # the review interface
 ```
 
-**100% of statements, branches, functions and lines** across 269 tests, with
+**100% of statements, branches, functions and lines** across 306 tests, with
 only `main.tsx` excluded -- it mounts React onto a DOM element that exists
 only in a browser, and a test pins the exclusion list so nothing else joins
-it. The thresholds are in [`gui/vitest.config.ts`](gui/vitest.config.ts) and
-fail the run rather than printing a number, and `pytest --run-node` runs the
-whole thing from the Python suite so it cannot go stale unnoticed.
+it. The review interface is held to the same thresholds and reaches them in
+93 tests: it decides what goes into the question set the agent is measured
+against, so a partially tested path there is a partially tested benchmark.
+
+The thresholds are in each project's `vitest.config.ts` and fail the run
+rather than printing a number, and `pytest --run-node` runs both suites from
+the Python one so neither can go stale unnoticed.
 
 Getting there deleted code in the same way. Four guards came out that no
 input could reach: a poll that re-checked a flag every caller had already
@@ -856,8 +945,8 @@ race.
 
 #### The parts a coverage report cannot see
 
-Twelve shell scripts, an nginx entrypoint fragment, two compose files, seven
-Dockerfiles and an nginx template, none of them Python. They are covered by
+Twelve shell scripts, two nginx entrypoint fragments, two compose files, nine
+Dockerfiles and two nginx templates, none of them Python. They are covered by
 reading and by running -- and, since nothing in coverage.py can see a shell
 script, by a measurement of their own:
 
@@ -872,9 +961,9 @@ script, by a measurement of their own:
   [`rag/`](rag) the same way; `docker/apitest/smoke.sh` against a real HTTPS
   server; `docker/init_db.sh` -- which otherwise runs only inside `docker
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
-  `gui/10-nl2sql-config.envsh` as the nginx entrypoint sources it. That tool
-  re-runs those suites with `bash -x` on and counts which commands the traces
-  mention -- **657 of 657**.
+  both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
+  That tool re-runs those suites with `bash -x` on and counts which commands
+  the traces mention -- **797 of 797**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -883,6 +972,17 @@ script, by a measurement of their own:
   shell, and in no list, so the measurement said 100% of eleven scripts while
   a twelfth had never been run by anything. The same check now covers the
   Dockerfiles and both compose files.
+
+  A second blind spot was in the counting rather than the inventory, and was
+  worse because the file was listed. The scanner counted quote characters to
+  decide whether a line continued, and an escaped `\"` -- one line of
+  `launch.sh` has one -- left it permanently inside a string, folding every
+  command after it into the one before. The result is a *shorter* list of
+  commands, all still reported as covered, so the report read `112 of 112,
+  100%` while a third of the script was never looked at. It is a real scanner
+  now, and the number went from 657 to 797 without a single new test: those
+  commands were always being run, just never counted. Two tests now assert
+  that no script is scanned only part way.
 
   It counts *commands*, not lines, because bash does not report lines
   individually and does not even report them consistently: a

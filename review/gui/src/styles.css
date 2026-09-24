@@ -1,0 +1,553 @@
+/*
+ * One stylesheet, written against roles rather than colours.
+ *
+ * The tokens are the web GUI's, deliberately: the two applications are
+ * different jobs for different people, but they are the same system, and a
+ * curator who moves between them should not feel they have changed product.
+ * The palette is defined once and redefined once for dark, so every rule
+ * below is correct in both without asking which is on.
+ */
+
+:root {
+  color-scheme: light;
+
+  --surface: #fcfcfb;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f4f3f0;
+  --border: #dedcd6;
+  --border-strong: #b9b6ad;
+
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #77756d;
+
+  --accent: #2a78d6;
+  --accent-contrast: #ffffff;
+  --good: #008300;
+  --bad: #c62a2a;
+  --warn: #9a6400;
+
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface: #1a1a19;
+    --surface-raised: #232322;
+    --surface-sunken: #131312;
+    --border: #383835;
+    --border-strong: #55544f;
+
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #96958c;
+
+    --accent: #5fa2ec;
+    --accent-contrast: #0b0b0b;
+    --good: #46c246;
+    --bad: #ef6f6f;
+    --warn: #dda022;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface: #1a1a19;
+  --surface-raised: #232322;
+  --surface-sunken: #131312;
+  --border: #383835;
+  --border-strong: #55544f;
+
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #96958c;
+
+  --accent: #5fa2ec;
+  --accent-contrast: #0b0b0b;
+  --good: #46c246;
+  --bad: #ef6f6f;
+  --warn: #dda022;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.mono,
+.code {
+  font-family: var(--mono);
+  font-size: 0.86rem;
+}
+
+/* --- frame ------------------------------------------------------------ */
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.masthead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+}
+
+.masthead-sub {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-left: 8px;
+}
+
+.reviewer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+.reviewer .input {
+  width: 180px;
+}
+
+.main {
+  flex: 1;
+  display: grid;
+  /* The queue is fixed and the detail takes the rest: the queue's job is to
+     be scanned, and a column that reflows as questions get longer cannot
+     be. */
+  grid-template-columns: minmax(260px, 340px) 1fr;
+  gap: 24px;
+  padding: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- queue ------------------------------------------------------------ */
+
+.queue {
+  position: sticky;
+  top: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.queue-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  padding: 4px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.chip-count {
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.queue-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: "verdict question" "verdict meta";
+  gap: 2px 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.queue-item[aria-current="true"] {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.queue-item .verdict {
+  grid-area: verdict;
+  align-self: start;
+}
+
+.queue-question {
+  grid-area: question;
+  font-size: 0.9rem;
+}
+
+.queue-meta {
+  grid-area: meta;
+  font-size: 0.78rem;
+}
+
+.queue-empty {
+  font-size: 0.88rem;
+}
+
+.verdict {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.verdict-yes {
+  background: color-mix(in srgb, var(--good) 16%, transparent);
+  color: var(--good);
+}
+
+.verdict-no {
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+  color: var(--bad);
+}
+
+/* --- detail ----------------------------------------------------------- */
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.detail-empty {
+  padding: 40px 0;
+  max-width: 46ch;
+}
+
+.original,
+.draft,
+.promoted {
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.original {
+  /* Sunken, because it is evidence rather than a place to work. */
+  background: var(--surface-sunken);
+}
+
+.original-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.82rem;
+}
+
+.original-question {
+  margin: 10px 0;
+  font-size: 1.02rem;
+}
+
+.original-comment {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface-raised);
+  font-size: 0.9rem;
+}
+
+.original-narrative {
+  margin: 10px 0;
+  font-size: 0.92rem;
+  color: var(--text-secondary);
+}
+
+.original-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  margin: 12px 0 0;
+  font-size: 0.84rem;
+}
+
+.original-facts div {
+  display: flex;
+  gap: 6px;
+}
+
+.original-facts dt {
+  color: var(--text-muted);
+}
+
+.original-facts dd {
+  margin: 0;
+}
+
+.original-note {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+}
+
+.code {
+  margin: 10px 0;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.original .code {
+  background: var(--surface-raised);
+}
+
+/* --- the form --------------------------------------------------------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 16px;
+}
+
+.field label {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.field-hint {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.required {
+  color: var(--bad);
+}
+
+/* The three fields a thumbs-up cannot carry. Marked, so a reviewer can see
+   at a glance what is actually being asked of them. */
+.badge-judgement {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+textarea.input {
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.input:disabled {
+  opacity: 0.6;
+}
+
+.preview h4 {
+  margin: 18px 0 0;
+  font-size: 0.9rem;
+}
+
+/* --- actions ---------------------------------------------------------- */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.button {
+  padding: 8px 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* The one button that writes the golden question set looks like it. */
+.button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.button-quiet {
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  background: transparent;
+}
+
+/* --- notices and results ---------------------------------------------- */
+
+.notice {
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  font-size: 0.88rem;
+}
+
+.notice p,
+.notice ul {
+  margin: 6px 0 0;
+}
+
+.notice ul {
+  padding-left: 20px;
+}
+
+.notice-error {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+}
+
+.notice-quiet {
+  background: var(--surface-sunken);
+}
+
+.promoted-complete {
+  border-color: var(--good);
+}
+
+.promoted-partial {
+  border-color: var(--warn);
+}
+
+.promoted-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.promoted-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.steps {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+}
+
+.step-ok strong {
+  color: var(--good);
+}
+
+.step-failed strong {
+  color: var(--bad);
+}
+
+.step-skipped strong {
+  color: var(--text-muted);
+}
+
+/* --- status bar ------------------------------------------------------- */
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 10px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+}
+
+.status-bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.status-warn {
+  color: var(--warn);
+}

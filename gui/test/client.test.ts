@@ -180,3 +180,58 @@ describe("createClient", () => {
     });
   });
 });
+
+describe("feedback", () => {
+  const receipt = { id: "sub-1", job_id: "job-1", verdict: "no", comment: "off by one", state: "pending" };
+
+  it("posts a verdict to the job it is about", async () => {
+    const { fetch, calls } = spyFetch(json(receipt));
+    const client = createClient({ fetch });
+
+    await expect(client.submitFeedback("job-1", "no", "off by one")).resolves.toEqual(receipt);
+
+    const [url, init] = calls[0]!;
+    expect(url).toBe("/v1/questions/job-1/feedback");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ verdict: "no", comment: "off by one" });
+  });
+
+  it("sends an empty comment rather than omitting the field", async () => {
+    // The server's model defaults it, but a client that omits a field it
+    // has a value for is a client whose payloads stop matching its types.
+    const { fetch, calls } = spyFetch(json(receipt));
+    await createClient({ fetch }).submitFeedback("job-1", "yes");
+    expect(JSON.parse(String(calls[0]![1].body))).toEqual({ verdict: "yes", comment: "" });
+  });
+
+  it("escapes a job id on its way into the path", async () => {
+    const { fetch, calls } = spyFetch(json(receipt));
+    await createClient({ fetch }).submitFeedback("a/b", "yes");
+    expect(calls[0]![0]).toBe("/v1/questions/a%2Fb/feedback");
+  });
+
+  it("carries the token when one is configured", async () => {
+    const { fetch, calls } = spyFetch(json(receipt));
+    await createClient({ fetch, token: "t0ken" }).submitFeedback("job-1", "yes");
+    expect((calls[0]![1].headers as Record<string, string>)["Authorization"]).toBe("Bearer t0ken");
+  });
+
+  it("withdraws a verdict", async () => {
+    const { fetch, calls } = spyFetch(new Response(null, { status: 204 }));
+    await expect(createClient({ fetch }).withdrawFeedback("job-1")).resolves.toBeUndefined();
+
+    const [url, init] = calls[0]!;
+    expect(url).toBe("/v1/questions/job-1/feedback");
+    expect(init.method).toBe("DELETE");
+  });
+
+  it("unwraps the error envelope when the server refuses", async () => {
+    const { fetch } = spyFetch(
+      json({ error: { code: "already_reviewed", message: "已 reviewed" } }, 409),
+    );
+    await expect(createClient({ fetch }).submitFeedback("job-1", "yes")).rejects.toMatchObject({
+      code: "already_reviewed",
+      status: 409,
+    });
+  });
+});

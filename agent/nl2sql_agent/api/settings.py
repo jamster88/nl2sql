@@ -108,6 +108,17 @@ class ApiSettings:
     # that drop idle connections see traffic.
     keepalive_seconds: float = 15.0
 
+    # --- Feedback --------------------------------------------------------
+    # The staging database a verdict is written to, as the INSERT-only
+    # `nl2sql_feedback_writer` role. Unset means the feedback routes answer
+    # 503 with a reason -- they still exist, so a generated client does not
+    # change shape depending on whether the server it met had feedback on.
+    #
+    # This is the only write credential this process holds, and the role it
+    # names can see nothing a curator has already judged. See
+    # `nl2sql_review.store.ensure_writer_role` for what fences it.
+    feedback_db_url: str | None = None
+
     # --- Presentation ----------------------------------------------------
     docs_enabled: bool = True
     log_level: str = "info"
@@ -138,6 +149,7 @@ class ApiSettings:
             max_wait_seconds=_env_float("API_MAX_WAIT_SECONDS", 900.0),
             event_stream_timeout_seconds=_env_float("API_EVENT_STREAM_TIMEOUT_SECONDS", 300.0),
             keepalive_seconds=_env_float("API_KEEPALIVE_SECONDS", 15.0),
+            feedback_db_url=_env("API_FEEDBACK_DB_URL"),
             docs_enabled=_env_bool("API_DOCS_ENABLED", True),
             log_level=_env_str("API_LOG_LEVEL", "info"),
             source="environment",
@@ -179,6 +191,11 @@ class ApiSettings:
             notes.append(
                 "API_CORS_ORIGINS is '*' while a token is required; browsers refuse "
                 "to send credentials to a wildcard origin. List the GUI's origin."
+            )
+        if self.feedback_db_url and not self.token:
+            notes.append(
+                "API_FEEDBACK_DB_URL is set while no API_TOKEN is, so anyone who can "
+                "reach the port can write rows into the feedback staging database."
             )
         if self.allow_principal:
             notes.append(

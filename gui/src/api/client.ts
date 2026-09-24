@@ -8,7 +8,17 @@
  * has to unwrap that at each call site eventually forgets to somewhere.
  */
 
-import type { ApiErrorBody, AskRequest, Job, JobList, Meta, Readiness } from "./types";
+import type {
+  ApiErrorBody,
+  AskRequest,
+  FeedbackModel,
+  FeedbackRequest,
+  Job,
+  JobList,
+  Meta,
+  Readiness,
+  Verdict,
+} from "./types";
 
 /**
  * A failure the server described.
@@ -68,6 +78,15 @@ export interface Client {
   job(id: string, options?: { wait?: number; signal?: AbortSignal }): Promise<Job>;
   jobs(limit?: number, signal?: AbortSignal): Promise<JobList>;
   cancel(id: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Record a verdict on an answer.
+   *
+   * The job id is the whole address: what the answer *was* is read from the
+   * job by the server, so this call carries an opinion and nothing else.
+   */
+  submitFeedback(id: string, verdict: Verdict, comment?: string, signal?: AbortSignal): Promise<FeedbackModel>;
+  /** Take a verdict back, for the misclick. */
+  withdrawFeedback(id: string, signal?: AbortSignal): Promise<void>;
   /** The URL an `EventSource` should open for this job's progress. */
   eventsUrl(job: Job): string;
 }
@@ -153,6 +172,23 @@ export function createClient(options: ClientOptions = {}): Client {
 
     cancel: (id, signal) =>
       request<void>(`/v1/questions/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: headers(),
+        signal: signal ?? null,
+      }),
+
+    submitFeedback(id, verdict, comment = "", signal) {
+      const payload: FeedbackRequest = { verdict, comment };
+      return request<FeedbackModel>(`/v1/questions/${encodeURIComponent(id)}/feedback`, {
+        method: "POST",
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify(payload),
+        signal: signal ?? null,
+      });
+    },
+
+    withdrawFeedback: (id, signal) =>
+      request<void>(`/v1/questions/${encodeURIComponent(id)}/feedback`, {
         method: "DELETE",
         headers: headers(),
         signal: signal ?? null,

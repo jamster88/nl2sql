@@ -233,6 +233,15 @@ fi
     echo "CONTEXT_IMAGE_NAME=$CONTEXT_IMAGE"
     echo "CONTEXT_IMAGE_TAG=$CONTEXT_TAG"
     echo "RAG_ENABLED=$([[ $WITH_RAG -eq 1 ]] && echo true || echo false)"
+    # Where the API writes a verdict from the web interface. Written
+    # unconditionally, and harmless when the feedback profile is not up: the
+    # API reports feedback as unavailable, /v1/meta says so, and the web
+    # interface keeps verdicts in the browser exactly as it did before.
+    #
+    # The role named here is INSERT-only on one table and cannot read a
+    # submission back. The review service creates it, and resets its grants,
+    # on every start -- see review/nl2sql_review/store.py.
+    echo "API_FEEDBACK_DB_URL=postgresql://nl2sql_feedback_writer:\${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}@nl2sql-feedbackdb:5432/\${FEEDBACK_DB_NAME:-nl2sql_feedback}"
     if [[ -n "$OLLAMA_URL" ]]; then echo "OLLAMA_BASE_URL=$OLLAMA_URL"; fi
     if [[ -n "$OLLAMA_MODEL" ]]; then echo "OLLAMA_MODEL=$OLLAMA_MODEL"; fi
     if [[ -n "$EMBED_URL" ]]; then echo "EMBED_BASE_URL=$EMBED_URL"; fi

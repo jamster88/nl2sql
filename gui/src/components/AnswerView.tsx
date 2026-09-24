@@ -123,7 +123,11 @@ export function AnswerView({ job, store, pipeline }: AnswerViewProps) {
       <FeedbackBar
         verdict={feedback.verdict}
         onVote={feedback.vote}
+        onComment={feedback.comment}
+        onRetry={feedback.retry}
         recordedAt={feedback.record?.at}
+        sync={feedback.sync}
+        error={feedback.error}
       />
     </article>
   );

@@ -1,0 +1,67 @@
+#!/bin/sh
+# The two decisions nginx cannot make for itself, made before its templates
+# are substituted.
+#
+# Sourced rather than executed -- hence `.envsh`, which the nginx image's
+# entrypoint treats differently -- because the first of the two exports a
+# variable the envsubst step after it has to see.
+
+set -eu
+
+# 1. The Authorization header.
+#
+#    The point of the indirection is the empty case: nginx drops a header
+#    whose value is the empty string, so a deployment with no token sends no
+#    Authorization header at all rather than "Bearer " with nothing after it.
+#
+#    This token can rewrite the golden question set, which is why it is set
+#    here and never reaches the browser.
+if [ -n "${REVIEW_TOKEN:-}" ]; then
+    export REVIEW_AUTH_HEADER="Bearer ${REVIEW_TOKEN}"
+else
+    export REVIEW_AUTH_HEADER=""
+fi
+
+# 2. Whether there is a certificate to verify.
+#
+#    `proxy_ssl_trusted_certificate` is read while nginx parses its config,
+#    so naming a file that is not there stops the container from starting,
+#    with a BIO error that says nothing about why. That is the right outcome
+#    for an HTTPS upstream; the message is just worth replacing with one
+#    that says what to do.
+#
+#    It is the wrong outcome behind REVIEW_TLS_ENABLED=false, where the
+#    service serves plain HTTP and there is no certificate anywhere.
+#
+#    The destination is overridable only so this script can be run against a
+#    temporary directory by the test suite. Nothing sets it in the image.
+tls_conf="${NGINX_REVIEW_UPSTREAM_TLS_CONF:-/etc/nginx/nl2sql-review-upstream-tls.conf}"
+
+case "${REVIEW_UPSTREAM}" in
+    https://*)
+        if [ ! -r "${REVIEW_CACERT}" ]; then
+            echo "nl2sql-review-gui: REVIEW_UPSTREAM is ${REVIEW_UPSTREAM} but there is no" >&2
+            echo "  readable certificate at REVIEW_CACERT=${REVIEW_CACERT} to verify it." >&2
+            echo "  The review service presents the certificate the agent API generates," >&2
+            echo "  so this usually means the API has not started yet, or the apitls" >&2
+            echo "  volume is not mounted here." >&2
+            exit 1
+        fi
+        cat > "$tls_conf" <<TLSEOF
+# Written by 10-nl2sql-review-config.envsh because REVIEW_UPSTREAM is HTTPS.
+proxy_ssl_verify on;
+proxy_ssl_verify_depth 3;
+proxy_ssl_trusted_certificate ${REVIEW_CACERT};
+proxy_ssl_server_name on;
+proxy_ssl_name ${REVIEW_SSL_NAME};
+TLSEOF
+        ;;
+    *)
+        cat > "$tls_conf" <<TLSEOF
+# Written by 10-nl2sql-review-config.envsh. REVIEW_UPSTREAM is
+# ${REVIEW_UPSTREAM} -- plain HTTP, so there is no certificate to verify.
+# Everything the reviewer's browser sends, including their edits to the
+# golden question set, crosses in clear text.
+TLSEOF
+        ;;
+esac

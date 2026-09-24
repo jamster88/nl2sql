@@ -109,6 +109,7 @@ export function makeMeta(overrides: Partial<Meta> = {}): Meta {
     },
     tls: { enabled: true, self_signed: true },
     authentication: "none",
+    feedback: true,
     ...overrides,
   };
 }
@@ -123,6 +124,10 @@ export function fakeClient(overrides: Partial<Client> = {}): Client {
     job: vi.fn().mockResolvedValue(job),
     jobs: vi.fn().mockResolvedValue({ jobs: [job], count: 1 }),
     cancel: vi.fn().mockResolvedValue(undefined),
+    submitFeedback: vi
+      .fn()
+      .mockResolvedValue({ id: "sub-1", job_id: job.id, verdict: "yes", comment: "", state: "pending" }),
+    withdrawFeedback: vi.fn().mockResolvedValue(undefined),
     eventsUrl: vi.fn((target) => target.links.events),
     ...overrides,
   };

@@ -18,8 +18,16 @@ data_gen/index_descriptions.md
 context_questions/RAW/
 context_questions/example_question_table_translation.txt
 
-# The GUI's build inputs and outputs. package-lock.json is committed; what
+# The GUIs' build inputs and outputs. package-lock.json is committed; what
 # it installs is not.
 gui/node_modules/
 gui/dist/
 gui/coverage/
+review/gui/node_modules/
+review/gui/dist/
+review/gui/coverage/
+
+# The copy the review service keeps beside the golden question document
+# before it replaces it. Useful when a promotion turns out to be wrong;
+# never something to commit.
+context_questions/*.md.bak

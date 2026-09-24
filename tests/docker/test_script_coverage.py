@@ -54,6 +54,11 @@ RAG_LIB = "rag/lib.sh"
 #: things and refuses to start over one of them.
 GUI_ENVSH = "gui/10-nl2sql-config.envsh"
 
+#: The review interface's equivalent. The same two decisions, and the token
+#: it turns into a header is the one that can rewrite the golden question
+#: set. Driven in tests/review/test_review_project.py.
+REVIEW_GUI_ENVSH = "review/gui/10-nl2sql-review-config.envsh"
+
 SMOKE = "docker/apitest/smoke.sh"
 
 #: Runs once, inside `docker build`, to bake a populated cluster into the
@@ -66,15 +71,15 @@ INIT_DB = "docker/init_db.sh"
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, INIT_DB)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, INIT_DB)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
-#: sandbox is in tests/rag/, and the GUI's start-up script is driven from
-#: tests/gui/.
+#: sandbox is in tests/rag/, the GUI's start-up script is driven from
+#: tests/gui/, and the review interface's from tests/review/.
 TEST_FILES = [
     path
-    for directory in ("docker", "api", "rag", "gui")
+    for directory in ("docker", "api", "rag", "gui", "review")
     for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
 ]
 TEST_SOURCES = "".join(path.read_text() for path in TEST_FILES)
@@ -504,6 +509,8 @@ DOCKERFILES = {
     "agent/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "docker/apitest/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "gui/Dockerfile": ("tests/gui/test_gui_project.py",),
+    "review/Dockerfile": ("tests/review/test_review_image.py",),
+    "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/seeded.Dockerfile": ("tests/rag/test_rag_images.py",),
@@ -515,6 +522,7 @@ COMPOSE_FILES = {
         "tests/docker/test_compose_config.py",
         "tests/docker/test_api_compose.py",
         "tests/docker/test_gui_compose.py",
+        "tests/review/test_review_compose.py",
     ),
     "rag/docker-compose.yml": ("tests/rag/test_rag_images.py",),
 }

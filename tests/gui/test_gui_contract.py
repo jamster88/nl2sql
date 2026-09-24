@@ -47,6 +47,8 @@ MIRRORED = {
     "Check": models.Check,
     "Readiness": models.Readiness,
     "AskRequest": models.AskRequest,
+    "FeedbackRequest": models.FeedbackRequest,
+    "FeedbackModel": models.FeedbackModel,
 }
 
 

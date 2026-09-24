@@ -1,0 +1,105 @@
+# The GUI's own server, and the hop that makes a browser's life simple.
+#
+# Three problems stand between a browser and this API, and none of them is
+# about the application:
+#
+#   1. The development certificate is self-signed. A browser blocks every
+#      request behind a warning -- and `EventSource` gives no warning to
+#      click, it simply never connects, so progress silently stops working.
+#   2. The API token would have to be shipped to the browser to be sent from
+#      it, which puts it in a bookmark, a screenshot and a support ticket.
+#   3. Two origins means CORS, pre-flight requests, and a wildcard that
+#      browsers refuse to send credentials to.
+#
+# One hop removes all three: the browser talks same-origin to this server,
+# and this server talks TLS to the API with a certificate it verifies and a
+# token it holds. It is the "intermediary service" the API documentation
+# recommends, and `vite.config.ts` is the same three rules for `npm run dev`.
+
+server {
+    listen ${GUI_PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Compressing the built bundle is most of the transfer saved. It is off
+    # for the API below, where it would buffer the event stream.
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # The hashed asset names are content addresses, so they can be cached
+    # forever; index.html never can, or a deploy is invisible until the
+    # browser decides otherwise.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    # One page, so any path that is not a file is still the page.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # --- the API ---------------------------------------------------------
+
+    location ~ ^/(v1|healthz|readyz|openapi\.json) {
+        # Resolved per request rather than once at start-up.
+        #
+        # nginx resolves a literal upstream while it parses its config and
+        # then caches the address for the life of the process. That has two
+        # consequences here, both bad: it refuses to start at all when the
+        # API is not up yet, so a GUI cannot come up first and wait; and it
+        # keeps talking to the old address after the API is restarted onto a
+        # new one, which shows up as a GUI that was working and now is not.
+        #
+        # Putting the upstream in a variable defers the lookup to request
+        # time. It costs the URI rewriting that a literal `proxy_pass` does,
+        # hence $request_uri, and it needs somewhere to ask -- Docker's
+        # embedded DNS server, on any network compose creates.
+        resolver ${GUI_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${API_UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Empty when no token is configured, and nginx omits a header whose
+        # value is empty -- so the unauthenticated deployment sends nothing
+        # rather than sending the word "Bearer" on its own.
+        proxy_set_header Authorization "${API_AUTH_HEADER}";
+        # Browsers send this on their own when an EventSource reconnects; it
+        # is how the server knows to resume rather than replay.
+        proxy_set_header Last-Event-ID $http_last_event_id;
+        proxy_set_header Connection "";
+
+        # The certificate is verified rather than skipped. This hop crosses a
+        # container network, and a proxy that trusts anything at the far end
+        # is a proxy that will one day trust something else.
+        #
+        # Included rather than written here because the directives are wrong
+        # when API_UPSTREAM is plain HTTP and there is no certificate to name
+        # -- see 10-nl2sql-config.envsh, which writes this file at start-up.
+        include /etc/nginx/nl2sql-upstream-tls.conf;
+
+        # Server-Sent Events. Without these three the progress stream is
+        # buffered until the answer is finished, which is the one thing the
+        # stream exists to avoid -- and it fails silently, as a spinner that
+        # never moves.
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+
+        # A question takes about a minute, and `?wait=` can hold a connection
+        # for the server's API_MAX_WAIT_SECONDS. The read timeout has to
+        # outlast both or the proxy cuts the answer off.
+        proxy_read_timeout ${API_READ_TIMEOUT};
+        proxy_send_timeout ${API_READ_TIMEOUT};
+    }
+}

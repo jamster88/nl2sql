@@ -214,6 +214,49 @@ def test_no_rag_skips_the_embedding_model_check(run_setup):
 
 
 # ---------------------------------------------------------------------------
+# Postgres image: pull or build
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_run_pulls_the_dataset_rather_than_regenerating_it(run_setup):
+    result = run_setup()
+    assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
+    assert not result.called("compose build postgres")
+
+
+def test_build_regenerates_the_dataset_locally_instead_of_pulling(run_setup):
+    """The slow path, and the only one that does not need the registry. It
+    had never been run by a test: the flag was named in the list of things
+    `--help` should mention, which read as coverage without being any.
+    """
+    result = run_setup("--build")
+    assert result.returncode == 0
+    assert result.called("compose build postgres")
+    assert not result.called("pull mcfaddja/nl2sql-retail-postgres")
+    assert "regenerates the dataset" in result.output
+
+
+def test_a_locally_built_image_is_what_compose_is_pinned_to(run_setup):
+    """Building and then writing the published image into .env would start
+    the pulled dataset and quietly discard what was just generated.
+    """
+    result = run_setup("--build")
+    env = result.env_file()
+    assert env["IMAGE_NAME"] == "nl2sql-retail-postgres"
+    assert env["IMAGE_TAG"] == "latest"
+
+
+def test_building_postgres_leaves_the_agent_image_alone(run_setup):
+    """Two independent decisions: --build is about the dataset, --build-agent
+    about the agent. Conflating them is a twenty-minute rebuild nobody asked
+    for.
+    """
+    result = run_setup("--build")
+    assert result.called("pull mcfaddja/nl2sql-agent")
+    assert not result.called("compose build agent")
+
+
+# ---------------------------------------------------------------------------
 # Agent image: pull, build, and fallback
 # ---------------------------------------------------------------------------
 
@@ -233,6 +276,52 @@ def test_a_failed_agent_pull_falls_back_to_building_from_source(run_setup):
     assert "from source instead" in result.output
     assert "which needs no registry access" in result.output
     assert result.called("compose build agent")
+
+
+# ---------------------------------------------------------------------------
+# GUI image: opt-in, pinned only when asked for
+# ---------------------------------------------------------------------------
+
+
+def test_the_gui_image_is_not_pulled_unless_it_is_asked_for(run_setup):
+    """Most people ask questions from a terminal. An image for a container
+    that is never started is a download nobody asked for.
+    """
+    result = run_setup()
+    assert not result.called("pull mcfaddja/nl2sql-gui")
+    assert "GUI_IMAGE_NAME" not in result.env_file()
+
+
+def test_the_gui_flag_pulls_and_pins_it(run_setup):
+    """Pinning is what makes the published image the one that runs: compose
+    builds a service with a `build:` section whenever its image is missing.
+    """
+    result = run_setup("--gui")
+    assert result.called("pull mcfaddja/nl2sql-gui:v4_2")
+    assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
+    assert result.env_file()["GUI_IMAGE_TAG"] == "v4_2"
+
+
+def test_naming_a_gui_image_or_tag_implies_the_flag(run_setup):
+    """Asking for a particular GUI image and then not getting one would be a
+    silent no-op, which is the worst kind of flag.
+    """
+    result = run_setup("--gui-tag", "v9_9")
+    assert result.called("pull mcfaddja/nl2sql-gui:v9_9")
+    assert result.env_file()["GUI_IMAGE_TAG"] == "v9_9"
+
+    result = run_setup("--gui-image", "example.com/other-gui")
+    assert result.called("pull example.com/other-gui:v4_2")
+    assert result.env_file()["GUI_IMAGE_NAME"] == "example.com/other-gui"
+
+
+def test_a_failed_gui_pull_is_not_fatal(run_setup):
+    """There is a Dockerfile right here, so a registry nobody can reach costs
+    a build rather than the whole setup.
+    """
+    result = run_setup("--gui", env={"FAKE_FAIL_PULL": "nl2sql-gui"})
+    assert result.returncode == 0
+    assert "will build it from source instead" in result.output
 
 
 def test_a_failed_vector_pull_is_fatal_with_actionable_guidance(run_setup):

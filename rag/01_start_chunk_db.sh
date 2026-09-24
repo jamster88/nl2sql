@@ -14,10 +14,10 @@ while [[ $# -gt 0 ]]; do
         -i|--image) PULL_IMAGE="$2"; shift 2 ;;
         -h|--help)
             cat <<'EOF'
-Usage: ./01_start_chunk_db.sh [--image REPO:TAG]
+Usage: ./01_start_chunk_db.sh [-i|--image REPO:TAG]
 
-  --image REPO:TAG   Pull a published chunk-store image instead of building
-                     locally (its data comes with it).
+  -i, --image REPO:TAG   Pull a published chunk-store image instead of
+                     building locally (its data comes with it).
 EOF
             exit 0 ;;
         *) die "unknown option: $1" ;;

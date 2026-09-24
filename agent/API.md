@@ -308,6 +308,11 @@ show the SQL it tried and the attempts it made.
 
 Nothing below imports anything from this repository.
 
+[`gui/`](../gui) is a complete one -- React and TypeScript, every endpoint
+here, the event stream with its resume and its fallback, and the whole answer
+rendered including the charts. It is worth reading before writing another:
+the snippets below are the shape, and it is the shape at full size.
+
 ### TypeScript / React
 
 ```ts
@@ -375,11 +380,19 @@ Nothing here assumes it -- CORS and the query-string token exist so a browser
 can call the API directly when that is simpler -- but the stream is plain SSE
 and relays without translation.
 
+[`gui/nginx.conf.template`](../gui/nginx.conf.template) is that service, at
+its smallest: thirty lines of nginx that verify this server's certificate,
+add the token, and pass the event stream through unbuffered. The three
+settings that keep it unbuffered are the ones worth copying --
+`proxy_buffering off`, `proxy_cache off` and `gzip off` -- because without
+any one of them the stream is held until the answer is finished, and it
+fails as a spinner that never moves rather than as an error.
+
 ### curl
 
 Every request this API serves is demonstrated in
 [`docker/apitest/smoke.sh`](../docker/apitest/smoke.sh), which is curl and
-nothing else. It is the shortest complete reference.
+nothing else. It is the shortest complete reference; `gui/` is the longest.
 
 ---
 

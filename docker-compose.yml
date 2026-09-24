@@ -249,6 +249,54 @@ services:
       start_period: 20s
     profiles: ["api"]
 
+  # The web interface: a React/TypeScript single page, built to static files
+  # and served by nginx, which also proxies the API.
+  #
+  # The proxy is the reason this is one container rather than two. A browser
+  # pointed straight at the API meets a self-signed certificate it will not
+  # accept, a token it should not be holding, and a second origin that turns
+  # every request into a CORS negotiation. One same-origin hop removes all
+  # three -- and none of it is a requirement of the API, which answers a
+  # browser directly when API_CORS_ORIGINS names it. See gui/nginx.conf.template.
+  gui:
+    build:
+      context: .
+      dockerfile: gui/Dockerfile
+    # Both, like the agent service. `setup.sh --gui` pulls the published
+    # image and pins these two; without the pin, compose builds it here on
+    # first start, which needs no registry and takes a couple of minutes.
+    image: ${GUI_IMAGE_NAME:-nl2sql-gui}:${GUI_IMAGE_TAG:-latest}
+    container_name: nl2sql-gui
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      GUI_PORT: ${GUI_PORT:-8080}
+      # nl2sql-api rather than api: both resolve on this network, but the
+      # API's generated certificate is issued for that name, and
+      # proxy_ssl_name below has to match something it covers.
+      API_UPSTREAM: ${GUI_API_UPSTREAM:-https://nl2sql-api:8443}
+      API_SSL_NAME: ${GUI_API_SSL_NAME:-nl2sql-api}
+      API_CACERT: ${GUI_API_CACERT:-/etc/nl2sql/tls/server.crt}
+      # Longer than a question takes, and longer than API_MAX_WAIT_SECONDS
+      # can hold a connection, or the proxy cuts the answer off.
+      API_READ_TIMEOUT: ${GUI_API_READ_TIMEOUT:-600s}
+      # Docker's embedded DNS. The proxy resolves the API per request so it
+      # survives the API being restarted onto a new address.
+      GUI_RESOLVER: ${GUI_RESOLVER:-127.0.0.11}
+      # Held here so the browser never sees it. The GUI sends no token of
+      # its own; this is the only place one is added.
+      API_TOKEN: ${API_TOKEN:-}
+    ports:
+      - "${GUI_PORT:-8080}:${GUI_PORT:-8080}"
+    volumes:
+      # Read-only, and only the certificate is read: the proxy verifies the
+      # API rather than skipping verification, which is the difference
+      # between TLS and a TLS-shaped URL.
+      - apitls:/etc/nl2sql/tls:ro
+    profiles: ["gui"]
+
   # An outside client. Nothing of this project is installed in it -- it is a
   # curl image on the same network, which is the point: if the API can only
   # be driven by something that imports nl2sql_agent, it is not an API.

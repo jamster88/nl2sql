@@ -16,6 +16,7 @@ without a test for it.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -23,19 +24,138 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+#: The two commands almost everyone runs. Both carry a `usage()` function.
 SCRIPTS = ("setup.sh", "launch.sh")
-SMOKE = "docker/apitest/smoke.sh"
-#: The API's smoke script is driven from tests/api/, against a real server
-#: rather than a fake Docker, so its assertions live there.
-TEST_SOURCES = "".join(
-    path.read_text()
-    for directory in ("docker", "api")
-    for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
+
+#: The RAG pipeline's own scripts -- the only way the knowledge base is built
+#: and published. Same shape of risk as the two above (flags, guard clauses
+#: and warnings, none of it Python), so they are held to the same rules;
+#: their sandbox is in tests/rag/test_rag_scripts.py.
+RAG_SCRIPTS = (
+    "rag/run_all.sh",
+    "rag/run_update.sh",
+    "rag/start_rag_db.sh",
+    "rag/01_start_chunk_db.sh",
+    "rag/03_start_vector_db.sh",
+    "rag/publish_db_image.sh",
 )
+
+#: Sourced rather than executed, so it takes no flags -- but it holds the
+#: helpers every script above dies through.
+RAG_LIB = "rag/lib.sh"
+
+#: Sourced by the nginx image's entrypoint. No flags, but it decides two
+#: things and refuses to start over one of them.
+GUI_ENVSH = "gui/10-nl2sql-config.envsh"
+
+SMOKE = "docker/apitest/smoke.sh"
+
+#: Everything that parses a flag or prints a message a user reads.
+COMMANDS = SCRIPTS + RAG_SCRIPTS
+
+#: Everything written in shell, whatever its shape.
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH)
+
+#: The API's smoke script is driven from tests/api/, against a real server
+#: rather than a fake Docker, so its assertions live there; the RAG scripts'
+#: sandbox is in tests/rag/, and the GUI's start-up script is driven from
+#: tests/gui/.
+TEST_FILES = [
+    path
+    for directory in ("docker", "api", "rag", "gui")
+    for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
+]
+TEST_SOURCES = "".join(path.read_text() for path in TEST_FILES)
+
+
+def _flags_actually_passed() -> set[str]:
+    """Flags handed to a script by a test, as opposed to merely named in one.
+
+    Read from the syntax tree rather than by searching the text, because
+    searching cannot tell a flag that was *run* from one listed in an
+    assertion about the help output -- and that distinction is the whole
+    point. It hid the fact that `setup.sh --build` had never once been
+    executed: the name appeared in a list of flags `--help` should mention,
+    which a substring search counted as coverage.
+    """
+    passed: set[str] = set()
+    for path in TEST_FILES:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = node.func.id if isinstance(node.func, ast.Name) else ""
+            if not name.startswith("run_"):
+                continue
+            for argument in node.args:
+                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                    passed.add(argument.value)
+    return passed
 
 
 def _source(name: str) -> str:
     return (REPO_ROOT / name).read_text()
+
+
+def _help_text(source: str) -> str:
+    """Whatever this script shows when asked what it takes.
+
+    Three shapes are in use and all three count as documentation: a `usage()`
+    function, a heredoc inside the `--help` case, and the header comment read
+    back out with `sed`. The last one is worth resolving rather than skipping
+    -- it means the line range in that `sed` is checked against the flags the
+    script actually parses.
+    """
+    if "usage() {" in source:
+        return source.split("usage() {")[1].split("EOF\n}")[0]
+
+    lines = source.splitlines()
+    text = "".join(re.findall(r"-h\|--help\)(.*?);;", source, re.DOTALL))
+    selected = re.search(r"sed -n '(\d+),(\d+)p'", text)
+    if selected:
+        # The help *is* those lines. Returning the case body as well would
+        # offer sed's own `-n` as a flag of the script's.
+        start, end = int(selected.group(1)), int(selected.group(2))
+        return "\n".join(lines[start - 1 : end])
+    if text.strip():
+        return text
+
+    # No --help at all: the header comment is the documentation.
+    header = []
+    for line in lines[1:]:
+        if not line.startswith("#"):
+            break
+        header.append(line)
+    return "\n".join(header)
+
+
+def _parsed_flags(name: str) -> set[str]:
+    """Every flag this script accepts, including ones it only forwards.
+
+    `start_rag_db.sh` documents `--image` and parses nothing: it passes `"$@"`
+    straight to `03_start_vector_db.sh`. Resolving that is better than
+    exempting it, because it means the delegate dropping the flag shows up
+    here as the wrapper documenting something that no longer exists.
+    """
+    source = _source(name)
+    flags = {
+        flag
+        for group in re.findall(r"^\s*(-[-\w|]+)\)", source, re.MULTILINE)
+        for flag in group.split("|")
+    }
+    for delegate in re.findall(r'\$RAG_DIR/(\S+\.sh)" "\$@"', source):
+        flags |= _parsed_flags(f"rag/{delegate}")
+    return flags
+
+
+def _documented_flags(help_text: str) -> set[str]:
+    """Flags named in a help text, however it is punctuated.
+
+    `[--no-push]` and `--image REPO:TAG` both count; the lookbehind is what
+    keeps a bracket or a bar from hiding one.
+    """
+    return set(re.findall(r"(?<![\w-])(--?[a-z][-a-z]*)", help_text))
 
 
 def _messages(source: str, function: str) -> list[str]:
@@ -74,44 +194,38 @@ def _asserted(message: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", COMMANDS)
 def test_every_flag_the_usage_text_offers_is_actually_parsed(script: str):
     """A documented flag that falls through to the unknown-option branch is
     worse than an undocumented one: the user is told to use it and then told
     it does not exist.
     """
-    source = _source(script)
-    usage = source.split("usage() {")[1].split("EOF\n}")[0]
-    parsed = set(re.findall(r"^\s*(-[-\w|]+)\)", source, re.MULTILINE))
-    parsed = {flag for group in parsed for flag in group.split("|")}
-    for flag in sorted(set(re.findall(r"\s(--?[a-z][-a-z]*)", usage))):
+    parsed = _parsed_flags(script)
+    for flag in sorted(_documented_flags(_help_text(_source(script)))):
         assert flag in parsed, f"{script} documents {flag} but never parses it"
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", COMMANDS)
 def test_every_parsed_flag_appears_in_the_usage_text(script: str):
-    source = _source(script)
-    usage = source.split("usage() {")[1].split("EOF\n}")[0]
-    parsed = set(re.findall(r"^\s*(-[-\w|]+)\)", source, re.MULTILINE))
-    for group in sorted(parsed):
-        for flag in group.split("|"):
-            if flag in ("-h", "--help", "*"):
-                continue
-            assert flag in usage, f"{script} parses {flag} but never documents it"
+    documented = _documented_flags(_help_text(_source(script)))
+    for flag in sorted(_parsed_flags(script)):
+        if flag in ("-h", "--help", "*"):
+            continue
+        assert flag in documented, f"{script} parses {flag} but never documents it"
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", COMMANDS)
 def test_every_flag_is_exercised_by_a_test(script: str):
     """The point of the sandbox is that a flag can be run for real against
     fake Docker. One nothing runs has never been executed at all.
     """
+    exercised = _flags_actually_passed()
     source = _source(script)
-    parsed = set(re.findall(r"^\s*(-[-\w|]+)\)", source, re.MULTILINE))
-    for group in sorted(parsed):
+    for group in sorted(re.findall(r"^\s*(-[-\w|]+)\)", source, re.MULTILINE)):
         flags = group.split("|")
         if "*" in flags:
             continue
-        assert any(f'"{flag}"' in TEST_SOURCES for flag in flags), (
+        assert any(flag in exercised for flag in flags), (
             f"{script} parses {group} but no test ever passes it"
         )
 
@@ -121,7 +235,7 @@ def test_every_flag_is_exercised_by_a_test(script: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", COMMANDS + (RAG_LIB,))
 def test_every_warning_the_user_could_see_is_asserted_by_a_test(script: str):
     """These scripts exist to warn. A warning no test triggers is a branch
     that has never run, and it will be discovered by the person it was
@@ -135,7 +249,7 @@ def test_every_warning_the_user_could_see_is_asserted_by_a_test(script: str):
     assert unasserted == [], f"{script} warnings no test checks: {unasserted}"
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", COMMANDS + (RAG_LIB,))
 def test_every_fatal_error_is_asserted_by_a_test(script: str):
     """A `die` is the strongest thing either script does, and the one whose
     message a user reads most carefully.
@@ -153,7 +267,7 @@ def test_every_fatal_error_is_asserted_by_a_test(script: str):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", ALL_SHELL)
 def test_the_script_is_syntactically_valid(script: str):
     result = subprocess.run(
         ["bash", "-n", str(REPO_ROOT / script)], capture_output=True, text=True
@@ -161,9 +275,16 @@ def test_the_script_is_syntactically_valid(script: str):
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize("script", SCRIPTS)
+@pytest.mark.parametrize("script", COMMANDS)
 def test_the_script_fails_fast_rather_than_limping_on(script: str):
     assert "set -euo pipefail" in _source(script)
+
+
+def test_the_sourced_library_does_not_change_its_callers_shell():
+    """`set -e` in a sourced file applies to whatever sourced it. lib.sh
+    leaves that decision to each script, and every one of them makes it.
+    """
+    assert not re.search(r"^set -", _source(RAG_LIB), re.MULTILINE)
 
 
 @pytest.mark.parametrize("script", SCRIPTS)
@@ -194,6 +315,47 @@ def test_both_scripts_create_what_the_v4_agent_needs_that_the_image_may_not_have
         source = _source(script)
         assert "reader_role.sql" in source, f"{script} never creates the agent's role"
         assert "pg_trgm" in source, f"{script} never creates the trigram extension"
+
+
+def test_a_help_text_never_prints_the_script_itself(script=None):
+    """`run_update.sh` shows its own header comment with `sed`, which is a
+    neat trick with one failure mode: a line range that runs past the end of
+    the comment prints shell source as documentation. It did.
+    """
+    for name in COMMANDS:
+        source = _source(name)
+        selected = re.search(r"sed -n '(\d+),(\d+)p'", source)
+        if not selected:
+            continue
+        start, end = int(selected.group(1)), int(selected.group(2))
+        shown = _source(name).splitlines()[start - 1 : end]
+        code = [line for line in shown if line.strip() and not line.startswith("#")]
+        assert code == [], f"{name} --help prints these lines of code: {code}"
+
+
+# ---------------------------------------------------------------------------
+# The GUI's start-up script
+# ---------------------------------------------------------------------------
+
+
+def test_the_gui_start_up_script_refuses_rather_than_warning():
+    """It runs before nginx and decides whether there is a certificate to
+    verify. Carrying on without one would mean proxying to an upstream
+    nobody checked, so the only outcome it has is to stop.
+    """
+    source = _source(GUI_ENVSH)
+    assert "exit 1" in source
+    assert "warn" not in source
+
+
+def test_every_message_the_gui_script_prints_is_asserted_by_a_test():
+    """Its messages go straight to stderr rather than through a `die`
+    helper, so they need their own sweep -- same rule, different shape.
+    """
+    printed = re.findall(r'^\s*echo "([^"$]{12,})" >&2', _source(GUI_ENVSH), re.MULTILINE)
+    assert printed, "no messages found in the GUI start-up script -- has it moved?"
+    unasserted = [message for message in printed if not _asserted(message)]
+    assert unasserted == [], f"{GUI_ENVSH} messages no test checks: {unasserted}"
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,12 @@
 #     ./launch.sh
 #     docker compose run --rm agent "How many stores are there?"
 #
-# Or, for a GUI to talk to instead of a terminal:
+# Or, in a browser:
+#
+#     ./launch.sh --gui
+#     open http://localhost:8080
+#
+# Or, for something else to talk to -- another GUI, a service, curl:
 #
 #     ./launch.sh --api
 #     curl --cacert <cert> https://localhost:8443/v1/meta
@@ -29,6 +34,7 @@ cd "$(dirname "$0")"
 
 WITH_RAG=1
 WITH_API=0
+WITH_GUI=0
 RESTART=0
 QUIET=0
 
@@ -45,6 +51,7 @@ Usage: ./launch.sh [options]
                    schema alone, with neither knowledge nor worked examples
       --api        Also start the REST API, so a GUI (or curl, or anything
                    that speaks HTTPS) can ask questions instead of a terminal
+      --gui        Also start the web interface, and the API it talks to
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -57,6 +64,9 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-rag) WITH_RAG=0; shift ;;
         --api) WITH_API=1; shift ;;
+        # The GUI is nothing without the API behind it, so asking for one
+        # asks for both rather than starting a page that cannot load.
+        --gui) WITH_GUI=1; WITH_API=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -349,6 +359,34 @@ if [[ $WITH_API -eq 1 ]]; then
     fi
 fi
 
+# --- The web interface -----------------------------------------------------
+# nginx serving the built page, and proxying /v1 to the API over TLS. It is
+# started after the API because it waits on the API's health check, and it
+# holds API_TOKEN so the browser never has to.
+gui_port=$(compose_env GUI_PORT 8080)
+
+start_gui() {
+    docker compose --profile api --profile gui up -d gui >/dev/null 2>&1 || return 1
+    local status=""
+    for _ in $(seq 1 60); do
+        status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-gui 2>/dev/null || echo starting)
+        [[ "$status" == "healthy" ]] && return 0
+        [[ "$(docker inspect --format '{{.State.Running}}' nl2sql-gui 2>/dev/null || echo true)" == "false" ]] && return 1
+        sleep 2
+    done
+    return 1
+}
+
+if [[ $WITH_GUI -eq 1 ]]; then
+    step "Starting the web interface"
+    if start_gui; then
+        info "GUI is healthy at http://localhost:$gui_port"
+    else
+        warn "the GUI container did not become healthy."
+        warn "Check what it said: docker compose --profile api --profile gui logs gui"
+    fi
+fi
+
 # --- Ready -----------------------------------------------------------------
 if [[ $QUIET -eq 0 ]]; then
     cat <<EOF
@@ -386,6 +424,21 @@ EOF
 
     Browse it at $api_scheme://localhost:$api_port/docs
     agent/API.md is the contract a GUI is written against.
+EOF
+    fi
+    if [[ $WITH_GUI -eq 1 ]]; then
+        cat <<EOF
+
+==> The web interface is up:
+
+    open http://localhost:$gui_port
+
+    Ask a question and watch the pipeline work through it, then say whether
+    the answer was right. nginx in that container holds the API token and
+    verifies the API's certificate, so the browser sees neither.
+
+    docker compose --profile api --profile gui logs -f gui
+    gui/README.md explains how it is put together.
 EOF
     fi
 fi

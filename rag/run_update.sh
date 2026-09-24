@@ -24,7 +24,9 @@ while [[ $# -gt 0 ]]; do
         --ollama-url) OLLAMA_URL="$2"; shift 2 ;;
         --publish) PUBLISH_USER="$2"; shift 2 ;;
         --tag) TAG="$2"; shift 2 ;;
-        -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+        # 2,10 is the header comment and nothing after it. The range
+        # has to stop before `set -euo pipefail`, or --help prints code.
+        -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
         *) die "unknown option: $1" ;;
     esac
 done

@@ -323,9 +323,24 @@ pip install -r rag/requirements.txt
 pytest tests/rag --run-docker
 ```
 
-79 tests: the parser against the real document, the BM25 ranking compared score
-for score against an independent Okapi implementation, the pgvector storage
-layer, and both loader scripts as command line programs.
+265 tests: the parser against the real document, the BM25 ranking compared
+score for score against an independent Okapi implementation, the pgvector
+storage layer, both loader scripts as command line programs, and the seven
+shell scripts on this page.
+
+Those last ones are run rather than read. Each gets a throwaway copy of `rag/`
+with a fake `docker` on PATH that records every call and returns scripted
+results, so what is asserted is the decision: which service is started, which
+image is pulled and when, whether a container is stopped before its volume is
+snapshotted and restarted afterwards, and which `die` a bad argument reaches.
+They were untested until they were not, and writing the tests turned up three
+defects -- see the repository README's
+[coverage section](../README.md#the-parts-a-coverage-report-cannot-see).
+
+The two images and `docker-compose.yml` are checked too, including the one
+invariant the whole publishing story rests on: `PGDATA` has to sit outside the
+path the base images declare as a `VOLUME`, or the published image ships a
+perfectly valid, completely empty database.
 
 Everything that writes gets a **throwaway database**, created from `template0`
 and dropped afterwards. A scratch schema would not be enough: every function

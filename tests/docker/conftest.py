@@ -58,6 +58,10 @@ case "$1" in
             echo "${FAKE_API_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-api* ]]; then
             echo "${FAKE_API_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-gui* && "$*" == *Running* ]]; then
+            echo "${FAKE_GUI_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-gui* ]]; then
+            echo "${FAKE_GUI_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi

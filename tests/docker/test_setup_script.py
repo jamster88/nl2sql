@@ -86,11 +86,19 @@ def test_default_run_succeeds(run_setup):
 
 
 def test_default_run_pulls_all_four_images(run_setup):
-    result = run_setup()
-    assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
-    assert result.called("pull mcfaddja/nl2sql-rag-vectordb:v3")
-    assert result.called("pull mcfaddja/nl2sql-rag-chunkdb:v3")
-    assert result.called("pull mcfaddja/nl2sql-agent:v4")
+    """Exact calls, not `called()`: that is a substring match, so an expected
+    `...agent:v4` went on passing against an actual `...agent:v4_2` and the
+    tag stopped being pinned by anything. The tags are read out of setup.sh
+    for the reason the .env test gives -- a release should not fail this.
+    """
+    calls = run_setup().calls
+    for image, tag in (
+        ("mcfaddja/nl2sql-retail-postgres", _shipped_tag("POSTGRES_TAG")),
+        ("mcfaddja/nl2sql-rag-vectordb", _shipped_tag("VECTOR_TAG")),
+        ("mcfaddja/nl2sql-rag-chunkdb", _shipped_tag("CONTEXT_TAG")),
+        ("mcfaddja/nl2sql-agent", _shipped_tag("AGENT_TAG")),
+    ):
+        assert f"pull {image}:{tag}" in calls, f"{image} was not pulled at {tag}"
 
 
 def test_default_run_starts_every_database(run_setup):
@@ -297,9 +305,10 @@ def test_the_gui_flag_pulls_and_pins_it(run_setup):
     builds a service with a `build:` section whenever its image is missing.
     """
     result = run_setup("--gui")
-    assert result.called("pull mcfaddja/nl2sql-gui:v4_2")
+    tag = _shipped_tag("GUI_TAG")
+    assert f"pull mcfaddja/nl2sql-gui:{tag}" in result.calls
     assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
-    assert result.env_file()["GUI_IMAGE_TAG"] == "v4_2"
+    assert result.env_file()["GUI_IMAGE_TAG"] == tag
 
 
 def test_naming_a_gui_image_or_tag_implies_the_flag(run_setup):

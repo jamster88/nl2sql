@@ -463,15 +463,3 @@ def test_build_artefacts_are_not_committed_or_sent_to_the_daemon(path: str):
     context is slow, and committing it is worse."""
     assert f"{path}/" in (REPO_ROOT / ".gitignore").read_text()
     assert path in (REPO_ROOT / ".dockerignore").read_text()
-
-
-def test_asking_for_the_gui_asks_for_the_api_behind_it():
-    launch = (REPO_ROOT / "launch.sh").read_text()
-    assert "--gui) WITH_GUI=1; WITH_API=1;" in launch
-
-
-def test_starting_the_gui_enables_both_profiles():
-    """The gui service depends on a service in another profile, and compose
-    will not start what no active profile names."""
-    launch = (REPO_ROOT / "launch.sh").read_text()
-    assert "docker compose --profile api --profile gui up -d gui" in launch

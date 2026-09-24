@@ -483,3 +483,87 @@ def run_start(tmp_path: Path):
         )
 
     return _run
+
+
+#: One binary standing in for `initdb`, `pg_ctl` and `psql`. `init_db.sh`
+#: runs only inside the postgres image build, where running it for real would
+#: mean building the whole dataset image; these record their arguments so the
+#: script itself still executes end to end rather than only being read.
+FAKE_PG_TOOL = r"""#!/usr/bin/env bash
+printf '%s %s\n' "${0##*/}" "$*" >> "$FAKE_LOG"
+if [[ -n "${FAKE_PG_FAIL:-}" && "$*" == *"$FAKE_PG_FAIL"* ]]; then
+    echo "fake ${0##*/}: refused ${FAKE_PG_FAIL}" >&2
+    exit 1
+fi
+exit 0
+"""
+
+
+@pytest.fixture
+def run_init_db(tmp_path: Path):
+    """Run docker/init_db.sh against fake Postgres binaries.
+
+    Returns a callable: run_init_db(env=...). The build ARGs the Dockerfile
+    passes are supplied as defaults, so a test overrides only what it is
+    about.
+    """
+    workdir = tmp_path / "build"
+    workdir.mkdir()
+    shutil.copy(REPO_ROOT / "docker" / "init_db.sh", workdir / "init_db.sh")
+    os.chmod(workdir / "init_db.sh", 0o755)
+
+    pgdata = tmp_path / "pgdata"
+    pgdata.mkdir()
+    for name in ("ddl.sql", "_load.sql", "reader_role.sql"):
+        (workdir / name).write_text("-- fixture\n")
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("initdb", "pg_ctl", "psql"):
+        path = bin_dir / name
+        path.write_text(FAKE_PG_TOOL)
+        os.chmod(path, 0o755)
+
+    log = tmp_path / "calls.log"
+    log.touch()
+
+    def _run(env: dict | None = None, timeout: int = 60) -> SetupRun:
+        run_env = dict(os.environ)
+        run_env["PATH"] = f"{bin_dir}:{run_env['PATH']}"
+        run_env["FAKE_LOG"] = str(log)
+        run_env.update(
+            {
+                "PGDATA": str(pgdata),
+                "DB_NAME": "nl2sql_retail",
+                "DB_USER": "nl2sql",
+                "DB_PASSWORD": "owner-secret",
+                "DB_READER": "nl2sql_reader",
+                "DB_READER_PASSWORD": "reader-secret",
+                "DDL_FILE": str(workdir / "ddl.sql"),
+                "LOAD_SQL": str(workdir / "_load.sql"),
+                "READER_SQL": str(workdir / "reader_role.sql"),
+            }
+        )
+        for key, value in (env or {}).items():
+            # None removes the variable, which is the only way to exercise
+            # `set -u` -- an ARG the Dockerfile forgot to pass is absent, not
+            # empty.
+            if value is None:
+                run_env.pop(key, None)
+            else:
+                run_env[key] = value
+
+        result = subprocess.run(
+            _traced(["bash", str(workdir / "init_db.sh")], run_env),
+            cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
+        )
+        _record(result)
+        return SetupRun(
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            calls=log.read_text().splitlines(),
+            workdir=workdir,
+        )
+
+    return _run

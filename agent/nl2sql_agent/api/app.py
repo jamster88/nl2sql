@@ -64,11 +64,6 @@ from .settings import ApiSettings
 from .tls import CertificateInfo
 from .translate import job_model, progress_event
 
-#: Routes that answer before anything is authenticated: the ones an
-#: orchestrator calls to decide whether this container is alive, and the
-#: self-describing ones a developer opens in a browser.
-PUBLIC_PATHS = ("/", "/healthz", "/readyz", "/openapi.json", "/docs", "/redoc")
-
 #: Status codes a client can be given without a code of our own. Anything
 #: raised deliberately below carries a specific one; this is the fallback so
 #: every error body has the same shape whatever produced it.

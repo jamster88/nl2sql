@@ -56,11 +56,17 @@ GUI_ENVSH = "gui/10-nl2sql-config.envsh"
 
 SMOKE = "docker/apitest/smoke.sh"
 
+#: Runs once, inside `docker build`, to bake a populated cluster into the
+#: postgres image. No flags -- it is handed build ARGs as environment -- and
+#: it is driven against fake `initdb`, `pg_ctl` and `psql` in
+#: tests/docker/test_init_db_script.py.
+INIT_DB = "docker/init_db.sh"
+
 #: Everything that parses a flag or prints a message a user reads.
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, INIT_DB)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
@@ -468,3 +474,76 @@ def test_the_helper_that_reads_compose_values_is_shared_by_both_scripts():
     """
     for script in SCRIPTS:
         assert "compose_env()" in _source(script), f"{script} lost compose_env"
+
+
+# ---------------------------------------------------------------------------
+# Nothing escapes the net
+#
+# Every list above is written by hand, and a file added beside one of them
+# joins no list, fails no test and appears in no measurement -- it is simply
+# absent, which looks exactly like a file that is covered. These compare the
+# hand-written inventories against what git actually tracks, so adding a
+# script, a Dockerfile or a compose file fails here until it is given tests.
+# ---------------------------------------------------------------------------
+
+
+def _tracked(*patterns: str) -> set[str]:
+    """Repository files git tracks matching these pathspecs, at any depth."""
+    result = subprocess.run(
+        ["git", "ls-files", "-z", *patterns],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    )
+    return {path for path in result.stdout.split("\0") if path}
+
+
+#: Dockerfile -> the test files that assert on its contents. A Dockerfile is
+#: not executed by the suite the way a script is; what is checked is what it
+#: says, so the mapping records where that checking lives.
+DOCKERFILES = {
+    "docker/Dockerfile": ("tests/docker/test_dockerfiles.py",),
+    "agent/Dockerfile": ("tests/docker/test_dockerfiles.py",),
+    "docker/apitest/Dockerfile": ("tests/docker/test_dockerfiles.py",),
+    "gui/Dockerfile": ("tests/gui/test_gui_project.py",),
+    "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
+    "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
+    "rag/docker/seeded.Dockerfile": ("tests/rag/test_rag_images.py",),
+}
+
+#: Compose file -> the test files that resolve and assert on it.
+COMPOSE_FILES = {
+    "docker-compose.yml": (
+        "tests/docker/test_compose_config.py",
+        "tests/docker/test_api_compose.py",
+        "tests/docker/test_gui_compose.py",
+    ),
+    "rag/docker-compose.yml": ("tests/rag/test_rag_images.py",),
+}
+
+
+def test_every_shell_file_in_the_repository_is_measured():
+    """`docker/init_db.sh` was tracked, was shell, and was in none of the
+    lists above -- so the measurement reported 100% of eleven scripts while a
+    twelfth went entirely unrun. This is the test that would have said so.
+    """
+    assert _tracked("*.sh", "*.envsh") == set(ALL_SHELL)
+
+
+@pytest.mark.parametrize("inventory", [DOCKERFILES, COMPOSE_FILES], ids=["dockerfiles", "compose"])
+def test_the_inventory_lists_every_file_git_tracks(inventory: dict):
+    patterns = ("*Dockerfile",) if inventory is DOCKERFILES else ("*docker-compose.yml",)
+    assert _tracked(*patterns) == set(inventory)
+
+
+@pytest.mark.parametrize("inventory", [DOCKERFILES, COMPOSE_FILES], ids=["dockerfiles", "compose"])
+def test_each_file_is_named_by_the_tests_said_to_cover_it(inventory: dict):
+    """A mapping nobody checks rots: a test file renamed away, or one that
+    stopped mentioning the file it is recorded against, both leave the entry
+    looking like coverage that is no longer there.
+    """
+    for path, drivers in inventory.items():
+        assert (REPO_ROOT / path).is_file(), path
+        for driver in drivers:
+            source = (REPO_ROOT / driver)
+            assert source.is_file(), driver
+            basename = path.rsplit("/", 1)[-1]
+            assert basename in source.read_text(), f"{driver} never mentions {basename}"

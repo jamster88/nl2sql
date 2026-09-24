@@ -166,6 +166,7 @@ only in a browser; the server warns about it at startup.
 | `GET` | `/readyz` | no | It can answer a question *now*. `503` when it cannot, with the reason per dependency |
 | `GET` | `/openapi.json` | no | The schema. Generate your client from this |
 | `GET` | `/docs` | no | The same thing, browsable (`API_DOCS_ENABLED=false` to remove) |
+| `GET` | `/redoc` | no | The same schema again, as reference documentation (same switch) |
 | `GET` | `/v1/meta` | yes | Version, model, tables in scope, limits, which pipeline stages are on, the certificate |
 | `POST` | `/v1/questions` | yes | Ask. `?wait=<seconds>` to block |
 | `GET` | `/v1/questions` | yes | Recent questions, newest first |

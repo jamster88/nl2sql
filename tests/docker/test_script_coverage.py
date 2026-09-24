@@ -178,18 +178,47 @@ def _messages(source: str, function: str) -> list[str]:
     return found
 
 
-def _asserted(message: str) -> bool:
+def _messages_in(script: str) -> list[str]:
+    """Every `warn` and `die` message in one script."""
+    source = _source(script)
+    return [
+        message
+        for function in ("warn", "die")
+        for message in _messages(source, function)
+    ]
+
+
+def _asserted(message: str, script: str) -> bool:
     """Whether some test quotes enough of this message to be checking it.
 
     A test rarely quotes a whole warning -- the script wraps them across
-    several `warn` calls and the test asserts the distinctive middle. So any
-    run of four consecutive words counts, which is specific enough that an
-    accidental match between two different messages does not happen here.
+    several `warn` calls and the test asserts the distinctive middle. So a
+    run of consecutive words counts; but only a run that appears in *this*
+    message and no other.
+
+    That qualification is the whole test. Without it, "could not pull" in a
+    test about the vector store marked the postgres and context-store
+    failures asserted too, and neither had ever been run. Three messages
+    were hiding behind phrasing they shared with two others.
+
+    Uniqueness is judged within the one script, not across all of them: two
+    scripts warning about the same thing in the same words is deliberate --
+    `setup.sh` and `launch.sh` both create the reader role and both say so --
+    and one test's assertion genuinely covers that phrase wherever it
+    appears.
     """
     words = message.split()
-    for width in (4, 3):
+    others = [other for other in _messages_in(script) if other != message]
+
+    # Length is not what makes a quotation specific -- uniqueness is. Two
+    # words are plenty when no other message in the script contains them,
+    # and six are not enough when another does.
+    for width in (6, 5, 4, 3, 2):
         for start in range(len(words) - width + 1):
-            if " ".join(words[start : start + width]) in TEST_SOURCES:
+            run = " ".join(words[start : start + width])
+            if any(run in other for other in others):
+                continue
+            if run in TEST_SOURCES:
                 return True
     return False
 
@@ -249,7 +278,7 @@ def test_every_warning_the_user_could_see_is_asserted_by_a_test(script: str):
     unasserted = [
         message
         for message in _messages(_source(script), "warn")
-        if not _asserted(message)
+        if not _asserted(message, script)
     ]
     assert unasserted == [], f"{script} warnings no test checks: {unasserted}"
 
@@ -262,7 +291,7 @@ def test_every_fatal_error_is_asserted_by_a_test(script: str):
     unasserted = [
         message
         for message in _messages(_source(script), "die")
-        if not _asserted(message)
+        if not _asserted(message, script)
     ]
     assert unasserted == [], f"{script} fatal messages no test checks: {unasserted}"
 
@@ -372,7 +401,7 @@ def test_every_message_the_gui_script_prints_is_asserted_by_a_test():
     """
     printed = re.findall(r'^\s*echo "([^"$]{12,})" >&2', _source(GUI_ENVSH), re.MULTILINE)
     assert printed, "no messages found in the GUI start-up script -- has it moved?"
-    unasserted = [message for message in printed if not _asserted(message)]
+    unasserted = [message for message in printed if not _asserted(message, GUI_ENVSH)]
     assert unasserted == [], f"{GUI_ENVSH} messages no test checks: {unasserted}"
 
 
@@ -391,12 +420,12 @@ def test_every_check_the_smoke_script_can_fail_is_exercised_by_a_test():
     """A `fail` that has never fired is a branch that has never run, and the
     whole point of this container is that its failures are trustworthy.
     """
-    unasserted = [m for m in _messages(_source(SMOKE), "fail") if not _asserted(m)]
+    unasserted = [m for m in _messages(_source(SMOKE), "fail") if not _asserted(m, SMOKE)]
     assert unasserted == [], f"smoke.sh failures no test triggers: {unasserted}"
 
 
 def test_every_fatal_error_in_the_smoke_script_is_exercised_by_a_test():
-    unasserted = [m for m in _messages(_source(SMOKE), "die") if not _asserted(m)]
+    unasserted = [m for m in _messages(_source(SMOKE), "die") if not _asserted(m, SMOKE)]
     assert unasserted == [], f"smoke.sh fatal messages no test triggers: {unasserted}"
 
 

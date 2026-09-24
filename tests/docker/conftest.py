@@ -189,10 +189,52 @@ fi
 exec /usr/bin/uname "$@"
 """
 
+#: start.sh tells WSL apart by reading /proc/version, which does not exist
+#: on a Mac and cannot be created there. This answers for that one path and
+#: hands everything else to the real grep -- which matters, because both
+#: setup.sh and launch.sh grep .env on every run.
+FAKE_GREP = r"""#!/usr/bin/env bash
+for arg in "$@"; do
+    if [[ "$arg" == "/proc/version" ]]; then
+        [[ -n "${FAKE_WSL:-}" ]] && exit 0
+        exit 1
+    fi
+done
+for candidate in /usr/bin/grep /bin/grep; do
+    [[ -x "$candidate" ]] && exec "$candidate" "$@"
+done
+exit 127
+"""
+
 BROWSER_OPENERS = (
     "open", "xdg-open", "wslview", "explorer.exe", "gio", "x-www-browser",
     "sensible-browser", "start",
 )
+
+
+#: Set to a directory to have every sandboxed script run under `bash -x`,
+#: with its trace appended there. That is what `python -m tests.shell_coverage`
+#: does, and it is the only way these scripts get a line-coverage number --
+#: nothing in coverage.py can see a shell script. Off unless asked for: the
+#: traces are large and the assertions do not want them on stderr.
+SHELL_TRACE = "NL2SQL_SHELL_TRACE"
+
+
+def _traced(command: list[str], run_env: dict) -> list[str]:
+    """Add `-x` and a line-numbering PS4 when tracing is on."""
+    if not os.environ.get(SHELL_TRACE):
+        return command
+    # The basename only: bash 3.2 truncates a long PS4, and a temporary
+    # directory path is long.
+    run_env["PS4"] = "+@${BASH_SOURCE##*/}@${LINENO}@ "
+    return [command[0], "-x", *command[1:]]
+
+
+def _record(result: subprocess.CompletedProcess) -> None:
+    directory = os.environ.get(SHELL_TRACE)
+    if directory:
+        with open(os.path.join(directory, "trace.log"), "a") as handle:
+            handle.write(result.stderr)
 
 
 @dataclass
@@ -268,9 +310,10 @@ def run_setup(tmp_path: Path):
             run_env.update(env)
 
         result = subprocess.run(
-            ["bash", str(workdir / "setup.sh"), *args],
+            _traced(["bash", str(workdir / "setup.sh")], run_env) + list(args),
             cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
         )
+        _record(result)
         return SetupRun(
             returncode=result.returncode,
             stdout=result.stdout,
@@ -334,9 +377,10 @@ def run_launch(tmp_path: Path):
             run_env.update(env)
 
         result = subprocess.run(
-            ["bash", str(workdir / "launch.sh"), *args],
+            _traced(["bash", str(workdir / "launch.sh")], run_env) + list(args),
             cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
         )
+        _record(result)
         return SetupRun(
             returncode=result.returncode,
             stdout=result.stdout,
@@ -374,7 +418,7 @@ def run_start(tmp_path: Path):
     bin_dir.mkdir()
     for name, body in (
         ("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP),
-        ("uname", FAKE_UNAME),
+        ("uname", FAKE_UNAME), ("grep", FAKE_GREP),
     ):
         path = bin_dir / name
         path.write_text(body)
@@ -426,9 +470,10 @@ def run_start(tmp_path: Path):
             run_env.update(env)
 
         result = subprocess.run(
-            ["bash", str(workdir / "start.sh"), *args],
+            _traced(["bash", str(workdir / "start.sh")], run_env) + list(args),
             cwd=workdir, capture_output=True, text=True, timeout=timeout, env=run_env,
         )
+        _record(result)
         return SetupRun(
             returncode=result.returncode,
             stdout=result.stdout,

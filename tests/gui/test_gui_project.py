@@ -11,6 +11,7 @@ production.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -265,9 +266,23 @@ def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
 
 
 def _source(script: Path, env: dict[str, str], then: str = "true") -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["sh", "-c", f". {script}; {then}"], capture_output=True, text=True, env=env
-    )
+    command = ["sh", "-c", f". {script}; {then}"]
+    if os.environ.get("NL2SQL_SHELL_TRACE"):
+        # See tests/shell_coverage.py. `sh -x` rather than `bash -x`: this
+        # script is sourced by the nginx image's entrypoint, which is not
+        # bash, and it is run here the same way.
+        #
+        # The name is written in rather than derived: POSIX sh has no
+        # BASH_SOURCE, and `$0` under `sh -c` is the shell. Only one script
+        # is sourced here, so the label is known without asking.
+        env = {**env, "PS4": f"+@{script.name}@${{LINENO}}@ "}
+        command = ["sh", "-x", "-c", f". {script}; {then}"]
+    result = subprocess.run(command, capture_output=True, text=True, env=env)
+    directory = os.environ.get("NL2SQL_SHELL_TRACE")
+    if directory:
+        with open(os.path.join(directory, "trace.log"), "a") as handle:
+            handle.write(result.stderr)
+    return result
 
 
 def test_the_start_up_script_is_valid_shell(config_envsh: Path):

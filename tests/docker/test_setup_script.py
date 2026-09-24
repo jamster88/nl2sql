@@ -324,6 +324,72 @@ def test_a_failed_gui_pull_is_not_fatal(run_setup):
     assert "will build it from source instead" in result.output
 
 
+def test_a_failed_context_store_pull_is_fatal_with_actionable_guidance(run_setup):
+    """The golden pairs and their BM25 statistics only exist in that image;
+    there is nothing to fall back to, so the message has to name both ways
+    forward rather than just stopping.
+    """
+    result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-rag-chunkdb"})
+    assert result.returncode != 0
+    assert "could not pull mcfaddja/nl2sql-rag-chunkdb" in result.output
+    assert "run 'docker login' first" in result.output
+    assert "re-run with --no-rag" in result.output
+
+
+def test_a_context_store_that_never_becomes_healthy_is_reported(run_setup):
+    """Waited out rather than assumed -- and the wait is what makes this the
+    one path where the retry `sleep` in that loop actually runs.
+    """
+    result = run_setup(env={"FAKE_CONTEXT_HEALTH": "starting"}, timeout=180)
+    assert result.returncode != 0
+    assert "the context store did not become healthy" in result.output
+    assert "docker compose logs chunkdb" in result.output
+
+
+def test_a_knowledge_base_with_no_embedded_chunks_warns_rather_than_stopping(run_setup):
+    """Same shape as the context store below, and the same reasoning: an
+    empty vector store is a working stack with worse answers. The agent
+    retrieves nothing and falls back to the schema.
+    """
+    result = run_setup(env={"FAKE_CHUNK_COUNT": "0"})
+    assert result.returncode == 0
+    assert "the knowledge base is up but has no embedded chunks in it" in result.output
+    assert "Retrieval will be skipped until it is populated" in result.output
+
+
+def test_a_populated_knowledge_base_says_how_many_chunks_it_has(run_setup):
+    result = run_setup()
+    assert "knowledge base ready with 53 embedded chunks" in result.output
+    assert "has no embedded chunks" not in result.output
+
+
+def test_a_context_store_with_no_golden_pairs_warns_rather_than_stopping(run_setup):
+    """An empty context store is a working stack with worse answers, not a
+    broken one: the agent skips worked examples and carries on. Stopping
+    setup over it would be wrong, and saying nothing would leave the
+    degradation to be discovered from the answers.
+    """
+    result = run_setup(env={"FAKE_PAIR_COUNT": "0"})
+    assert result.returncode == 0
+    assert "the context store is up but holds no golden pairs" in result.output
+    assert "Worked examples will be skipped until it is populated" in result.output
+
+
+def test_a_context_store_that_cannot_be_counted_warns_the_same_way(run_setup):
+    """`psql` failing leaves the count empty rather than zero, and an empty
+    string must not read as "fine".
+    """
+    result = run_setup(env={"FAKE_PAIR_COUNT": ""})
+    assert result.returncode == 0
+    assert "holds no golden pairs" in result.output
+
+
+def test_a_populated_context_store_says_how_many_pairs_it_has(run_setup):
+    result = run_setup()
+    assert "context store ready with 45 golden question/SQL pairs" in result.output
+    assert "holds no golden pairs" not in result.output
+
+
 def test_a_failed_vector_pull_is_fatal_with_actionable_guidance(run_setup):
     """The knowledge base image is the one thing v2 cannot synthesize locally,
     so the failure has to name both ways forward: authenticate, or opt out.

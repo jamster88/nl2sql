@@ -201,10 +201,20 @@ def run_rag(tmp_path: Path):
         if env:
             run_env.update(env)
 
+        command = ["bash", str(rag / script)]
+        if os.environ.get("NL2SQL_SHELL_TRACE"):
+            # See tests/shell_coverage.py -- the only way a shell script gets
+            # a line-coverage number.
+            run_env["PS4"] = "+@${BASH_SOURCE##*/}@${LINENO}@ "
+            command = [command[0], "-x", *command[1:]]
         result = subprocess.run(
-            ["bash", str(rag / script), *args],
+            command + list(args),
             cwd=rag, capture_output=True, text=True, timeout=timeout, env=run_env,
         )
+        directory = os.environ.get("NL2SQL_SHELL_TRACE")
+        if directory:
+            with open(os.path.join(directory, "trace.log"), "a") as handle:
+                handle.write(result.stderr)
         return ScriptRun(
             returncode=result.returncode,
             stdout=result.stdout,

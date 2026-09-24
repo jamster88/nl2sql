@@ -332,3 +332,20 @@ def test_gio_is_invoked_the_way_gio_wants(run_start):
     result = run_start(env={"FAKE_UNAME_S": "Linux", "BROWSER": "gio"})
     opened = [call for call in result.calls if call.startswith("browser ")]
     assert opened == ["browser gio open http://localhost:8080"]
+
+
+def test_wsl_reaches_for_the_windows_side_opener(run_start):
+    """WSL has `xdg-open` and it frequently opens nothing, so the
+    Windows-side openers are tried first there. It is also the one branch
+    that cannot be reached by faking `uname` alone -- WSL is told apart by
+    what is in /proc/version, and a Mac has no /proc at all.
+    """
+    result = run_start(env={"FAKE_UNAME_S": "Linux", "FAKE_WSL": "1"})
+    opened = [call for call in result.calls if call.startswith("browser ")]
+    assert opened == ["browser wslview http://localhost:8080"]
+
+
+def test_plain_linux_is_not_mistaken_for_wsl(run_start):
+    result = run_start(env={"FAKE_UNAME_S": "Linux"})
+    opened = [call for call in result.calls if call.startswith("browser ")]
+    assert opened == ["browser xdg-open http://localhost:8080"]

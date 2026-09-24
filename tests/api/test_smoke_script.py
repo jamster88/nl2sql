@@ -125,16 +125,39 @@ def api(tmp_path: Path):
         served.stop()
 
 
+def _traced(command: list[str], run_env: dict) -> list[str]:
+    """Trace into NL2SQL_SHELL_TRACE when it is set.
+
+    Same arrangement as the sandboxes in tests/docker/conftest.py, so
+    `python -m tests.shell_coverage` can measure this script too -- it is
+    the one driven against a real server rather than a fake Docker, which
+    changes how it is run but not what is worth knowing about it.
+    """
+    if not os.environ.get("NL2SQL_SHELL_TRACE"):
+        return command
+    run_env["PS4"] = "+@${BASH_SOURCE##*/}@${LINENO}@ "
+    return [command[0], "-x", *command[1:]]
+
+
+def _record(result: subprocess.CompletedProcess) -> None:
+    directory = os.environ.get("NL2SQL_SHELL_TRACE")
+    if directory:
+        with open(os.path.join(directory, "trace.log"), "a") as handle:
+            handle.write(result.stderr)
+
+
 def smoke(base: str, *args: str, env: dict | None = None, timeout: int = 120):
     run_env = dict(os.environ, API_BASE_URL=base, APITEST_WAIT_SECONDS="60")
     run_env.pop("API_TOKEN", None)
     run_env.pop("API_CACERT", None)
     run_env.pop("API_INSECURE", None)
     run_env.update(env or {})
-    return subprocess.run(
-        ["bash", str(SMOKE), *args],
+    result = subprocess.run(
+        _traced(["bash", str(SMOKE)], run_env) + list(args),
         capture_output=True, text=True, timeout=timeout, env=run_env, cwd=REPO_ROOT,
     )
+    _record(result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -215,12 +238,13 @@ def test_the_servers_own_certificate_is_pinned_when_it_is_mounted(api, tmp_path,
     script = SMOKE.read_text().replace("/etc/nl2sql/tls/", str(mounted) + "/")
     local = tmp_path / "smoke.sh"
     local.write_text(script)
+    pinned_env = dict(os.environ, API_BASE_URL=served.base, APITEST_WAIT_SECONDS="60",
+                      API_INSECURE="false")
     result = subprocess.run(
-        ["bash", str(local)],
-        capture_output=True, text=True, timeout=120, cwd=REPO_ROOT,
-        env=dict(os.environ, API_BASE_URL=served.base, APITEST_WAIT_SECONDS="60",
-                 API_INSECURE="false"),
+        _traced(["bash", str(local)], pinned_env),
+        capture_output=True, text=True, timeout=120, cwd=REPO_ROOT, env=pinned_env,
     )
+    _record(result)
     assert "pinned as a CA" in result.stdout
     assert result.returncode == 0, result.stdout + result.stderr
 

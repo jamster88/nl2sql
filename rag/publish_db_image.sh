@@ -14,16 +14,21 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 SERVICE="${1:-}"
 IMAGE_REF="${2:-}"
 PUSH=1
-shift 2 2>/dev/null || true
+
+# Checked before the shift, not after. `shift 2` with one argument fails and
+# leaves it in place, so the option loop below then reported the service name
+# as an unknown option -- for the likeliest mistake there is, forgetting the
+# image reference.
+[[ -n "$SERVICE" && -n "$IMAGE_REF" ]] || die "usage: ./publish_db_image.sh <chunkdb|vectordb> <repo:tag> [--no-push]"
+[[ "$IMAGE_REF" == *:* ]] || die "image reference needs an explicit tag, e.g. user/name:v1"
+
+shift 2
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-push) PUSH=0; shift ;;
         *) die "unknown option: $1" ;;
     esac
 done
-
-[[ -n "$SERVICE" && -n "$IMAGE_REF" ]] || die "usage: ./publish_db_image.sh <chunkdb|vectordb> <repo:tag> [--no-push]"
-[[ "$IMAGE_REF" == *:* ]] || die "image reference needs an explicit tag, e.g. user/name:v1"
 
 case "$SERVICE" in
     chunkdb)  CONTAINER=nl2sql-rag-chunkdb;  VOLUME=nl2sql-rag-chunkdb-data;  BASE="${CHUNKDB_IMAGE:-nl2sql-rag-chunkdb}:${CHUNKDB_TAG:-latest}" ;;

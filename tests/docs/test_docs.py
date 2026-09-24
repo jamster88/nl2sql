@@ -21,7 +21,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 AGENT_DIR = REPO_ROOT / "agent"
 
-DOCS = ("README.md", "agent/README.md", "agent/USAGE.md", "agent/API.md", "data_gen/README.md")
+DOCS = (
+    "README.md",
+    "agent/README.md",
+    "agent/USAGE.md",
+    "agent/API.md",
+    "data_gen/README.md",
+    "rag/README.md",
+    "gui/README.md",
+)
 
 
 @pytest.fixture(scope="module")

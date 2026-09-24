@@ -707,8 +707,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1319 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 1687, including ones that build and run containers
+pytest                             # 1469 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 1840, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -716,13 +716,13 @@ pytest --run-docker --run-node     # all 1687, including ones that build and run
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
-| [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, and both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test |
+| [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in all three shell scripts is exercised by some test, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 269-test suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 357 tests behind `--run-docker` are the ones that need a working daemon:
+The 360 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent and GUI images and run them, resolve the real compose
 file, and query the three live databases. The 11 behind `--run-node` need npm,
 and run the GUI's own suite. Two flags rather than one because the two needs
@@ -732,7 +732,7 @@ should still be able to run the interface's. Everything else runs offline in
 about 20 seconds -- `setup.sh` included, since it is exercised against fake
 binaries rather than real Docker.
 
-Twenty-eight of those 357 also need the **embedding host**: a local Ollama
+Twenty-eight of those 360 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -824,8 +824,9 @@ race.
 
 #### The parts a coverage report cannot see
 
-Three shell scripts and a compose file, none of them Python. They are covered
-by reading and by running, not by a report:
+Nine shell scripts, two compose files, six Dockerfiles and an nginx template,
+none of them Python. They are covered by reading and by running, not by a
+report:
 
 * **`setup.sh` and `launch.sh`** are run against fake `docker`, `curl` and
   `sleep` binaries, once per scenario they can take.
@@ -833,9 +834,17 @@ by reading and by running, not by a report:
   then asserts structurally that every flag is parsed, documented and passed
   by some test, and that every `warn` and `die` message is asserted somewhere.
   A warning nobody triggers looks exactly like a warning that works, and these
-  scripts are almost entirely warnings. Measured by `xtrace`, that reaches 94%
-  and 93% of their lines; the remainder is lines bash cannot report at all --
-  function headers, `case` labels, and multi-line command substitutions.
+  scripts are almost entirely warnings. Measured by `xtrace`, 92% and 96% of
+  their lines; the remainder is lines bash cannot report at all -- function
+  headers, `case` labels, and the continuation lines of a command split across
+  several.
+* **The seven scripts in [`rag/`](rag)** -- the only way the knowledge base is
+  built and published -- get the same treatment in
+  [`tests/rag/test_rag_scripts.py`](tests/rag/test_rag_scripts.py), and reach
+  **100% of their lines**. That covers both ways each store starts, the
+  publish path in full (stop, snapshot, restart, build, push) and every one of
+  its seven refusals, and the incremental run's decision to leave a container
+  that is already serving queries alone.
 * **`docker/apitest/smoke.sh`**, the outside client, is run *for real* by
   [`tests/api/test_smoke_script.py`](tests/api/test_smoke_script.py): bash,
   curl and jq against a live HTTPS server built from `create_app` with a
@@ -845,11 +854,30 @@ by reading and by running, not by a report:
   that carries nothing, and the refusals that make its two exit codes mean
   something. 89% of its lines by `xtrace`, the rest being the same
   bash-unreportable shapes.
-* **`docker-compose.yml`** is checked in both directions for every service
+* **Both compose files** are checked in both directions for every service
   that takes settings: nothing is set that the code never reads, and nothing
   the code reads is missing from it. That holds for the agent's own settings
-  against `config.py`, the API's against `api/settings.py`, and the smoke
-  script's against the script itself.
+  against `config.py`, the API's against `api/settings.py`, the GUI proxy's
+  against its nginx template, the smoke script's against the script itself,
+  and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
+  image overrides the start-up scripts `export`, where a name compose does not
+  read would make `--image` a silent no-op that pulls a published store and
+  then starts a local one.
+* **`docker/init_db.sh`**, which builds the retail cluster at image-build
+  time, is the one script that cannot be driven by fake binaries -- faking
+  `initdb`, `pg_ctl` and `psql` would leave nothing real under test. So it is
+  run against the stock Postgres image it is built on, with a two-row dataset
+  instead of a million: the cluster it leaves behind is started again
+  afterwards, and asserted to hold the rows, to have `pg_trgm` installed, and
+  to let the read-only role read and refuse to let it write.
+* **The images and the proxy.** Every Dockerfile is read for the things that
+  fail quietly: that the GUI's toolchain does not ship and its build stage is
+  not emulated, and that both RAG stores keep `PGDATA` *outside* the path
+  their base images declare as a `VOLUME` -- get that wrong and the published
+  image is a perfectly valid, completely empty database, which looks like
+  retrieval finding nothing rather than like a broken build. The GUI's nginx
+  template is checked for the three settings that keep the event stream
+  unbuffered, and its start-up script is run for both of its branches.
 
 Running the scripts rather than only reading them is what earns its keep.
 Doing it turned up three defects in one pass: the smoke script aborted under
@@ -858,6 +886,22 @@ own Alpine container; an unauthorised client exited `2`, the code that means
 "the API was never there, retry", when the API was answering perfectly well;
 and a missing `.tables` was counted as zero and announced as a pass, so an
 error body read as a healthy server with nothing in it.
+
+Bringing the `rag/` scripts under the same treatment turned up three more.
+`publish_db_image.sh` answered its likeliest mistake -- forgetting the image
+reference -- with `unknown option: chunkdb`, because `shift 2` fails with one
+argument and leaves it in place for the option loop; the check now runs
+before the shift. `run_update.sh --help` printed two lines of its own shell
+source, its `sed` range having been written to the wrong line. And both store
+starters accepted `-i` while documenting only `--image`.
+
+A fourth came from the coverage measurement rather than from the tests. The
+structural sweep said every flag was exercised, and `xtrace` said
+`setup.sh --build` had never run: the flag appeared in a test as *data* --
+one entry in a list of flags `--help` ought to mention -- and a substring
+search cannot tell that from an argument. It reads the syntax tree now,
+counting only flags actually passed to a script, which is how the local
+dataset build came to have tests at all.
 
 Getting the RAG pipeline to 100% turned up a real defect the same way.
 `vector_store.search()` bound its query vector as a Python list, which

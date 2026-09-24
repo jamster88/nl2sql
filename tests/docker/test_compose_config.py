@@ -22,6 +22,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytestmark = pytest.mark.docker
 
@@ -486,3 +487,33 @@ def test_the_resolved_config_does_not_depend_on_the_developers_shell(tmp_path_fa
     assert clean["services"]["agent"]["environment"]["EMBED_BASE_URL"].startswith(
         "http://host.docker.internal"
     )
+
+
+# ---------------------------------------------------------------------------
+# The RAG pipeline's own compose file
+# ---------------------------------------------------------------------------
+
+
+def test_the_rag_compose_file_resolves():
+    """`rag/docker-compose.yml` is a second compose file, run by the RAG
+    scripts from their own directory and never by the root one.
+
+    Its contents are checked by reading the YAML in
+    tests/rag/test_rag_images.py; this is the half that needs compose itself,
+    and it is the only thing that catches a schema change.
+    """
+    result = subprocess.run(
+        ["docker", "compose", "config", "--quiet"],
+        cwd=REPO_ROOT / "rag", capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_the_two_compose_files_are_separate_projects():
+    """They declare different `name:`s, so the RAG stores never appear in
+    `docker compose ps` at the repository root and cannot be brought down by
+    a `docker compose down` meant for the retail database.
+    """
+    root = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+    rag = yaml.safe_load((REPO_ROOT / "rag" / "docker-compose.yml").read_text())
+    assert root["name"] != rag["name"]

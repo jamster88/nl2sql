@@ -214,6 +214,49 @@ def test_no_rag_skips_the_embedding_model_check(run_setup):
 
 
 # ---------------------------------------------------------------------------
+# Postgres image: pull or build
+# ---------------------------------------------------------------------------
+
+
+def test_the_default_run_pulls_the_dataset_rather_than_regenerating_it(run_setup):
+    result = run_setup()
+    assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
+    assert not result.called("compose build postgres")
+
+
+def test_build_regenerates_the_dataset_locally_instead_of_pulling(run_setup):
+    """The slow path, and the only one that does not need the registry. It
+    had never been run by a test: the flag was named in the list of things
+    `--help` should mention, which read as coverage without being any.
+    """
+    result = run_setup("--build")
+    assert result.returncode == 0
+    assert result.called("compose build postgres")
+    assert not result.called("pull mcfaddja/nl2sql-retail-postgres")
+    assert "regenerates the dataset" in result.output
+
+
+def test_a_locally_built_image_is_what_compose_is_pinned_to(run_setup):
+    """Building and then writing the published image into .env would start
+    the pulled dataset and quietly discard what was just generated.
+    """
+    result = run_setup("--build")
+    env = result.env_file()
+    assert env["IMAGE_NAME"] == "nl2sql-retail-postgres"
+    assert env["IMAGE_TAG"] == "latest"
+
+
+def test_building_postgres_leaves_the_agent_image_alone(run_setup):
+    """Two independent decisions: --build is about the dataset, --build-agent
+    about the agent. Conflating them is a twenty-minute rebuild nobody asked
+    for.
+    """
+    result = run_setup("--build")
+    assert result.called("pull mcfaddja/nl2sql-agent")
+    assert not result.called("compose build agent")
+
+
+# ---------------------------------------------------------------------------
 # Agent image: pull, build, and fallback
 # ---------------------------------------------------------------------------
 

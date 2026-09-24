@@ -17,7 +17,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-pytestmark = pytest.mark.docker
+# No marker. Every test here drives launch.sh against fake `docker`, `curl`
+# and `sleep` binaries and never touches a daemon -- the same arrangement
+# test_setup_script.py and test_start_script.py use, and neither of those is
+# marked. It carried `pytest.mark.docker` for its first few months anyway,
+# which kept sixty tests out of the default run for no reason.
 
 
 # ---------------------------------------------------------------------------

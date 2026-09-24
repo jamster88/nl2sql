@@ -441,14 +441,41 @@ def test_every_launch_flag_is_documented(launch_sh: str, root_readme: str, agent
         assert flag in documented, f"{flag} is not mentioned in README.md or agent/USAGE.md"
 
 
-def test_the_two_scripts_are_both_documented_with_when_to_use_each(root_readme: str):
-    """They look interchangeable and are not: one pulls images, the other checks
-    the databases are populated. Someone who reaches for the wrong one either
-    waits minutes for nothing or misses the problem they came to find.
+def test_the_three_scripts_are_documented_with_when_to_use_each(root_readme: str):
+    """They look interchangeable and are not: one pulls images, one checks the
+    databases are populated, one runs both and opens a browser. Someone who
+    reaches for the wrong one either waits minutes for nothing or misses the
+    problem they came to find.
     """
+    assert "./start.sh" in root_readme
     assert "./setup.sh" in root_readme
     assert "./launch.sh" in root_readme
     assert "First run" in root_readme
+
+
+@pytest.fixture(scope="module")
+def start_sh() -> str:
+    return (REPO_ROOT / "start.sh").read_text()
+
+
+def test_every_start_flag_is_documented(start_sh: str, root_readme: str):
+    """Same rule as launch.sh: the parser is the source of truth, and a flag
+    nobody has read about is a flag nobody uses.
+    """
+    flags = set(re.findall(r"^\s+(?:-\w\|)?(--[a-z-]+)\)", start_sh, re.MULTILINE))
+    assert flags, "no flags found in start.sh -- the pattern needs updating"
+    for flag in flags - {"--help"}:
+        assert flag in root_readme, f"{flag} is not mentioned in README.md"
+
+
+def test_the_front_door_is_what_the_readme_opens_with(root_readme: str):
+    """It is the first thing someone new runs, so it is the first thing the
+    document should say. A quick start that begins with the three-step
+    version is a quick start nobody finishes.
+    """
+    quick_start = root_readme.split("## Quick start")[1].split("\n## ")[0]
+    assert "./start.sh" in quick_start
+    assert quick_start.index("./start.sh") < quick_start.index("./setup.sh")
 
 
 def test_the_quick_start_is_still_two_commands(root_readme: str):

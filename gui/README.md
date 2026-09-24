@@ -4,8 +4,7 @@ A React and TypeScript front end for the agent's REST API. Ask a question,
 watch the pipeline work through it, read the answer with its chart and its
 rows, and say whether it was right.
 
-    ./launch.sh --gui
-    open http://localhost:8080
+    ./start.sh
 
 Nothing here imports a line of the agent. It speaks the same JSON over HTTPS
 that any other client would ([`agent/API.md`](../agent/API.md) is the
@@ -62,11 +61,17 @@ where the answer would. A failed run still carries the SQL it tried.
 
 ### With compose, which is how nearly everyone will
 
-    ./launch.sh --gui                                   # starts the API too
+    ./start.sh                                          # and opens the page
+    ./launch.sh --gui                                   # without the browser
     docker compose --profile api --profile gui up -d    # or directly
 
 Both profiles, because the `gui` service depends on the `api` service and
 compose will not start what no active profile names.
+[`start.sh`](../start.sh) is the one-command version of all of it: it runs
+`setup.sh` on a first run and `launch.sh` after, waits until this page
+actually answers -- which is later than the container calling itself healthy
+-- and opens it. `--no-browser` skips the last step; `BROWSER` chooses what
+does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 

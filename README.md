@@ -3,12 +3,22 @@
 ## Quick start
 
 ```bash
+./start.sh
+```
+
+That is the whole thing. [`start.sh`](start.sh) pulls what is missing, starts
+every container, waits until the page answers, and opens it in your browser
+at <http://localhost:8080>. First run is a few minutes and about 3 GB of
+images; afterwards it is seconds.
+
+Prefer a terminal?
+
+```bash
 ./setup.sh
 docker compose run --rm agent "How many stores are there?"
 ```
 
-That is the whole setup. [`setup.sh`](setup.sh) brings up the four containers
-the agent needs and leaves them ready:
+Either way the same containers come up:
 
 | Container | What it holds |
 |---|---|
@@ -23,14 +33,27 @@ The agent and the GUI are published images (`v4_2`); the rest are built or
 pulled by `setup.sh` as well. [Pulling the images](#pulling-the-images) has
 the tags.
 
-### Two scripts
+### Three scripts
 
 | | When | What it does |
 |---|---|---|
+| [`./start.sh`](start.sh) | You just want to use it | Runs the two below, waits for the page, opens your browser |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
 | [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
 
-Afterwards, in both cases:
+`start.sh` adds nothing of its own -- it runs the other two and opens a
+browser. Use them directly when you want the parts separately: a terminal
+session with no API, a different agent tag, no knowledge base.
+
+```bash
+./start.sh --no-browser    # everything up, prints the URL instead
+./start.sh --no-rag        # schema-only, like v1
+./start.sh --restart       # recreate the containers
+./start.sh --quiet         # only print problems
+BROWSER=firefox ./start.sh # open it with something in particular
+```
+
+Afterwards, whichever route you took:
 
 ```bash
 docker compose run --rm agent "<your question>"
@@ -39,7 +62,7 @@ docker compose run --rm agent "<your question>"
 Or in a browser -- see [The web interface](#the-web-interface):
 
 ```bash
-./launch.sh --gui
+./launch.sh --gui          # without the browser step
 open http://localhost:8080
 ```
 
@@ -52,10 +75,10 @@ started as a server instead of a command -- see
 curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
 ```
 
-They fail in different ways, which is why they are separate. Setup fails when an
-image will not pull. Launch catches the things that go wrong later: a container
-that is up but empty, a chat host that has moved, an embedding model that is not
-the one the vectors were built with. None of those stop the stack from starting,
+Setup and launch fail in different ways, which is why they are separate.
+Setup fails when an image will not pull. Launch catches the things that go
+wrong later: a container that is up but empty, a chat host that has moved, an
+embedding model that is not the one the vectors were built with. None of those stop the stack from starting,
 and all of them make the agent look bad at its job rather than broken.
 
 ```
@@ -284,8 +307,7 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + B
 ## The web interface
 
 ```bash
-./launch.sh --gui
-open http://localhost:8080
+./start.sh
 ```
 
 A React and TypeScript front end, built to static files and served by nginx.
@@ -329,6 +351,14 @@ a browser directly when `API_CORS_ORIGINS` names the origin -- but a
 self-signed certificate blocks `EventSource` with no warning to click, and
 [`gui/README.md`](gui/README.md) explains the three problems one same-origin
 hop removes.
+
+`start.sh` waits until the page actually answers before opening it. That is
+not the same as waiting for the container to call itself healthy: nginx
+reports healthy as soon as it is up, which is a moment before it has read the
+configuration written for it at start-up, and a browser opened on the health
+check alone lands on a connection error often enough to matter. On a machine
+with no desktop it prints the URL and carries on, which is not a failure --
+`--no-browser` asks for that deliberately, and `BROWSER` picks what opens it.
 
 For development against a running API:
 
@@ -707,8 +737,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1469 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 1840, including ones that build and run containers
+pytest                             # 1600 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 1911, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -717,12 +747,12 @@ pytest --run-docker --run-node     # all 1840, including ones that build and run
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `setup.sh`/`launch.sh` run against fake `docker`/`curl` binaries -- plus a structural check that every flag, warning and fatal message in all three shell scripts is exercised by some test, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in all eleven shell scripts is exercised by some test, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 269-test suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 360 tests behind `--run-docker` are the ones that need a working daemon:
+The 300 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent and GUI images and run them, resolve the real compose
 file, and query the three live databases. The 11 behind `--run-node` need npm,
 and run the GUI's own suite. Two flags rather than one because the two needs
@@ -730,9 +760,11 @@ are different -- a clone with Docker but no npm should still be able to run
 every container test, and a GUI developer with npm and no Docker daemon
 should still be able to run the interface's. Everything else runs offline in
 about 20 seconds -- `setup.sh` included, since it is exercised against fake
-binaries rather than real Docker.
+binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
+which is worth saying because `launch.sh`'s were marked `docker` for months
+without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 360 also need the **embedding host**: a local Ollama
+Twenty-eight of those 300 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -824,27 +856,45 @@ race.
 
 #### The parts a coverage report cannot see
 
-Nine shell scripts, two compose files, six Dockerfiles and an nginx template,
-none of them Python. They are covered by reading and by running, not by a
-report:
+Eleven shell scripts, two compose files, six Dockerfiles and an nginx
+template, none of them Python. They are covered by reading and by running --
+and, since nothing in coverage.py can see a shell script, by a measurement of
+their own:
 
-* **`setup.sh` and `launch.sh`** are run against fake `docker`, `curl` and
-  `sleep` binaries, once per scenario they can take.
-  [`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py)
-  then asserts structurally that every flag is parsed, documented and passed
-  by some test, and that every `warn` and `die` message is asserted somewhere.
-  A warning nobody triggers looks exactly like a warning that works, and these
-  scripts are almost entirely warnings. Measured by `xtrace`, 92% and 96% of
-  their lines; the remainder is lines bash cannot report at all -- function
-  headers, `case` labels, and the continuation lines of a command split across
-  several.
-* **The seven scripts in [`rag/`](rag)** -- the only way the knowledge base is
-  built and published -- get the same treatment in
-  [`tests/rag/test_rag_scripts.py`](tests/rag/test_rag_scripts.py), and reach
-  **100% of their lines**. That covers both ways each store starts, the
-  publish path in full (stop, snapshot, restart, build, push) and every one of
-  its seven refusals, and the incremental run's decision to leave a container
-  that is already serving queries alone.
+* **Every one of them runs, and all of them reach 100%.**
+
+  ```bash
+  python -m tests.shell_coverage
+  ```
+
+  `start.sh`, `setup.sh` and `launch.sh` are driven against fake `docker`,
+  `curl`, `sleep`, `uname`, `grep` and browser binaries; the seven scripts in
+  [`rag/`](rag) the same way; `docker/apitest/smoke.sh` against a real HTTPS
+  server; and `gui/10-nl2sql-config.envsh` as the nginx entrypoint sources
+  it. That tool re-runs those suites with `bash -x` on and counts which
+  commands the traces mention -- **640 of 640**.
+
+  It counts *commands*, not lines, because bash does not report lines
+  individually and does not even report them consistently: a
+  backslash-continued simple command is traced at its first line, an
+  assignment from a multi-line `$(...)` at its last. Modelling that exactly
+  is a losing game; a command counts as run when the trace mentions any of
+  its lines, which is the question actually being asked.
+
+  The percentage is a measurement, not the gate. What runs in CI is
+  structural, in
+  [`tests/docker/test_script_coverage.py`](tests/docker/test_script_coverage.py):
+  every flag parsed, documented and *passed by a test*, and every `warn` and
+  `die` message quoted by one. These scripts are almost entirely warnings,
+  and a warning nobody triggers looks exactly like a warning that works.
+
+  Two platform cases deserve their own note, because neither can happen on
+  the machine the suite runs on. `start.sh` picks a browser opener from
+  `uname`, so a fake `uname` runs the Linux and Windows branches on a Mac --
+  an opener that is wrong for Linux is otherwise invisible until someone on
+  Linux runs it. And WSL is told apart by reading `/proc/version`, which a
+  Mac does not have, so a `grep` that answers for that one path and defers to
+  the real one for everything else makes that branch reachable too.
 * **`docker/apitest/smoke.sh`**, the outside client, is run *for real* by
   [`tests/api/test_smoke_script.py`](tests/api/test_smoke_script.py): bash,
   curl and jq against a live HTTPS server built from `create_app` with a
@@ -852,8 +902,7 @@ report:
   an ordinary `pytest` -- each of the three ways it decides to trust the
   server, a server that is up but not ready, a question that fails, a stream
   that carries nothing, and the refusals that make its two exit codes mean
-  something. 89% of its lines by `xtrace`, the rest being the same
-  bash-unreportable shapes.
+  something.
 * **Both compose files** are checked in both directions for every service
   that takes settings: nothing is set that the code never reads, and nothing
   the code reads is missing from it. That holds for the agent's own settings
@@ -902,6 +951,26 @@ one entry in a list of flags `--help` ought to mention -- and a substring
 search cannot tell that from an argument. It reads the syntax tree now,
 counting only flags actually passed to a script, which is how the local
 dataset build came to have tests at all.
+
+The same sweep, turned on the `warn` and `die` messages, found four more
+hiding the same way. A message counted as checked if any four consecutive
+words of it appeared in a test -- and "could not pull" appears in three of
+setup.sh's messages, so one test about the vector store was marking the
+postgres and context-store failures checked too. Neither had ever run, nor
+had the warnings for an empty knowledge base or an empty context store. The
+rule is uniqueness now rather than length: a quotation counts when no other
+message *in the same script* contains it, which is what makes it a
+quotation of that one.
+
+Getting the last of it also meant fixing the measurement three times. A
+command split across lines was being counted once per line and missed on
+every one, which is how two scripts came to be quoted at 92% and 96% when
+they were at 100%; `awk -F'"'` read as an unbalanced quote and swallowed
+everything after it; and a `$(...)` holding a `while` loop was closed at the
+`do`. Each is pinned by a test in
+[`tests/docker/test_shell_coverage_tool.py`](tests/docker/test_shell_coverage_tool.py),
+because a mistake in a measurement is a number in a document that nobody can
+tell is wrong.
 
 Getting the RAG pipeline to 100% turned up a real defect the same way.
 `vector_store.search()` bound its query vector as a Python list, which

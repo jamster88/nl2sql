@@ -85,6 +85,20 @@ case "$1" in
         shift
         # Matched on the whole argument list rather than $1: these are
         # invoked with a --profile in front of the subcommand.
+        if [[ "$*" == *"run --rm desktop"* ]]; then
+            # Builds the desktop client's jar into a bind mount. The real one
+            # takes minutes; this one writes the file that proves it ran.
+            [[ -n "${FAKE_DESKTOP_BUILD_FAILS:-}" ]] && exit 1
+            mkdir -p desktop/target
+            printf 'not really a jar\n' > desktop/target/nl2sql-desktop.jar
+            exit 0
+        fi
+        if [[ "$*" == *" cp api:"* ]]; then
+            # Copies the API's certificate out of the volume it writes it to.
+            [[ -n "${FAKE_CERT_COPY_FAILS:-}" ]] && exit 1
+            printf 'not really a certificate\n' > "${@: -1}"
+            exit 0
+        fi
         if [[ "$*" == *" logs "* || "$*" == *" logs" ]]; then
             # What the API container said, for the branch that tells an image
             # without the REST API apart from any other startup failure.
@@ -233,6 +247,13 @@ if [[ -n "${FAKE_UNAME_S:-}" && "$*" == "-s" ]]; then
     printf '%s\n' "$FAKE_UNAME_S"
     exit 0
 fi
+# The machine, for the JavaFX classifier launch.sh works out. Answered
+# separately from -s because the two vary independently: an arm64 Mac and an
+# arm64 Linux box need different builds of the same client.
+if [[ -n "${FAKE_UNAME_M:-}" && "$*" == "-m" ]]; then
+    printf '%s\n' "$FAKE_UNAME_M"
+    exit 0
+fi
 exec /usr/bin/uname "$@"
 """
 
@@ -328,6 +349,31 @@ def _copy_reader_role_sql(workdir: Path) -> None:
     shutil.copy(REPO_ROOT / "docker" / "reader_role.sql", workdir / "docker" / "reader_role.sql")
 
 
+def _make_desktop_sources(workdir: Path) -> None:
+    """Enough of `desktop/` for launch.sh to decide whether the jar is stale.
+
+    It compares the jar's timestamp against everything under `desktop/src`
+    and `desktop/pom.xml`. With neither present `find` reports nothing, which
+    reads as "no source is newer" -- so a sandbox without them would answer
+    "already built" for a jar that was never built from anything.
+    """
+    (workdir / "desktop" / "src").mkdir(parents=True)
+    (workdir / "desktop" / "src" / "Main.java").write_text("// a source file\n")
+    (workdir / "desktop" / "pom.xml").write_text("<project/>\n")
+
+
+#: Stands in for a Java runtime. `start.sh` asks for its version before it
+#: runs anything, and the answer decides whether it runs anything at all.
+FAKE_JAVA = r"""#!/usr/bin/env bash
+if [[ "$1" == "-version" ]]; then
+    printf 'openjdk version "%s" 2026-09-25\n' "${FAKE_JAVA_VERSION:-21.0.12}" >&2
+    exit 0
+fi
+printf 'java %s\n' "$*" >> "$FAKE_LOG"
+exit 0
+"""
+
+
 @pytest.fixture
 def run_setup(tmp_path: Path):
     """Run setup.sh in a sandbox. Returns a callable: run_setup(*args, env=...)."""
@@ -386,10 +432,18 @@ def run_launch(tmp_path: Path):
         shutil.copy(REPO_ROOT / name, workdir / name)
         os.chmod(workdir / name, 0o755)
     _copy_reader_role_sql(workdir)
+    _make_desktop_sources(workdir)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name, body in (("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP)):
+    # `uname` is here for the desktop client: launch.sh reads the system and
+    # the machine to decide which of OpenJFX's five native builds to ask for,
+    # and a test that could not answer for a machine other than this one
+    # would only ever exercise one of the five.
+    for name, body in (
+        ("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP),
+        ("uname", FAKE_UNAME),
+    ):
         path = bin_dir / name
         path.write_text(body)
         os.chmod(path, 0o755)
@@ -460,12 +514,13 @@ def run_start(tmp_path: Path):
         shutil.copy(REPO_ROOT / name, workdir / name)
         os.chmod(workdir / name, 0o755)
     _copy_reader_role_sql(workdir)
+    _make_desktop_sources(workdir)
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     for name, body in (
         ("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP),
-        ("uname", FAKE_UNAME), ("grep", FAKE_GREP),
+        ("uname", FAKE_UNAME), ("grep", FAKE_GREP), ("java", FAKE_JAVA),
     ):
         path = bin_dir / name
         path.write_text(body)

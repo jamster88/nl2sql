@@ -2,9 +2,9 @@
 
 Puts data_gen/, agent/, review/ and rag/ on sys.path so `import datagen`,
 `import nl2sql_agent`, `import nl2sql_review` and `import ragproc` work
-without any of them being installed, and wires up the --run-docker and
---run-node opt-ins for tests that build/run real containers, talk to a live
-service, or need a JavaScript toolchain.
+without any of them being installed, and wires up the --run-docker,
+--run-node and --run-java opt-ins for tests that build/run real containers,
+talk to a live service, or need a JavaScript or Java toolchain.
 
 `rag/` is there because the review service's promotion path validates a
 rendered golden pair by parsing it with the loader's own parser -- the whole
@@ -41,14 +41,22 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="also run tests marked 'node' (runs the GUI's own test suite, "
         "which needs npm and a populated gui/node_modules)",
     )
+    parser.addoption(
+        "--run-java",
+        action="store_true",
+        default=False,
+        help="also run tests marked 'java' (runs the desktop client's own "
+        "test suite, which needs Maven and a JDK of 21 or later)",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    # Two opt-ins rather than one because the two needs are different: a
+    # Three opt-ins rather than one because the three needs are different: a
     # clone with Docker but no npm should still be able to run every
-    # container test, and a GUI developer with npm and no Docker daemon
-    # should still be able to run the GUI's suite.
-    for name in ("docker", "node"):
+    # container test, a GUI developer with npm and no Docker daemon should
+    # still be able to run the GUI's suite, and neither of them should be
+    # asked for a JDK to run the Python ones.
+    for name in ("docker", "node", "java"):
         if config.getoption(f"--run-{name}"):
             continue
         skip = pytest.mark.skip(reason=f"needs --run-{name}")

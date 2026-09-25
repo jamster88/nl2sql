@@ -28,10 +28,10 @@ cd "$(dirname "$0")"
 OPEN_BROWSER=1
 QUIET=0
 WITH_REVIEW=0
-# Flags handed to launch.sh. Seeded with the one that is always passed, so
-# the array is never empty -- bash 3.2, which is what macOS ships, aborts on
-# "${arr[@]}" for an empty array under `set -u`.
-LAUNCH_ARGS=(--gui)
+WITH_DESKTOP=0
+# Flags handed on. The interface itself is decided after parsing, because
+# --desktop replaces the web one rather than adding to it.
+LAUNCH_ARGS=()
 SETUP_ARGS=(--gui)
 
 step() { [[ $QUIET -eq 1 ]] || printf '\n==> %s\n' "$1"; }
@@ -53,6 +53,9 @@ Usage: ./start.sh [options]
 
 Brings up the whole stack and opens the web interface in your browser.
 
+      --desktop      Use the Java desktop client instead of the web interface:
+                     builds its jar, copies the API's certificate out and runs
+                     it. Needs a Java runtime of 21 or later on this machine
       --review       Also bring up the feedback system -- the staging database
                      that keeps verdicts, the service that promotes them into
                      the golden questions, and the review interface -- and open
@@ -84,6 +87,11 @@ while [[ $# -gt 0 ]]; do
         # so one flag asks for the lot. launch.sh resolves the chain.
         --review) WITH_REVIEW=1; LAUNCH_ARGS+=(--review); SETUP_ARGS+=(--review); shift ;;
         --feedback) LAUNCH_ARGS+=(--feedback); shift ;;
+        # The desktop client is an interface, not an addition to one: with
+        # this the web interface is not started and no browser is opened for
+        # it. --review still opens the review page, which has no desktop
+        # equivalent and is not going to get one.
+        --desktop) WITH_DESKTOP=1; shift ;;
         --no-browser) OPEN_BROWSER=0; shift ;;
         --no-rag) LAUNCH_ARGS+=(--no-rag); SETUP_ARGS+=(--no-rag); shift ;;
         --restart) LAUNCH_ARGS+=(--restart); shift ;;
@@ -92,6 +100,16 @@ while [[ $# -gt 0 ]]; do
         *) usage >&2; die "unknown option: $1" ;;
     esac
 done
+
+# The interface goes first so the rest of the list reads as additions to it.
+# Guarded expansion: the array is empty when no other flag was given, and
+# "${arr[@]}" on an empty array aborts under `set -u` on bash 3.2, which is
+# what macOS ships.
+if [[ $WITH_DESKTOP -eq 1 ]]; then
+    LAUNCH_ARGS=(--desktop ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"})
+else
+    LAUNCH_ARGS=(--gui ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"})
+fi
 
 # --- Prerequisites ---------------------------------------------------------
 command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
@@ -130,11 +148,13 @@ wait_for_page() {  # wait_for_page URL
     return 1
 }
 
-step "Waiting for the interface"
-if ! wait_for_page "$url"; then
-    warn "the web interface never answered at $url."
-    warn "Check what it said: docker compose --profile api --profile gui logs gui"
-    exit 1
+if [[ $WITH_DESKTOP -eq 0 ]]; then
+    step "Waiting for the interface"
+    if ! wait_for_page "$url"; then
+        warn "the web interface never answered at $url."
+        warn "Check what it said: docker compose --profile api --profile gui logs gui"
+        exit 1
+    fi
 fi
 
 # The review interface is a separate container on a separate port, and it is
@@ -150,6 +170,77 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         warn "the review interface never answered at $review_url."
         warn "Check what it said: docker compose --profile reviewgui logs reviewgui"
         warn "The web interface is up; verdicts are staged and can be reviewed later."
+    fi
+fi
+
+# --- The desktop client ----------------------------------------------------
+# A local process rather than a page, so there is no URL to open and no
+# container to wait on: launch.sh has already built the jar and copied the
+# certificate out, and this runs it.
+DESKTOP_JAR="desktop/target/nl2sql-desktop.jar"
+DESKTOP_LOG="desktop/target/desktop.log"
+
+java_major() {  # java_major PATH_TO_JAVA -- the major version, or 0
+    local line
+    [[ -n "$1" ]] || { printf '0'; return 0; }
+    line=$("$1" -version 2>&1 | head -1)
+    # `openjdk version "21.0.12" ...` and `openjdk version "28-ea" ...` are
+    # both ordinary; so is `"1.8.0_412"`, which yields 1 and is refused.
+    line=${line#*\"}
+    line=${line%%\"*}
+    line=${line%%.*}
+    line=${line%%-*}
+    case "$line" in
+        ''|*[!0-9]*) printf '0' ;;
+        *) printf '%s' "$line" ;;
+    esac
+}
+
+start_desktop() {
+    # No java at all and a java too old are the same answer -- "this machine
+    # needs a newer runtime" -- so they are the same branch. `java_major`
+    # reports 0 for a path that is not there, which is how.
+    local java_bin major
+    java_bin=$(command -v java 2>/dev/null || true)
+    major=$(java_major "$java_bin")
+    if [[ "$major" -lt 21 ]]; then
+        warn "the desktop client needs a Java runtime of 21 or later, and this"
+        warn "machine reports Java ${major} (nothing on PATH reports 0)."
+        warn "The jar is built; point a newer runtime at it yourself:"
+        warn "  <path-to-java> -jar $DESKTOP_JAR --cacert ./nl2sql-api.crt"
+        return 1
+    fi
+    if [[ ! -f "$DESKTOP_JAR" ]]; then
+        warn "$DESKTOP_JAR was not built, so there is nothing to run."
+        return 1
+    fi
+
+    local api_port
+    api_port=$(compose_env API_PORT 8443)
+    local trust=(--insecure)
+    if [[ -f nl2sql-api.crt ]]; then
+        # Verifying beats not verifying, and the certificate is right there.
+        trust=(--cacert ./nl2sql-api.crt)
+    else
+        warn "./nl2sql-api.crt is missing, so the client will not verify the API's"
+        warn "certificate. It says so in its own status bar for as long as that is true."
+    fi
+
+    # In the background, with its output kept: a window that fails to open
+    # leaves a stack trace somewhere findable rather than on a terminal the
+    # user has already closed.
+    "$java_bin" -jar "$DESKTOP_JAR" "${trust[@]}" \
+        --url "https://localhost:$api_port" >"$DESKTOP_LOG" 2>&1 &
+    return 0
+}
+
+desktop_running=0
+if [[ $WITH_DESKTOP -eq 1 ]]; then
+    step "Opening the desktop client"
+    if start_desktop; then
+        desktop_running=1
+    else
+        warn "The API is up; ./start.sh (without --desktop) opens the web interface instead."
     fi
 fi
 
@@ -191,10 +282,14 @@ open_browser() {
 }
 
 if [[ $OPEN_BROWSER -eq 1 ]]; then
-    step "Opening $url"
-    if ! open_browser "$url"; then
-        warn "could not open a browser on this machine. Open it yourself:"
-        warn "$url"
+    # Not under --desktop: the questions are asked in a window this script
+    # has already opened, and there is no web interface running to open.
+    if [[ $WITH_DESKTOP -eq 0 ]]; then
+        step "Opening $url"
+        if ! open_browser "$url"; then
+            warn "could not open a browser on this machine. Open it yourself:"
+            warn "$url"
+        fi
     fi
     if [[ $review_ready -eq 1 ]]; then
         # Opened second so the interface people actually ask questions in is
@@ -208,15 +303,45 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
             warn "$review_url"
         fi
     fi
-else
+elif [[ $WITH_DESKTOP -eq 0 ]]; then
     step "Ready at $url"
+    [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
+else
+    step "The desktop client is running"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
 fi
 
 # Deliberately short. launch.sh has just printed what the stack is and how
 # to look at it; saying it again is how a front door starts feeling like a
 # wall of text rather than one command.
-if [[ $QUIET -eq 0 ]]; then
+if [[ $QUIET -eq 0 && $WITH_DESKTOP -eq 1 ]]; then
+    cat <<EOF
+
+    The desktop client is open. Ask a question, and say whether the answer
+    was right -- the verdict goes to the same staging table the web interface
+    writes to, so it turns up in the same review queue.
+
+EOF
+    if [[ $desktop_running -eq 0 ]]; then
+        cat <<EOF
+    It could not be started here. The jar is built:
+
+    java -jar $DESKTOP_JAR --cacert ./nl2sql-api.crt
+
+EOF
+    fi
+    if [[ $WITH_REVIEW -eq 1 ]]; then
+        cat <<EOF
+    $review_url                     review what people said, and promote the good ones
+
+EOF
+    fi
+    cat <<EOF
+    docker compose --profile api down          stop the API behind it
+    $DESKTOP_LOG        what the window said, if it did not open
+
+EOF
+elif [[ $QUIET -eq 0 ]]; then
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
 

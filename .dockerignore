@@ -16,3 +16,7 @@ gui/coverage
 review/gui/node_modules
 review/gui/dist
 review/gui/coverage
+
+# The desktop client's build output: a jar of about ten megabytes, built from
+# the sources beside it.
+desktop/target/

@@ -226,6 +226,20 @@ about (`tables`, `scope`), what it must respect (`limits.max_rows`), and what
 to render (`pipeline.narrate` false means there is no paragraph to show,
 `pipeline.audit` false means no verification badge).
 
+Two of those limits describe the request rather than the answer:
+
+| Field | Default | What |
+| --- | --- | --- |
+| `limits.max_question_length` | `2000` | Characters. A longer question is `422`, not a truncated one |
+| `limits.max_metadata_entries` | `20` | Pairs. Keys are capped at 64 characters and values at 256 |
+
+They are published because of who needs them. A browser that sends an
+over-long question sees the `422` in its network tab; a desktop client shows
+the user whatever it was handed, and "422 Unprocessable Entity" is not an
+explanation of a text box forty characters too long. `desktop/` reads both on
+start-up and refuses the question in the box, which is the only place the
+user can still do something about it.
+
 ---
 
 ## The answer

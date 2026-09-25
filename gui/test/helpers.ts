@@ -98,6 +98,8 @@ export function makeMeta(overrides: Partial<Meta> = {}): Meta {
       statement_timeout_ms: 30000,
       max_concurrency: 2,
       max_wait_seconds: 900,
+      max_question_length: 2000,
+      max_metadata_entries: 20,
     },
     pipeline: {
       supervisor: true,

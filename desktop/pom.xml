@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The desktop client.
+
+  Nothing here imports anything from this repository. The agent's REST API is
+  the whole interface, exactly as it is for `gui/` — this is the second
+  client of it, written in another language on purpose, because a contract
+  only one implementation has ever met is a contract nobody has checked.
+
+  Three choices worth explaining, since none of them is the default:
+
+  * **JavaFX 21**, not the newest. It is the long-term-support line and runs
+    on every JDK from 17 upwards; 25 refuses to load on anything below 25,
+    which would make the floor for running this the newest JDK rather than
+    the oldest supported one.
+  * **The platform is a property, not the builder's.** OpenJFX publishes its
+    native code under a classifier and picks the host's automatically, which
+    is right for a developer and wrong for an artefact built in a container:
+    `-Djavafx.platform=` names the machine the jar is *for*. One jar is one
+    platform — the same library file name is used on macOS x86-64 and on
+    arm64, so a jar carrying both would carry one of them twice under one
+    name and load whichever came first.
+  * **One shaded jar.** JavaFX on the class path rather than the module path
+    is what makes that possible — five copies of `javafx.base` cannot be
+    resolved as modules, and splitting them into per-platform directories
+    would mean a launcher that has to work out which. The cost is one
+    warning on start-up, which `Main` explains.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>org.nl2sql</groupId>
+  <artifactId>nl2sql-desktop</artifactId>
+  <version>4.4.0</version>
+  <packaging>jar</packaging>
+
+  <name>nl2sql-desktop</name>
+  <description>Desktop front end for the nl2sql agent's REST API.</description>
+
+  <licenses>
+    <license>
+      <name>Apache-2.0</name>
+      <url>https://www.apache.org/licenses/LICENSE-2.0</url>
+    </license>
+  </licenses>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.release>21</maven.compiler.release>
+
+    <javafx.version>21.0.12</javafx.version>
+    <jackson.version>2.22.3</jackson.version>
+    <junit.version>5.14.4</junit.version>
+    <monocle.version>21.0.2</monocle.version>
+
+    <compiler.plugin.version>3.16.0</compiler.plugin.version>
+    <surefire.plugin.version>3.6.0</surefire.plugin.version>
+    <shade.plugin.version>3.6.2</shade.plugin.version>
+    <jacoco.plugin.version>0.8.15</jacoco.plugin.version>
+
+    <main.class>org.nl2sql.desktop.Main</main.class>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
+    <!--
+      JavaFX, once. The artifact above carries no code at all (it is a few
+      hundred bytes of manifest); what it does carry is a dependency on
+      itself under a classifier, and the classifier is `${javafx.platform}`,
+      which OpenJFX's own parent POM works out from the machine Maven is
+      running on.
+
+      That property is the whole cross-building story. `mvn
+      -Djavafx.platform=mac-aarch64` resolves a macOS build from a Linux
+      container, which is what the image below does: the jar is built where
+      Docker is and run where the user is, and those are not the same
+      machine.
+    -->
+    <dependency>
+      <groupId>org.openjfx</groupId>
+      <artifactId>javafx-controls</artifactId>
+      <version>${javafx.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+
+    <!--
+      Monocle: a JavaFX display that is not a display.
+
+      Needed because of macOS, and useful everywhere. AppKit insists on owning
+      the process's first thread, and under a test runner that thread is the
+      one running the tests — so the toolkit comes up and then delivers
+      nothing, which is a hang rather than a failure. Monocle replaces the
+      whole windowing back end with one that draws into memory, so the tests
+      run with no display, no window server and nothing to be starved of.
+    -->
+    <dependency>
+      <groupId>org.testfx</groupId>
+      <artifactId>openjfx-monocle</artifactId>
+      <version>${monocle.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>nl2sql-desktop</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>${compiler.plugin.version}</version>
+        <configuration>
+          <compilerArgs>
+            <arg>-Xlint:all</arg>
+            <arg>-Werror</arg>
+          </compilerArgs>
+        </configuration>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>${surefire.plugin.version}</version>
+        <configuration>
+          <!--
+            Headless, in software. `glass.platform` is what swaps AppKit (or
+            GTK, or Win32) for Monocle; `prism.order=sw` keeps the rendering
+            off the GPU, which a machine with no display does not have a
+            usable one of either.
+          -->
+          <systemPropertyVariables>
+            <java.awt.headless>true</java.awt.headless>
+            <glass.platform>Monocle</glass.platform>
+            <monocle.platform>Headless</monocle.platform>
+            <prism.order>sw</prism.order>
+          </systemPropertyVariables>
+        </configuration>
+      </plugin>
+
+      <!--
+        The coverage gate, at 100% of lines and branches, matching the
+        Python and TypeScript sides of this repository. A threshold below
+        100 is a number nobody looks at; a failing build is read.
+      -->
+      <plugin>
+        <groupId>org.jacoco</groupId>
+        <artifactId>jacoco-maven-plugin</artifactId>
+        <version>${jacoco.plugin.version}</version>
+        <configuration>
+          <excludes>
+            <!--
+              The entry point calls Application.launch(), which does not
+              return until the window is closed. It is covered by starting
+              the application, which the UI tests do directly.
+            -->
+            <exclude>org/nl2sql/desktop/Main.class</exclude>
+          </excludes>
+        </configuration>
+        <executions>
+          <execution>
+            <id>prepare</id>
+            <goals><goal>prepare-agent</goal></goals>
+          </execution>
+          <execution>
+            <id>report</id>
+            <phase>test</phase>
+            <goals><goal>report</goal></goals>
+          </execution>
+          <execution>
+            <id>check</id>
+            <phase>test</phase>
+            <goals><goal>check</goal></goals>
+            <configuration>
+              <rules>
+                <rule>
+                  <element>BUNDLE</element>
+                  <limits>
+                    <limit>
+                      <counter>LINE</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>1.00</minimum>
+                    </limit>
+                    <limit>
+                      <counter>BRANCH</counter>
+                      <value>COVEREDRATIO</value>
+                      <minimum>1.00</minimum>
+                    </limit>
+                  </limits>
+                </rule>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>${shade.plugin.version}</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <!--
+                    Signatures do not survive being merged into another jar:
+                    the class files are the same, but the archive they were
+                    signed as part of is not, and the JVM rejects them.
+                  -->
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>module-info.class</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>${main.class}</mainClass>
+                  <manifestEntries>
+                    <!--
+                      JDK 24 and later warn on every native call made from
+                      the class path unless it is enabled. JavaFX makes one
+                      before it draws anything, so without this the first
+                      thing a user sees is a wall of warnings.
+                    -->
+                    <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
+                    <Implementation-Version>${project.version}</Implementation-Version>
+                  </manifestEntries>
+                </transformer>
+              </transformers>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>

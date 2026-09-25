@@ -491,3 +491,99 @@ def test_a_machine_that_cannot_open_the_review_page_still_says_where_it_is(run_s
     assert "http://localhost:8081" in result.output
     # And the first page's failure is still reported separately.
     assert "could not open a browser" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The desktop client
+# ---------------------------------------------------------------------------
+
+
+def test_desktop_runs_the_jar_against_the_api(run_start):
+    result = run_start("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert result.returncode == 0
+    assert result.calls_matching("java -jar desktop/target/nl2sql-desktop.jar")
+    assert result.calls_matching("--cacert ./nl2sql-api.crt")
+    assert result.calls_matching("--url https://localhost:8443")
+
+
+def test_desktop_is_an_interface_rather_than_an_addition_to_one(run_start):
+    """The questions are asked in a window this script has already opened.
+    Starting the web interface as well would be a second one nobody asked
+    for, and a browser tab in front of it."""
+    result = run_start("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert not result.calls_matching("compose --profile api --profile gui up -d gui")
+    assert "==> Opening http://localhost:8080" not in result.output
+
+
+def test_desktop_and_review_still_opens_the_review_page(run_start):
+    """There is no desktop equivalent of the review interface and there is
+    not going to be one: curation happens in the web interface."""
+    result = run_start("--desktop", "--review",
+                       env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert result.calls_matching("java -jar")
+    assert [call for call in result.calls
+            if call.startswith("browser") and "http://localhost:8081" in call]
+
+
+def test_a_java_too_old_to_run_it_says_which_it_found(run_start):
+    """JavaFX 21 needs a runtime of 21; an 8 that says "1.8.0_412" reads as
+    1 and is refused with the number it reported. No java at all reports 0
+    and gets the same sentence, because it is the same answer."""
+    result = run_start("--desktop", env={"FAKE_JAVA_VERSION": "1.8.0_412"})
+
+    assert result.returncode == 0
+    assert "reports Java 1 " in result.output
+    assert "21 or later" in result.output
+    assert "-jar desktop/target/nl2sql-desktop.jar" in result.output
+
+
+def test_an_early_access_runtime_is_new_enough(run_start):
+    """`openjdk version "28-ea"` is an ordinary thing to have installed."""
+    result = run_start("--desktop", env={"FAKE_JAVA_VERSION": "28-ea"})
+
+    assert result.calls_matching("java -jar")
+
+
+def test_a_runtime_that_reports_nothing_recognisable_is_refused(run_start):
+    """The same branch a machine with no java at all takes."""
+    result = run_start("--desktop", env={"FAKE_JAVA_VERSION": "who knows"})
+
+    assert "reports Java 0" in result.output
+    assert not result.calls_matching("java -jar")
+
+
+def test_a_jar_that_was_never_built_is_not_run(run_start):
+    result = run_start("--desktop", env={"FAKE_DESKTOP_BUILD_FAILS": "1"})
+
+    assert "was not built" in result.output
+    assert not result.calls_matching("java -jar")
+
+
+def test_the_closing_notes_explain_where_the_verdicts_go(run_start):
+    result = run_start("--desktop")
+
+    assert "the same staging table the web interface" in result.output
+    assert "desktop/target/desktop.log" in result.output
+
+
+def test_without_the_certificate_the_client_is_told_not_to_verify(run_start):
+    """Verifying beats not verifying and the certificate is normally right
+    there. When it is not, the client is still run -- with the check off, and
+    saying so, which is better than not starting at all."""
+    result = run_start("--desktop", env={"FAKE_CERT_COPY_FAILS": "1"})
+
+    assert "will not verify the API's" in result.output
+    assert result.calls_matching("--insecure")
+    assert not result.calls_matching("--cacert")
+
+
+def test_no_browser_with_the_desktop_client_says_it_is_already_open(run_start):
+    """There is no URL to print for it: it is a window, and it is up."""
+    result = run_start("--desktop", "--no-browser")
+
+    assert "The desktop client is running" in result.output
+    assert result.calls_matching("java -jar")
+

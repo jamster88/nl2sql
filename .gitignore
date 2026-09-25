@@ -31,3 +31,12 @@ review/gui/coverage/
 # before it replaces it. Useful when a promotion turns out to be wrong;
 # never something to commit.
 context_questions/*.md.bak
+
+# The desktop client's build output: a jar of about ten megabytes, built from
+# the sources beside it.
+desktop/target/
+
+# The API's development certificate, copied out of the container it writes
+# itself in. Per-deployment and regenerated when the names it covers change,
+# so a committed one would be wrong for everybody who did not write it.
+nl2sql-api.crt

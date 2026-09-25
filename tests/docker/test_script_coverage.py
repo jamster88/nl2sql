@@ -510,6 +510,11 @@ DOCKERFILES = {
     "agent/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "docker/apitest/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "gui/Dockerfile": ("tests/gui/test_gui_project.py",),
+    # The only one whose output leaves the image rather than becoming it.
+    "desktop/Dockerfile": (
+        "tests/java/test_desktop_project.py",
+        "tests/docker/test_desktop_image.py",
+    ),
     "review/Dockerfile": ("tests/review/test_review_image.py",),
     "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),

@@ -278,3 +278,30 @@ describe("App", () => {
     expect(within(history).getAllByRole("button")).toHaveLength(20);
   });
 });
+
+describe("feedback failures reach the status bar", () => {
+  it("sends nothing when the server says it takes no feedback", async () => {
+    const client = fakeClient({ meta: vi.fn().mockResolvedValue(makeMeta({ feedback: false })) });
+    render(<App client={client} watch={watch} />);
+    await askAndAnswer();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Yes" }));
+    expect(client.submitFeedback).not.toHaveBeenCalled();
+    // And nothing under the answer claims a failure.
+    expect(screen.queryByText(/not sent/)).not.toBeInTheDocument();
+  });
+
+  it("says so when a verdict cannot be sent", async () => {
+    // No `store` prop, so App builds the real API-backed one and its
+    // onError is the thing under test.
+    const client = fakeClient({
+      submitFeedback: vi.fn().mockRejectedValue(new Error("cannot reach the API")),
+    });
+    render(<App client={client} watch={watch} />);
+    await askAndAnswer();
+
+    await userEvent.click(await screen.findByRole("button", { name: "No" }));
+
+    expect(await screen.findByText(/feedback: cannot reach the API/)).toBeInTheDocument();
+  });
+});

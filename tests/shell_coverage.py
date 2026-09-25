@@ -52,6 +52,10 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # Sourced by the nginx image's entrypoint rather than executed, and by
     # `sh` rather than bash, so it is traced the same way it runs.
     "gui/10-nl2sql-config.envsh": ("tests/gui/test_gui_project.py",),
+    # The review interface's equivalent, sourced and traced the same way.
+    # The token it turns into a header is the one that can rewrite the
+    # golden question set, so its empty case matters more than most.
+    "review/gui/10-nl2sql-review-config.envsh": ("tests/review/test_review_project.py",),
     # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
     # running it for real would mean building the dataset image.
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),
@@ -64,8 +68,63 @@ _BLOCK_KEYWORDS = re.compile(
 )
 _FUNCTION_HEADER = re.compile(r"^(local\s+)?[\w_]+\(\)\s*\{")
 _BARE_CASE_LABEL = re.compile(r"^[^(]*\)\s*$")
-_HEREDOC_START = re.compile(r"<<-?'?EOF'?")
-_SINGLE_QUOTED = re.compile(r"'[^']*'")
+#: A heredoc, whatever it calls its delimiter. Captured rather than fixed to
+#: `EOF`: a script that ends its heredoc with anything else -- and one does,
+#: because it writes a heredoc from inside another -- had every line of the
+#: body counted as an uncovered command, which is a ceiling no test could
+#: ever lift and a number that looks like a gap in the tests rather than in
+#: the tool.
+_HEREDOC_START = re.compile(r"""<<-?\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1""")
+
+
+def scan_quotes(raw: str, single: bool, double: bool) -> tuple[bool, bool, str]:
+    """Walk one line, tracking quote state, and return the text outside quotes.
+
+    A character-by-character scan rather than counting quotes, because
+    counting gets three common shapes wrong and each one is worse than the
+    last:
+
+    * **An escaped quote** (`grep -q "\\"$model"`) is a literal character.
+      Counted as a delimiter it leaves the scanner permanently inside a
+      string, and every command after it is folded into the one before --
+      silently, because the result is a *shorter* list of commands that are
+      all still reported as covered. One line of `launch.sh` did this, and
+      a third of that script had never been measured.
+    * **A quote inside the other kind of quote** (`awk -F'"'`) is literal
+      too, and so is an apostrophe in `"the agent's role"`.
+    * **A single-quoted string spanning several lines** -- `setup.sh` embeds
+      a Python probe that way -- is one argument to one command. Its lines
+      were being counted as eight uncovered commands that no test could
+      ever reach, because they are not commands.
+
+    The text outside quotes is what `$(` and `)` are counted in, so a
+    parenthesis inside a string no longer opens anything.
+    """
+    outside: list[str] = []
+    index = 0
+    while index < len(raw):
+        char = raw[index]
+        if single:
+            if char == "'":
+                single = False
+        elif double:
+            if char == "\\":
+                index += 1  # whatever follows is literal
+            elif char == '"':
+                double = False
+        else:
+            if char == "\\":
+                index += 1
+            elif char == "'":
+                single = True
+            elif char == '"':
+                double = True
+            elif char == "#" and (not outside or outside[-1].isspace()):
+                break  # a comment: nothing after it is code
+            else:
+                outside.append(char)
+        index += 1
+    return single, double, "".join(outside)
 #: A command continues onto the next line when it ends with a backslash, a
 #: pipe, or a boolean operator. bash reports the whole thing as one.
 _CONTINUES = re.compile(r"(\\|\|\||&&|\||&)\s*$")
@@ -91,8 +150,9 @@ def logical_commands(source: str) -> list[tuple[int, set[int], str]]:
     """
     lines = source.splitlines()
     commands: list[tuple[int, set[int], str]] = []
-    in_heredoc = False
+    heredoc_end: str | None = None
     open_quote = False
+    open_single = False
     continued = False
     depth = 0
     start: int | None = None
@@ -101,12 +161,14 @@ def logical_commands(source: str) -> list[tuple[int, set[int], str]]:
     for number, raw in enumerate(lines, 1):
         stripped = raw.strip()
 
-        if in_heredoc:
-            if stripped in ("EOF", "'EOF'"):
-                in_heredoc = False
+        if heredoc_end is not None:
+            # A heredoc ends at its own delimiter alone on a line, with
+            # leading whitespace allowed for the `<<-` form.
+            if stripped == heredoc_end:
+                heredoc_end = None
             continue
 
-        if not (continued or open_quote or depth):
+        if not (continued or open_quote or open_single or depth):
             if not stripped or stripped.startswith("#"):
                 continue
             if _FUNCTION_HEADER.match(stripped) or _BLOCK_KEYWORDS.match(stripped):
@@ -117,8 +179,9 @@ def logical_commands(source: str) -> list[tuple[int, set[int], str]]:
 
         span.add(number)
 
-        if _HEREDOC_START.search(raw) and not open_quote:
-            in_heredoc = True
+        opened = _HEREDOC_START.search(raw)
+        if opened and not (open_quote or open_single):
+            heredoc_end = opened.group(2)
             if start is not None:
                 commands.append((start, set(span), lines[start - 1].strip()))
             start, span, continued, open_quote = None, set(), False, False
@@ -127,19 +190,17 @@ def logical_commands(source: str) -> list[tuple[int, set[int], str]]:
         # A backslash is not the only thing that continues a command: a line
         # ending in a pipe or a boolean operator does too, and bash reports
         # the whole pipeline as one.
+        open_single, open_quote, literal = scan_quotes(raw, open_single, open_quote)
+        # Read from the raw line, not from the text outside quotes: the
+        # scanner consumes a trailing backslash as an escape character, and
+        # a trailing backslash is exactly what continuation is.
         continued = bool(_CONTINUES.search(raw))
         # An unclosed `$(` continues a command however the lines inside it
         # end -- `events=$(curl ... | while read; do ... done)` is one
         # command, and bash reports it at the `done)`.
-        literal = _SINGLE_QUOTED.sub("", raw)
         depth = max(0, depth + literal.count("$(") - literal.count(")"))
-        # Double quotes inside a single-quoted string are literal -- `awk
-        # -F'"'` is not an unbalanced quote, and treating it as one swallows
-        # every line after it into the same command.
-        if _SINGLE_QUOTED.sub("", raw).count('"') % 2 == 1:
-            open_quote = not open_quote
 
-        if not continued and not open_quote and not depth and start is not None:
+        if not (continued or open_quote or open_single or depth) and start is not None:
             commands.append((start, set(span), lines[start - 1].strip()))
             start, span = None, set()
 
@@ -164,6 +225,19 @@ def run(directory: Path) -> str:
     )
     log = directory / "trace.log"
     return log.read_text(errors="replace") if log.exists() else ""
+
+
+def _percent(hit: int, total: int) -> int:
+    """Rounded down, except that only a clean sweep may print 100.
+
+    `%.0f` rounded 867 of 869 up to "100%", which is the one number this
+    tool exists to be trusted about -- a report that says 100 while two
+    commands have never run is worse than one that says nothing, because
+    nobody goes looking.
+    """
+    if hit == total:
+        return 100
+    return min(99, int(100 * hit / total))
 
 
 def report(trace: str) -> tuple[list[tuple[str, int, int, list[tuple[int, str]]]], int, int]:
@@ -192,9 +266,9 @@ def main() -> int:
     print(f"{'script':30} {'run':>8} {'commands':>9} {'':>5}")
     print("-" * 52)
     for name, hit_count, line_count, _ in rows:
-        print(f"{name:30} {hit_count:>8} {line_count:>9} {100 * hit_count / line_count:>4.0f}%")
+        print(f"{name:30} {hit_count:>8} {line_count:>9} {_percent(hit_count, line_count):>4}%")
     print("-" * 52)
-    print(f"{'TOTAL':30} {covered:>8} {total:>9} {100 * covered / total:>4.0f}%")
+    print(f"{'TOTAL':30} {covered:>8} {total:>9} {_percent(covered, total):>4}%")
 
     for name, _, _, missed in rows:
         if missed:

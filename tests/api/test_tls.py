@@ -246,7 +246,12 @@ def test_a_ca_issued_certificate_passes_the_switch(paths, tmp_path):
         )
     )
 
-    info = ensure_certificate(settings_for(paths, tls_allow_self_signed=False))
+    # Asked only for the name this leaf carries: "not self-signed" is the
+    # property under test, and a name it does not cover is a different note
+    # with its own test below.
+    info = ensure_certificate(
+        settings_for(paths, tls_allow_self_signed=False, tls_hostnames=("nl2sql-api",))
+    )
     assert info is not None and info.self_signed is False
     assert certificate_notes(info) == []
 
@@ -316,3 +321,112 @@ def test_a_certificate_with_no_subject_alternative_names_reads_as_having_none(tm
     info = describe_certificate(path)
     assert info.hostnames == []
     assert info.summary()["hostnames"] == []
+
+
+# ---------------------------------------------------------------------------
+# A certificate that stopped covering the names it is configured for
+# ---------------------------------------------------------------------------
+#
+# This is what happens when a new service joins the stack and
+# API_TLS_HOSTNAMES grows. The volume still holds the certificate from
+# before; it is silently missing the new name; and the only symptom is the
+# new service's proxy failing to verify it, with a message about a hostname
+# mismatch and nothing about which name or why. It broke the review GUI on
+# every existing deployment before this existed.
+
+
+def test_a_generated_certificate_is_reissued_when_a_name_is_added(paths):
+    first = ensure_certificate(settings_for(paths, tls_hostnames=("localhost", "nl2sql-api")))
+    assert "nl2sql-review" not in first.hostnames
+
+    second = ensure_certificate(
+        settings_for(paths, tls_hostnames=("localhost", "nl2sql-api", "nl2sql-review"))
+    )
+    assert "nl2sql-review" in second.hostnames
+    assert second.reissued_for == ["nl2sql-review"]
+    assert second.fingerprint_sha256 != first.fingerprint_sha256
+
+
+def test_the_reissue_is_said_out_loud_because_it_changes_the_fingerprint(paths):
+    ensure_certificate(settings_for(paths, tls_hostnames=("localhost",)))
+    info = ensure_certificate(settings_for(paths, tls_hostnames=("localhost", "nl2sql-review")))
+
+    note = " ".join(certificate_notes(info))
+    assert "did not cover nl2sql-review" in note
+    assert "pinned the old fingerprint" in note
+
+
+def test_a_certificate_that_covers_everything_is_left_alone(paths):
+    """The property the volume exists for: a generated certificate survives a
+    restart, so a client that pinned it keeps working."""
+    names = ("localhost", "nl2sql-api", "nl2sql-review")
+    first = ensure_certificate(settings_for(paths, tls_hostnames=names))
+    second = ensure_certificate(settings_for(paths, tls_hostnames=names))
+
+    assert second.fingerprint_sha256 == first.fingerprint_sha256
+    assert second.reissued_for == []
+    assert certificate_notes(second) == [n for n in certificate_notes(first)]
+
+
+def test_a_certificate_covering_more_than_asked_for_is_left_alone(paths):
+    """Narrowing the list is not a reason to reissue: the extra names do no
+    harm, and throwing the certificate away would break whatever uses them."""
+    first = ensure_certificate(
+        settings_for(paths, tls_hostnames=("localhost", "nl2sql-api", "nl2sql-review"))
+    )
+    second = ensure_certificate(settings_for(paths, tls_hostnames=("localhost",)))
+    assert second.fingerprint_sha256 == first.fingerprint_sha256
+
+
+def test_a_generated_certificate_is_not_reissued_when_generating_is_off(paths):
+    """API_TLS_GENERATE=false means this process does not write certificates,
+    and that has to hold for replacing one as well as for creating one."""
+    first = ensure_certificate(settings_for(paths, tls_hostnames=("localhost",)))
+    second = ensure_certificate(
+        settings_for(paths, tls_hostnames=("localhost", "nl2sql-review"), tls_generate=False)
+    )
+    assert second.fingerprint_sha256 == first.fingerprint_sha256
+    assert "does not cover nl2sql-review" in " ".join(certificate_notes(second))
+
+
+def test_a_ca_issued_certificate_is_never_replaced(paths, tmp_path):
+    """It cannot be reissued here, and replacing it is a decision for whoever
+    obtained it. So it is left alone and the mismatch is reported."""
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    cert, key = paths
+    cert.parent.mkdir(parents=True, exist_ok=True)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = dt.datetime.now(dt.timezone.utc)
+    leaf = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "nl2sql-api")]))
+        .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Example CA")]))
+        .public_key(leaf_key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=1))
+        .not_valid_after(now + dt.timedelta(days=30))
+        .add_extension(x509.SubjectAlternativeName([x509.DNSName("nl2sql-api")]), critical=False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    cert.write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
+    key.write_bytes(
+        leaf_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    before = cert.read_bytes()
+
+    info = ensure_certificate(
+        settings_for(paths, tls_hostnames=("nl2sql-api", "nl2sql-review"))
+    )
+
+    assert cert.read_bytes() == before, "it replaced a CA-issued certificate"
+    assert info.missing_hostnames == ["nl2sql-review"]
+    assert "CA-issued, so it was left alone" in " ".join(certificate_notes(info))

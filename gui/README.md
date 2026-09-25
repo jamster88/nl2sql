@@ -83,7 +83,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_2 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_4 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -239,22 +239,50 @@ asserts nothing is ever drawn outside the plot area.
 
 ## The feedback
 
-Two buttons under every answer, and this version does nothing with the
-verdict but keep it in the browser and show it back -- in the answer panel
-and beside the question in the session list. That is the whole requirement
-for now.
+Two buttons under every answer, and -- once one is pressed -- a box to say
+why. The verdict is shown back in the answer panel and beside the question in
+the session list, and it is sent to the API, where it is staged for review
+and possibly promoted into the golden question set. See
+[`review/README.md`](../review/README.md) for what happens to it after that.
 
-What is worth being careful about is *where* it is kept, because the next
-version sends it somewhere, and the difference between an easy change and an
-awkward one is whether the components ever learned that `localStorage` was
-involved. So: one interface in [`feedback/store.ts`](src/feedback/store.ts),
-one implementation behind it, and nothing above it that knows which. A
-version that POSTs to the API is a new `createApiFeedbackStore` and one line
-in `App.tsx` -- and because the methods that will become asynchronous are
-already the only ones that mutate, they can return promises without any
-caller changing shape.
+The earlier version kept the verdict in the browser and did nothing else with
+it. What it was careful about was *where* it was kept, on the grounds that
+the next version would send it somewhere and the difference between an easy
+change and an awkward one is whether the components ever learned that
+`localStorage` was involved. That prediction held exactly: one interface in
+[`feedback/store.ts`](src/feedback/store.ts), one implementation behind it,
+and the change was a new `createApiFeedbackStore` and one line in `App.tsx`.
 
-Two smaller decisions that came out of using it:
+The POST is **not** awaited before the button changes state. A verdict is a
+courtesy the user is doing us, and making them watch a spinner for it is how
+a feedback system stops collecting feedback. So the browser store is written
+first and is what the interface reads, the request goes out behind it, and
+the record's `sync` field carries what happened -- which is why that field
+exists rather than the failure being swallowed or thrown at a user who has
+already moved on.
+
+The browser store underneath is not a cache. A verdict given while the server
+was unreachable is still on screen after a reload, still marked unsent, and
+still the user's own record of what they thought.
+
+Four decisions that came out of using it:
+
+* **The comment box only appears after a verdict.** Asking for prose up front
+  turns a one-click courtesy into a form, and a feedback widget that looks
+  like a form is one people scroll past.
+* **"Not sent" looks different from "sent".** It is the one case where saying
+  nothing actively misleads: the user believes they have reported a problem,
+  and nobody has heard it. There is a Retry button beside it.
+* **A server with no staging database is not a failure.** `/v1/meta` carries
+  `feedback: true|false`; when it is false the store records locally and
+  claims nothing, rather than putting a red warning under every answer for
+  something nobody did wrong.
+* **The snapshot is the server's, not the page's.** The page sends a verdict
+  and a comment. The question, the SQL and the result shape are read from the
+  job by the server, so a client cannot stage evidence of an answer the agent
+  never gave.
+
+Two smaller ones that predate all of it:
 
 * **Clicking the recorded verdict withdraws it.** A misclick on "No" should
   not send someone hunting for an undo, and a verdict that cannot be taken
@@ -295,7 +323,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-269 tests, 100% of statements, branches, functions and lines -- matching the
+306 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

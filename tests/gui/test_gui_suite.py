@@ -121,13 +121,11 @@ def test_coverage_is_complete(suite: subprocess.CompletedProcess, metric: str):
     assert float(match.group(1)) == 100.0
 
 
-def test_the_entry_point_is_the_only_thing_left_out(suite: subprocess.CompletedProcess):
-    """Excluding a file from coverage is how a suite quietly stops covering
-    things, so the exclusion list is pinned rather than trusted."""
-    config = (GUI / "vitest.config.ts").read_text()
-    excluded = re.findall(r'"(src/[^"]+)"', re.search(r"exclude: \[([^\]]*)\]", config).group(1))
-    assert excluded == ["src/main.tsx"]
-    assert suite.returncode == 0
+# The coverage exclusion list is pinned by
+# `tests/gui/test_gui_project.py::test_only_the_entry_point_is_left_out_of_coverage`,
+# which reads the same file and needs no npm to do it. A copy here asserted
+# the same thing behind --run-node, and re-asserted the suite's exit code,
+# which `test_every_gui_test_passes` above already is.
 
 
 def test_the_lockfile_matches_package_json(installed: str):

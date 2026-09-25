@@ -19,7 +19,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.shell_coverage import DRIVEN_BY, logical_commands, report, traced_lines
+from tests.shell_coverage import (
+    DRIVEN_BY,
+    _percent,
+    logical_commands,
+    report,
+    traced_lines,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -183,3 +189,156 @@ def test_a_command_substitution_holding_a_loop_is_one_command():
 def test_a_substitution_opened_and_closed_on_one_line_does_not_continue():
     source = 'name=$(basename "$0")\ninfo "$name"\n'
     assert len(logical_commands(source)) == 2
+
+
+# ---------------------------------------------------------------------------
+# Heredocs, whatever they call their delimiter
+# ---------------------------------------------------------------------------
+
+
+def test_a_heredoc_body_is_not_counted_as_commands():
+    """Its lines are data, and bash never gives them a line number."""
+    source = (
+        'cat > /tmp/x <<EOF\n'
+        'proxy_ssl_verify on;\n'
+        'proxy_ssl_name ${NAME};\n'
+        'EOF\n'
+        'echo done\n'
+    )
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == ["cat > /tmp/x <<EOF", "echo done"]
+
+
+@pytest.mark.parametrize(
+    "delimiter", ["EOF", "TLSEOF", "'EOF'", '"EOF"', "'TLSEOF'", "SQL", "_END_"]
+)
+def test_the_delimiter_is_read_rather_than_assumed(delimiter: str):
+    """`EOF` used to be hardcoded.
+
+    A script whose heredoc ended with anything else had every line of the
+    body counted as an uncovered command -- a ceiling no test could lift,
+    reported as a gap in the tests rather than in this tool. One script does
+    use another delimiter, because it writes a heredoc from inside one.
+    """
+    end = delimiter.strip("'\"")
+    source = f"cat > /tmp/x <<{delimiter}\nnot a command\nalso not one\n{end}\necho done\n"
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == [f"cat > /tmp/x <<{delimiter}", "echo done"]
+
+
+def test_a_dash_heredoc_may_indent_its_delimiter():
+    source = "cat <<-EOF\n\tbody\n\tEOF\necho done\n"
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == ["cat <<-EOF", "echo done"]
+
+
+def test_a_delimiter_that_is_not_alone_on_its_line_does_not_end_the_heredoc():
+    source = "cat > /tmp/x <<EOF\nEOF is mentioned here\nEOF\necho done\n"
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == ["cat > /tmp/x <<EOF", "echo done"]
+
+
+def test_two_heredocs_with_different_delimiters_both_close():
+    source = (
+        "cat > /a <<ONE\nbody\nONE\n"
+        "cat > /b <<TWO\nbody\nTWO\n"
+        "echo done\n"
+    )
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == ["cat > /a <<ONE", "cat > /b <<TWO", "echo done"]
+
+
+# ---------------------------------------------------------------------------
+# Escaped quotes
+# ---------------------------------------------------------------------------
+
+
+def test_an_escaped_quote_does_not_open_a_string():
+    """This one had been hiding a third of launch.sh.
+
+    `grep -q "\\"$model"` has three double quotes, one of them escaped and
+    therefore literal. Counting it left the scanner permanently inside a
+    string, and every command after it was folded into the one before --
+    silently, because the result is a *shorter* list of commands that are
+    all still reported as covered. The measurement said 100% of 112
+    commands; the script had 169.
+    """
+    source = (
+        'if printf \'%s\' "$tags" | grep -q "\\"$model"; then\n'
+        '    echo found\n'
+        'fi\n'
+        'echo after\n'
+    )
+    texts = [text for _, _, text in logical_commands(source)]
+    assert "echo after" in texts, "everything after the escaped quote was swallowed"
+    assert "echo found" in texts
+
+
+def test_an_escaped_quote_inside_a_command_substitution_does_not_unbalance_it():
+    source = 'x=$(echo "a \\" b")\necho after\n'
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == ['x=$(echo "a \\" b")', "echo after"]
+
+
+def test_a_genuinely_unbalanced_quote_still_continues_the_command():
+    """The behaviour the escaped-quote fix must not undo: a string really
+    spanning two lines is one command, and bash reports it as one."""
+    source = 'echo "first\nsecond"\necho after\n'
+    texts = [text for _, _, text in logical_commands(source)]
+    assert texts == ['echo "first', "echo after"]
+
+
+def test_every_command_in_launch_sh_is_seen():
+    """A whole-file check, because the failure mode above is invisible in a
+    per-line one: the scanner stops emitting and nothing says so.
+
+    The last command is near the end of the file, not two thirds through it.
+    """
+    source = (REPO_ROOT / "launch.sh").read_text()
+    commands = logical_commands(source)
+    last = commands[-1][0]
+    total = len(source.splitlines())
+    assert last > total * 0.9, (
+        f"the scanner stopped at line {last} of {total}; everything after it "
+        "is being folded into one command and reported as covered"
+    )
+
+
+@pytest.mark.parametrize("script", sorted(DRIVEN_BY))
+def test_no_script_is_scanned_only_part_way(script: str):
+    """The same check for every script the measurement covers."""
+    source = (REPO_ROOT / script).read_text()
+    commands = logical_commands(source)
+    lines = source.splitlines()
+    # The last *command* line, ignoring the trailing comments and blanks a
+    # script ends with.
+    meaningful = [
+        n for n, raw in enumerate(lines, 1) if raw.strip() and not raw.strip().startswith("#")
+    ]
+    assert commands, f"{script} has no commands at all"
+    assert commands[-1][0] >= meaningful[-1] - 30, (
+        f"{script}: the scanner stopped at line {commands[-1][0]}, but the file "
+        f"has commands as late as line {meaningful[-1]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# The number the whole tool is trusted for
+# ---------------------------------------------------------------------------
+
+
+def test_only_a_clean_sweep_prints_a_hundred():
+    """`%.0f` rounded 867 of 869 up to "100%".
+
+    That is the one number this tool exists to be trusted about: a report
+    saying 100 while two commands have never run is worse than one saying
+    nothing, because nobody goes looking.
+    """
+    assert _percent(869, 869) == 100
+    assert _percent(867, 869) == 99
+    assert _percent(9999, 10000) == 99
+
+
+@pytest.mark.parametrize("hit,total,expected", [(0, 10, 0), (5, 10, 50), (1, 3, 33)])
+def test_everything_else_is_rounded_down(hit: int, total: int, expected: int):
+    assert _percent(hit, total) == expected

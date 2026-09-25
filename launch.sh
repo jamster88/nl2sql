@@ -35,6 +35,8 @@ cd "$(dirname "$0")"
 WITH_RAG=1
 WITH_API=0
 WITH_GUI=0
+WITH_FEEDBACK=0
+WITH_REVIEW=0
 RESTART=0
 QUIET=0
 
@@ -52,6 +54,10 @@ Usage: ./launch.sh [options]
       --api        Also start the REST API, so a GUI (or curl, or anything
                    that speaks HTTPS) can ask questions instead of a terminal
       --gui        Also start the web interface, and the API it talks to
+      --feedback   Also start the staging database, so verdicts given in the
+                   web interface are kept instead of staying in the browser
+      --review     Also start the review interface, where staged feedback is
+                   turned into golden questions (implies --feedback)
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -67,6 +73,12 @@ while [[ $# -gt 0 ]]; do
         # The GUI is nothing without the API behind it, so asking for one
         # asks for both rather than starting a page that cannot load.
         --gui) WITH_GUI=1; WITH_API=1; shift ;;
+        # Capture needs somewhere to put a verdict, so this is the staging
+        # database plus the API that writes to it.
+        --feedback) WITH_FEEDBACK=1; WITH_API=1; shift ;;
+        # The review interface is nothing without the service behind it, and
+        # the service is nothing without the database in front of it.
+        --review) WITH_REVIEW=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -359,6 +371,51 @@ if [[ $WITH_API -eq 1 ]]; then
     fi
 fi
 
+# --- Waiting, and the proxies -----------------------------------------------
+# `wait_healthy` above is not used here on purpose: it calls `die`, and the
+# whole point of these three is to warn and carry on. A missing review
+# interface should not stop a working agent from being reported as working.
+await_health() {  # await_health CONTAINER
+    local container="$1" status=""
+    for _ in $(seq 1 60); do
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
+        [[ "$status" == "healthy" ]] && return 0
+        [[ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo true)" == "false" ]] && return 1
+        sleep 2
+    done
+    return 1
+}
+
+# --- The proxies, and the certificate they loaded at start ---------------
+# nginx reads `proxy_ssl_trusted_certificate` once, while it parses its
+# config. A certificate reissued after that -- which the API does when
+# API_TLS_HOSTNAMES grows to cover a service that did not exist before -- is
+# one the proxy has never seen, and every request through it then fails with
+# an upstream verification error while the page itself still loads fine.
+#
+# The container's own health check cannot see this: it asks for index.html,
+# which is served from disk. So the check is a request for a route the API
+# owns, through the proxy, and the cure is a restart.
+proxy_reaches_api() {  # proxy_reaches_api PORT
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        "http://localhost:$1/readyz" 2>/dev/null || echo 000)
+    # 503 is the API answering that it is not ready, which still means the
+    # proxy reached it. Only a failure to reach it at all is the problem here.
+    [[ "$code" == "200" || "$code" == "503" ]]
+}
+
+repair_proxy() {  # repair_proxy NAME PORT PROFILES...
+    local name="$1" port="$2"
+    shift 2
+    proxy_reaches_api "$port" && return 0
+    info "$name cannot reach the API through its proxy -- restarting it to pick up"
+    info "the current certificate (the API reissues one when a service name is added)"
+    docker compose "$@" restart "$name" >/dev/null 2>&1 || return 1
+    await_health "nl2sql-${name/reviewgui/review-gui}" || return 1
+    proxy_reaches_api "$port"
+}
+
 # --- The web interface -----------------------------------------------------
 # nginx serving the built page, and proxying /v1 to the API over TLS. It is
 # started after the API because it waits on the API's health check, and it
@@ -380,10 +437,88 @@ start_gui() {
 if [[ $WITH_GUI -eq 1 ]]; then
     step "Starting the web interface"
     if start_gui; then
-        info "GUI is healthy at http://localhost:$gui_port"
+        if repair_proxy gui "$gui_port" --profile api --profile gui; then
+            info "GUI is healthy at http://localhost:$gui_port"
+        else
+            warn "the GUI is up but cannot reach the API through its proxy."
+            warn "Check what it said: docker compose --profile api --profile gui logs gui"
+        fi
     else
         warn "the GUI container did not become healthy."
         warn "Check what it said: docker compose --profile api --profile gui logs gui"
+    fi
+fi
+
+# --- Feedback --------------------------------------------------------------
+# The staging database a verdict is written to, and the service that reviews
+# what lands there.
+#
+# Two things are worth knowing about the order here. The API is told where
+# the staging database is through API_FEEDBACK_DB_URL, which compose reads
+# from the environment -- so the database has to exist before the API is
+# started, which is why --feedback is handled before the API above would
+# have been enough on its own. And the review service creates the schema and
+# the API's INSERT-only role on its own start, so the API can be pointed at
+# a database whose tables do not exist yet and will simply report feedback as
+# unavailable until they do.
+review_port=$(compose_env REVIEW_PORT 8444)
+review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
+
+start_feedbackdb() {
+    docker compose --profile feedback up -d feedbackdb >/dev/null 2>&1 || return 1
+    await_health nl2sql-feedbackdb
+}
+
+start_review() {
+    docker compose --profile feedback --profile review up -d review >/dev/null 2>&1 || return 1
+    await_health nl2sql-review
+}
+
+start_reviewgui() {
+    docker compose --profile feedback --profile review --profile reviewgui \
+        up -d reviewgui >/dev/null 2>&1 || return 1
+    await_health nl2sql-review-gui
+}
+
+if [[ $WITH_FEEDBACK -eq 1 ]]; then
+    step "Starting the feedback staging database"
+    if start_feedbackdb; then
+        info "Staging database is healthy on port $(compose_env FEEDBACK_DB_PORT 5435)"
+        if [[ -z "$(compose_env API_FEEDBACK_DB_URL "")" ]]; then
+            warn "API_FEEDBACK_DB_URL is not set, so the API will not write verdicts to it."
+            warn "setup.sh writes one into .env; add it there or export it before starting."
+        fi
+    else
+        warn "the staging database did not become healthy."
+        warn "Check what it said: docker compose --profile feedback logs feedbackdb"
+    fi
+fi
+
+if [[ $WITH_REVIEW -eq 1 ]]; then
+    step "Starting the review service"
+    if start_review; then
+        case "$(compose_env REVIEW_TLS_ENABLED true)" in
+            0|false|no|off|FALSE|NO|OFF) review_scheme=http ;;
+            *) review_scheme=https ;;
+        esac
+        info "Review service is healthy at $review_scheme://localhost:$review_port"
+    else
+        warn "the review service did not become healthy."
+        warn "Check what it said: docker compose --profile feedback --profile review logs review"
+    fi
+
+    step "Starting the review interface"
+    if start_reviewgui; then
+        if repair_proxy reviewgui "$review_gui_port" \
+            --profile feedback --profile review --profile reviewgui; then
+            info "Review interface is healthy at http://localhost:$review_gui_port"
+        else
+            warn "the review interface is up but cannot reach the review service."
+            warn "Check what it said: docker compose --profile reviewgui logs reviewgui"
+        fi
+    else
+        warn "the review interface did not become healthy."
+        warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
     fi
 fi
 
@@ -424,6 +559,27 @@ EOF
 
     Browse it at $api_scheme://localhost:$api_port/docs
     agent/API.md is the contract a GUI is written against.
+EOF
+    fi
+    if [[ $WITH_REVIEW -eq 1 ]]; then
+        cat <<EOF
+
+==> The review interface is up:
+
+    open http://localhost:$review_gui_port
+
+    Verdicts given in the web interface land in the staging database and wait
+    here. A reviewer reads what was asked, what the agent answered and what
+    the user thought of it, writes the three fields a thumbs-up cannot carry
+    -- keywords, reasoning target, expected result -- and promotes the pair.
+
+    Promoting appends it to context_questions/translated_questions.md in this
+    checkout, so it shows up in \`git diff\` like any other edit and is
+    committed the same way. The previous version is kept beside it as
+    translated_questions.md.bak.
+
+    docker compose --profile feedback --profile review --profile reviewgui logs -f review
+    review/README.md explains how it is put together.
 EOF
     fi
     if [[ $WITH_GUI -eq 1 ]]; then

@@ -12,7 +12,7 @@
  * get exercised on every run.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AnswerView } from "./components/AnswerView";
 import { AskBox } from "./components/AskBox";
@@ -22,7 +22,8 @@ import { StatusBar } from "./components/StatusBar";
 import { createClient, type Client } from "./api/client";
 import { useAsk } from "./api/useAsk";
 import type { JobWatchOptions } from "./api/events";
-import { createFeedbackStore, type FeedbackStore } from "./feedback/store";
+import { createApiFeedbackStore } from "./feedback/apiStore";
+import type { FeedbackStore } from "./feedback/store";
 import type { Job, Meta } from "./api/types";
 
 export interface AppProps {
@@ -36,7 +37,24 @@ export const HISTORY_LIMIT = 20;
 
 export function App({ client: given, store: givenStore, watch }: AppProps) {
   const client = useMemo(() => given ?? createClient(), [given]);
-  const store = useMemo(() => givenStore ?? createFeedbackStore(), [givenStore]);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+  // Whether the server takes feedback, in a ref rather than state: the store
+  // is built once and reads this on every vote, so it must see the value
+  // `/v1/meta` brings back *after* the store was built.
+  const accepted = useRef(false);
+  // The API-backed store, always. On a server with no staging database it
+  // behaves exactly like the browser-only one it wraps -- the verdict is
+  // recorded and shown, and nothing claims to have sent it anywhere.
+  const store = useMemo(
+    () =>
+      givenStore ??
+      createApiFeedbackStore({
+        client,
+        enabled: () => accepted.current,
+        onError: (error) => setFeedbackError(error.message),
+      }),
+    [givenStore, client],
+  );
 
   const [meta, setMeta] = useState<Meta | null>(null);
   const [metaError, setMetaError] = useState<Error | null>(null);
@@ -54,7 +72,10 @@ export function App({ client: given, store: givenStore, watch }: AppProps) {
     const abort = new AbortController();
     client
       .meta(abort.signal)
-      .then(setMeta)
+      .then((value) => {
+        accepted.current = value.feedback;
+        setMeta(value);
+      })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
         setMetaError(error instanceof Error ? error : new Error(String(error)));
@@ -140,7 +161,11 @@ export function App({ client: given, store: givenStore, watch }: AppProps) {
         />
       </main>
 
-      <StatusBar meta={meta} error={metaError} warnings={warnings} />
+      <StatusBar
+        meta={meta}
+        error={metaError}
+        warnings={feedbackError ? [...warnings, `feedback: ${feedbackError}`] : warnings}
+      />
     </div>
   );
 }

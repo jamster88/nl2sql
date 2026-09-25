@@ -48,10 +48,13 @@ from ..graph import STEP_LABELS, Nl2SqlAgent
 from ..llm import LlmUnavailableError
 from ..supervisor import INTENT_FRAMING, describe_scope
 from .jobs import Job, JobStore, StreamChunk
+from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable, build_sink
 from .models import (
     ApiError,
     AskRequest,
     Check,
+    FeedbackModel,
+    FeedbackRequest,
     Health,
     Job as JobModel,
     JobList,
@@ -62,7 +65,7 @@ from .models import (
 )
 from .settings import ApiSettings
 from .tls import CertificateInfo
-from .translate import job_model, progress_event
+from .translate import answer_from_state, job_model, progress_event
 
 #: Status codes a client can be given without a code of our own. Anything
 #: raised deliberately below carries a specific one; this is the fallback so
@@ -203,6 +206,7 @@ def create_app(
     agent_factory: Callable[[], Nl2SqlAgent] | None = None,
     store: JobStore | None = None,
     certificate: CertificateInfo | None = None,
+    feedback: FeedbackSink | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
@@ -212,6 +216,7 @@ def create_app(
     """
     settings = settings or Settings.from_env()
     api = api_settings or ApiSettings.from_env()
+    sink = feedback if feedback is not None else build_sink(api.feedback_db_url)
     holder = AgentHolder(agent_factory or (lambda: Nl2SqlAgent(settings)))
 
     def default_runner(question: str, principal: str | None, on_progress) -> dict:
@@ -254,6 +259,7 @@ def create_app(
     app.state.jobs = jobs
     app.state.agent = holder
     app.state.certificate = certificate
+    app.state.feedback = sink
 
     if api.cors_origins:
         app.add_middleware(
@@ -347,7 +353,14 @@ def create_app(
     )
     def readyz(response: Response) -> Readiness:
         checks = holder.checks()
+        # Readiness is decided before feedback is looked at, and feedback is
+        # reported after: a server whose staging database is down can still
+        # answer questions, which is the job. Failing readiness over it would
+        # have an orchestrator restart a working agent because an optional
+        # side channel was unavailable.
         ready = all(check.ok for check in checks.values())
+        ok, detail = sink.check()
+        checks["feedback"] = Check(ok=ok, detail=detail)
         if not ready:
             response.status_code = HTTP_503_SERVICE_UNAVAILABLE
         return Readiness(ready=ready, checks=checks, warnings=api.warnings())
@@ -391,6 +404,7 @@ def create_app(
                 else {"enabled": api.tls_enabled, "self_signed": False}
             ),
             authentication="bearer" if api.token else "none",
+            feedback=sink.check()[0],
         )
 
     @app.post(
@@ -543,6 +557,114 @@ def create_app(
                 "Connection": "keep-alive",
             },
         )
+
+    # --- feedback ---------------------------------------------------------
+
+    def _capture_from(job: Job, body: FeedbackRequest) -> Capture:
+        """Build the staged snapshot out of the job the server still holds.
+
+        Everything but the verdict and the comment comes from here rather
+        than from the request, so a submission can never describe an answer
+        this server did not give.
+
+        The snapshot is taken through `answer_from_state`, which is the same
+        translation the job's own document goes through. Reading `job.state`
+        directly here would be a second translation to keep in step with the
+        first -- and the one that handles a `Decimal` out of Postgres, a
+        refusal with no result, and a chart that is a dataclass in one code
+        path and a dict in another is the one that already exists.
+        """
+        answer = answer_from_state(job.state)
+        table = answer.result
+        return Capture(
+            job_id=job.id,
+            verdict=body.verdict,
+            question=job.question,
+            sql_code=answer.sql,
+            answer=answer.answer,
+            narrative=answer.narrative,
+            intent=answer.intent,
+            tables=", ".join(answer.tables),
+            row_count=table.row_count if table else 0,
+            columns=tuple(table.columns) if table else (),
+            comment=body.comment,
+            agent_version=__version__,
+        )
+
+    @app.post(
+        "/v1/questions/{job_id}/feedback",
+        tags=["feedback"],
+        response_model=FeedbackModel,
+        status_code=201,
+        dependencies=guarded,
+        summary="Say whether this answer was right",
+        responses={
+            HTTP_404_NOT_FOUND: {"model": ApiError},
+            HTTP_409_CONFLICT: {"model": ApiError},
+            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
+        },
+        description=(
+            "Records a verdict in the staging database, where it waits to be "
+            "reviewed and possibly promoted into the golden question set. The "
+            "job's question, SQL and result shape are captured with it, because "
+            "the job itself is forgotten after API_JOB_TTL_SECONDS and a verdict "
+            "pointing at a forgotten job is not reviewable.\n\n"
+            "Voting again replaces the verdict, until a reviewer has acted on it."
+        ),
+    )
+    def record_feedback(job_id: str, body: FeedbackRequest) -> FeedbackModel:
+        job = _require(job_id)
+        if not job.terminal:
+            # There is nothing to have an opinion about yet, and the snapshot
+            # taken now would be of a half-finished run -- which is the one
+            # thing a golden pair must never be built from.
+            raise ApiHTTPError(
+                HTTP_409_CONFLICT,
+                "job_running",
+                f"job {job_id} is {job.status}; wait for it to finish before judging it",
+            )
+        try:
+            submission_id = sink.record(_capture_from(job, body))
+        except AlreadyReviewed as exc:
+            raise ApiHTTPError(HTTP_409_CONFLICT, "already_reviewed", str(exc)) from exc
+        except FeedbackUnavailable as exc:
+            raise ApiHTTPError(
+                HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc)
+            ) from exc
+        return FeedbackModel(
+            id=submission_id, job_id=job.id, verdict=body.verdict, comment=body.comment
+        )
+
+    @app.delete(
+        "/v1/questions/{job_id}/feedback",
+        tags=["feedback"],
+        status_code=204,
+        dependencies=guarded,
+        summary="Withdraw a verdict",
+        responses={
+            HTTP_404_NOT_FOUND: {"model": ApiError},
+            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
+        },
+        description=(
+            "For the misclick. Succeeds only while nobody has reviewed the "
+            "verdict; once one has been acted on it is a record of what "
+            "happened and stops being the voter's to take back."
+        ),
+    )
+    def withdraw_feedback(job_id: str) -> Response:
+        try:
+            removed = sink.withdraw(job_id)
+        except FeedbackUnavailable as exc:
+            raise ApiHTTPError(
+                HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc)
+            ) from exc
+        if not removed:
+            raise ApiHTTPError(
+                HTTP_404_NOT_FOUND,
+                "not_found",
+                f"no feedback for job {job_id} that can still be withdrawn",
+            )
+        return Response(status_code=204)
 
     @app.delete(
         "/v1/questions/{job_id}",

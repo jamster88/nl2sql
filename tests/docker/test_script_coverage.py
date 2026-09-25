@@ -17,6 +17,7 @@ without a test for it.
 from __future__ import annotations
 
 import ast
+import collections
 import re
 import subprocess
 from pathlib import Path
@@ -54,6 +55,11 @@ RAG_LIB = "rag/lib.sh"
 #: things and refuses to start over one of them.
 GUI_ENVSH = "gui/10-nl2sql-config.envsh"
 
+#: The review interface's equivalent. The same two decisions, and the token
+#: it turns into a header is the one that can rewrite the golden question
+#: set. Driven in tests/review/test_review_project.py.
+REVIEW_GUI_ENVSH = "review/gui/10-nl2sql-review-config.envsh"
+
 SMOKE = "docker/apitest/smoke.sh"
 
 #: Runs once, inside `docker build`, to bake a populated cluster into the
@@ -66,15 +72,15 @@ INIT_DB = "docker/init_db.sh"
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, INIT_DB)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, INIT_DB)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
-#: sandbox is in tests/rag/, and the GUI's start-up script is driven from
-#: tests/gui/.
+#: sandbox is in tests/rag/, the GUI's start-up script is driven from
+#: tests/gui/, and the review interface's from tests/review/.
 TEST_FILES = [
     path
-    for directory in ("docker", "api", "rag", "gui")
+    for directory in ("docker", "api", "rag", "gui", "review")
     for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
 ]
 TEST_SOURCES = "".join(path.read_text() for path in TEST_FILES)
@@ -504,6 +510,8 @@ DOCKERFILES = {
     "agent/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "docker/apitest/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "gui/Dockerfile": ("tests/gui/test_gui_project.py",),
+    "review/Dockerfile": ("tests/review/test_review_image.py",),
+    "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/seeded.Dockerfile": ("tests/rag/test_rag_images.py",),
@@ -515,6 +523,7 @@ COMPOSE_FILES = {
         "tests/docker/test_compose_config.py",
         "tests/docker/test_api_compose.py",
         "tests/docker/test_gui_compose.py",
+        "tests/review/test_review_compose.py",
     ),
     "rag/docker-compose.yml": ("tests/rag/test_rag_images.py",),
 }
@@ -547,3 +556,98 @@ def test_each_file_is_named_by_the_tests_said_to_cover_it(inventory: dict):
             assert source.is_file(), driver
             basename = path.rsplit("/", 1)[-1]
             assert basename in source.read_text(), f"{driver} never mentions {basename}"
+
+
+# ---------------------------------------------------------------------------
+# The two file kinds no inventory named
+# ---------------------------------------------------------------------------
+#
+# `docker/init_db.sh` taught the lesson: a hand-written list is a place for a
+# file to fall through, and a file that joins no list is not reported as
+# uncovered -- it is simply absent, which reads exactly like one that passes.
+#
+# These two are driven straight off `git ls-files`, with no list to keep in
+# step. A sixth requirements file or a third nginx template is held to the
+# same rules the moment it is committed.
+
+
+def _dependencies(path: str) -> list[str]:
+    """The requirement lines of a file, without comments, blanks or `-r`."""
+    lines = (REPO_ROOT / path).read_text().splitlines()
+    return [
+        stripped
+        for line in lines
+        if (stripped := line.split("#")[0].strip()) and not stripped.startswith("-r")
+    ]
+
+
+def test_there_are_requirements_files_to_check():
+    """A pathspec that stops matching would make every test below vacuous."""
+    assert _tracked("*requirements.txt")
+
+
+@pytest.mark.parametrize("path", sorted(_tracked("*requirements.txt")))
+def test_every_dependency_is_version_bounded(path: str):
+    """An unbounded requirement is a build that stops reproducing.
+
+    It was asserted for `review/requirements.txt` alone, which left the other
+    four free to drift -- including the one the agent image is built from.
+    """
+    for line in _dependencies(path):
+        assert re.search(r"[=<>~]", line), f"{path}: {line!r} has no version bound"
+
+
+def test_a_package_pinned_exactly_in_two_places_is_pinned_to_one_version():
+    """The agent and the review service install four of the same packages.
+
+    They are separate images built from one checkout, and they answer with
+    the same error envelope against types generated from the same models --
+    so a bump applied to one and not the other is two services that were only
+    ever tested as one.
+    """
+    pinned: dict[str, dict[str, str]] = collections.defaultdict(dict)
+    for path in _tracked("*requirements.txt"):
+        for line in _dependencies(path):
+            match = re.fullmatch(r"([A-Za-z0-9_.\-]+(?:\[[^\]]+\])?)==([^\s,]+)", line)
+            if match:
+                pinned[match.group(1).lower()][path] = match.group(2)
+
+    shared = {name: where for name, where in pinned.items() if len(where) > 1}
+    assert shared, "no package is pinned in two files -- this test is checking nothing"
+    for name, where in sorted(shared.items()):
+        assert len(set(where.values())) == 1, f"{name} is pinned differently: {where}"
+
+
+def test_there_are_nginx_templates_to_check():
+    assert _tracked("*.template")
+
+
+@pytest.mark.parametrize("path", sorted(_tracked("*.template")))
+def test_every_nginx_template_verifies_its_upstream(path: str):
+    """A proxy that trusts anything at the far end is a proxy that will one
+    day trust something else. The directives live in an included file, which
+    the start-up script writes from the upstream's own scheme."""
+    template = (REPO_ROOT / path).read_text()
+    assert "-upstream-tls.conf;" in template, f"{path} includes no TLS block"
+    assert "proxy_ssl_verify off" not in template
+
+
+@pytest.mark.parametrize("path", sorted(_tracked("*.template")))
+def test_no_nginx_template_carries_a_token(path: str):
+    """The tokens these proxies hold are the whole reason a browser does not
+    have to. One written into a template is one in the image."""
+    template = (REPO_ROOT / path).read_text()
+    assert not re.search(r'Authorization\s+"Bearer\s+\S', template), (
+        f"{path} appears to hard-code a token rather than substituting one"
+    )
+    assert "AUTH_HEADER}" in template, f"{path} does not take its token from a variable"
+
+
+@pytest.mark.parametrize("path", sorted(_tracked("*.template")))
+def test_every_nginx_template_resolves_its_upstream_per_request(path: str):
+    """nginx resolves a literal upstream once, while it parses its config,
+    then caches it for the life of the process: it refuses to start before
+    the service is up, and talks to a stale address after it restarts."""
+    template = (REPO_ROOT / path).read_text()
+    assert "resolver " in template
+    assert "proxy_pass $upstream$request_uri;" in template

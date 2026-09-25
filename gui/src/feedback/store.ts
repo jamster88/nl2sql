@@ -20,18 +20,40 @@
 
 export type Verdict = "yes" | "no";
 
+/**
+ * Where a verdict has got to.
+ *
+ * `local` is the honest answer for the browser-only store: it was recorded
+ * here and was never going anywhere else. The other three belong to the
+ * store that POSTs, and exist so the interface can say "your click was
+ * heard but the server has not confirmed it" instead of looking identical
+ * to success. A verdict that silently failed to send is worse than one that
+ * was never offered -- the user believes they have reported the problem.
+ */
+export type SyncState = "local" | "saving" | "saved" | "failed";
+
 export interface FeedbackRecord {
   jobId: string;
   question: string;
   verdict: Verdict;
   /** ISO 8601, so the record survives JSON without a revival step. */
   at: string;
+  sync?: SyncState;
+  /** Why it did not send. Present only with `sync: "failed"`. */
+  error?: string;
 }
 
 export interface FeedbackStore {
   get: (jobId: string) => FeedbackRecord | undefined;
-  /** Record a verdict, or replace one. Returns what was stored. */
-  set: (jobId: string, question: string, verdict: Verdict) => FeedbackRecord;
+  /**
+   * Record a verdict, or replace one. Returns what was stored.
+   *
+   * `sync` is how the API-backed store moves a record through "saving" to
+   * "saved" without a second method: `set` already replaces by job id and
+   * already notifies, so re-setting the same verdict with a new status is
+   * the whole of it.
+   */
+  set: (jobId: string, question: string, verdict: Verdict, sync?: SyncState, error?: string) => FeedbackRecord;
   /** Withdraw a verdict, for the misclick. */
   clear: (jobId: string) => void;
   /** Newest first. */
@@ -95,8 +117,15 @@ export function createFeedbackStore(
   return {
     get: (jobId) => records.find((record) => record.jobId === jobId),
 
-    set(jobId, question, verdict) {
-      const record: FeedbackRecord = { jobId, question, verdict, at: now().toISOString() };
+    set(jobId, question, verdict, sync = "local", error) {
+      const record: FeedbackRecord = {
+        jobId,
+        question,
+        verdict,
+        at: now().toISOString(),
+        sync,
+        ...(error === undefined ? {} : { error }),
+      };
       records = [record, ...records.filter((existing) => existing.jobId !== jobId)].slice(0, MAX_RECORDS);
       announce();
       return record;

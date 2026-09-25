@@ -22,9 +22,13 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v4_2"
+AGENT_TAG="v4_4"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v4_2"
+GUI_TAG="v4_4"
+REVIEW_IMAGE="mcfaddja/nl2sql-review"
+REVIEW_TAG="v4_4"
+REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
+REVIEW_GUI_TAG="v4_4"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -41,6 +45,7 @@ BUILD_AGENT=0
 # for. `./launch.sh --gui` still works without this -- it builds the image
 # from this checkout instead, which is slower but needs no registry.
 WITH_GUI=0
+WITH_REVIEW=0
 WITH_RAG=1
 VERIFY=1
 RESET=0
@@ -57,12 +62,19 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v4_2)
+      --agent-tag TAG    Agent image tag to pull (default: v4_4)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v4_2)
+      --gui-tag TAG      GUI image tag to pull (default: v4_4)
+      --review           Also pull and pin the feedback review service and
+                         its interface (implies --gui)
+      --review-image N   Review service image (default: mcfaddja/nl2sql-review)
+      --review-tag TAG   Review service image tag (default: v4_4)
+      --review-gui-image N   Review interface image
+                         (default: mcfaddja/nl2sql-review-gui)
+      --review-gui-tag TAG   Review interface image tag (default: v4_4)
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3)
       --context-image N  Context store image (default: mcfaddja/nl2sql-rag-chunkdb)
@@ -95,6 +107,14 @@ while [[ $# -gt 0 ]]; do
         --gui) WITH_GUI=1; shift ;;
         --gui-image) GUI_IMAGE="$2"; WITH_GUI=1; shift 2 ;;
         --gui-tag) GUI_TAG="$2"; WITH_GUI=1; shift 2 ;;
+        # The review interface is no use without the web interface in front
+        # of it -- feedback has to be given before it can be reviewed -- so
+        # asking for one pulls both.
+        --review) WITH_REVIEW=1; WITH_GUI=1; shift ;;
+        --review-image) REVIEW_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
+        --review-tag) REVIEW_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
+        --review-gui-image) REVIEW_GUI_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
+        --review-gui-tag) REVIEW_GUI_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --vector-image) VECTOR_IMAGE="$2"; shift 2 ;;
         --vector-tag) VECTOR_TAG="$2"; shift 2 ;;
         --context-image) CONTEXT_IMAGE="$2"; shift 2 ;;
@@ -211,6 +231,46 @@ if [[ $WITH_RAG -eq 1 ]]; then
 fi
 
 # --- Environment file ------------------------------------------------------
+# --- Carry over what the last run chose ------------------------------------
+# .env is rewritten from scratch every time, and most of what goes into it is
+# written only when a flag gave it a value. Without this, re-running the
+# script to pick up a new image -- `./setup.sh --review` on a machine that was
+# first set up with `--ollama-url` -- would produce a .env with no Ollama host
+# in it, and the agent would start looking for a model on localhost.
+#
+# Nothing here overrides a flag: each value is taken only when the flag did
+# not supply one. The old file is still moved to .env.bak below, so this is
+# about not needing it rather than about being able to recover.
+env_value() {  # env_value KEY -- what the existing .env says, or nothing
+    [[ -f .env ]] || return 0
+    grep -E "^$1=" .env | tail -1 | cut -d= -f2-
+}
+
+# Written as `if` rather than `[[ ... ]] && ...`: this script runs under
+# `set -e`, where an AND-list whose test is false is a failing statement and
+# takes the whole script down with it.
+carry() {  # carry VARNAME ENV_KEY -- fill VARNAME from .env if it is empty
+    local current="${!1}"
+    if [[ -z "$current" ]]; then
+        printf -v "$1" '%s' "$(env_value "$2")"
+    fi
+}
+
+carry OLLAMA_URL OLLAMA_BASE_URL
+carry OLLAMA_MODEL OLLAMA_MODEL
+carry EMBED_URL EMBED_BASE_URL
+carry EMBED_MODEL_NAME EMBED_MODEL
+carry POSTGRES_PORT POSTGRES_PORT
+
+# The two optional image sets are pinned only when asked for, so "was it
+# asked for last time" is the same question as "is it pinned in .env".
+if [[ $WITH_GUI -eq 0 && -n "$(env_value GUI_IMAGE_NAME)" ]]; then
+    WITH_GUI=1
+fi
+if [[ $WITH_REVIEW -eq 0 && -n "$(env_value REVIEW_IMAGE_NAME)" ]]; then
+    WITH_REVIEW=1
+fi
+
 step "Writing .env"
 if [[ -f .env ]]; then
     mv .env .env.bak
@@ -228,11 +288,28 @@ fi
         echo "GUI_IMAGE_NAME=$GUI_IMAGE"
         echo "GUI_IMAGE_TAG=$GUI_TAG"
     fi
+    # Same reasoning as the GUI above: pinned only when it was asked for, so
+    # compose does not go looking for an image nobody wanted.
+    if [[ $WITH_REVIEW -eq 1 ]]; then
+        echo "REVIEW_IMAGE_NAME=$REVIEW_IMAGE"
+        echo "REVIEW_IMAGE_TAG=$REVIEW_TAG"
+        echo "REVIEW_GUI_IMAGE_NAME=$REVIEW_GUI_IMAGE"
+        echo "REVIEW_GUI_IMAGE_TAG=$REVIEW_GUI_TAG"
+    fi
     echo "VECTOR_IMAGE_NAME=$VECTOR_IMAGE"
     echo "VECTOR_IMAGE_TAG=$VECTOR_TAG"
     echo "CONTEXT_IMAGE_NAME=$CONTEXT_IMAGE"
     echo "CONTEXT_IMAGE_TAG=$CONTEXT_TAG"
     echo "RAG_ENABLED=$([[ $WITH_RAG -eq 1 ]] && echo true || echo false)"
+    # Where the API writes a verdict from the web interface. Written
+    # unconditionally, and harmless when the feedback profile is not up: the
+    # API reports feedback as unavailable, /v1/meta says so, and the web
+    # interface keeps verdicts in the browser exactly as it did before.
+    #
+    # The role named here is INSERT-only on one table and cannot read a
+    # submission back. The review service creates it, and resets its grants,
+    # on every start -- see review/nl2sql_review/store.py.
+    echo "API_FEEDBACK_DB_URL=postgresql://nl2sql_feedback_writer:\${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}@nl2sql-feedbackdb:5432/\${FEEDBACK_DB_NAME:-nl2sql_feedback}"
     if [[ -n "$OLLAMA_URL" ]]; then echo "OLLAMA_BASE_URL=$OLLAMA_URL"; fi
     if [[ -n "$OLLAMA_MODEL" ]]; then echo "OLLAMA_MODEL=$OLLAMA_MODEL"; fi
     if [[ -n "$EMBED_URL" ]]; then echo "EMBED_BASE_URL=$EMBED_URL"; fi
@@ -264,6 +341,19 @@ if [[ $WITH_GUI -eq 1 ]]; then
         warn "could not pull $GUI_IMAGE:$GUI_TAG (private repo, or not logged in);"
         warn "./launch.sh --gui will build it from source instead."
     fi
+fi
+
+# The review service and its interface. Two images rather than one because
+# they are two containers: a Python service that can rewrite the golden
+# question set, and an nginx serving a page that talks to it.
+if [[ $WITH_REVIEW -eq 1 ]]; then
+    for pair in "$REVIEW_IMAGE:$REVIEW_TAG" "$REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG"; do
+        step "Pulling $pair (feedback review)"
+        if ! docker pull "$pair"; then
+            warn "could not pull $pair (private repo, or not logged in);"
+            warn "./launch.sh --review will build it from source instead."
+        fi
+    done
 fi
 
 # --- Start the databases ---------------------------------------------------

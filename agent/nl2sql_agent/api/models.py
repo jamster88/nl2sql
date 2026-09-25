@@ -233,6 +233,48 @@ class JobList(BaseModel):
     count: int
 
 
+class FeedbackRequest(BaseModel):
+    """What a user says about an answer: yes or no, and optionally why.
+
+    Only these two fields. The question, the SQL, the row count and the rest
+    of the snapshot are taken from the job by the server -- it still has it,
+    since a vote happens while the answer is on screen -- rather than being
+    sent by the client. A client that supplied its own snapshot could supply
+    one that never matched the job, and the staging table would then hold
+    evidence of an answer the agent never gave.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"examples": [{"verdict": "no", "comment": "fiscal month is off by one"}]},
+    )
+
+    verdict: Literal["yes", "no"] = Field(
+        description="Whether the answer was right. The whole of the required input."
+    )
+    comment: str = Field(
+        default="",
+        max_length=4000,
+        description="Optional free text for the reviewer: what was wrong, or what to check.",
+    )
+
+
+class FeedbackModel(BaseModel):
+    """The receipt for a recorded verdict.
+
+    `state` is what the review service has done with it. It is always
+    `pending` at capture time -- the writer role cannot see any other state,
+    let alone create one -- and is present so the field means the same thing
+    in both services' documents.
+    """
+
+    id: str
+    job_id: str
+    verdict: Literal["yes", "no"]
+    comment: str = ""
+    state: Literal["pending"] = "pending"
+
+
 class Limits(BaseModel):
     max_rows: int
     max_attempts: int
@@ -272,6 +314,14 @@ class Meta(BaseModel):
     pipeline: Pipeline
     tls: dict[str, Any] = Field(default_factory=dict)
     authentication: Literal["none", "bearer"] = "none"
+    feedback: bool = Field(
+        default=False,
+        description=(
+            "True when this server has a staging database and will accept "
+            "POST /v1/questions/{id}/feedback. A GUI reads it to decide whether "
+            "to draw the verdict buttons at all."
+        ),
+    )
 
 
 class Health(BaseModel):

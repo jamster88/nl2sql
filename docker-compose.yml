@@ -81,6 +81,45 @@ services:
       retries: 5
       start_period: 30s
 
+  # The feedback staging database: where a verdict from the web GUI waits
+  # until someone has looked at it.
+  #
+  # A stock Postgres rather than one of this project's built images, and its
+  # own service rather than a schema in one of the others, because what it
+  # holds is a different kind of thing. The retail store is the subject under
+  # test and writing curation data into it would pollute the thing being
+  # measured; the chunk and vector stores ship their data inside published
+  # images, so they are artefacts rather than places to keep something that
+  # accumulates. This is ordinary runtime data written by strangers, and it
+  # wants its own volume, its own backup story and its own blast radius.
+  #
+  # The schema and the INSERT-only writer role are created by the review
+  # service on every start, so there is nothing to bake into an image -- see
+  # review/nl2sql_review/store.py.
+  feedbackdb:
+    image: ${FEEDBACK_IMAGE:-postgres:18}
+    container_name: nl2sql-feedbackdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${FEEDBACK_DB_USER:-feedback}
+      POSTGRES_PASSWORD: ${FEEDBACK_DB_PASSWORD:-feedback}
+      POSTGRES_DB: ${FEEDBACK_DB_NAME:-nl2sql_feedback}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${FEEDBACK_DB_PORT:-5435}:5432"
+    volumes:
+      - feedbackdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${FEEDBACK_DB_USER:-feedback} -d ${FEEDBACK_DB_NAME:-nl2sql_feedback}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles: ["feedback"]
+
   agent:
     build:
       context: .
@@ -210,7 +249,10 @@ services:
       API_TLS_KEY_FILE: ${API_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
       API_TLS_GENERATE: ${API_TLS_GENERATE:-true}
       API_TLS_ALLOW_SELF_SIGNED: ${API_TLS_ALLOW_SELF_SIGNED:-true}
-      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,127.0.0.1,::1}
+      # nl2sql-review is in this list because the review service presents
+      # this same certificate rather than generating a second one, and its
+      # GUI's nginx verifies the name it connects to.
+      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,nl2sql-review,review,127.0.0.1,::1}
       API_TLS_DAYS: ${API_TLS_DAYS:-}
       # --- who may call ----------------------------------------------
       API_TOKEN: ${API_TOKEN:-}
@@ -225,6 +267,13 @@ services:
       API_KEEPALIVE_SECONDS: ${API_KEEPALIVE_SECONDS:-}
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-}
       API_LOG_LEVEL: ${API_LOG_LEVEL:-}
+      # --- feedback --------------------------------------------------
+      # The only write credential this process holds, and it is INSERT-only
+      # on one table: the role cannot read a submission back and cannot see
+      # anything a curator has already judged. Unset -- which is what the
+      # default gives when the feedback profile is not up -- means the
+      # feedback routes answer 503 with a reason and everything else works.
+      API_FEEDBACK_DB_URL: ${API_FEEDBACK_DB_URL:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -297,6 +346,128 @@ services:
       - apitls:/etc/nl2sql/tls:ro
     profiles: ["gui"]
 
+  # The review service: the process that can rewrite the golden question set.
+  #
+  # Separate from the API because of what it can do, not because of what it
+  # is. It writes context_questions/translated_questions.md and reloads the
+  # stores built from it -- that is the question set the agent is measured
+  # against, and giving those powers to the internet-facing process because
+  # both happen to be FastAPI would put the benchmark inside the blast radius
+  # of the thing being benchmarked.
+  review:
+    build:
+      context: .
+      dockerfile: review/Dockerfile
+    image: ${REVIEW_IMAGE_NAME:-nl2sql-review}:${REVIEW_IMAGE_TAG:-latest}
+    container_name: nl2sql-review
+    restart: unless-stopped
+    depends_on:
+      feedbackdb:
+        condition: service_healthy
+      chunkdb:
+        condition: service_healthy
+      vectordb:
+        condition: service_healthy
+    environment:
+      REVIEW_HOST: ${REVIEW_HOST:-0.0.0.0}
+      REVIEW_PORT: ${REVIEW_PORT:-8444}
+      REVIEW_ROOT_PATH: ${REVIEW_ROOT_PATH:-}
+      # Presents the certificate the API generates rather than one of its
+      # own; API_TLS_HOSTNAMES above covers nl2sql-review for that reason.
+      REVIEW_TLS_ENABLED: ${REVIEW_TLS_ENABLED:-true}
+      REVIEW_TLS_CERT_FILE: ${REVIEW_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      REVIEW_TLS_KEY_FILE: ${REVIEW_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
+      # Not optional in the way API_TOKEN is. A caller here can edit the
+      # golden question set; the readiness endpoint says so loudly when this
+      # is unset.
+      REVIEW_TOKEN: ${REVIEW_TOKEN:-}
+      REVIEW_CORS_ORIGINS: ${REVIEW_CORS_ORIGINS:-}
+      # As the owner: this service creates the schema and re-fences the
+      # INSERT-only role the API connects as, on every start.
+      FEEDBACK_DB_URL: ${REVIEW_FEEDBACK_DB_URL:-postgresql://feedback:feedback@nl2sql-feedbackdb:5432/nl2sql_feedback}
+      FEEDBACK_WRITER_PASSWORD: ${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}
+      REVIEW_MANAGE_SCHEMA: ${REVIEW_MANAGE_SCHEMA:-}
+      # --- promotion -------------------------------------------------
+      REVIEW_DOCUMENT: ${REVIEW_DOCUMENT:-/app/context_questions/translated_questions.md}
+      REVIEW_RAG_DIR: ${REVIEW_RAG_DIR:-/app/rag}
+      REVIEW_RELOAD_CONTEXT: ${REVIEW_RELOAD_CONTEXT:-}
+      REVIEW_RELOAD_VECTORS: ${REVIEW_RELOAD_VECTORS:-}
+      REVIEW_RELOAD_TIMEOUT_SECONDS: ${REVIEW_RELOAD_TIMEOUT_SECONDS:-}
+      CHUNK_DB_URL: ${REVIEW_CHUNK_DB_URL:-postgresql://ragproc:ragproc@nl2sql-chunkdb:5432/nl2sql_chunks}
+      VECTOR_DB_URL: ${REVIEW_VECTOR_DB_URL:-postgresql://ragproc:ragproc@nl2sql-vectordb:5432/nl2sql_vectors}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
+      REVIEW_DOCS_ENABLED: ${REVIEW_DOCS_ENABLED:-}
+      REVIEW_LOG_LEVEL: ${REVIEW_LOG_LEVEL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${REVIEW_PORT:-8444}:${REVIEW_PORT:-8444}"
+    volumes:
+      # Read-only: the certificate the API wrote, which this service presents.
+      - apitls:/etc/nl2sql/tls:ro
+      # The golden question document, bind-mounted from the working tree.
+      #
+      # This is the one writable bind mount in the project and it is the
+      # whole point of the service: a promotion has to change the file in
+      # *this checkout*, so it can be read, reviewed and committed like any
+      # other edit. Written into a container's own copy it would vanish with
+      # the container, and the golden set would have grown somewhere nobody
+      # can see.
+      - ./context_questions:/app/context_questions
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os,ssl,urllib.request;
+          p=os.environ.get('REVIEW_PORT','8444');
+          s='https' if os.environ.get('REVIEW_TLS_ENABLED','true').lower() not in ('0','false','no','off') else 'http';
+          c=ssl._create_unverified_context();
+          urllib.request.urlopen(f'{s}://127.0.0.1:{p}/healthz', context=c, timeout=5).read()"
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+    profiles: ["review"]
+
+  # The review interface: a second React/TypeScript single page, built to
+  # static files and served by its own nginx, which proxies the review
+  # service.
+  #
+  # A second container and a second npm project rather than a route in the
+  # web GUI. Two entry points in one project would share a build, and the
+  # public GUI's image would then be serving the interface that rewrites the
+  # golden question set to anyone who could reach it.
+  reviewgui:
+    build:
+      context: .
+      dockerfile: review/gui/Dockerfile
+    image: ${REVIEW_GUI_IMAGE_NAME:-nl2sql-review-gui}:${REVIEW_GUI_IMAGE_TAG:-latest}
+    container_name: nl2sql-review-gui
+    restart: unless-stopped
+    depends_on:
+      review:
+        condition: service_healthy
+    environment:
+      REVIEW_GUI_PORT: ${REVIEW_GUI_PORT:-8081}
+      # nl2sql-review rather than review: both resolve on this network, but
+      # the certificate is issued for that name and proxy_ssl_name has to
+      # match something it covers.
+      REVIEW_UPSTREAM: ${REVIEW_GUI_UPSTREAM:-https://nl2sql-review:8444}
+      REVIEW_SSL_NAME: ${REVIEW_GUI_SSL_NAME:-nl2sql-review}
+      REVIEW_CACERT: ${REVIEW_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      # Longer than a promotion takes: it runs both RAG loaders and re-embeds.
+      REVIEW_READ_TIMEOUT: ${REVIEW_GUI_READ_TIMEOUT:-900s}
+      REVIEW_GUI_RESOLVER: ${REVIEW_GUI_RESOLVER:-127.0.0.11}
+      # Held here so the reviewer's browser never sees it. This token can
+      # rewrite the golden question set.
+      REVIEW_TOKEN: ${REVIEW_TOKEN:-}
+    ports:
+      - "${REVIEW_GUI_PORT:-8081}:${REVIEW_GUI_PORT:-8081}"
+    volumes:
+      - apitls:/etc/nl2sql/tls:ro
+    profiles: ["reviewgui"]
+
   # An outside client. Nothing of this project is installed in it -- it is a
   # curl image on the same network, which is the point: if the API can only
   # be driven by something that imports nl2sql_agent, it is not an API.
@@ -330,6 +501,10 @@ volumes:
     # every `docker compose up`.
   pgdata:
     name: nl2sql-pgdata
+  feedbackdata:
+    # Staged feedback. The one volume here holding data a person typed
+    # rather than data a build produced, which is what makes it the one
+    # worth backing up.
   chunkdata:
     # Project-scoped, seeded from the published image on first start -- the
     # same arrangement as vectordata below.

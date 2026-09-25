@@ -700,12 +700,26 @@ pre {
 /* --- feedback -------------------------------------------------------- */
 
 .feedback {
+  /* A column now, because the comment box sits under the verdict row
+     rather than beside it: the row is a one-click courtesy and the box is
+     an optional second thought, and putting them on one line makes the
+     whole thing read as a form. */
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.feedback-row {
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
   align-items: center;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+}
+
+.feedback-row .input {
+  flex: 1 1 260px;
 }
 
 .feedback-prompt {
@@ -732,6 +746,41 @@ pre {
 
 .feedback-note {
   font-size: 0.82rem;
+}
+
+/* Unsent is the one state that must not look like the others: the user
+   believes they have reported a problem, and nobody has heard it. */
+.feedback-note[data-sync="failed"] {
+  color: var(--bad);
+  font-weight: 550;
+}
+
+.feedback-note[data-sync="saved"] {
+  color: var(--good);
+}
+
+/* The retry button, which should read as a repair and not as a new action. */
+.button-quiet {
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  background: transparent;
+}
+
+.feedback-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--bad);
+}
+
+.feedback-comment {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.feedback-comment-label {
+  font-size: 0.85rem;
+  font-weight: 550;
 }
 
 /* --- history --------------------------------------------------------- */

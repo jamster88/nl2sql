@@ -529,3 +529,235 @@ def test_the_closing_lines_say_what_the_browser_is_spared(run_launch):
     output = run_launch("--gui").output
     assert "holds the API token and" in output
     assert "verifies the API's certificate" in output
+
+
+# ---------------------------------------------------------------------------
+# The feedback staging database (--feedback) and the review stack (--review)
+# ---------------------------------------------------------------------------
+
+
+def test_the_feedback_stack_is_not_started_unless_it_is_asked_for(run_launch):
+    """Most people ask questions and never review anything, and this stack
+    opens the port that can rewrite the golden question set."""
+    result = run_launch()
+    assert not result.called("up -d feedbackdb")
+    assert not result.called("up -d review")
+    assert "staging database" not in result.output
+
+
+def test_the_feedback_flag_starts_the_staging_database(run_launch):
+    result = run_launch("--feedback")
+    assert result.called("--profile feedback up -d feedbackdb")
+    assert "Staging database is healthy on port 5435" in result.output
+
+
+def test_asking_for_feedback_asks_for_the_api_that_writes_to_it(run_launch):
+    """A staging database nothing writes to is a container burning memory."""
+    result = run_launch("--feedback")
+    assert result.called("--profile api up -d api")
+
+
+def test_feedback_alone_does_not_drag_the_review_stack_in(run_launch):
+    result = run_launch("--feedback")
+    assert not result.called("up -d review")
+    assert not result.called("up -d reviewgui")
+
+
+def test_the_staging_port_follows_what_compose_will_use(run_launch):
+    result = run_launch("--feedback", env_file="IMAGE_NAME=x\nFEEDBACK_DB_PORT=5999\n")
+    assert "Staging database is healthy on port 5999" in result.output
+
+
+def test_an_api_with_nowhere_to_write_is_warned_about(run_launch):
+    """The database is up and the API has not been told where it is, which
+    looks exactly like working until someone votes."""
+    result = run_launch("--feedback")
+    assert "API_FEEDBACK_DB_URL is not set" in result.output
+    assert "setup.sh writes one into .env" in result.output
+
+
+def test_a_configured_api_is_not_warned_about(run_launch):
+    result = run_launch(
+        "--feedback",
+        env_file="IMAGE_NAME=x\nAPI_FEEDBACK_DB_URL=postgresql://w:p@nl2sql-feedbackdb:5432/nl2sql_feedback\n",
+    )
+    assert "API_FEEDBACK_DB_URL is not set" not in result.output
+
+
+def test_a_staging_database_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--feedback", env={"FAKE_FEEDBACK_HEALTH": "starting"}, timeout=180)
+    assert "the staging database did not become healthy" in result.output
+    assert "docker compose --profile feedback logs feedbackdb" in result.output
+
+
+def test_the_review_flag_starts_the_service_and_its_interface(run_launch):
+    result = run_launch("--review")
+    assert result.called("--profile feedback --profile review up -d review")
+    assert result.called("--profile feedback --profile review --profile reviewgui up -d reviewgui")
+    assert "Review service is healthy at https://localhost:8444" in result.output
+    assert "Review interface is healthy at http://localhost:8081" in result.output
+
+
+def test_asking_for_review_asks_for_everything_under_it(run_launch):
+    """The interface is nothing without the service, and the service is
+    nothing without the database in front of it."""
+    result = run_launch("--review")
+    assert result.called("--profile feedback up -d feedbackdb")
+    assert result.called("--profile api up -d api")
+
+
+def test_the_review_scheme_follows_the_tls_setting(run_launch):
+    result = run_launch("--review", env_file="IMAGE_NAME=x\nREVIEW_TLS_ENABLED=false\n")
+    assert "Review service is healthy at http://localhost:8444" in result.output
+
+
+def test_the_review_ports_follow_what_compose_will_use(run_launch):
+    result = run_launch(
+        "--review", env_file="IMAGE_NAME=x\nREVIEW_PORT=9444\nREVIEW_GUI_PORT=9081\n"
+    )
+    assert "https://localhost:9444" in result.output
+    assert "http://localhost:9081" in result.output
+
+
+def test_a_review_service_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--review", env={"FAKE_REVIEW_HEALTH": "starting"}, timeout=240)
+    assert "the review service did not become healthy" in result.output
+    assert "--profile feedback --profile review logs review" in result.output
+
+
+def test_a_review_interface_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--review", env={"FAKE_REVIEW_GUI_HEALTH": "starting"}, timeout=240)
+    assert "the review interface did not become healthy" in result.output
+    assert "--profile reviewgui logs reviewgui" in result.output
+
+
+def test_a_container_that_died_is_not_waited_out(run_launch):
+    """A container that exited is never going to become healthy, so the wait
+    gives up on it rather than sitting through the whole timeout."""
+    result = run_launch(
+        "--review",
+        env={"FAKE_REVIEW_HEALTH": "starting", "FAKE_REVIEW_RUNNING": "false"},
+        timeout=60,
+    )
+    assert "the review service did not become healthy" in result.output
+
+
+def test_the_closing_lines_say_where_to_open_the_review_interface(run_launch):
+    output = run_launch("--review").output
+    assert "open http://localhost:8081" in output
+    assert "review/README.md" in output
+
+
+def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_launch):
+    """The single most surprising thing about the review interface: it
+    writes a tracked file, and the reviewer is expected to commit it."""
+    output = run_launch("--review").output
+    assert "context_questions/translated_questions.md" in output
+    assert "git diff" in output
+
+
+def test_the_closing_lines_name_the_three_fields_a_reviewer_must_write(run_launch):
+    """The part of the job no thumbs-up can do for them."""
+    output = run_launch("--review").output
+    assert "keywords" in output
+    assert "reasoning target" in output
+    assert "expected result" in output
+
+
+def test_a_database_without_the_trigram_extension_is_warned_about(run_launch):
+    """The agent falls back to difflib without pg_trgm, which is a quieter
+    kind of wrong: literal matching still works, just less well, so nothing
+    fails and the only sign is this line.
+
+    Asserted explicitly rather than incidentally. It used to be covered by a
+    test that happened to quote two words shared with nothing else in the
+    script; adding an unrelated warning elsewhere made those two words
+    ambiguous and the coverage evaporated without anything breaking.
+    """
+    result = run_launch(env={"FAKE_TRGM_INSTALLED": "0"})
+    assert "pg_trgm is not installed" in result.output
+    assert "falls back to difflib" in result.output
+
+
+def test_a_database_with_the_trigram_extension_says_so_instead(run_launch):
+    result = run_launch(env={"FAKE_TRGM_INSTALLED": "1"})
+    assert "literal matching: pg_trgm installed (trigram search)" in result.output
+    assert "pg_trgm is not installed" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# A proxy still trusting a certificate that has been reissued
+# ---------------------------------------------------------------------------
+#
+# nginx reads the API's certificate once, while it parses its config. When
+# the API reissues one -- which it does when API_TLS_HOSTNAMES grows to cover
+# a service that did not exist before -- an already-running proxy is trusting
+# a certificate nobody presents any more. The container stays *healthy*,
+# because its health check asks for index.html and that is served from disk;
+# every request to the API through it returns 502. And `docker compose up -d`
+# does not restart a healthy container, so it stays that way.
+#
+# This is what an upgrade looks like from the outside, and it is why the
+# check is a request for a route the API owns rather than a health status.
+
+
+def test_the_gui_is_checked_through_its_proxy_not_just_for_health(run_launch):
+    result = run_launch("--gui")
+    assert result.called("readyz"), "nothing asked the API for anything through the proxy"
+    assert "GUI is healthy at http://localhost:8080" in result.output
+
+
+def test_a_gui_whose_proxy_cannot_reach_the_api_is_restarted(run_launch):
+    result = run_launch("--gui", env={"FAKE_PROXY_BROKEN": "8080"})
+
+    assert "cannot reach the API through its proxy" in result.output
+    assert result.called("restart gui")
+    # And once restarted it is reported as working, not as broken.
+    assert "GUI is healthy at http://localhost:8080" in result.output
+
+
+def test_a_working_gui_proxy_is_not_restarted(run_launch):
+    """A restart drops every connection through it. Only do it when it is the
+    cure for something."""
+    result = run_launch("--gui")
+    assert not result.called("restart gui")
+
+
+def test_the_restart_says_why_rather_than_just_doing_it(run_launch):
+    result = run_launch("--gui", env={"FAKE_PROXY_BROKEN": "8080"})
+    assert "pick up" in result.output
+    assert "certificate" in result.output
+
+
+def test_the_review_interface_is_checked_through_its_proxy_too(run_launch):
+    result = run_launch("--review")
+    assert "Review interface is healthy at http://localhost:8081" in result.output
+
+
+def test_a_review_interface_whose_proxy_is_stale_is_restarted(run_launch):
+    result = run_launch("--review", env={"FAKE_PROXY_BROKEN": "8081"})
+
+    assert "cannot reach the API through its proxy" in result.output
+    assert result.called("restart reviewgui")
+    assert "Review interface is healthy at http://localhost:8081" in result.output
+
+
+def test_a_gui_proxy_a_restart_does_not_fix_is_reported_not_papered_over(run_launch):
+    """A restart cures a stale certificate and nothing else. When the proxy
+    still cannot reach the API, saying "healthy" would be the wrong answer to
+    the only question the user has."""
+    result = run_launch("--gui", env={"FAKE_PROXY_DEAD": "8080"})
+
+    assert result.called("restart gui")
+    assert "cannot reach the API through its proxy" in result.output
+    assert "GUI is healthy" not in result.output
+    assert "docker compose --profile api --profile gui logs gui" in result.output
+
+
+def test_a_review_proxy_a_restart_does_not_fix_is_reported_too(run_launch):
+    result = run_launch("--review", env={"FAKE_PROXY_DEAD": "8081"})
+
+    assert result.called("restart reviewgui")
+    assert "cannot reach the review service" in result.output
+    assert "Review interface is healthy" not in result.output
+    assert "docker compose --profile reviewgui logs reviewgui" in result.output

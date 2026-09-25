@@ -34,6 +34,7 @@ omit =
 # module, and those are the ones most likely to go untested.
 include =
     agent/nl2sql_agent/*
+    review/nl2sql_review/*
     benchmarks/*
     rag/*
     data_gen/*

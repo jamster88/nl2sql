@@ -22,6 +22,9 @@ describe("createFeedbackStore", () => {
       question: "how many stores?",
       verdict: "yes",
       at: "2026-09-22T12:00:00.000Z",
+      // The browser-only store says so about every record it holds: it was
+      // recorded here and was never going anywhere else.
+      sync: "local",
     });
     expect(store.get("job-1")).toEqual(record);
   });

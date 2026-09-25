@@ -1,0 +1,16 @@
+# The review service. Deliberately short: this process serves HTTP, talks to
+# Postgres, and shells out to the RAG loaders. It never answers a question,
+# so none of the agent's model machinery is here.
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic>=2,<3
+psycopg[binary]==3.3.5
+
+# --- what the loaders need (rag/ragproc) -----------------------------------
+# Promotion runs 05_load_golden_pairs.py and 06_embed_golden_pairs.py as
+# scripts. They are the documented, tested path for loading the golden pairs,
+# and re-implementing them here would be a second set of rules to keep in
+# agreement with the first.
+pgvector>=0.3
+requests>=2.32
+numpy>=1.26

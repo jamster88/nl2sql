@@ -64,6 +64,19 @@ case "$1" in
             echo "${FAKE_GUI_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-gui* ]]; then
             echo "${FAKE_GUI_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-feedbackdb* ]]; then
+            echo "${FAKE_FEEDBACK_HEALTH:-healthy}"
+        # The review GUI's container name contains the review service's, so
+        # the longer name is matched first or every review-gui inspect would
+        # be answered as the service.
+        elif [[ "$*" == *nl2sql-review-gui* && "$*" == *Running* ]]; then
+            echo "${FAKE_REVIEW_GUI_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-review-gui* ]]; then
+            echo "${FAKE_REVIEW_GUI_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-review* && "$*" == *Running* ]]; then
+            echo "${FAKE_REVIEW_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-review* ]]; then
+            echo "${FAKE_REVIEW_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi
@@ -140,6 +153,40 @@ done
 # Ollama probe down.
 if [[ -n "${FAKE_GUI_DOWN:-}" && "$*" == *":${FAKE_GUI_PORT:-8080}"* ]]; then exit 7; fi
 if [[ -n "${FAKE_OLLAMA_DOWN:-}" ]]; then exit 7; fi
+
+# launch.sh probes /readyz *through* a proxy to find out whether nginx is
+# still trusting a certificate that has since been reissued -- the container
+# is healthy either way, so only a request the API owns tells them apart.
+# FAKE_PROXY_BROKEN makes that probe fail once per port, which is what a
+# stale certificate looks like: the restart is expected to cure it.
+# FAKE_PROXY_DEAD makes it fail every time, which is the other case -- the
+# proxy cannot reach the API for a reason a restart does not fix, and the
+# script has to say so rather than report it as working.
+if [[ "$*" == */readyz* ]]; then
+    code=200
+    for port in ${FAKE_PROXY_DEAD:-}; do
+        if [[ "$*" == *":${port}/readyz"* ]]; then code=000; fi
+    done
+    for port in ${FAKE_PROXY_BROKEN:-}; do
+        if [[ "$*" == *":${port}/readyz"* ]]; then
+            marker="${FAKE_LOG%/*}/proxy-broken-${port}"
+            if [[ -e "$marker" ]]; then
+                # Already restarted once; the reissued certificate is loaded.
+                code=200
+            else
+                touch "$marker"
+                code=000
+            fi
+        fi
+    done
+    printf 'curl readyz %s -> %s\n' "$*" "$code" >> "$FAKE_LOG"
+    for arg in "$@"; do
+        case "$prev_w" in -w|--write-out) printf '%s' "$code" ;; esac
+        prev_w="$arg"
+    done
+    [[ "$code" == "000" ]] && exit 7
+    exit 0
+fi
 
 # Assigned on its own line rather than inline as ${VAR:-default}: brace
 # expansion stops at the first unescaped } and would truncate this JSON.

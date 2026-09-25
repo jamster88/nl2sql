@@ -333,7 +333,10 @@ def test_a_failed_gui_pull_is_not_fatal(run_setup):
     """
     result = run_setup("--gui", env={"FAKE_FAIL_PULL": "nl2sql-gui"})
     assert result.returncode == 0
-    assert "will build it from source instead" in result.output
+    # Named rather than quoting the shared half of the sentence: the review
+    # images say the same thing about themselves, and a test that matched
+    # either would stop proving anything about this one.
+    assert "./launch.sh --gui will build it from source instead." in result.output
 
 
 def test_a_failed_context_store_pull_is_fatal_with_actionable_guidance(run_setup):
@@ -649,3 +652,142 @@ def test_a_chat_model_tagged_latest_is_not_reported_as_missing(run_setup):
     result = run_setup(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k:latest"},{"name":"bge-m3:latest"}'})
     assert "is available at" in result.output
     assert "does not have qwen3.8-256k" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# The feedback review images
+# ---------------------------------------------------------------------------
+
+
+def test_review_pulls_both_images_and_the_interface_in_front_of_them(run_setup):
+    """Feedback has to be given before it can be reviewed, so asking for the
+    review images asks for the web interface too."""
+    result = run_setup("--review")
+
+    assert result.called(f"pull mcfaddja/nl2sql-review:{_shipped_tag('REVIEW_TAG')}")
+    assert result.called(f"pull mcfaddja/nl2sql-review-gui:{_shipped_tag('REVIEW_GUI_TAG')}")
+    assert result.called(f"pull mcfaddja/nl2sql-gui:{_shipped_tag('GUI_TAG')}")
+
+
+def test_review_pins_all_four_names_in_the_env_file(run_setup):
+    """Unpinned, compose builds them from this checkout on first start --
+    a pip install and an npm ci inside two containers."""
+    env = run_setup("--review").env_file()
+
+    assert env["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
+    assert env["REVIEW_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-review-gui"
+    assert env["REVIEW_IMAGE_TAG"] == _shipped_tag("REVIEW_TAG")
+    assert env["REVIEW_GUI_IMAGE_TAG"] == _shipped_tag("REVIEW_GUI_TAG")
+
+
+def test_nothing_about_review_is_pinned_unless_it_was_asked_for(run_setup):
+    """Pinning an image nobody wanted makes compose go looking for it."""
+    env = run_setup().env_file()
+    assert "REVIEW_IMAGE_NAME" not in env
+    assert "REVIEW_GUI_IMAGE_NAME" not in env
+
+
+def test_naming_any_review_image_or_tag_implies_the_flag(run_setup):
+    """Asking for a particular image and then not getting one would be a
+    silent no-op, which is the worst kind of flag.
+
+    Written out rather than parametrized on purpose. The guard in
+    `test_script_coverage.py` reads the syntax tree for flags passed as
+    literals, precisely so that a flag merely *named* in a test does not
+    count as one that was run -- and a parametrized value is not a literal
+    at the call site.
+    """
+    assert run_setup("--review-image", "example.com/rev").env_file()[
+        "REVIEW_IMAGE_NAME"
+    ] == "example.com/rev"
+    assert run_setup("--review-tag", "v9_9").env_file()["REVIEW_IMAGE_TAG"] == "v9_9"
+    assert run_setup("--review-gui-image", "example.com/rev-gui").env_file()[
+        "REVIEW_GUI_IMAGE_NAME"
+    ] == "example.com/rev-gui"
+    assert run_setup("--review-gui-tag", "v9_9").env_file()["REVIEW_GUI_IMAGE_TAG"] == "v9_9"
+
+
+def test_a_failed_review_pull_is_not_fatal(run_setup):
+    """Same as the GUI: there are Dockerfiles right here, so an unreachable
+    registry costs a build rather than the whole setup."""
+    result = run_setup("--review", env={"FAKE_FAIL_PULL": "nl2sql-review"})
+    assert result.returncode == 0
+    assert "./launch.sh --review will build it from source instead." in result.output
+
+
+# ---------------------------------------------------------------------------
+# Re-running it should not undo the last run
+# ---------------------------------------------------------------------------
+#
+# .env is rewritten from scratch every time, and most of what goes into it is
+# written only when a flag gave it a value. That made every re-run a quiet
+# downgrade: `./setup.sh --review` on a machine first set up with
+# `--ollama-url` produced a .env with no Ollama host in it, and the agent
+# started looking for a model on localhost.
+#
+# These run the script twice in one sandbox, which is what the upgrade
+# actually is, rather than writing a .env by hand and hoping it looks like
+# one the script would have written.
+
+
+def test_the_ollama_host_survives_a_re_run(run_setup):
+    first = run_setup("--ollama-url", "http://192.168.1.5:11434")
+    assert first.env_file()["OLLAMA_BASE_URL"] == "http://192.168.1.5:11434"
+
+    second = run_setup("--review")
+    assert second.env_file()["OLLAMA_BASE_URL"] == "http://192.168.1.5:11434"
+    assert second.env_file()["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
+
+
+def test_a_flag_still_wins_over_what_was_there(run_setup):
+    """Carrying values over must not make them impossible to change."""
+    run_setup("--ollama-url", "http://old:11434")
+    second = run_setup("--ollama-url", "http://new:11434")
+    assert second.env_file()["OLLAMA_BASE_URL"] == "http://new:11434"
+
+
+def test_every_optional_value_survives_a_re_run(run_setup):
+    run_setup(
+        "--ollama-url", "http://chat:11434",
+        "--model", "qwen3.8-256k",
+        "--embed-url", "http://embed:11434",
+        "--embed-model", "bge-m3",
+        "--port", "5999",
+    )
+    env = run_setup().env_file()
+
+    assert env["OLLAMA_BASE_URL"] == "http://chat:11434"
+    assert env["OLLAMA_MODEL"] == "qwen3.8-256k"
+    assert env["EMBED_BASE_URL"] == "http://embed:11434"
+    assert env["EMBED_MODEL"] == "bge-m3"
+    assert env["POSTGRES_PORT"] == "5999"
+
+
+def test_a_pinned_gui_stays_pinned_without_the_flag(run_setup):
+    """"Was it asked for last time" is the same question as "is it pinned"."""
+    run_setup("--gui")
+    env = run_setup().env_file()
+    assert env["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
+
+
+def test_a_pinned_review_stays_pinned_without_the_flag(run_setup):
+    run_setup("--review")
+    env = run_setup().env_file()
+    assert env["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
+    assert env["REVIEW_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-review-gui"
+
+
+def test_nothing_is_carried_over_on_a_first_run(run_setup):
+    """There is no previous .env, and reading one that is not there must not
+    write empty values into the new one."""
+    env = run_setup().env_file()
+    assert "OLLAMA_BASE_URL" not in env
+    assert "GUI_IMAGE_NAME" not in env
+    assert "REVIEW_IMAGE_NAME" not in env
+
+
+def test_the_previous_env_is_still_kept_beside_the_new_one(run_setup):
+    """Carrying values over is about not needing the backup, not about
+    replacing it."""
+    run_setup("--ollama-url", "http://old:11434")
+    assert "existing .env moved to .env.bak" in run_setup().output

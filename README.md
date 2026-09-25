@@ -40,7 +40,7 @@ the tags.
 
 | | When | What it does |
 |---|---|---|
-| [`./start.sh`](start.sh) | You just want to use it | Runs the two below, waits for the page, opens your browser |
+| [`./start.sh`](start.sh) | You just want to use it | Runs the two below, waits for the page, opens your browser. `--review` brings the feedback system up too and opens that as well |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
 | [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
 
@@ -49,12 +49,20 @@ browser. Use them directly when you want the parts separately: a terminal
 session with no API, a different agent tag, no knowledge base.
 
 ```bash
-./start.sh --no-browser    # everything up, prints the URL instead
+./start.sh --review        # and the review interface, in a second page
+./start.sh --feedback      # keep verdicts, without the review interface
+./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
 ./start.sh --restart       # recreate the containers
 ./start.sh --quiet         # only print problems
 BROWSER=firefox ./start.sh # open it with something in particular
 ```
+
+`--review` is the whole feedback system in one command: the staging database
+that keeps verdicts, the service that promotes them into the golden question
+set, and a second page at <http://localhost:8081> beside the first. Whether
+that lands in a new window or a new tab is the browser's decision -- neither
+`open` nor `xdg-open` has a say in it.
 
 Afterwards, whichever route you took:
 
@@ -74,8 +82,8 @@ interface and lets them be turned into golden questions -- see
 [Feedback](#feedback):
 
 ```bash
-./launch.sh --review       # staging database, review service, review interface
-open http://localhost:8081
+./start.sh --review        # both pages, opened for you
+./launch.sh --review       # the same containers, without the browser step
 ```
 
 Or as a REST server for something else to talk to, which is the same agent
@@ -248,6 +256,26 @@ Both work. The difference is that compose builds a service whose image is
 missing, so without the pin the first `./launch.sh --gui` spends a couple of
 minutes running `npm ci` inside a container.
 
+### Upgrading an existing checkout
+
+`.env` pins the image tags, and neither `launch.sh` nor `start.sh` rewrites
+it -- so a machine set up on an earlier tag keeps running that tag until
+`setup.sh` is run again:
+
+```bash
+./setup.sh --review     # re-pins the tags, and pulls the two review images
+./start.sh --review
+```
+
+Re-running it is safe. It rewrites `.env` from scratch, but carries over what
+the last run chose -- the Ollama host, the models, the port, and whether the
+web interface and the review images were pinned -- so only the tags change.
+The previous file is still kept as `.env.bak`.
+
+Without that step, `./start.sh --review` on an older checkout brings up an
+agent that has no feedback routes, and the review interface sits at an empty
+queue forever.
+
 To publish new ones, build both architectures in the same step so the tags
 stay multi-arch, as every earlier tag is:
 
@@ -397,9 +425,13 @@ The web interface asks whether an answer was right. This is where those
 answers go.
 
 ```bash
-./launch.sh --review
-open http://localhost:8081
+./start.sh --review
 ```
+
+That is the whole thing: databases, the API, the web interface, the staging
+database, the review service and the review interface -- and both pages
+opened in your browser. [`./launch.sh --review`](launch.sh) is the same
+containers without the browser step.
 
 Without it, a verdict stays in the browser and nothing is lost -- the buttons
 still work, the verdict is still shown, and `/v1/meta` tells the page not to
@@ -832,8 +864,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1993 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 2382, including ones that build and run containers
+pytest                             # 2023 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 2412, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -886,7 +918,7 @@ COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
 coverage combine && coverage report --show-missing --skip-covered
 ```
 
-**100% of every Python file in the repository** -- 6,617 statements, none
+**100% of every Python file in the repository** -- 6,629 statements, none
 missed. Not four packages with the scripts left out: the agent and its REST
 server, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
@@ -975,7 +1007,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **797 of 797**.
+  the traces mention -- **869 of 869**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -995,6 +1027,11 @@ script, by a measurement of their own:
   now, and the number went from 657 to 797 without a single new test: those
   commands were always being run, just never counted. Two tests now assert
   that no script is scanned only part way.
+
+  A third was in the arithmetic. The percentage was formatted with `%.0f`,
+  which rounded 867 of 869 up to `100%` -- the one number the tool exists to
+  be trusted about. Only a clean sweep prints 100 now; everything else rounds
+  down.
 
   It counts *commands*, not lines, because bash does not report lines
   individually and does not even report them consistently: a

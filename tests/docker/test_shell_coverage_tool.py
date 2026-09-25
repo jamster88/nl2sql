@@ -19,7 +19,13 @@ from pathlib import Path
 
 import pytest
 
-from tests.shell_coverage import DRIVEN_BY, logical_commands, report, traced_lines
+from tests.shell_coverage import (
+    DRIVEN_BY,
+    _percent,
+    logical_commands,
+    report,
+    traced_lines,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
@@ -314,3 +320,25 @@ def test_no_script_is_scanned_only_part_way(script: str):
         f"{script}: the scanner stopped at line {commands[-1][0]}, but the file "
         f"has commands as late as line {meaningful[-1]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# The number the whole tool is trusted for
+# ---------------------------------------------------------------------------
+
+
+def test_only_a_clean_sweep_prints_a_hundred():
+    """`%.0f` rounded 867 of 869 up to "100%".
+
+    That is the one number this tool exists to be trusted about: a report
+    saying 100 while two commands have never run is worse than one saying
+    nothing, because nobody goes looking.
+    """
+    assert _percent(869, 869) == 100
+    assert _percent(867, 869) == 99
+    assert _percent(9999, 10000) == 99
+
+
+@pytest.mark.parametrize("hit,total,expected", [(0, 10, 0), (5, 10, 50), (1, 3, 33)])
+def test_everything_else_is_rounded_down(hit: int, total: int, expected: int):
+    assert _percent(hit, total) == expected

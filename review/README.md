@@ -177,18 +177,34 @@ is committed by a person.
 ## Running it
 
 ```bash
+./start.sh --review         # everything, with both pages opened for you
+```
+
+That is the whole thing from cold: the databases, the API, the web interface
+people vote in, the staging database, this service, and the review interface
+-- then <http://localhost:8080> and <http://localhost:8081> in your browser.
+
+The same containers without the browser step, or a smaller subset:
+
+```bash
 ./launch.sh --review        # staging database, review service, review interface
 ./launch.sh --feedback      # just the staging database, so verdicts are kept
 ```
 
 `--review` implies `--feedback`, which implies `--api`: the interface is
 nothing without the service, the service is nothing without the database, and
-the database is nothing without the API that writes to it.
+the database is nothing without the API that writes to it. `--feedback` on its
+own is for the machine that *collects* feedback when a different one reviews
+it -- the staging database is the only part that has to be where people vote.
 
-The interface is then at <http://localhost:8081>, and promotion writes the
-`context_questions/` directory of *this checkout*, bind-mounted into the
-container. That is deliberate. Written into a container's own copy, the
-golden set would grow somewhere nobody can see.
+On a checkout set up before this existed, `.env` still pins the older image
+tags and knows nothing about the two review images, so run
+`./setup.sh --review` once first. It re-pins the tags and pulls them, carrying
+over the Ollama host and everything else the last run chose.
+
+Promotion writes the `context_questions/` directory of *this checkout*,
+bind-mounted into the container. That is deliberate. Written into a
+container's own copy, the golden set would grow somewhere nobody can see.
 
 Directly:
 

@@ -349,3 +349,134 @@ def test_plain_linux_is_not_mistaken_for_wsl(run_start):
     result = run_start(env={"FAKE_UNAME_S": "Linux"})
     opened = [call for call in result.calls if call.startswith("browser ")]
     assert opened == ["browser xdg-open http://localhost:8080"]
+
+
+# ---------------------------------------------------------------------------
+# The feedback system (--review, --feedback)
+# ---------------------------------------------------------------------------
+
+
+def test_review_brings_up_the_whole_feedback_stack(run_start):
+    """One flag, because the chain is not optional at any link: the interface
+    needs the service, the service needs the staging database, and none of it
+    is any use without the web interface people vote in."""
+    result = run_start("--review")
+
+    assert result.returncode == 0
+    assert result.called("--profile feedback up -d feedbackdb")
+    assert result.called("--profile feedback --profile review up -d review")
+    assert result.called("--profile reviewgui up -d reviewgui")
+    assert result.called("--profile api --profile gui up -d gui")
+
+
+def test_review_opens_both_pages(run_start):
+    result = run_start("--review")
+    opened = [call for call in result.calls if call.startswith("browser ")]
+
+    assert len(opened) == 2, f"expected two pages:\n" + "\n".join(opened)
+    assert opened[0].endswith("http://localhost:8080")
+    assert opened[1].endswith("http://localhost:8081")
+
+
+def test_the_review_page_is_opened_second(run_start):
+    """So the interface people actually ask questions in is left in front."""
+    result = run_start("--review")
+    order = [line for line in result.output.splitlines() if "Opening http" in line]
+    assert order == ["==> Opening http://localhost:8080", "==> Opening http://localhost:8081"]
+
+
+def test_without_review_only_one_page_opens(run_start):
+    result = run_start()
+    opened = [call for call in result.calls if call.startswith("browser ")]
+    assert len(opened) == 1
+    assert "8081" not in result.output
+
+
+def test_review_waits_for_the_second_page_too(run_start):
+    """The same reason as the first: nginx answers its health check a moment
+    before it has read its configuration."""
+    result = run_start("--review")
+    assert "Waiting for the review interface" in result.output
+    assert result.called("curl http://localhost:8081")
+
+
+def test_a_review_page_that_never_answers_does_not_take_the_stack_down(run_start):
+    """The web interface is already up and answering. Exiting here would take
+    a working stack away over a page the user may not have looked at yet."""
+    result = run_start("--review", env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "8081"})
+
+    assert result.returncode == 0
+    assert "the review interface never answered" in result.output
+    assert "verdicts are staged and can be reviewed later" in result.output
+    # The web interface still opened.
+    opened = [call for call in result.calls if call.startswith("browser ")]
+    assert len(opened) == 1
+    assert opened[0].endswith("http://localhost:8080")
+
+
+def test_feedback_stages_verdicts_without_the_review_interface(run_start):
+    """For the machine that collects feedback and a different one that reviews
+    it -- the staging database is the only part that has to be where people
+    are voting."""
+    result = run_start("--feedback")
+
+    assert result.called("--profile feedback up -d feedbackdb")
+    assert not result.called("up -d reviewgui")
+    assert len([c for c in result.calls if c.startswith("browser ")]) == 1
+
+
+def test_no_browser_prints_both_urls_rather_than_opening_them(run_start):
+    result = run_start("--review", "--no-browser")
+
+    assert not [call for call in result.calls if call.startswith("browser ")]
+    assert "http://localhost:8080" in result.output
+    assert "http://localhost:8081" in result.output
+
+
+def test_the_review_ports_follow_what_compose_will_publish(run_start):
+    result = run_start("--review", env_file="IMAGE_NAME=x\nGUI_PORT=9080\nREVIEW_GUI_PORT=9081\n")
+    opened = [call for call in result.calls if call.startswith("browser ")]
+    assert opened[0].endswith("http://localhost:9080")
+    assert opened[1].endswith("http://localhost:9081")
+
+
+def test_the_closing_lines_say_what_each_page_is_for(run_start):
+    """Two URLs with no explanation is worse than one, because the second is
+    the one nobody has seen before."""
+    output = run_start("--review").output
+    assert "say whether the answer was right" in output
+    assert "promote the good ones" in output
+
+
+def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_start):
+    output = run_start("--review").output
+    assert "context_questions/translated_questions.md" in output
+    assert "git diff" in output
+
+
+def test_the_closing_lines_say_how_to_stop_the_whole_thing(run_start):
+    output = run_start("--review").output
+    assert "--profile review" in output and "--profile reviewgui" in output
+    assert "down" in output
+
+
+def test_a_first_run_pulls_the_review_images_too(run_start):
+    """Otherwise compose builds them from source on first start, which is a
+    pip install and an npm ci inside two containers."""
+    result = run_start("--review", env_file=None)
+    assert result.called("pull mcfaddja/nl2sql-review:")
+    assert result.called("pull mcfaddja/nl2sql-review-gui:")
+
+
+def test_a_machine_that_cannot_open_the_review_page_still_says_where_it_is(run_start):
+    """The second page has its own failure to report. Falling back to the
+    first one's message would leave the URL nobody has seen before unsaid --
+    and that is the one someone needs written down.
+    """
+    result = run_start("--review", env={"FAKE_BROWSER_EXIT": "3"})
+
+    assert result.returncode == 0
+    assert "could not open the review interface" in result.output
+    assert "http://localhost:8081" in result.output
+    # And the first page's failure is still reported separately.
+    assert "could not open a browser" in result.output

@@ -227,6 +227,19 @@ def run(directory: Path) -> str:
     return log.read_text(errors="replace") if log.exists() else ""
 
 
+def _percent(hit: int, total: int) -> int:
+    """Rounded down, except that only a clean sweep may print 100.
+
+    `%.0f` rounded 867 of 869 up to "100%", which is the one number this
+    tool exists to be trusted about -- a report that says 100 while two
+    commands have never run is worse than one that says nothing, because
+    nobody goes looking.
+    """
+    if hit == total:
+        return 100
+    return min(99, int(100 * hit / total))
+
+
 def report(trace: str) -> tuple[list[tuple[str, int, int, list[tuple[int, str]]]], int, int]:
     hit = traced_lines(trace)
     rows = []
@@ -253,9 +266,9 @@ def main() -> int:
     print(f"{'script':30} {'run':>8} {'commands':>9} {'':>5}")
     print("-" * 52)
     for name, hit_count, line_count, _ in rows:
-        print(f"{name:30} {hit_count:>8} {line_count:>9} {100 * hit_count / line_count:>4.0f}%")
+        print(f"{name:30} {hit_count:>8} {line_count:>9} {_percent(hit_count, line_count):>4}%")
     print("-" * 52)
-    print(f"{'TOTAL':30} {covered:>8} {total:>9} {100 * covered / total:>4.0f}%")
+    print(f"{'TOTAL':30} {covered:>8} {total:>9} {_percent(covered, total):>4}%")
 
     for name, _, _, missed in rows:
         if missed:

@@ -32,23 +32,12 @@ def setup_source() -> str:
 # ---------------------------------------------------------------------------
 # Static checks (no execution)
 # ---------------------------------------------------------------------------
-
-
-def test_script_fails_fast(setup_source: str):
-    assert "set -euo pipefail" in setup_source
-
-
-def test_script_is_syntactically_valid():
-    import subprocess
-
-    result = subprocess.run(["bash", "-n", str(REPO_ROOT / "setup.sh")], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
-def test_script_runs_from_its_own_directory(setup_source: str):
-    # It writes .env next to docker-compose.yml, so it must not depend on the
-    # caller's working directory.
-    assert 'cd "$(dirname "$0")"' in setup_source
+#
+# `set -euo pipefail`, `bash -n` and `cd "$(dirname "$0")"` are not checked
+# here. `test_script_coverage.py` asserts all three, parametrized over every
+# script including this one, so a copy for setup.sh alone tested nothing the
+# parametrized version did not -- and would have gone on passing if the
+# parametrized one were deleted.
 
 
 # ---------------------------------------------------------------------------

@@ -455,9 +455,20 @@ def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_start):
 
 
 def test_the_closing_lines_say_how_to_stop_the_whole_thing(run_start):
-    output = run_start("--review").output
-    assert "--profile review" in output and "--profile reviewgui" in output
-    assert "down" in output
+    """The whole command, not the word "down".
+
+    Five profiles have to be named or `compose down` leaves containers
+    running, and a test that only looked for "down" passed against any
+    sentence containing it.
+    """
+    # The backslash is a real line continuation -- the command is printed
+    # across two lines because it is long -- so it is folded away here along
+    # with the wrapping, leaving the command someone would paste.
+    output = " ".join(run_start("--review").output.replace("\\", " ").split())
+    assert (
+        "docker compose --profile api --profile gui --profile feedback "
+        "--profile review --profile reviewgui down" in output
+    )
 
 
 def test_a_first_run_pulls_the_review_images_too(run_start):

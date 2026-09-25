@@ -510,3 +510,51 @@ def test_init_db_sh_builds_a_working_cluster(tmp_path, docker_daemon_available: 
     assert "READER COULD WRITE" not in result.stdout
     # Installed by the script, not by the base image.
     assert "pg_trgm=1" in lines, f"pg_trgm was not installed:\n{result.stdout}"
+
+
+# ---------------------------------------------------------------------------
+# The build context
+# ---------------------------------------------------------------------------
+
+
+def test_no_node_modules_is_sent_to_the_daemon():
+    """Each one is over four thousand files and a hundred megabytes, and both
+    images install their own from the lockfile.
+
+    `review/gui/node_modules` was missed when the review interface was added:
+    it was put in .gitignore and not here, so every build uploaded it to the
+    daemon to be thrown away. The rule is derived from the projects that
+    exist rather than written out, so a third interface cannot repeat it.
+    """
+    root = DOCKER_DIR.parent
+    ignored = set((root / ".dockerignore").read_text().split())
+    projects = [
+        path.parent.relative_to(root)
+        for path in root.glob("*/package.json")
+    ] + [
+        path.parent.relative_to(root)
+        for path in root.glob("*/*/package.json")
+        if "node_modules" not in str(path)
+    ]
+    assert projects, "no npm project found -- this test is checking nothing"
+
+    for project in projects:
+        for artefact in ("node_modules", "dist", "coverage"):
+            assert f"{project}/{artefact}" in ignored, (
+                f"{project}/{artefact} is not in .dockerignore"
+            )
+
+
+def test_the_dockerignore_keeps_what_the_images_actually_need():
+    """Excluding too much is the other way to break a build, and it fails at
+    `COPY` with a path that looks like a typo."""
+    root = DOCKER_DIR.parent
+    ignored = set((root / ".dockerignore").read_text().split())
+    needed = [
+        "review/nl2sql_review", "review/requirements.txt", "review/gui/src",
+        "review/gui/package.json", "agent/nl2sql_agent", "gui/src",
+        "rag/ragproc", "context_questions",
+    ]
+    for path in needed:
+        assert path not in ignored, f"{path} is excluded but an image copies it"
+        assert (root / path).exists(), f"{path} no longer exists"

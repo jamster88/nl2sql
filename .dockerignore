@@ -6,8 +6,13 @@ __pycache__
 *.pyc
 .DS_Store
 
-# The GUI's build inputs and outputs. node_modules alone is tens of
-# thousands of files, and the image installs its own from the lockfile.
+# The GUIs' build inputs and outputs. node_modules alone is over four
+# thousand files and a hundred megabytes *each*, and both images install
+# their own from the lockfile -- so sending them is a hundred megabytes
+# uploaded to the daemon to be thrown away.
 gui/node_modules
 gui/dist
 gui/coverage
+review/gui/node_modules
+review/gui/dist
+review/gui/coverage

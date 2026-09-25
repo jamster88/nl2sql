@@ -106,11 +106,10 @@ def test_coverage_is_complete(suite: subprocess.CompletedProcess, metric: str):
     assert float(match.group(1)) == 100.0
 
 
-def test_the_entry_point_is_the_only_thing_left_out(suite: subprocess.CompletedProcess):
-    config = (GUI / "vitest.config.ts").read_text()
-    excluded = re.findall(r'"(src/[^"]+)"', re.search(r"exclude: \[([^\]]*)\]", config).group(1))
-    assert excluded == ["src/main.tsx"]
-    assert suite.returncode == 0
+# The exclusion list and the separate-project boundary are both pinned by
+# `tests/review/test_review_project.py`, which reads the same files offline.
+# Copies here asserted the same facts behind --run-node -- needing npm to
+# read a static file -- and re-asserted the suite's exit code.
 
 
 def test_the_lockfile_matches_package_json(installed: str):
@@ -118,18 +117,3 @@ def test_the_lockfile_matches_package_json(installed: str):
     lock = json.loads((GUI / "package-lock.json").read_text())
     assert lock["name"] == package["name"]
     assert lock["version"] == package["version"]
-
-
-def test_the_review_gui_is_a_separate_project_from_the_web_gui():
-    """Separate on purpose, and the separation is physical.
-
-    Two Vite entry points in one project would share a build, and the public
-    GUI's image would then serve the review interface to anyone who could
-    reach it. A second package.json is a few more files and a boundary that
-    cannot be crossed by forgetting something.
-    """
-    assert (GUI / "package.json").is_file()
-    review = json.loads((GUI / "package.json").read_text())
-    web = json.loads((REPO_ROOT / "gui" / "package.json").read_text())
-    assert review["name"] != web["name"]
-    assert not (REPO_ROOT / "gui" / "src" / "review").exists()

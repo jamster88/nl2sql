@@ -864,8 +864,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 2023 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 2412, including ones that build and run containers
+pytest                             # 2036 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 2422, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -882,7 +882,7 @@ pytest --run-docker --run-node     # all 2412, including ones that build and run
 
 The 366 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent and GUI images and run them, resolve the real compose
-file, and query the four live databases. The 23 behind `--run-node` need npm,
+file, and query the four live databases. The 20 behind `--run-node` need npm,
 and run the two GUIs' own suites. Two flags rather than one because the two needs
 are different -- a clone with Docker but no npm should still be able to run
 every container test, and a GUI developer with npm and no Docker daemon
@@ -1016,6 +1016,21 @@ script, by a measurement of their own:
   shell, and in no list, so the measurement said 100% of eleven scripts while
   a twelfth had never been run by anything. The same check now covers the
   Dockerfiles and both compose files.
+
+  Two more file kinds are checked the same way, and driven straight off
+  `git ls-files` with no list to keep in step at all: every
+  `requirements.txt` must bound every version it names, and a package pinned
+  exactly in two of them must be pinned to the same version -- the agent and
+  the review service install four of the same packages, and a bump applied
+  to one and not the other is two services that were only ever tested as
+  one. Every nginx template must verify its upstream, resolve it per
+  request, and take its token from a variable rather than carrying one.
+
+  The same sweep found `review/gui/node_modules` in `.gitignore` and not in
+  `.dockerignore`: 110 MB and four thousand files uploaded to the daemon on
+  every build, to be thrown away. The rule is now derived from the npm
+  projects that exist rather than written out, so a third interface cannot
+  repeat it.
 
   A second blind spot was in the counting rather than the inventory, and was
   worse because the file was listed. The scanner counted quote characters to

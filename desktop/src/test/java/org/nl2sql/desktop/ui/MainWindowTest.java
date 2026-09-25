@@ -64,7 +64,7 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 4.4.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 4.5.0"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
@@ -84,7 +84,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 4.4.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 4.5.0"));
             window.close();
         });
     }
@@ -461,6 +461,144 @@ class MainWindowTest {
             assertEquals(List.of("job-1"), client.cancelled);
             // Nothing on screen about it: the question is already gone.
             assertFalse(Nodes.says(window.root(), "cannot be interrupted"));
+            window.close();
+        });
+    }
+
+    /** An answer with enough to say that the width it is given matters. */
+    private static Models.Job wordy() {
+        Models.Answer base = Fakes.answer();
+        Models.Answer answer = new Models.Answer(base.answer(), base.narrative(), base.sql(),
+                base.verdict(), base.intent(), null, base.tables(), base.literals(),
+                base.result(), base.chart(),
+                List.of(new Models.Claim("Produce net sales were $719,279.97 in fiscal year "
+                        + "2025, which is an increase of eleven per cent over the previous year "
+                        + "across every banner in the group.", 719279.97,
+                        List.of(List.of(0, "net_sales")), null)),
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of());
+        Models.Job job = Fakes.answered();
+        return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
+                job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),
+                job.progress(), answer, null, job.links());
+    }
+
+
+/** The whole window, laid out at one width, with its answer on screen. */
+    private double answerHeadlineHeight(double width) {
+        Fakes.FakeClient fresh = new Fakes.FakeClient();
+        MainWindow window = new MainWindow(fresh, Stores.of(new Stores.Recording()),
+                Settings.from(Map.of()), Runnable::run, Runnable::run, new AtomicBoolean());
+        window.start();
+        window.show(wordy());
+        javafx.stage.Stage stage = FxToolkit.render(window.root(), width, 760);
+
+        double column = Nodes.widthOf(window.root(), "answer");
+        assertTrue(column <= width, "the answer column is " + column + " in " + width);
+        for (javafx.scene.Node sentence : Nodes.withClass(window.root(), "claim")) {
+            assertTrue(Nodes.width(sentence) <= column + 8,
+                    "a sentence is " + Nodes.width(sentence) + " wide in " + column);
+        }
+        double height = Nodes.heightOf(window.root(), "answer-headline");
+        stage.close();
+        window.close();
+        return height;
+    }
+
+    @Test
+    void the_whole_window_still_reads_at_the_narrowest_it_will_go() {
+        // The minimum the stage is given is measured, not chosen: below it
+        // the answer column stops reflowing and starts being scrolled
+        // sideways, which is the one thing a window full of prose should not
+        // ask of a reader.
+        FxToolkit.onFx(() -> assertTrue(
+                answerHeadlineHeight(DesktopApp.MINIMUM_WIDTH) > answerHeadlineHeight(1100),
+                "the answer did not reflow between 1100 and the declared minimum"));
+    }
+
+    @Test
+    void the_window_declares_a_minimum_it_can_actually_draw() {
+        FxToolkit.onFx(() -> {
+            DesktopApp app = new DesktopApp();
+            javafx.stage.Stage stage = new javafx.stage.Stage();
+
+            app.show(stage, "--url", "https://localhost:1", "--insecure");
+
+            assertEquals(DesktopApp.MINIMUM_WIDTH, stage.getMinWidth());
+            assertEquals(DesktopApp.MINIMUM_HEIGHT, stage.getMinHeight());
+            app.stop();
+            stage.close();
+        });
+    }
+
+    @Test
+    void the_session_list_takes_a_share_of_the_window_rather_than_a_fixed_strip() {
+        // At 1100 a fixed 260 is a quarter of the window and right. At 560 it
+        // was very nearly half, and the answer had to be read through what
+        // was left of the other half.
+        FxToolkit.onFx(() -> {
+            for (double width : new double[] {1100, 560}) {
+                MainWindow window = new MainWindow(new Fakes.FakeClient(),
+                        Stores.of(new Stores.Recording()), Settings.from(Map.of()),
+                        Runnable::run, Runnable::run, new AtomicBoolean());
+                window.start();
+                javafx.stage.Stage stage = FxToolkit.render(window.root(), width, 700);
+
+                double list = Nodes.widthOf(window.root(), "history-panel");
+                assertTrue(list <= width * 0.31,
+                        "the session list is " + list + " of " + width);
+                stage.close();
+                window.close();
+            }
+        });
+    }
+
+
+    @Test
+    void nothing_in_the_window_may_demand_a_window_wider_than_the_minimum() {
+        // The defect this pins, and the reason it took three tries to find.
+        // A label reports the width its text wants as its *minimum*, and a
+        // BorderPane honours a minimum: the status bar's four-hundred
+        // character scope sentence asked for 2075 pixels, so the root laid
+        // itself out 2075 wide inside a 1260-pixel window and the screen
+        // clipped the eight hundred pixels of answer that did not fit. Both
+        // panes looked wrong; only one of them was.
+        //
+        // Asserting on the root's minimum catches it wherever it comes from,
+        // which the per-component tests below could not: each of them was
+        // measuring a component that was, on its own, fine.
+        FxToolkit.onFx(() -> {
+            MainWindow window = new MainWindow(new Fakes.FakeClient(),
+                    Stores.of(new Stores.Recording()), Settings.from(Map.of()),
+                    Runnable::run, Runnable::run, new AtomicBoolean());
+            window.start();
+            window.show(wordy());
+            javafx.stage.Stage stage = FxToolkit.render(window.root(), 1260, 800);
+
+            double floor = ((javafx.scene.layout.Region) window.root()).minWidth(-1);
+            assertTrue(floor <= DesktopApp.MINIMUM_WIDTH,
+                    "the window cannot be made narrower than " + floor
+                            + ", but it declares a minimum of " + DesktopApp.MINIMUM_WIDTH);
+            stage.close();
+            window.close();
+        });
+    }
+
+    @Test
+    void nothing_is_drawn_wider_than_the_pane_that_holds_it() {
+        FxToolkit.onFx(() -> {
+            MainWindow window = new MainWindow(new Fakes.FakeClient(),
+                    Stores.of(new Stores.Recording()), Settings.from(Map.of()),
+                    Runnable::run, Runnable::run, new AtomicBoolean());
+            window.start();
+            window.show(wordy());
+            javafx.stage.Stage stage = FxToolkit.render(window.root(), 1260, 800);
+
+            for (String pane : new String[] {"status", "main", "answer", "history-panel"}) {
+                double width = Nodes.widthOf(window.root(), pane);
+                assertTrue(width <= 1260,
+                        "." + pane + " is " + width + " wide in a 1260 window");
+            }
+            stage.close();
             window.close();
         });
     }

@@ -26,11 +26,11 @@ class StatusBarTest {
             StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
             bar.show(Fakes.meta(true));
 
-            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 4.4.0"));
-            assertTrue(Nodes.says(bar.node(), "qwen2.5-coder:32b"));
-            assertTrue(Nodes.says(bar.node(), "2 tables"));
+            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 4.5.0"));
+            assertTrue(Nodes.says(bar.node(), "qwen3.8-256k"));
+            assertTrue(Nodes.says(bar.node(), "19 tables"));
             assertTrue(Nodes.says(bar.node(), "token required"));
-            assertTrue(Nodes.says(bar.node(), "Retail point-of-sale data."));
+            assertTrue(Nodes.says(bar.node(), Fakes.SCOPE));
         });
     }
 
@@ -128,6 +128,57 @@ class StatusBarTest {
             // the meta that is no longer there.
             bar.setWarnings(List.of("late"));
             assertTrue(Nodes.says(bar.node(), "Connecting"));
+        });
+    }
+
+private static double barHeight(double width, boolean failed) {
+        StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
+        if (failed) {
+            bar.showError("cannot reach the API at https://nl2sql.example.com:8443: "
+                    + "no route to host after ten seconds");
+        } else {
+            bar.show(Fakes.meta(true));
+        }
+        javafx.stage.Stage stage =
+                FxToolkit.render(new javafx.scene.layout.VBox(bar.node()), width, 200);
+        double height = bar.node().getLayoutBounds().getHeight();
+        for (javafx.scene.Node label : Nodes.withClass(bar.node(), "muted")) {
+            assertTrue(Nodes.width(label) <= width, "a status line is " + Nodes.width(label));
+        }
+        stage.close();
+        return height;
+    }
+
+    @Test
+    void the_sentence_describing_the_database_wraps_rather_than_being_cut_off() {
+        FxToolkit.onFx(() -> assertTrue(barHeight(300, false) > barHeight(900, false)));
+    }
+
+    @Test
+    void the_reason_it_is_not_connected_wraps_too() {
+        FxToolkit.onFx(() -> assertTrue(barHeight(300, true) > barHeight(900, true)));
+    }
+
+
+    @Test
+    void the_line_naming_the_tables_does_not_set_a_floor_under_the_window() {
+        // It runs to four hundred characters, and a label's minimum width is
+        // the width its text wants -- so this one asked for two thousand
+        // pixels and got them, at the expense of everything to its right.
+        FxToolkit.onFx(() -> {
+            StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
+            bar.show(Fakes.meta(true));
+            bar.setWarnings(Fakes.WARNINGS);
+            javafx.stage.Stage stage =
+                    FxToolkit.render(new javafx.scene.layout.VBox(bar.node()), 600, 300);
+
+            double floor = bar.node().minWidth(-1);
+            assertTrue(floor < 200, "the status bar's floor is " + floor);
+            for (javafx.scene.Node label : Nodes.withClass(bar.node(), "muted")) {
+                assertTrue(Nodes.width(label) <= 600,
+                        "a status line is " + Nodes.width(label) + " wide in 600");
+            }
+            stage.close();
         });
     }
 }

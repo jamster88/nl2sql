@@ -242,4 +242,20 @@ class FeedbackBarTest {
             assertTrue(Nodes.oneWithClass(bar.node(), "feedback-comment").isVisible());
         });
     }
+
+private static double rowHeight(double width) {
+        FeedbackBar bar = new FeedbackBar();
+        bar.show(record(Models.Verdict.NO, SyncState.FAILED, "no route to host"));
+        javafx.stage.Stage stage =
+                FxToolkit.render(new javafx.scene.layout.VBox(bar.node()), width, 300);
+        double height = Nodes.heightOf(bar.node(), "feedback-row");
+        assertTrue(Nodes.width(bar.retry()) <= width);
+        stage.close();
+        return height;
+    }
+
+    @Test
+    void the_row_wraps_rather_than_pushing_the_retry_off_the_end() {
+        FxToolkit.onFx(() -> assertTrue(rowHeight(240) > rowHeight(900)));
+    }
 }

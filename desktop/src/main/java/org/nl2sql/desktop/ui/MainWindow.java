@@ -76,6 +76,9 @@ public final class MainWindow {
     private Models.Pipeline pipeline;
     private final List<String> warnings = new ArrayList<>();
 
+    /** As wide as the session list gets, and a third of the window at most. */
+    private static final double HISTORY_WIDTH = 260;
+
     public MainWindow(ApiClient client, FeedbackStore store, Settings settings, Executor background,
                       Consumer<Runnable> foreground, AtomicBoolean feedbackAccepted) {
         this.client = client;
@@ -101,11 +104,15 @@ public final class MainWindow {
 
         column.getStyleClass().add("main");
         column.setSpacing(12);
+        // Same rule as the status bar below: whatever is in the column, the
+        // column is never the reason the window has to be wider.
+        column.setMinWidth(0);
         column.getChildren().addAll(askBox.node(), error, notice, progress.node(), answerSlot);
         answerSlot.setSpacing(12);
 
         ScrollPane scroll = new ScrollPane(column);
         scroll.setFitToWidth(true);
+        scroll.setMinWidth(0);
         scroll.getStyleClass().add("main-scroll");
 
         Label title = new Label("NL2SQL");
@@ -116,8 +123,13 @@ public final class MainWindow {
         masthead.getStyleClass().add("masthead");
 
         Region left = history.node();
-        left.setPrefWidth(260);
-        left.setMinWidth(180);
+        left.setPrefWidth(HISTORY_WIDTH);
+        left.setMinWidth(140);
+        // A share of the window rather than a fixed strip. At 1100 the fixed
+        // 260 was a quarter of it and right; at 560 it was very nearly half,
+        // and the answer had to be read through what was left.
+        left.maxWidthProperty().bind(
+                javafx.beans.binding.Bindings.min(HISTORY_WIDTH, root.widthProperty().multiply(0.3)));
         VBox.setVgrow(left, Priority.ALWAYS);
 
         root.getStyleClass().add("app");

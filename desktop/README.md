@@ -156,6 +156,45 @@ things in the same order: the sentence, then the picture, then the rows, then
 * **A refusal is a success.** The agent decided a question was out of scope
   and said so; there is no table, because no query ran.
 
+Everything that is a sentence reflows as the window is resized, and that took
+more than turning wrapping on. Two things in JavaFX make prose run off the
+edge rather than wrap, and the interface had both. A `TextFlow` breaks the
+`Text` nodes it is given across lines and lays anything else out at its
+preferred width as one unbreakable box -- so the answer, which is one
+hoverable span per claim, has to be made of `Text` and not of `Label`. And
+`setWrapText(true)` on its own only permits wrapping: the label still asks
+for the width its text wants and its container still gives it, so the height
+that comes back is one line. What makes the height depend on the width is a
+ceiling, read from the container it sits in. The session list had a third
+version of the same problem: a `ListCell` sizes itself to its text and the
+virtual flow behind it sizes itself to the widest cell, so one long question
+made the whole panel six hundred pixels wide inside a two-hundred-pixel pane
+and spilled out over the answer beside it. The session list takes a share of the
+window rather than a fixed strip -- 260 pixels is a quarter of a wide window
+and nearly half a narrow one -- and the Ask button is the one control that
+refuses to shrink, because a button that gives way becomes an ellipsis and an
+ellipsis is not a label anyone can guess at. The window also declines to be
+dragged narrower than it can lay out, rather than letting itself be cut in
+half.
+
+The last of those was the one that mattered, and it was neither of the panes
+it appeared to be in. A label reports the width its text wants as its
+*minimum*, a `BorderPane` honours a minimum, and `/v1/meta` describes this
+database in a sentence four hundred characters long -- so the status bar's
+floor was two thousand pixels, the root laid itself out that wide inside a
+window half the size, and the screen clipped everything that did not fit.
+Both panes looked broken; only the bar was. Nothing in the window may set a
+floor under the window, and a test asserts exactly that.
+
+Two habits came out of finding it three tries late. Layout defects are found
+by *drawing* the window rather than measuring it -- `Node.snapshot` works
+under Monocle, so a throwaway test can render the whole window to a PNG at
+any size and a person can look at it. And the fixtures say what the server
+really says: the scope sentence in `Fakes` is the real one, all three hundred
+and ninety characters, because the tidy twenty-six character version had no
+opinion about how wide the window had to be and that is precisely the opinion
+that was wrong.
+
 ---
 
 ## Feedback
@@ -204,6 +243,7 @@ src/main/java/org/nl2sql/desktop/
   chart/                 rows to series, a port of gui/src/charts/values.ts
   feedback/              the verdict, where it is kept and where it goes
   ui/                    the window, and every part of it
+    Markup.java          undoing the escaping the pipeline does for markdown
 ```
 
 Three decisions are worth knowing because they look arbitrary otherwise:
@@ -284,7 +324,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-354 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+375 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

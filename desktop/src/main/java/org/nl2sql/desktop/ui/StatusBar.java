@@ -37,6 +37,12 @@ public final class StatusBar {
         node.getStyleClass().add("status");
         node.setHgap(12);
         node.setVgap(4);
+        // The line naming what the database covers runs to four hundred
+        // characters, and a label reports the width its text wants as its
+        // *minimum* -- which a BorderPane honours by laying the whole window
+        // out two thousand pixels wide and letting the screen clip it. The
+        // bar is the bottom of that window, so its floor was the window's.
+        node.setMinWidth(0);
         connecting();
     }
 
@@ -64,6 +70,10 @@ public final class StatusBar {
         meta = null;
         Label headline = new Label("Not connected.");
         headline.getStyleClass().add("status-error");
+        Label why = new Label(message);
+        why.setWrapText(true);
+        why.setMinWidth(0);
+        why.maxWidthProperty().bind(node.widthProperty().subtract(24));
         node.getChildren().setAll(
                 headline,
                 new Label(message),
@@ -89,15 +99,21 @@ public final class StatusBar {
             node.getChildren().add(muted(meta.scope()));
         }
         for (String warning : warnings) {
-            Label label = new Label(warning);
-            label.getStyleClass().add("status-warning");
+            Label label = muted(warning);
+            label.getStyleClass().setAll("status-warning");
             node.getChildren().add(label);
         }
     }
 
-    private static Label muted(String text) {
+    private Label muted(String text) {
         Label label = new Label(text);
         label.getStyleClass().add("muted");
+        // One of these is a sentence describing the database and another is
+        // whatever a readiness check had to say, so they are bounded by the
+        // bar they sit in rather than by how much they have to say.
+        label.setWrapText(true);
+        label.setMinWidth(0);
+        label.maxWidthProperty().bind(node.widthProperty().subtract(24));
         return label;
     }
 }

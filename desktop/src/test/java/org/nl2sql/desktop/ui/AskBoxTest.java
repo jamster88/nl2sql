@@ -202,4 +202,56 @@ class AskBoxTest {
             assertEquals(List.of(), asked);
         });
     }
+
+/** The example row's height, in a window of this width. */
+    private static double examplesHeight(double width) {
+        AskBox box = new AskBox();
+        javafx.stage.Stage stage =
+                FxToolkit.render(new javafx.scene.layout.VBox(box.node()), width, 500);
+        double height = Nodes.heightOf(box.node(), "ask-examples");
+        double pane = Nodes.widthOf(box.node(), "ask-examples");
+        for (Node chip : Nodes.withClass(box.node(), "chip")) {
+            assertTrue(Nodes.width(chip) <= pane + 1,
+                    "a chip is " + Nodes.width(chip) + " wide in " + pane);
+        }
+        stage.close();
+        return height;
+    }
+
+    @Test
+    void a_long_example_wraps_instead_of_setting_a_floor_under_the_window() {
+        // A button sizes itself to its text and a FlowPane hands it that
+        // width, so the longest example was a five-hundred-pixel floor that
+        // nothing else in the window could get under.
+        FxToolkit.onFx(() -> {
+            double wide = examplesHeight(900);
+            double narrow = examplesHeight(380);
+
+            assertTrue(narrow > wide, "the examples did not reflow: " + wide + " -> " + narrow);
+        });
+    }
+
+    @Test
+    void the_question_box_wraps_what_is_typed_into_it() {
+        FxToolkit.onFx(() -> assertTrue(new AskBox().field().isWrapText()));
+    }
+
+    @Test
+    void the_ask_button_keeps_its_label_however_narrow_the_window_is() {
+        // An HBox takes the room it needs from whichever child will give it.
+        // The text area gives; a button asked to give turns into an ellipsis,
+        // which is the one control in the window nobody can guess at.
+        FxToolkit.onFx(() -> {
+            AskBox box = new AskBox();
+            box.setQuestion("something");
+            javafx.scene.layout.VBox host = new javafx.scene.layout.VBox(box.node());
+            javafx.stage.Stage stage = FxToolkit.render(host, 300, 400);
+
+            double wanted = box.action().prefWidth(-1);
+            assertTrue(Nodes.width(box.action()) >= wanted - 1,
+                    "the Ask button shrank to " + Nodes.width(box.action())
+                            + " from " + wanted);
+            stage.close();
+        });
+    }
 }

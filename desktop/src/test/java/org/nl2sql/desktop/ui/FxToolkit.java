@@ -118,12 +118,44 @@ public final class FxToolkit implements BeforeAllCallback {
      * without this would be asserting on a table that has none.
      */
     public static Stage render(Parent root) {
+        return render(root, 900, 700);
+    }
+
+    /**
+     * The same, at a chosen size, for the tests about reflowing.
+     *
+     * <p>Those tests build the thing twice, once per width, rather than
+     * resizing one. Resizing a graph that has already been laid out leaves a
+     * wrapped label reporting the height it had at the old width -- the
+     * toolkit settles that over the next pulse, and a test measuring in
+     * between reads it as text that did not reflow.
+     */
+    public static Stage render(Parent root, double width, double height) {
         Stage stage = new Stage();
-        stage.setScene(Styles.apply(new Scene(root, 900, 700)));
+        stage.setScene(Styles.apply(new Scene(root, width, height)));
         stage.show();
-        root.applyCss();
-        root.layout();
+        settle(root);
         return stage;
+    }
+
+    /**
+     * Lay out until it stops changing.
+     *
+     * <p>One pass is not enough for wrapped text. The pass that hands out the
+     * new widths is not the pass that can ask how tall three lines are at
+     * that width, so the first answer is the height the label had before --
+     * which a single-pass test reads as text that did not reflow, and a
+     * single-pass snapshot draws as one clipped line. A real window gets
+     * another pulse; a test has to ask for one.
+     */
+    public static void settle(Parent root) {
+        for (int pass = 0; pass < 8; pass++) {
+            root.applyCss();
+            root.layout();
+            if (!root.isNeedsLayout()) {
+                return;
+            }
+        }
     }
 
     /** Ends the toolkit when the whole run does. */

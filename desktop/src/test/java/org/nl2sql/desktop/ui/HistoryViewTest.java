@@ -153,4 +153,51 @@ class HistoryViewTest {
             assertEquals("job-1", history.list().getSelectionModel().getSelectedItem().id());
         });
     }
+
+    private static final String LONG_QUESTION =
+            "What were our total net sales for the Produce department in fiscal year 2025, "
+                    + "broken down by banner and by state?";
+
+    @Test
+    void a_long_question_wraps_instead_of_widening_the_whole_panel() {
+        // A ListCell sizes itself to its text and the virtual flow behind it
+        // sizes itself to the widest cell, so one long question made the
+        // panel six hundred pixels wide inside a two-hundred-pixel pane --
+        // and the list spilled out over the answer beside it.
+        FxToolkit.onFx(() -> {
+            HistoryView history = new HistoryView(Stores.of(new Stores.Recording()), 10);
+            history.remember(answered("job-1", LONG_QUESTION));
+            javafx.scene.layout.VBox host = new javafx.scene.layout.VBox(history.node());
+            host.setPrefWidth(240);
+            javafx.stage.Stage stage = FxToolkit.render(host, 240, 500);
+
+            double list = Nodes.widthOf(history.node(), "history");
+            assertTrue(list <= 240, "the list is " + list + " wide in 240");
+            for (javafx.scene.Node cell : Nodes.withClass(history.node(), "list-cell")) {
+                assertTrue(Nodes.width(cell) <= list + 1,
+                        "a row is " + Nodes.width(cell) + " wide in " + list);
+            }
+            // And the question is still all there, on as many lines as it takes.
+            assertTrue(Nodes.says(history.node(), LONG_QUESTION));
+            stage.close();
+        });
+    }
+
+    @Test
+    void the_whole_panel_stays_inside_the_window_it_is_in() {
+        FxToolkit.onFx(() -> {
+            HistoryView history = new HistoryView(Stores.of(new Stores.Recording()), 10);
+            for (int index = 0; index < 6; index++) {
+                history.remember(answered("job-" + index, LONG_QUESTION + " (" + index + ")"));
+            }
+            javafx.scene.layout.VBox host = new javafx.scene.layout.VBox(history.node());
+            host.setPrefWidth(200);
+            javafx.stage.Stage stage = FxToolkit.render(host, 200, 600);
+
+            for (javafx.scene.Node node : Nodes.withClass(history.node(), "list-cell")) {
+                assertTrue(Nodes.width(node) <= 200, "a row is " + Nodes.width(node) + " in 200");
+            }
+            stage.close();
+        });
+    }
 }

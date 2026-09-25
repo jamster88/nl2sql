@@ -196,15 +196,23 @@
 
 .answer-headline {
     -fx-font-size: 15px;
+    -fx-line-spacing: 2;
 }
 
+/*
+ * A Text node rather than a Label, so that TextFlow can break it across
+ * lines -- which means `-fx-fill` rather than `-fx-text-fill`, and an
+ * underline rather than a background, because a Text has no background to
+ * colour.
+ */
 .claim {
-    -fx-padding: 1 2 1 2;
+    -fx-fill: -text-primary;
 }
 
 .claim:hover {
-    -fx-background-color: derive(-accent, 82%);
-    -fx-background-radius: 4;
+    -fx-fill: -accent;
+    -fx-underline: true;
+    -fx-cursor: hand;
 }
 
 .notice {

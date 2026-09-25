@@ -32,6 +32,9 @@ public final class HistoryView {
     private final FeedbackStore store;
     private final int limit;
 
+    /** The cell's own padding, plus room for the scroll bar the list may show. */
+    private static final int CELL_MARGIN = 36;
+
     private Consumer<Models.Job> onSelect = job -> {
     };
     private boolean selecting;
@@ -109,26 +112,49 @@ public final class HistoryView {
         return label;
     }
 
+    /**
+     * One question in the list.
+     *
+     * <p>The question is drawn by a label of the cell's own rather than by
+     * the cell's own text, because a {@code ListCell} sizes itself to its
+     * text and the virtual flow behind it sizes itself to the widest cell --
+     * so one long question made the whole panel wider than the pane holding
+     * it, and the list spilled out over the answer beside it. A label with a
+     * ceiling read from the list wraps instead.
+     */
     private final class Row extends ListCell<Models.Job> {
+
+        private final Label text = new Label();
+
+        Row() {
+            text.setWrapText(true);
+            text.maxWidthProperty().bind(list.widthProperty().subtract(CELL_MARGIN));
+            // Never ask for more room than the list has: the cell's own
+            // preferred width is what the flow behind it adds up.
+            setPrefWidth(0);
+            setMinWidth(0);
+        }
+
         @Override
         protected void updateItem(Models.Job job, boolean empty) {
             super.updateItem(job, empty);
             // `empty` and a null job are the same state: a cell the list is
             // holding for a row that is not there.
             if (job == null) {
-                setText(null);
                 setGraphic(null);
+                setTooltip(null);
                 return;
             }
             String mark = store.get(job.id())
                     .map(Row::glyph)
                     .orElse("");
-            setText(mark + job.question());
+            text.setText(mark + job.question());
+            setGraphic(text);
             setTooltip(new javafx.scene.control.Tooltip(job.question()));
         }
 
         private static String glyph(FeedbackRecord record) {
-            return record.verdict() == Models.Verdict.YES ? "✓  " : "✗  ";
+            return record.verdict() == Models.Verdict.YES ? "\u2713  " : "\u2717  ";
         }
     }
 }

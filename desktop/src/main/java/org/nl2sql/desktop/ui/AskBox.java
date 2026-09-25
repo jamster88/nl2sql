@@ -8,6 +8,7 @@ import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
 import java.util.List;
@@ -57,6 +58,7 @@ public final class AskBox {
         field.setPrefRowCount(2);
         field.setWrapText(true);
         field.getStyleClass().add("ask-input");
+        field.setMinWidth(0);
         field.textProperty().addListener((observable, before, after) -> textChanged(after));
         field.setOnKeyPressed(event -> {
             if (event.getCode() == KeyCode.ENTER && !event.isShiftDown()) {
@@ -69,6 +71,10 @@ public final class AskBox {
 
         action.getStyleClass().addAll("button", "button-primary");
         action.setDefaultButton(true);
+        // The one thing in the row that must not shrink. An HBox takes the
+        // space it needs from whichever child will give it, and a button
+        // that gives becomes an ellipsis -- so the box is asked instead.
+        action.setMinWidth(Region.USE_PREF_SIZE);
         action.setDisable(true);
         action.setOnAction(event -> {
             if (busy) {
@@ -86,12 +92,23 @@ public final class AskBox {
         examples.getStyleClass().add("ask-examples");
         examples.setHgap(6);
         examples.setVgap(6);
+        // A FlowPane asks for as much width as its widest child wants, and
+        // each chip's cap is read from the width the pane ends up with -- so
+        // without this the two would agree on the longest example and the
+        // window could never be narrower than that.
+        examples.setMinWidth(0);
         Label tryThese = new Label("Try");
         tryThese.getStyleClass().add("ask-examples-label");
         examples.getChildren().add(tryThese);
         for (String example : EXAMPLES) {
             Button chip = new Button(example);
             chip.getStyleClass().add("chip");
+            // A button sizes itself to its text and a FlowPane hands it that
+            // width, so the longest example would otherwise be a floor under
+            // the whole window. Bounded by the row it sits in, it wraps.
+            chip.setWrapText(true);
+            chip.setMinWidth(0);
+            chip.maxWidthProperty().bind(examples.widthProperty().subtract(16));
             chip.setOnAction(event -> onAsk.accept(example));
             examples.getChildren().add(chip);
         }

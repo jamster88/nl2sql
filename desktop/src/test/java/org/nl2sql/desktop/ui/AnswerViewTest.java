@@ -580,4 +580,108 @@ class AnswerViewTest {
             assertTrue(Nodes.says(trace.getContent(), "3 model calls"));
         });
     }
+
+    private static final String LONG_CLAIM =
+            "Produce net sales were $719,279.97 in fiscal year 2025, which is an increase of "
+                    + "eleven per cent over the previous year across every banner in the group.";
+
+    /** The answer, laid out at one width. Heights of the three prose blocks. */
+    private double[] prose(double width) {
+        Models.Job job = with(answerWith("proceed", null,
+                        List.of(new Models.Claim(LONG_CLAIM, 719279.97,
+                                List.of(List.of(0, "net_sales")), null)),
+                        new Models.AuditReport(false, List.of(LONG_CLAIM), List.of(),
+                                List.of(), null)),
+                Models.JobStatus.SUCCEEDED, null);
+        Models.Job wordy = new Models.Job(job.id(), job.status(),
+                "What were our total net sales for the Produce department in fiscal year 2025, "
+                        + "broken down by banner and by state?",
+                job.metadata(), job.created_at(), job.started_at(), job.finished_at(),
+                job.duration_ms(), job.progress(), job.answer(), null, job.links());
+        AnswerView view = new AnswerView(wordy, Stores.of(new Stores.Recording()), null);
+        javafx.stage.Stage stage =
+                FxToolkit.render(new javafx.scene.layout.VBox(view.node()), width, 900);
+
+        // A few pixels of slack for the space each sentence ends with, which
+        // separates it from the next and is allowed to hang past the margin.
+        // The defect this guards against overran by five hundred.
+        double flow = Nodes.widthOf(view.node(), "answer-headline");
+        for (Node sentence : Nodes.withClass(view.node(), "claim")) {
+            assertTrue(Nodes.width(sentence) <= flow + 8,
+                    "a sentence is " + Nodes.width(sentence) + " wide in " + flow);
+        }
+        double[] heights = {
+                Nodes.heightOf(view.node(), "answer-question"),
+                Nodes.heightOf(view.node(), "answer-headline"),
+                Nodes.heightOf(view.node(), "audit-failed"),
+        };
+        stage.close();
+        return heights;
+    }
+
+    @Test
+    void the_question_the_answer_and_the_audit_all_reflow_as_the_window_narrows() {
+        // The defect this pins: a TextFlow breaks the Text nodes it is given
+        // across lines and lays anything else out at its preferred width as
+        // one unbreakable box. With a Label per claim the answer -- the most
+        // important thing in the window -- was drawn nearly a thousand pixels
+        // wide inside a four-hundred-pixel column and simply cut off. The
+        // question and the audit had the second half of the same problem:
+        // wrapText on its own leaves a label asking for the width its text
+        // wants, and being given it.
+        FxToolkit.onFx(() -> {
+            double[] wide = prose(900);
+            double[] narrow = prose(480);
+
+            assertTrue(narrow[0] > wide[0], "the question did not reflow");
+            assertTrue(narrow[1] > wide[1], "the answer did not reflow");
+            assertTrue(narrow[2] > wide[2], "the audit did not reflow");
+        });
+    }
+
+    @Test
+    void a_refusal_and_a_failure_reflow_too() {
+        FxToolkit.onFx(() -> {
+            Models.Answer base = Fakes.answer();
+            Models.Answer refused = new Models.Answer(base.answer(), "", base.sql(),
+                    "out_of_domain", base.intent(), LONG_CLAIM, base.tables(), List.of(), null,
+                    null, List.of(), base.audit(), null, 1, List.of(), Map.of());
+
+            assertTrue(noticeHeight(refused, null, 380) > noticeHeight(refused, null, 900));
+            assertTrue(noticeHeight(null, LONG_CLAIM, 380) > noticeHeight(null, LONG_CLAIM, 900));
+        });
+    }
+
+    private double noticeHeight(Models.Answer answer, String error, double width) {
+        AnswerView view = new AnswerView(
+                with(answer, error == null ? Models.JobStatus.SUCCEEDED : Models.JobStatus.FAILED,
+                        error),
+                Stores.of(new Stores.Recording()), null);
+        javafx.stage.Stage stage =
+                FxToolkit.render(new javafx.scene.layout.VBox(view.node()), width, 700);
+        double height = Nodes.oneWithClass(view.node(),
+                error == null ? "notice-verdict" : "notice-error").getLayoutBounds().getHeight();
+        stage.close();
+        return height;
+    }
+
+    @Test
+    void nothing_in_the_trace_sets_a_floor_under_the_window() {
+        // A node name is allowed to be shortened; a row that cannot be made
+        // to fit is a window that cannot be made narrow.
+        FxToolkit.onFx(() -> {
+            AnswerView view = new AnswerView(Fakes.answered(), Stores.of(new Stores.Recording()),
+                    null);
+            TitledPane trace = (TitledPane) Nodes.withClass(view.node(), "disclosure").get(2);
+            trace.setExpanded(true);
+            javafx.stage.Stage stage =
+                    FxToolkit.render(new javafx.scene.layout.VBox(view.node()), 420, 700);
+
+            for (Node name : Nodes.withClass(trace.getContent(), "trace-node")) {
+                double floor = ((javafx.scene.layout.Region) name).minWidth(-1);
+                assertTrue(floor < 100, "a trace row will not shrink: " + floor);
+            }
+            stage.close();
+        });
+    }
 }

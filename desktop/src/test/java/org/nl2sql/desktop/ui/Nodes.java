@@ -23,6 +23,20 @@ final class Nodes {
     private Nodes() {
     }
 
+    /** How wide a node was actually laid out. */
+    static double width(Node node) {
+        return node.getLayoutBounds().getWidth();
+    }
+
+    /** How wide the node with this style class was laid out. */
+    static double widthOf(Node root, String styleClass) {
+        return width(oneWithClass(root, styleClass));
+    }
+
+    static double heightOf(Node root, String styleClass) {
+        return oneWithClass(root, styleClass).getLayoutBounds().getHeight();
+    }
+
     static List<Node> withClass(Node root, String styleClass) {
         List<Node> found = new ArrayList<>();
         collect(root, styleClass, found);
@@ -61,7 +75,11 @@ final class Nodes {
     private static List<Node> children(Node node) {
         List<Node> found = new ArrayList<>();
         if (node instanceof ScrollPane scroll && scroll.getContent() != null) {
-            found.add(scroll.getContent());
+            // Only the content. Once a skin has been built the same nodes are
+            // also reachable through the viewport it made, and walking both
+            // finds every one of them twice -- which reads as a window with
+            // two of everything in it.
+            return List.of(scroll.getContent());
         }
         if (node instanceof TitledPane titled && titled.getContent() != null) {
             found.add(titled.getContent());
@@ -83,6 +101,12 @@ final class Nodes {
         }
         if (node instanceof javafx.scene.control.TextInputControl input && input.isVisible()) {
             found.add(input.getText());
+        }
+        // The answer's sentences are Text nodes rather than Labels, because
+        // only a Text is broken across lines by the TextFlow holding it.
+        if (node instanceof javafx.scene.text.Text text && text.isVisible()
+                && !text.getText().isEmpty()) {
+            found.add(text.getText());
         }
         for (Node child : children(node)) {
             collectText(child, found);

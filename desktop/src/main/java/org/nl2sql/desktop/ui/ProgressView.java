@@ -4,6 +4,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import org.nl2sql.desktop.api.Models;
@@ -40,8 +41,13 @@ public final class ProgressView {
 
     public ProgressView() {
         current.getStyleClass().add("progress-current");
+        // The detail a node reports is prose -- "3 tables, 2 examples" is the
+        // short one -- so it is given the row and allowed to use two lines of
+        // it rather than being cut off at the end of one.
+        current.setWrapText(true);
         count.getStyleClass().addAll("progress-count", "muted");
         HBox head = new HBox(8, current, count);
+        HBox.setHgrow(current, Priority.ALWAYS);
         head.getStyleClass().add("progress-head");
 
         steps.getStyleClass().add("progress-steps");

@@ -28,6 +28,17 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class DesktopApp extends Application {
 
+    /**
+     * The narrowest window this interface still lays out rather than clips.
+     *
+     * <p>Measured rather than chosen: {@code MainWindowTest} lays the whole
+     * window out at exactly this width and fails if a sentence stops
+     * reflowing or anything is drawn wider than what holds it.
+     */
+    public static final double MINIMUM_WIDTH = 560;
+
+    public static final double MINIMUM_HEIGHT = 480;
+
     private ExecutorService background;
     private MainWindow window;
 
@@ -56,6 +67,12 @@ public final class DesktopApp extends Application {
 
         stage.setTitle("NL2SQL — ask the retail database");
         stage.setScene(Styles.apply(new Scene(window.root(), 1100, 760)));
+        // Below this the answer column stops reflowing and starts being
+        // scrolled sideways, which is the one thing a window full of prose
+        // should not ask of a reader. A window that refuses to become
+        // unusable is better than one that lets itself be cut in half.
+        stage.setMinWidth(MINIMUM_WIDTH);
+        stage.setMinHeight(MINIMUM_HEIGHT);
         stage.show();
         window.start();
     }

@@ -2,6 +2,7 @@ package org.nl2sql.desktop.ui;
 
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
+import javafx.scene.control.Labeled;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TitledPane;
 import javafx.scene.layout.HBox;
@@ -40,7 +41,7 @@ import java.util.Set;
  *       window is already drawing.
  *   <li><b>It is unescaped on the way in.</b> The prose is escaped for
  *       markdown, which renders raw HTML; a label draws text, so {@code &amp;}
- *       would arrive on screen as five characters. See {@link Text}.
+ *       would arrive on screen as five characters. See {@link Markup}.
  * </ul>
  *
  * <p>And the sentence is not one block: the audit ties each of its sentences to
@@ -75,6 +76,7 @@ public final class AnswerView {
 
         node.getStyleClass().add("answer");
         node.setSpacing(12);
+        node.setMinWidth(0);
         node.getChildren().add(head());
 
         Models.Answer answer = job.answer();
@@ -95,7 +97,7 @@ public final class AnswerView {
                 node.getChildren().addAll(table.node(), ResultTableView.caption(answer.result()));
             }
             if (pipeline == null || pipeline.audit()) {
-                node.getChildren().add(audit(answer));
+                node.getChildren().add(audit(answer, node));
             }
         }
 
@@ -129,8 +131,9 @@ public final class AnswerView {
     private Region head() {
         Label question = new Label(job.question());
         question.getStyleClass().add("answer-question");
-        question.setWrapText(true);
         HBox row = new HBox(12, question);
+        // Room for the timing beside it, which is never more than "999.9s".
+        wrapTo(question, row, 72);
         HBox.setHgrow(question, Priority.ALWAYS);
         row.setAlignment(Pos.CENTER_LEFT);
         if (job.duration_ms() != null) {
@@ -150,7 +153,7 @@ public final class AnswerView {
         Label why = new Label(job.error() == null || job.error().isEmpty()
                 ? "The server did not say why."
                 : job.error());
-        why.setWrapText(true);
+        wrapTo(why, box, 24);
         box.getChildren().addAll(headline, why);
         Models.Answer answer = job.answer();
         if (answer != null && !answer.sql().isEmpty()) {
@@ -165,9 +168,9 @@ public final class AnswerView {
         Label headline = new Label(
                 VERDICT_TITLES.getOrDefault(answer.verdict(), "The agent did not answer"));
         headline.getStyleClass().add("notice-headline");
-        String said = answer.clarification() == null ? "" : Text.plain(answer.clarification());
-        Label body = new Label(said.isEmpty() ? Text.lead(answer.answer()) : said);
-        body.setWrapText(true);
+        String said = answer.clarification() == null ? "" : Markup.plain(answer.clarification());
+        Label body = new Label(said.isEmpty() ? Markup.lead(answer.answer()) : said);
+        wrapTo(body, box, 24);
         box.getChildren().addAll(headline, body);
         return box;
     }
@@ -182,17 +185,21 @@ public final class AnswerView {
      */
     private Region narrative(Models.Answer answer) {
         if (answer.claims().isEmpty()) {
-            String said = Text.plain(answer.narrative());
-            Label headline = new Label(said.isEmpty() ? Text.lead(answer.answer()) : said);
+            String said = Markup.plain(answer.narrative());
+            Label headline = new Label(said.isEmpty() ? Markup.lead(answer.answer()) : said);
             headline.getStyleClass().add("answer-headline");
-            headline.setWrapText(true);
+            wrapTo(headline, node, 32);
             return headline;
         }
 
         TextFlow flow = new TextFlow();
         flow.getStyleClass().add("answer-headline");
         for (Models.Claim claim : answer.claims()) {
-            Label sentence = new Label(Text.plain(claim.text())
+            // A Text node, not a Label. TextFlow breaks the Text nodes it is
+            // given across lines and treats anything else as one unbreakable
+            // box -- so a Label here is a sentence that runs off the edge and
+            // is clipped, however narrow the window gets.
+            javafx.scene.text.Text sentence = new javafx.scene.text.Text(Markup.plain(claim.text())
                     + (claim.formula() == null ? "" : " " + claim.formula()) + " ");
             sentence.getStyleClass().add("claim");
             Set<String> cells = keysOf(claim);
@@ -224,17 +231,17 @@ public final class AnswerView {
         }
     }
 
-    private static Region audit(Models.Answer answer) {
+    private static Region audit(Models.Answer answer, Region column) {
         Models.AuditReport report = answer.audit();
         List<String> problems = new ArrayList<>();
         for (String claim : report.unsupported_claims()) {
-            problems.add("Unsupported: " + Text.plain(claim));
+            problems.add("Unsupported: " + Markup.plain(claim));
         }
         for (String reason : report.drop_reasons()) {
-            problems.add(Text.plain(reason));
+            problems.add(Markup.plain(reason));
         }
         if (report.semantic_issue() != null && !report.semantic_issue().isEmpty()) {
-            problems.add(Text.plain(report.semantic_issue()));
+            problems.add(Markup.plain(report.semantic_issue()));
         }
 
         if (report.passed() && problems.isEmpty()) {
@@ -266,11 +273,12 @@ public final class AnswerView {
         if (!answer.sql().isEmpty()) {
             VBox body = new VBox(6, sql(answer.sql()));
             if (!answer.tables().isEmpty()) {
-                body.getChildren().add(muted("Tables: " + String.join(", ", answer.tables())));
+                body.getChildren().add(
+                        wrapTo(muted("Tables: " + String.join(", ", answer.tables())), body, 8));
             }
             if (answer.plan_cost() != null) {
-                body.getChildren().add(muted("Planner cost estimate: "
-                        + String.format(Locale.US, "%,.1f", answer.plan_cost())));
+                body.getChildren().add(wrapTo(muted("Planner cost estimate: "
+                        + String.format(Locale.US, "%,.1f", answer.plan_cost())), body, 8));
             }
             panes.add(disclosure(answer.attempts() > 1
                     ? "SQL (" + answer.attempts() + " attempts)"
@@ -309,10 +317,15 @@ public final class AnswerView {
         for (Models.TraceEntry entry : answer.trace()) {
             Label name = new Label(entry.node());
             name.getStyleClass().add("trace-node");
-            name.setMinWidth(160);
+            // Preferred rather than minimum: a floor here is a floor on the
+            // whole window, and a node name that has to be shortened is a
+            // smaller loss than a row that cannot be made to fit.
+            name.setPrefWidth(160);
+            name.setMinWidth(0);
             Region bar = new Region();
             bar.getStyleClass().add("trace-bar");
             bar.setPrefWidth(Math.max(1, entry.ms() / slowest * 240));
+            bar.setMinWidth(0);
             Label ms = new Label(String.format(Locale.US, "%.2fs", entry.ms() / 1000));
             ms.getStyleClass().add("trace-ms");
             HBox row = new HBox(8, name, bar, ms);
@@ -362,6 +375,22 @@ public final class AnswerView {
         Label label = new Label(text);
         label.getStyleClass().add("muted");
         label.setWrapText(true);
+        return label;
+    }
+
+    /**
+     * Wrap this label to the width of whatever it is put into.
+     *
+     * <p>{@code setWrapText(true)} on its own is not enough. A label reports
+     * the width its text wants, its container hands it that, and the height
+     * that comes back is one line -- so the text is drawn on one line and
+     * clipped by the column. Giving it a ceiling read from the container is
+     * what makes the height depend on the width instead.
+     */
+    private static <T extends Labeled> T wrapTo(T label, Region container, double margin) {
+        label.setWrapText(true);
+        label.setMinWidth(0);
+        label.maxWidthProperty().bind(container.widthProperty().subtract(margin));
         return label;
     }
 }

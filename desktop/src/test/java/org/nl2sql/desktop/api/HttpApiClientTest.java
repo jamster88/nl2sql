@@ -128,7 +128,7 @@ class HttpApiClientTest {
                         ? Json.write(Fakes.meta(true))
                         : Json.write(Fakes.ready()));
 
-        assertEquals("4.4.0", client.meta().version());
+        assertEquals("4.5.0", client.meta().version());
         assertTrue(client.readiness().ready());
         assertEquals(List.of("GET /v1/meta", "GET /readyz"), requested);
     }
@@ -292,7 +292,7 @@ class HttpApiClientTest {
         HttpApiClient client = https(Map.of(), exchange -> Json.write(Fakes.meta(true)),
                 "--insecure");
 
-        assertEquals("4.4.0", client.meta().version());
+        assertEquals("4.5.0", client.meta().version());
     }
 
     @Test

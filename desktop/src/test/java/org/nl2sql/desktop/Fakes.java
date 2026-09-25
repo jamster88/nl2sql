@@ -79,10 +79,39 @@ public final class Fakes {
         return new Models.ProgressEvent(seq, node, label, detail, "2026-09-25T10:00:0" + seq + "Z");
     }
 
+    /**
+     * What the server actually says about itself, at the length it says it.
+     *
+     * <p>The scope sentence is the real one, all three hundred and ninety
+     * characters of it. A tidier fixture is why three rounds of layout
+     * measurement reported a window that fits: a twenty-six character scope
+     * has no opinion about how wide the window has to be, and the real one
+     * demanded two thousand pixels.
+     */
+    public static final String SCOPE = "this database holds retail data in these tables: "
+            + "dim_ad_channel, dim_ad_placement, dim_allowance_type, dim_competitor, dim_date, "
+            + "dim_geography, dim_product, dim_promo_calendar, dim_promotion, dim_store, "
+            + "dim_vendor, fact_ad_performance, fact_competitor_pricing, fact_item_cogs, "
+            + "fact_item_prices, fact_pos_retail_sales, fact_promotion_lift, "
+            + "fact_vendor_allowances";
+
+    /** The two `/readyz` warns about on a development deployment, verbatim. */
+    public static final List<String> WARNINGS = List.of(
+            "No API_TOKEN is set, so every caller that can reach the port can ask questions.",
+            "API_FEEDBACK_DB_URL is set while no API_TOKEN is, so anyone who can reach the port "
+                    + "can write rows into the feedback staging database.");
+
+    /** The nineteen tables the retail database actually holds. */
+    public static final List<String> TABLES = List.of("dim_ad_channel", "dim_ad_placement",
+            "dim_allowance_type", "dim_competitor", "dim_date", "dim_geography", "dim_product",
+            "dim_promo_calendar", "dim_promotion", "dim_store", "dim_vendor",
+            "fact_ad_performance", "fact_competitor_pricing", "fact_item_cogs",
+            "fact_item_prices", "fact_pos_retail_sales", "fact_promotion_lift",
+            "fact_vendor_allowances", "fact_store_traffic");
+
     public static Models.Meta meta(boolean feedback) {
-        return new Models.Meta("nl2sql-agent", "4.4.0", "qwen2.5-coder:32b",
-                List.of("aggregate"), List.of("dim_product", "fact_pos_retail_sales"),
-                "Retail point-of-sale data.",
+        return new Models.Meta("nl2sql-agent", "4.5.0", "qwen3.8-256k",
+                List.of("aggregate"), TABLES, SCOPE,
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",
                         List.of("screen", "generate_sql", "run_sql")),
@@ -90,7 +119,8 @@ public final class Fakes {
     }
 
     public static Models.Readiness ready() {
-        return new Models.Readiness(true, Map.of("database", new Models.Check(true, "")), List.of());
+        return new Models.Readiness(true, Map.of("database", new Models.Check(true, "")),
+                WARNINGS);
     }
 
     /**

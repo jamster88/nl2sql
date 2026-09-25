@@ -3,6 +3,8 @@ package org.nl2sql.desktop.ui;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextField;
+import javafx.geometry.Pos;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -72,12 +74,17 @@ public final class FeedbackBar {
         no.setOnAction(event -> onVote.accept(Models.Verdict.NO));
 
         note.getStyleClass().addAll("feedback-note", "muted");
+        note.setWrapText(true);
         retry.getStyleClass().addAll("button", "button-quiet");
         retry.setOnAction(event -> onRetry.run());
         failure.getStyleClass().add("feedback-error");
         failure.setWrapText(true);
 
-        HBox row = new HBox(8, prompt, yes, no, note, retry);
+        // A FlowPane, not an HBox: the prompt, two buttons, a timestamp and
+        // a Retry do not fit on one line of a narrow window, and an HBox
+        // would push the last of them off the end rather than below.
+        FlowPane row = new FlowPane(8, 4, prompt, yes, no, note, retry);
+        row.setAlignment(Pos.CENTER_LEFT);
         row.getStyleClass().add("feedback-row");
 
         commentLabel.getStyleClass().add("feedback-comment-label");

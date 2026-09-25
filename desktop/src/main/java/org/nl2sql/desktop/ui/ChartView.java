@@ -144,6 +144,10 @@ public final class ChartView {
     private static Region style(XYChart<?, ?> chart, ChartData data) {
         chart.getStyleClass().add("answer-chart");
         chart.setAnimated(false);
+        // A chart asks for room for its axis labels and holds the whole
+        // column open at that width. It is the one thing here that can be
+        // read at any size, so it gives way to the prose beside it.
+        chart.setMinWidth(0);
         // One series needs no key to itself; more than one does.
         chart.setLegendVisible(data.series().size() > 1);
         chart.setPrefHeight(320);

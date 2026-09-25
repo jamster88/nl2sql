@@ -103,4 +103,21 @@ class ProgressViewTest {
             assertTrue(Nodes.texts(progress.node()).stream().noneMatch(text -> text.contains("/")));
         });
     }
+
+private static double currentStepHeight(double width) {
+        ProgressView progress = new ProgressView();
+        progress.setNodes(List.of("generate_sql"));
+        progress.add(Fakes.step(1, "generate_sql", "sql",
+                "3 tables, 2 worked examples, 14 knowledge chunks and one repair"));
+        javafx.stage.Stage stage =
+                FxToolkit.render(new javafx.scene.layout.VBox(progress.node()), width, 300);
+        double height = Nodes.heightOf(progress.node(), "progress-current");
+        stage.close();
+        return height;
+    }
+
+    @Test
+    void a_step_that_has_a_lot_to_say_wraps_rather_than_being_cut_off() {
+        FxToolkit.onFx(() -> assertTrue(currentStepHeight(320) > currentStepHeight(900)));
+    }
 }

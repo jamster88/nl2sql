@@ -379,7 +379,14 @@ if [[ "$1" == "-version" ]]; then
     exit 0
 fi
 printf 'java %s\n' "$*" >> "$FAKE_LOG"
-exit 0
+if [[ -n "${FAKE_JAVA_DIES:-}" ]]; then
+    printf 'Exception in Application start method\n' >&2
+    exit 1
+fi
+# start.sh asks whether the window is still there a moment after opening it,
+# so this has to still be there. The real `sleep`, because the fake one on
+# PATH returns instantly -- which is what keeps the test itself quick.
+exec /bin/sleep 5
 """
 
 

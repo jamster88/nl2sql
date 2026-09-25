@@ -14,9 +14,19 @@
 #                         then brings up the API and the GUI in front of it
 #   * your browser        at http://localhost:8080
 #
+# With --desktop the last step is a window instead of a page: the same stack
+# comes up, the client's jar is fetched (or built, if there is no published
+# one for this machine), the API's certificate is copied out for it to verify
+# against, and it is started. The web interface is not started at all -- one
+# interface is what was asked for, and it is this one.
+#
+#     ./start.sh --desktop
+#
 # With --review it does the same for the feedback system: the staging
 # database that keeps verdicts, the service that promotes them into the
-# golden questions, and a second page at http://localhost:8081.
+# golden questions, and a second page at http://localhost:8081. That page
+# opens whichever interface was chosen, because reviewing happens in one
+# place and there is no desktop half of it.
 #
 # Use those two directly when you want the parts separately -- a terminal
 # session with no API, a different agent tag, no knowledge base. This script
@@ -181,6 +191,7 @@ fi
 # certificate out, and this runs it.
 DESKTOP_JAR="desktop/target/nl2sql-desktop.jar"
 DESKTOP_LOG="desktop/target/desktop.log"
+DESKTOP_PID="desktop/target/desktop.pid"
 
 java_major() {  # java_major PATH_TO_JAVA -- the major version, or 0
     local line
@@ -228,21 +239,54 @@ start_desktop() {
         warn "certificate. It says so in its own status bar for as long as that is true."
     fi
 
-    # In the background, with its output kept: a window that fails to open
-    # leaves a stack trace somewhere findable rather than on a terminal the
-    # user has already closed.
-    "$java_bin" -jar "$DESKTOP_JAR" "${trust[@]}" \
-        --url "https://localhost:$api_port" >"$DESKTOP_LOG" 2>&1 &
+    # Two things, and neither is enough on its own. `nohup` is what survives
+    # the terminal being closed. The subshell is what survives *this script
+    # exiting*: backgrounded directly, the client is a job of this shell and
+    # goes when this shell's process group does, which is moments later. In
+    # a subshell it is reparented away and outlives both.
+    mkdir -p "$(dirname "$DESKTOP_PID")"
+    ( nohup "$java_bin" -jar "$DESKTOP_JAR" "${trust[@]}" \
+          --url "https://localhost:$api_port" >"$DESKTOP_LOG" 2>&1 &
+      printf '%s' "$!" > "$DESKTOP_PID" )
+    local pid
+    pid=$(cat "$DESKTOP_PID")
+
+    # The same promise the browser half makes: do not report success until
+    # the thing is actually up. A window that will not open does not open in
+    # the first second or two, and the output is already being kept.
+    sleep 2
+    if ! kill -0 "$pid" 2>/dev/null; then
+        warn "the desktop client started and stopped again. It said:"
+        while read -r said; do warn "  $said"; done < <(grep -v '^WARNING' "$DESKTOP_LOG" | head -6)
+        return 1
+    fi
     return 0
+}
+
+desktop_already_running() {
+    local pid
+    [[ -f "$DESKTOP_PID" ]] || return 1
+    pid=$(cat "$DESKTOP_PID" 2>/dev/null)
+    [[ -n "$pid" ]] || return 1
+    # `kill -0` asks whether a process exists without touching it. The file
+    # outlives the process it names, so the file alone proves nothing --
+    # and a second window onto the same API is a thing nobody asked for.
+    kill -0 "$pid" 2>/dev/null
 }
 
 desktop_running=0
 if [[ $WITH_DESKTOP -eq 1 ]]; then
-    step "Opening the desktop client"
-    if start_desktop; then
+    if desktop_already_running; then
+        step "The desktop client is already open"
+        info "pid $(cat "$DESKTOP_PID") -- it is pointed at the API this script just checked"
         desktop_running=1
     else
-        warn "The API is up; ./start.sh (without --desktop) opens the web interface instead."
+        step "Opening the desktop client"
+        if start_desktop; then
+            desktop_running=1
+        else
+            warn "The API is up; ./start.sh (without --desktop) opens the web interface instead."
+        fi
     fi
 fi
 

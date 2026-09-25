@@ -3,13 +3,22 @@
 ## Quick start
 
 ```bash
-./start.sh
+./start.sh              # the web interface, in your browser
+./start.sh --desktop    # the Java desktop client instead, in a window
 ```
 
 That is the whole thing. [`start.sh`](start.sh) pulls what is missing, starts
-every container, waits until the page answers, and opens it in your browser
-at <http://localhost:8080>. First run is a few minutes and about 3 GB of
-images; afterwards it is seconds.
+every container, and puts an interface in front of you. Which interface is
+the only choice it asks you to make, and it has a default: with no flag it
+waits until the page actually answers and opens it in your browser at
+<http://localhost:8080>; with `--desktop` it fetches the desktop client's jar
+(building it if there is no published one for this machine), copies the API's
+certificate out for the client to verify against, and opens the window
+instead. Either way `--review` brings the feedback system up as well and
+opens the review page beside whichever you chose.
+
+First run is a few minutes and about 3 GB of images; afterwards it is
+seconds.
 
 Prefer a terminal?
 
@@ -41,17 +50,18 @@ the tags.
 
 | | When | What it does |
 |---|---|---|
-| [`./start.sh`](start.sh) | You just want to use it | Runs the two below, waits for the page, opens your browser. `--review` brings the feedback system up too and opens that as well; `--desktop` opens the Java client instead of a browser |
+| [`./start.sh`](start.sh) | You just want to use it | Runs the two below and opens an interface: the web one in your browser by default, or the Java desktop client with `--desktop`. `--review` brings the feedback system up as well and opens the review page beside either |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
 | [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
 
-`start.sh` adds nothing of its own -- it runs the other two and opens a
-browser. Use them directly when you want the parts separately: a terminal
+`start.sh` adds nothing of its own -- it runs the other two and opens an
+interface. Use them directly when you want the parts separately: a terminal
 session with no API, a different agent tag, no knowledge base.
 
 ```bash
 ./start.sh --review        # and the review interface, in a second page
 ./start.sh --desktop       # the Java desktop client instead of the web one
+./start.sh --desktop --review   # the window, and the review page beside it
 ./start.sh --feedback      # keep verdicts, without the review interface
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
@@ -511,6 +521,17 @@ container, so what the `desktop` image does is *carry* a jar -- and that keeps
 the promise the rest of this repository makes, that Docker is the only thing
 anyone has to install. Running it needs a Java runtime of 21 or later and
 nothing else; JavaFX is inside the jar.
+
+**The window outlives the command that opened it**, which took two things
+rather than one. `nohup` is what survives the terminal being closed
+afterwards; the subshell it is started in is what survives `start.sh` itself
+exiting, because a process backgrounded directly is a job of that shell and
+is reaped with its process group moments later. `start.sh` also waits a beat
+and checks the window is still there before it claims to have opened one --
+the same promise its browser half makes by waiting for the page to answer --
+and prints what the client said if it stopped. Run it again and it says the
+client is already open rather than putting a second window onto the same
+API.
 
 The jar is built in a Linux container for a machine that is not the
 container, so `launch.sh` reads `uname`, pulls the tag for what it finds, and
@@ -982,8 +1003,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2163 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2561, including ones that build and run containers
+pytest                                          # 2167 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2565, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1156,7 +1177,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **991 of 991**.
+  the traces mention -- **1009 of 1009**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

@@ -63,6 +63,18 @@ started and no browser is opened for it. `--review` still opens the review
 page, because there is no desktop equivalent of it and there is not going to
 be one — curation happens in one place.
 
+The window is left running when the command returns, and is still there when
+the terminal is closed. Those are two different problems: a process
+backgrounded directly is a job of the shell that started it and is reaped
+with that shell's process group, which `start.sh` is about to end, so the
+client is started inside a subshell; and `nohup` is what ignores the hangup a
+closing terminal sends afterwards. `start.sh` waits a moment and checks the
+window is still there before saying it opened one, and repeats what the
+client said if it is not. Running it again reports the client as already open
+rather than putting a second window onto the same API — the pid is kept
+beside the jar and checked against the operating system rather than trusted,
+because the file outlives the process it names.
+
 What the machine needs is **a Java runtime of 21 or later**, and nothing
 else. JavaFX is inside the jar. Docker builds that jar, so Maven is a
 developer's tool here rather than a user's.

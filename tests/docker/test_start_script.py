@@ -13,6 +13,8 @@ re-test of the other two.
 
 from __future__ import annotations
 
+import os
+
 import re
 import subprocess
 from pathlib import Path
@@ -586,4 +588,68 @@ def test_no_browser_with_the_desktop_client_says_it_is_already_open(run_start):
 
     assert "The desktop client is running" in result.output
     assert result.calls_matching("java -jar")
+
+
+def test_the_client_outlives_the_script_that_started_it(run_start):
+    """This script exits; the window should not.
+
+    Two mechanisms, and neither is enough alone. The subshell is what
+    survives the script exiting -- backgrounded directly, the client is a job
+    of that shell and is reaped with its process group moments later, which
+    is a window that closes itself. `nohup` is what survives the terminal
+    being closed afterwards, which cannot be observed from here without
+    hanging up on ourselves, so it is asserted against the command.
+
+    Both are checked against the line rather than the word, because both
+    words also appear in the comment that explains them.
+    """
+    result = run_start("--desktop")
+
+    assert result.calls_matching("java -jar")
+    launcher = re.search(r'^\s*\( nohup "\$java_bin" -jar',
+                         (result.workdir / "start.sh").read_text(), re.MULTILINE)
+    assert launcher, "the client is not detached into a subshell, or not run under nohup"
+
+    pid_file = result.workdir / "desktop/target/desktop.pid"
+    assert pid_file.is_file()
+    # The stand-in stays alive for five seconds, so this is asking whether
+    # the script left it running rather than waited for it.
+    os.kill(int(pid_file.read_text()), 0)
+
+
+def test_a_second_run_does_not_open_a_second_window(run_start):
+    """`launch.sh` starts whatever is down and leaves what is up alone. The
+    front door should behave the same way: two windows onto one API is a
+    thing nobody asked for."""
+    first = run_start("--desktop")
+    assert "Opening the desktop client" in first.output
+
+    second = run_start("--desktop")
+
+    assert "already open" in second.output
+    assert len(second.calls_matching("java -jar")) == 1
+
+
+def test_a_pid_file_left_behind_by_a_dead_client_starts_a_new_one(run_start):
+    """The file outlives the process it names, so the file alone proves
+    nothing -- which is why the check asks the operating system."""
+    result = run_start("--desktop")
+    (result.workdir / "desktop/target/desktop.pid").write_text("999999")
+
+    again = run_start("--desktop")
+
+    assert "Opening the desktop client" in again.output
+    assert "already open" not in again.output
+
+
+def test_a_client_that_will_not_open_says_what_it_said(run_start):
+    """The browser half waits until the page answers before reporting
+    success. This is the same promise: a window that fails to open leaves a
+    stack trace, and printing the first lines of it beats printing nothing."""
+    result = run_start("--desktop", env={"FAKE_JAVA_DIES": "1"})
+
+    assert result.returncode == 0
+    assert "started and stopped again" in result.output
+    assert "Exception in Application start method" in result.output
+    assert "opens the web interface instead" in result.output
 

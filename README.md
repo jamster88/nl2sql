@@ -329,6 +329,15 @@ The builder stage is pinned to `$BUILDPLATFORM` because its output is the
 same bytes whatever it runs on; the stage that ships is not, because that is
 the one a manifest needs a variant of.
 
+A published tag does not move. A correction to something already published
+is a new patch version and a new tag -- `v4_5_1` -- rather than a re-push of
+`v4_5`, because a tag that changes under somebody is the one kind of breakage
+they cannot debug from their own checkout. The tag is the version with its
+dots turned into underscores, truncated to however many components the tag
+carries: `v4_5` is 4.5.x and `v4_5_1` is exactly 4.5.1, and
+[`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds the
+fourteen places that say so to the same number.
+
 The two database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
 and the two RAG stores version independently, because their *content* changes
 independently of the code -- and the RAG stores are published by
@@ -973,8 +982,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2148 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2546, including ones that build and run containers
+pytest                                          # 2163 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2561, including ones that build and run containers
 ```
 
 | Directory | Covers |

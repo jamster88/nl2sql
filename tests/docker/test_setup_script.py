@@ -16,6 +16,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+#: The tag `setup.sh` pins, read rather than written down. A release moves it
+#: and a test that spelled it out would be a file to hand-edit every time --
+#: which is exactly the cost a patch release should not have.
+DESKTOP_TAG = re.search(
+    r'^DESKTOP_TAG="(\S+)"', (REPO_ROOT / "setup.sh").read_text(), re.MULTILINE
+).group(1)
+
+
 
 def _shipped_tag(name: str) -> str:
     """The image tag this checkout of setup.sh pins, e.g. AGENT_TAG."""
@@ -793,10 +801,11 @@ def test_desktop_pulls_the_image_for_this_machine_and_pins_it(run_setup):
     result = run_setup("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
 
     assert result.returncode == 0
-    assert result.called("pull mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64")
+    assert result.called(
+        f"pull mcfaddja/nl2sql-desktop-build:{DESKTOP_TAG}-mac-aarch64")
     env = (result.workdir / ".env").read_text()
     assert "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build" in env
-    assert "DESKTOP_IMAGE_TAG=v4_5" in env
+    assert f"DESKTOP_IMAGE_TAG={DESKTOP_TAG}" in env
 
 
 def test_desktop_pulls_one_platform_and_not_five(run_setup):
@@ -805,7 +814,7 @@ def test_desktop_pulls_one_platform_and_not_five(run_setup):
 
     pulls = result.calls_matching("pull mcfaddja/nl2sql-desktop-build")
     assert len(pulls) == 1
-    assert "v4_5-linux-aarch64" in pulls[0]
+    assert f"{DESKTOP_TAG}-linux-aarch64" in pulls[0]
 
 
 def test_a_desktop_image_that_will_not_pull_says_what_happens_instead(run_setup):
@@ -837,7 +846,8 @@ def test_a_second_run_keeps_the_desktop_pin(run_setup):
 
     assert "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build" in (
         second.workdir / ".env").read_text()
-    assert second.called("pull mcfaddja/nl2sql-desktop-build:v4_5-linux")
+    assert second.called(
+        f"pull mcfaddja/nl2sql-desktop-build:{DESKTOP_TAG}-linux")
 
 
 def test_the_desktop_image_and_tag_can_be_named(run_setup):
@@ -868,5 +878,6 @@ def test_the_tag_pulled_names_the_machine_this_is(run_setup, system, machine, cl
     on, and a tag that is wrong for a platform is a jar that will not start."""
     result = run_setup("--desktop", env={"FAKE_UNAME_S": system, "FAKE_UNAME_M": machine})
 
-    assert result.called(f"pull mcfaddja/nl2sql-desktop-build:v4_5-{classifier}")
+    assert result.called(
+        f"pull mcfaddja/nl2sql-desktop-build:{DESKTOP_TAG}-{classifier}")
 

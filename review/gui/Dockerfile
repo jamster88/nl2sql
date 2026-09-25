@@ -60,4 +60,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql feedback review GUI" \
       org.opencontainers.image.description="React/TypeScript interface for reviewing feedback and promoting it into the golden question set" \
-      org.opencontainers.image.version="4.3.0"
+      org.opencontainers.image.version="4.4.0"

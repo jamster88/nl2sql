@@ -61,6 +61,12 @@ class CertificateInfo:
     self_signed: bool = False
     fingerprint_sha256: str = ""
     generated: bool = False
+    #: Names that were missing from a certificate already on disk, and which
+    #: it was reissued to cover. Empty unless that happened.
+    reissued_for: list[str] = field(default_factory=list)
+    #: Names the configuration asks for that this certificate does not cover
+    #: and which cannot be added, because it is CA-issued. Empty otherwise.
+    missing_hostnames: list[str] = field(default_factory=list)
 
     @property
     def expired(self) -> bool:
@@ -256,6 +262,32 @@ def ensure_certificate(settings: ApiSettings) -> CertificateInfo | None:
         )
     else:
         info = describe_certificate(cert_file)
+        # A certificate already on disk is normally kept as it is -- that is
+        # what makes a generated one survive a restart, so a client that
+        # pinned its fingerprint keeps working.
+        #
+        # The exception is a *generated* certificate that no longer covers
+        # the names it is supposed to. That happens when a new service joins
+        # the stack and API_TLS_HOSTNAMES grows: the volume still holds the
+        # certificate from before, it is silently missing the new name, and
+        # the only symptom is the new service's proxy failing to verify it,
+        # with a message about a hostname mismatch and nothing about which
+        # name or why.
+        #
+        # So a self-signed one is reissued to cover them. A CA-issued one
+        # never is -- it cannot be, and replacing it is a decision for
+        # whoever obtained it -- and `certificate_notes` says so instead.
+        missing = [name for name in settings.tls_hostnames if name not in info.hostnames]
+        if missing and info.self_signed and settings.tls_generate:
+            info = generate_self_signed(
+                cert_file,
+                key_file,
+                hostnames=settings.tls_hostnames,
+                days=settings.tls_days,
+            )
+            info.reissued_for = missing
+        elif missing:
+            info.missing_hostnames = missing
 
     if info.self_signed and not settings.tls_allow_self_signed:
         raise TlsError(
@@ -281,6 +313,20 @@ def certificate_notes(info: CertificateInfo | None) -> list[str]:
     elif info.days_remaining <= 14:
         notes.append(
             f"the certificate at {info.path} expires in {info.days_remaining} day(s)."
+        )
+    if info.reissued_for:
+        notes.append(
+            f"the certificate at {info.path} did not cover "
+            f"{', '.join(info.reissued_for)}, so a new one was generated. Anything "
+            "that pinned the old fingerprint -- or copied it out with `docker "
+            "compose cp` -- needs it again."
+        )
+    if info.missing_hostnames:
+        notes.append(
+            f"the certificate at {info.path} does not cover "
+            f"{', '.join(info.missing_hostnames)} and is CA-issued, so it was left "
+            "alone. Anything connecting under those names will fail to verify it; "
+            "reissue it to cover them."
         )
     if info.self_signed:
         notes.append(

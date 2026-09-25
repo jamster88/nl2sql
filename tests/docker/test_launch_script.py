@@ -683,3 +683,81 @@ def test_a_database_with_the_trigram_extension_says_so_instead(run_launch):
     result = run_launch(env={"FAKE_TRGM_INSTALLED": "1"})
     assert "literal matching: pg_trgm installed (trigram search)" in result.output
     assert "pg_trgm is not installed" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# A proxy still trusting a certificate that has been reissued
+# ---------------------------------------------------------------------------
+#
+# nginx reads the API's certificate once, while it parses its config. When
+# the API reissues one -- which it does when API_TLS_HOSTNAMES grows to cover
+# a service that did not exist before -- an already-running proxy is trusting
+# a certificate nobody presents any more. The container stays *healthy*,
+# because its health check asks for index.html and that is served from disk;
+# every request to the API through it returns 502. And `docker compose up -d`
+# does not restart a healthy container, so it stays that way.
+#
+# This is what an upgrade looks like from the outside, and it is why the
+# check is a request for a route the API owns rather than a health status.
+
+
+def test_the_gui_is_checked_through_its_proxy_not_just_for_health(run_launch):
+    result = run_launch("--gui")
+    assert result.called("readyz"), "nothing asked the API for anything through the proxy"
+    assert "GUI is healthy at http://localhost:8080" in result.output
+
+
+def test_a_gui_whose_proxy_cannot_reach_the_api_is_restarted(run_launch):
+    result = run_launch("--gui", env={"FAKE_PROXY_BROKEN": "8080"})
+
+    assert "cannot reach the API through its proxy" in result.output
+    assert result.called("restart gui")
+    # And once restarted it is reported as working, not as broken.
+    assert "GUI is healthy at http://localhost:8080" in result.output
+
+
+def test_a_working_gui_proxy_is_not_restarted(run_launch):
+    """A restart drops every connection through it. Only do it when it is the
+    cure for something."""
+    result = run_launch("--gui")
+    assert not result.called("restart gui")
+
+
+def test_the_restart_says_why_rather_than_just_doing_it(run_launch):
+    result = run_launch("--gui", env={"FAKE_PROXY_BROKEN": "8080"})
+    assert "pick up" in result.output
+    assert "certificate" in result.output
+
+
+def test_the_review_interface_is_checked_through_its_proxy_too(run_launch):
+    result = run_launch("--review")
+    assert "Review interface is healthy at http://localhost:8081" in result.output
+
+
+def test_a_review_interface_whose_proxy_is_stale_is_restarted(run_launch):
+    result = run_launch("--review", env={"FAKE_PROXY_BROKEN": "8081"})
+
+    assert "cannot reach the API through its proxy" in result.output
+    assert result.called("restart reviewgui")
+    assert "Review interface is healthy at http://localhost:8081" in result.output
+
+
+def test_a_gui_proxy_a_restart_does_not_fix_is_reported_not_papered_over(run_launch):
+    """A restart cures a stale certificate and nothing else. When the proxy
+    still cannot reach the API, saying "healthy" would be the wrong answer to
+    the only question the user has."""
+    result = run_launch("--gui", env={"FAKE_PROXY_DEAD": "8080"})
+
+    assert result.called("restart gui")
+    assert "cannot reach the API through its proxy" in result.output
+    assert "GUI is healthy" not in result.output
+    assert "docker compose --profile api --profile gui logs gui" in result.output
+
+
+def test_a_review_proxy_a_restart_does_not_fix_is_reported_too(run_launch):
+    result = run_launch("--review", env={"FAKE_PROXY_DEAD": "8081"})
+
+    assert result.called("restart reviewgui")
+    assert "cannot reach the review service" in result.output
+    assert "Review interface is healthy" not in result.output
+    assert "docker compose --profile reviewgui logs reviewgui" in result.output

@@ -102,6 +102,40 @@ the point of having one. Three ways to work with it, best first:
     # 3. Turn verification off, for a throwaway experiment only
     curl --insecure https://localhost:8443/healthz
 
+### When a generated certificate is replaced
+
+A certificate already on disk is normally kept exactly as it is. That is what
+makes a generated one survive a restart, so a client that trusted it once --
+or pinned its fingerprint -- keeps working.
+
+There is one exception. If the certificate is self-signed and no longer covers
+every name in `API_TLS_HOSTNAMES`, a new one is generated to cover them, and
+the server says so at start-up.
+
+This exists because of what happens otherwise. When a new service joins the
+stack, `API_TLS_HOSTNAMES` grows to cover it -- the review service presents
+this certificate rather than generating a second one, so `nl2sql-review` had
+to be added to the list. On an existing deployment the volume still held the
+certificate from before. It was silently missing the new name, and the only
+symptom was the new service's proxy refusing to verify it, with a message
+about a hostname mismatch and nothing about which name, or why, or that a
+certificate written months ago was the reason.
+
+Two consequences worth knowing:
+
+* **The fingerprint changes.** Anything that pinned the old one, or copied it
+  out with `docker compose cp`, needs it again. The start-up warning says so.
+* **A proxy in front of the API has to be restarted.** nginx reads the
+  certificate once, while it parses its config, so an already-running proxy
+  goes on trusting a certificate nobody presents any more -- and its own
+  health check will not notice, because that asks for a page served from
+  disk. `launch.sh` checks by asking for `/readyz` *through* the proxy and
+  restarts it when that fails.
+
+A CA-issued certificate is never replaced. It cannot be reissued here, and
+replacing it is a decision for whoever obtained it, so the mismatch is
+reported at start-up and the certificate is left alone.
+
 ### Taking the development certificate away
 
 Once a real certificate is mounted, set `API_TLS_ALLOW_SELF_SIGNED=false`.

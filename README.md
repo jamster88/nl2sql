@@ -254,10 +254,21 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_2 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_4 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_2 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_4 .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v4_4 .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v4_4 .
 ```
+
+The two database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
+and the two RAG stores version independently, because their *content* changes
+independently of the code -- and the RAG stores are published by
+[`rag/publish_db_image.sh`](rag/publish_db_image.sh), which tars a stopped
+container's data directory. That is a snapshot of one machine, so those two
+tags are arm64 only.
 
 The agent's version label comes from `AGENT_VERSION` in
 [`agent/Dockerfile`](agent/Dockerfile) and the GUI's from
@@ -269,7 +280,8 @@ has to ask.
 
 | Tag | Use |
 |---|---|
-| `v4_2` | The multi-agent pipeline, the REST API, and the web interface. Pinned -- what `setup.sh` pulls. |
+| `v4_4` | Adds the feedback system: verdicts staged from the web interface, and the review service and interface that promote them into the golden questions. Pinned -- what `setup.sh` pulls. |
+| `v4_2` | The multi-agent pipeline, the REST API, and the web interface. Pinned. |
 | `v4_1` | The same pipeline and REST API, before the GUI. Pinned. |
 | `v4` | The multi-agent pipeline, CLI only. Pinned; `./launch.sh --api` cannot run against it, and says so. |
 | `v3` | RAG plus the golden-pair ensemble, one linear graph. Pinned. |
@@ -820,8 +832,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 1979 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 2368, including ones that build and run containers
+pytest                             # 1993 tests, no Docker, npm or network needed
+pytest --run-docker --run-node     # all 2382, including ones that build and run containers
 ```
 
 | Directory | Covers |

@@ -319,8 +319,11 @@ def test_naming_a_gui_image_or_tag_implies_the_flag(run_setup):
     assert result.called("pull mcfaddja/nl2sql-gui:v9_9")
     assert result.env_file()["GUI_IMAGE_TAG"] == "v9_9"
 
+    # Read from setup.sh rather than written in: this assertion is about the
+    # *image* flag implying --gui, and hardcoding the default tag beside it
+    # made it fail on every version bump for a reason unrelated to the flag.
     result = run_setup("--gui-image", "example.com/other-gui")
-    assert result.called("pull example.com/other-gui:v4_2")
+    assert result.called(f"pull example.com/other-gui:{_shipped_tag('GUI_TAG')}")
     assert result.env_file()["GUI_IMAGE_NAME"] == "example.com/other-gui"
 
 

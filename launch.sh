@@ -371,6 +371,51 @@ if [[ $WITH_API -eq 1 ]]; then
     fi
 fi
 
+# --- Waiting, and the proxies -----------------------------------------------
+# `wait_healthy` above is not used here on purpose: it calls `die`, and the
+# whole point of these three is to warn and carry on. A missing review
+# interface should not stop a working agent from being reported as working.
+await_health() {  # await_health CONTAINER
+    local container="$1" status=""
+    for _ in $(seq 1 60); do
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
+        [[ "$status" == "healthy" ]] && return 0
+        [[ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo true)" == "false" ]] && return 1
+        sleep 2
+    done
+    return 1
+}
+
+# --- The proxies, and the certificate they loaded at start ---------------
+# nginx reads `proxy_ssl_trusted_certificate` once, while it parses its
+# config. A certificate reissued after that -- which the API does when
+# API_TLS_HOSTNAMES grows to cover a service that did not exist before -- is
+# one the proxy has never seen, and every request through it then fails with
+# an upstream verification error while the page itself still loads fine.
+#
+# The container's own health check cannot see this: it asks for index.html,
+# which is served from disk. So the check is a request for a route the API
+# owns, through the proxy, and the cure is a restart.
+proxy_reaches_api() {  # proxy_reaches_api PORT
+    local code
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+        "http://localhost:$1/readyz" 2>/dev/null || echo 000)
+    # 503 is the API answering that it is not ready, which still means the
+    # proxy reached it. Only a failure to reach it at all is the problem here.
+    [[ "$code" == "200" || "$code" == "503" ]]
+}
+
+repair_proxy() {  # repair_proxy NAME PORT PROFILES...
+    local name="$1" port="$2"
+    shift 2
+    proxy_reaches_api "$port" && return 0
+    info "$name cannot reach the API through its proxy -- restarting it to pick up"
+    info "the current certificate (the API reissues one when a service name is added)"
+    docker compose "$@" restart "$name" >/dev/null 2>&1 || return 1
+    await_health "nl2sql-${name/reviewgui/review-gui}" || return 1
+    proxy_reaches_api "$port"
+}
+
 # --- The web interface -----------------------------------------------------
 # nginx serving the built page, and proxying /v1 to the API over TLS. It is
 # started after the API because it waits on the API's health check, and it
@@ -392,7 +437,12 @@ start_gui() {
 if [[ $WITH_GUI -eq 1 ]]; then
     step "Starting the web interface"
     if start_gui; then
-        info "GUI is healthy at http://localhost:$gui_port"
+        if repair_proxy gui "$gui_port" --profile api --profile gui; then
+            info "GUI is healthy at http://localhost:$gui_port"
+        else
+            warn "the GUI is up but cannot reach the API through its proxy."
+            warn "Check what it said: docker compose --profile api --profile gui logs gui"
+        fi
     else
         warn "the GUI container did not become healthy."
         warn "Check what it said: docker compose --profile api --profile gui logs gui"
@@ -413,20 +463,6 @@ fi
 # unavailable until they do.
 review_port=$(compose_env REVIEW_PORT 8444)
 review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
-
-# `wait_healthy` above is not used here on purpose: it calls `die`, and the
-# whole point of these three is to warn and carry on. A missing review
-# interface should not stop a working agent from being reported as working.
-await_health() {  # await_health CONTAINER
-    local container="$1" status=""
-    for _ in $(seq 1 60); do
-        status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
-        [[ "$status" == "healthy" ]] && return 0
-        [[ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || echo true)" == "false" ]] && return 1
-        sleep 2
-    done
-    return 1
-}
 
 start_feedbackdb() {
     docker compose --profile feedback up -d feedbackdb >/dev/null 2>&1 || return 1
@@ -473,7 +509,13 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
 
     step "Starting the review interface"
     if start_reviewgui; then
-        info "Review interface is healthy at http://localhost:$review_gui_port"
+        if repair_proxy reviewgui "$review_gui_port" \
+            --profile feedback --profile review --profile reviewgui; then
+            info "Review interface is healthy at http://localhost:$review_gui_port"
+        else
+            warn "the review interface is up but cannot reach the review service."
+            warn "Check what it said: docker compose --profile reviewgui logs reviewgui"
+        fi
     else
         warn "the review interface did not become healthy."
         warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"

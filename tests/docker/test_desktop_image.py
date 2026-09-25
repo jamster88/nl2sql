@@ -114,3 +114,30 @@ def test_the_compose_service_builds_the_same_thing(docker_cli: str | None,
     assert service["build"]["args"]["JAVAFX_PLATFORM"] == CROSS_PLATFORM
     assert service["image"].endswith(CROSS_PLATFORM)
     assert service["profiles"] == ["desktop"]
+
+
+def test_the_published_image_carries_the_jar_and_not_the_toolchain(
+        docker_cli: str | None, docker_daemon_available: bool, jar: Path):
+    """The builder stage is Maven, a JDK and half a gigabyte of dependency
+    cache; the stage that ships is alpine and one file. The `jar` fixture has
+    already built it, so this only reads what came out."""
+    tag = "nl2sql-desktop-build:test-mac-aarch64"
+    listing = subprocess.run(
+        [docker_cli, "run", "--rm", "--entrypoint", "sh", tag, "-c",
+         "ls /opt/nl2sql; command -v mvn java javac || true"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert listing.returncode == 0, listing.stderr
+    assert "nl2sql-desktop.jar" in listing.stdout
+    # Nothing that could build it is left in the thing that carries it.
+    assert "mvn" not in listing.stdout
+    assert "javac" not in listing.stdout
+
+    size = subprocess.run(
+        [docker_cli, "image", "inspect", tag, "--format", "{{.Size}}"],
+        capture_output=True, text=True, timeout=60,
+    )
+    # The jar is about 11 MB and alpine about 8. A gigabyte means the
+    # shipping stage went away and the builder is being published instead.
+    assert int(size.stdout.strip()) < 100 * 1024 * 1024, size.stdout
+

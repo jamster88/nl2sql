@@ -183,9 +183,34 @@ def test_the_build_runs_where_docker_is_and_targets_where_java_is(dockerfile: st
     assert "-Djavafx.platform=${JAVAFX_PLATFORM}" in dockerfile
 
 
-def test_the_base_image_is_pinned_to_a_version(dockerfile: str):
-    image = re.search(r"^FROM (?:--platform=\S+ )?(\S+)", dockerfile, re.MULTILINE).group(1)
-    assert ":" in image and not image.endswith(":latest")
+def _stages(dockerfile: str) -> list[str]:
+    return re.findall(r"^FROM (?:--platform=\S+ )?(\S+)", dockerfile, re.MULTILINE)
+
+
+def test_every_base_image_is_pinned_to_a_version(dockerfile: str):
+    for image in _stages(dockerfile):
+        assert ":" in image and not image.endswith(":latest"), image
+
+
+def test_the_toolchain_does_not_ship(dockerfile: str):
+    """Maven, a JDK and half a gigabyte of dependency cache have no business
+    in a published artefact whose whole job is to hold a twelve-megabyte
+    file. Two stages is the difference between 33 MB and a gigabyte."""
+    stages = _stages(dockerfile)
+    assert len(stages) == 2
+    assert stages[0].startswith("maven:")
+    assert stages[1].startswith("alpine:")
+
+
+def test_the_stage_that_ships_is_built_for_the_target(dockerfile: str):
+    """The builder is pinned to $BUILDPLATFORM because its output is the same
+    bytes whatever it runs on. The stage below is the one that runs on the
+    user's machine, so it is the one a multi-architecture manifest needs a
+    variant of -- and pinning it to the builder would publish one
+    architecture under a manifest claiming two."""
+    shipping = re.search(r"^FROM (?:--platform=\S+ )?(alpine:\S+)", dockerfile, re.MULTILINE)
+    assert shipping, "the shipping stage is missing"
+    assert "--platform" not in shipping.group(0)
 
 
 def test_the_dependency_layer_is_cached_on_the_pom(dockerfile: str):
@@ -216,11 +241,61 @@ def test_compose_builds_it_for_the_platform_it_is_told_to(compose: str):
     body = service.group(1)
     assert "dockerfile: desktop/Dockerfile" in body
     assert "JAVAFX_PLATFORM: ${JAVAFX_PLATFORM:-linux}" in body
-    # Tagged by platform: a cached image built for another machine is a jar
-    # that will not start on this one.
-    assert "${JAVAFX_PLATFORM:-linux}" in re.search(r"image: ([^\n]+)", body).group(1)
+    # The tag is a version *and* a platform, which is how the published ones
+    # are named: a cached image built for another machine is a jar that will
+    # not start on this one, and one built from another checkout is a jar
+    # that is not this checkout.
+    image = re.search(r"image: ([^\n]+)", body).group(1)
+    assert "${DESKTOP_IMAGE_TAG:-local}" in image
+    assert "${JAVAFX_PLATFORM:-linux}" in image
     assert 'profiles: ["desktop"]' in body
     assert "./desktop/target:/out" in body
+
+
+def test_the_published_desktop_tag_names_a_version_this_actually_is():
+    """The same rule the agent and GUI tags are held to. A tag that is not a
+    prefix of the version pulls a jar that is not this checkout -- and this
+    one is pulled rather than built, so nothing else would notice."""
+    setup_sh = (REPO_ROOT / "setup.sh").read_text()
+    match = re.search(r'^DESKTOP_TAG="v([\d_]+)"', setup_sh, re.MULTILINE)
+    assert match, "setup.sh no longer pins a desktop tag of the form vN or vN_M"
+    tagged = match.group(1).split("_")
+    assert tagged == __version__.split(".")[: len(tagged)], (
+        f"setup.sh pulls the desktop client at v{match.group(1)}, "
+        f"but this package is {__version__}"
+    )
+
+
+def test_every_published_image_moves_at_the_same_tag():
+    """They are built from one checkout and only ever tested together, so
+    "which client goes with which API" should not be a question."""
+    setup_sh = (REPO_ROOT / "setup.sh").read_text()
+    tags = {
+        name: re.search(rf'^{name}="(\S+)"', setup_sh, re.MULTILINE).group(1)
+        for name in ("AGENT_TAG", "GUI_TAG", "REVIEW_TAG", "REVIEW_GUI_TAG", "DESKTOP_TAG")
+    }
+    assert len(set(tags.values())) == 1, tags
+
+
+def test_setup_pulls_the_jar_and_launch_only_uses_it():
+    """The division every other image here is held to: setup pulls, launch
+    starts. A `docker pull` in launch.sh would make every start a download,
+    which is the one thing it is documented not to be."""
+    setup_sh = (REPO_ROOT / "setup.sh").read_text()
+    launch_sh = (REPO_ROOT / "launch.sh").read_text()
+
+    assert "DESKTOP_IMAGE_NAME=$DESKTOP_IMAGE" in setup_sh
+    assert 'docker pull "$desktop_pair"' in setup_sh
+    assert "docker pull" not in launch_sh
+
+
+def test_setup_pulls_only_the_platform_this_machine_is():
+    """The other four are 33 MB each of no use here."""
+    setup_sh = (REPO_ROOT / "setup.sh").read_text()
+    block = re.search(r"javafx_platform\(\) \{(.*?)\n\}", setup_sh, re.DOTALL)
+    assert block, "setup.sh no longer works out which platform to pull for"
+    assert set(re.findall(r"printf '([a-z0-9-]+)'", block.group(1))) == PLATFORMS
+    assert '$DESKTOP_TAG-$(javafx_platform)' in setup_sh
 
 
 def test_launch_can_name_every_platform_openjfx_publishes(launch_sh: str):

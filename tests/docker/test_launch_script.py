@@ -867,3 +867,47 @@ def test_the_closing_notes_say_how_to_run_it(run_launch):
     assert "Java runtime of 21 or later" in result.output
     # The point of the whole thing: one queue, whichever client was used.
     assert "the same staging table, the same review" in result.output
+
+
+DESKTOP_PINNED_ENV = (
+    "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
+    "IMAGE_TAG=v1\n"
+    "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
+    "AGENT_IMAGE_TAG=v4_5\n"
+    "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build\n"
+    "DESKTOP_IMAGE_TAG=v4_5\n"
+    "RAG_ENABLED=true\n"
+)
+
+
+def test_a_pinned_image_that_is_here_is_copied_from_rather_than_rebuilt(run_launch):
+    """`setup.sh --desktop` pulled it. Compose builds a service only when its
+    image is missing, so this turns a Maven build into a copy."""
+    result = run_launch("--desktop", env_file=DESKTOP_PINNED_ENV,
+                        env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64",
+                             "FAKE_DESKTOP_IMAGE_PRESENT": "1"})
+
+    assert "Taking it from mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64" in result.output
+    assert "Building it for" not in result.output
+    # And it never asks a registry: launch.sh is the fast path.
+    assert not result.calls_matching("pull ")
+
+
+def test_a_pinned_image_that_is_not_here_is_built_instead(run_launch):
+    """A tag that is not published yet, a machine that never ran setup with
+    --desktop, or one that is offline. The jar is still what was asked for."""
+    result = run_launch("--desktop", env_file=DESKTOP_PINNED_ENV,
+                        env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert "Building it for linux" in result.output
+    assert (result.workdir / "desktop/target/nl2sql-desktop.jar").is_file()
+
+
+def test_an_unpinned_checkout_looks_for_a_local_tag(run_launch):
+    """`nl2sql-desktop-build:local-linux` has nowhere to be pulled from, which
+    is what .env naming no image means."""
+    result = run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert result.calls_matching("image inspect nl2sql-desktop-build:local-linux")
+    assert "Building it for linux" in result.output
+

@@ -32,8 +32,9 @@ Either way the same containers come up:
 | `nl2sql-review` | The service that turns reviewed feedback into golden questions, with `--review` |
 | `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 
-The agent, the GUI and both halves of the review system are published images
-(`v4_4`); the rest are built or pulled by `setup.sh` as well. [Pulling the images](#pulling-the-images) has
+The agent, the GUI, both halves of the review system and the desktop client's
+jar are published images (`v4_5`); the rest are built or pulled by `setup.sh`
+as well. [Pulling the images](#pulling-the-images) has
 the tags.
 
 ### Three scripts
@@ -249,15 +250,19 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v4_4       # the agent, and the REST API
-docker pull mcfaddja/nl2sql-gui:v4_4         # the web interface
-docker pull mcfaddja/nl2sql-review:v4_4      # the review service
-docker pull mcfaddja/nl2sql-review-gui:v4_4  # the review interface
+docker pull mcfaddja/nl2sql-agent:v4_5       # the agent, and the REST API
+docker pull mcfaddja/nl2sql-gui:v4_5         # the web interface
+docker pull mcfaddja/nl2sql-review:v4_5      # the review service
+docker pull mcfaddja/nl2sql-review-gui:v4_5  # the review interface
 ```
 
-There is no published image for the desktop client, because a jar is not a
-deployment: the `desktop` compose service builds one for the machine it will
-run on, and `./launch.sh --desktop` is what asks it to.
+The desktop client is published too, but by platform rather than by
+architecture, because a jar carries native code for the machine it will draw
+on: `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64` and the four siblings
+named in [The desktop client](#the-desktop-client). The image holds the jar
+and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
+and `./launch.sh --desktop` pulls the one this machine needs, falling back to
+building it when there is nothing to pull.
 
 `setup.sh` pulls the agent for you and pins it in `.env`. The GUI is opt-in,
 because most people ask questions from a terminal and an image for a
@@ -298,14 +303,31 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_4 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_4 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v4_4 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v4_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v4_4 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v4_5 .
 ```
+
+The desktop client is published along a second axis as well. Every tag is
+multi-architecture like the four above -- that is the machine the image
+*runs* on, to copy the jar out -- but the jar inside carries native code for
+one JavaFX platform, so there is a tag per platform:
+
+```bash
+for platform in mac-aarch64 mac linux linux-aarch64 win; do
+  docker buildx build --platform linux/amd64,linux/arm64 \
+    -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
+    --push -t mcfaddja/nl2sql-desktop-build:v4_5-$platform .
+done
+```
+
+The builder stage is pinned to `$BUILDPLATFORM` because its output is the
+same bytes whatever it runs on; the stage that ships is not, because that is
+the one a manifest needs a variant of.
 
 The two database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
 and the two RAG stores version independently, because their *content* changes
@@ -324,7 +346,8 @@ has to ask.
 
 | Tag | Use |
 |---|---|
-| `v4_4` | Adds the feedback system: verdicts staged from the web interface, and the review service and interface that promote them into the golden questions. Pinned -- what `setup.sh` pulls. |
+| `v4_5` | Adds the Java desktop client, and the two request limits in `/v1/meta` it needed. Pinned -- what `setup.sh` pulls. |
+| `v4_4` | Adds the feedback system: verdicts staged from the web interface, and the review service and interface that promote them into the golden questions. Pinned. |
 | `v4_2` | The multi-agent pipeline, the REST API, and the web interface. Pinned. |
 | `v4_1` | The same pipeline and REST API, before the GUI. Pinned. |
 | `v4` | The multi-agent pipeline, CLI only. Pinned; `./launch.sh --api` cannot run against it, and says so. |
@@ -474,24 +497,36 @@ run with `--cacert`. `--fingerprint` and `--insecure` are the other two
 answers, and the status bar says which of them is in force for as long as it
 is true.
 
-**Docker builds it; Java runs it.** Nothing runs a desktop application in a
-container, so what the `desktop` compose service does is produce a jar -- and
-that keeps the promise the rest of this repository makes, that Docker is the
-only thing anyone has to install. Running it needs a Java runtime of 21 or
-later and nothing else; JavaFX is inside the jar.
+**Docker fetches it; Java runs it.** Nothing runs a desktop application in a
+container, so what the `desktop` image does is *carry* a jar -- and that keeps
+the promise the rest of this repository makes, that Docker is the only thing
+anyone has to install. Running it needs a Java runtime of 21 or later and
+nothing else; JavaFX is inside the jar.
 
 The jar is built in a Linux container for a machine that is not the
-container, so `launch.sh` reads `uname` and passes the answer in:
+container, so `launch.sh` reads `uname`, pulls the tag for what it finds, and
+builds locally only when there is nothing to pull:
 
 ```bash
-./launch.sh --desktop        # build it and copy the certificate out
+./launch.sh --desktop        # fetch it and copy the certificate out
 java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
 ```
 
 One jar is one platform. The same native library file names are used on macOS
 x86-64 and arm64, so a jar carrying both would carry one of them twice under
-one name and load whichever came first; `launch.sh` records which platform
-the jar was built for and rebuilds when that or a source file changes.
+one name and load whichever came first. That is why there is a published tag
+per platform --
+
+| Tag | For |
+|---|---|
+| `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v4_5-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v4_5-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v4_5-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v4_5-win` | Windows |
+
+-- and why `launch.sh` records which platform the jar beside it was built
+for, and fetches again when that or a source file changes.
 
 ## Feedback
 
@@ -938,8 +973,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2130 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2527, including ones that build and run containers
+pytest                                          # 2148 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2546, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -955,7 +990,7 @@ pytest --run-docker --run-node --run-java       # all 2527, including ones that 
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 371 tests behind `--run-docker` are the ones that need a working daemon:
+The 372 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, and query the four live databases. The 20 behind `--run-node`
 need npm, and run the two GUIs' own suites. The 6 behind `--run-java` need
@@ -1112,7 +1147,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **962 of 962**.
+  the traces mention -- **991 of 991**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

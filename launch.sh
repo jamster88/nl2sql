@@ -455,7 +455,17 @@ desktop_jar_is_current() {  # desktop_jar_is_current PLATFORM
     [[ -z "$(find desktop/src desktop/pom.xml -newer "$DESKTOP_JAR" -print -quit 2>/dev/null)" ]]
 }
 
-build_desktop_jar() {  # build_desktop_jar PLATFORM
+desktop_image() {  # desktop_image PLATFORM -- what compose resolves for it
+    printf '%s:%s-%s' \
+        "$(compose_env DESKTOP_IMAGE_NAME nl2sql-desktop-build)" \
+        "$(compose_env DESKTOP_IMAGE_TAG local)" "$1"
+}
+
+build_desktop_jar() {  # build_desktop_jar PLATFORM -- or take it from the image
+    # Compose builds a service that has a `build:` section only when its
+    # image is missing, so a `setup.sh --desktop` that pulled one turns this
+    # into a copy. Nothing is pulled here: launch.sh is the fast path, and a
+    # download in it would be a download on every start.
     JAVAFX_PLATFORM="$1" docker compose --profile desktop run --rm desktop >/dev/null 2>&1 || return 1
     printf '%s' "$1" > desktop/target/.platform
     [[ -f "$DESKTOP_JAR" ]]
@@ -468,7 +478,11 @@ if [[ $WITH_DESKTOP -eq 1 ]]; then
     if desktop_jar_is_current "$desktop_platform"; then
         info "$DESKTOP_JAR is already built for $desktop_platform"
     else
-        info "Building it for $desktop_platform -- a few minutes the first time"
+        if docker image inspect "$(desktop_image "$desktop_platform")" >/dev/null 2>&1; then
+            info "Taking it from $(desktop_image "$desktop_platform")"
+        else
+            info "Building it for $desktop_platform -- a few minutes the first time"
+        fi
         if build_desktop_jar "$desktop_platform"; then
             info "Built $DESKTOP_JAR"
         else

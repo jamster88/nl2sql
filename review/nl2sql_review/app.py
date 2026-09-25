@@ -72,7 +72,7 @@ from .render import Draft
 from .settings import ReviewSettings
 from .store import STATES, Repository, Submission
 
-__version__ = "4.4.0"
+__version__ = "4.5.0"
 
 #: Same envelope as the agent API, so one client parses both services.
 FALLBACK_CODES = {

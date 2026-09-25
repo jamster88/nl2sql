@@ -513,8 +513,11 @@ services:
         # container would otherwise assume about itself.
         JAVAFX_PLATFORM: ${JAVAFX_PLATFORM:-linux}
     # Tagged by platform: one jar is one platform, and a cached image built
-    # for another machine is a jar that will not start on this one.
-    image: ${DESKTOP_IMAGE_NAME:-nl2sql-desktop-build}:${JAVAFX_PLATFORM:-linux}
+    # for another machine is a jar that will not start on this one. The tag
+    # is a version *and* a platform, which is how the published ones are
+    # named -- `v4_5-mac-aarch64`. Unpinned it says `local`, which has
+    # nowhere to be pulled from and is built here instead.
+    image: ${DESKTOP_IMAGE_NAME:-nl2sql-desktop-build}:${DESKTOP_IMAGE_TAG:-local}-${JAVAFX_PLATFORM:-linux}
     volumes:
       - ./desktop/target:/out
     profiles: ["desktop"]

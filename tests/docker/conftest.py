@@ -51,6 +51,15 @@ case "$1" in
     volume)
         [[ -n "${FAKE_VOLUME_EXISTS:-}" ]] && exit 0
         exit 1 ;;
+    image)
+        # `docker image inspect <tag>` -- launch.sh asks whether the desktop
+        # client's image is already here before deciding what to say about
+        # where the jar is coming from.
+        if [[ "$2" == "inspect" ]]; then
+            [[ -n "${FAKE_DESKTOP_IMAGE_PRESENT:-}" ]] && exit 0
+            exit 1
+        fi
+        exit 0 ;;
     inspect)
         if [[ "$*" == *nl2sql-vectordb* ]]; then
             echo "${FAKE_VECTOR_HEALTH:-healthy}"
@@ -387,7 +396,12 @@ def run_setup(tmp_path: Path):
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    for name, body in (("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP)):
+    # `uname` again: setup.sh reads the system and the machine to decide
+    # which of the desktop client's five published tags to pull.
+    for name, body in (
+        ("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP),
+        ("uname", FAKE_UNAME),
+    ):
         path = bin_dir / name
         path.write_text(body)
         os.chmod(path, 0o755)

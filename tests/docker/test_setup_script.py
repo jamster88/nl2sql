@@ -780,3 +780,93 @@ def test_the_previous_env_is_still_kept_beside_the_new_one(run_setup):
     replacing it."""
     run_setup("--ollama-url", "http://old:11434")
     assert "existing .env moved to .env.bak" in run_setup().output
+
+
+# ---------------------------------------------------------------------------
+# The desktop client's jar
+# ---------------------------------------------------------------------------
+
+
+def test_desktop_pulls_the_image_for_this_machine_and_pins_it(run_setup):
+    """Tagged by JavaFX platform rather than by architecture, because it
+    carries a jar and a jar carries native code for the machine it draws on."""
+    result = run_setup("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert result.returncode == 0
+    assert result.called("pull mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64")
+    env = (result.workdir / ".env").read_text()
+    assert "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build" in env
+    assert "DESKTOP_IMAGE_TAG=v4_5" in env
+
+
+def test_desktop_pulls_one_platform_and_not_five(run_setup):
+    """The other four are 33 MB each of no use on this machine."""
+    result = run_setup("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "aarch64"})
+
+    pulls = result.calls_matching("pull mcfaddja/nl2sql-desktop-build")
+    assert len(pulls) == 1
+    assert "v4_5-linux-aarch64" in pulls[0]
+
+
+def test_a_desktop_image_that_will_not_pull_says_what_happens_instead(run_setup):
+    """A tag not published for this platform, or a machine that is offline.
+    The jar is still what the user gets -- built rather than fetched."""
+    result = run_setup("--desktop", env={"FAKE_FAIL_PULL": "nl2sql-desktop-build"})
+
+    assert result.returncode == 0
+    assert "could not pull" in result.output
+    assert "will build it instead" in result.output
+
+
+def test_without_the_flag_nothing_desktop_is_pulled_or_pinned(run_setup):
+    """Unpinned, compose resolves a local tag with nowhere to be pulled from
+    and launch.sh builds the jar. Most people never ask for this client."""
+    result = run_setup()
+
+    assert not result.calls_matching("pull mcfaddja/nl2sql-desktop-build")
+    assert "DESKTOP_IMAGE_NAME" not in (result.workdir / ".env").read_text()
+
+
+def test_a_second_run_keeps_the_desktop_pin(run_setup):
+    """Re-running setup.sh is how tags are upgraded, and "was it asked for
+    last time" is the same question as "is it pinned in .env"."""
+    first = run_setup("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+    assert "DESKTOP_IMAGE_NAME" in (first.workdir / ".env").read_text()
+
+    second = run_setup(env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build" in (
+        second.workdir / ".env").read_text()
+    assert second.called("pull mcfaddja/nl2sql-desktop-build:v4_5-linux")
+
+
+def test_the_desktop_image_and_tag_can_be_named(run_setup):
+    """The same override every other published image has, for a fork or a
+    tag built somewhere else."""
+    result = run_setup("--desktop-image", "example.test/nl2sql-desktop",
+                       "--desktop-tag", "nightly",
+                       env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert result.called("pull example.test/nl2sql-desktop:nightly-linux")
+    env = (result.workdir / ".env").read_text()
+    assert "DESKTOP_IMAGE_NAME=example.test/nl2sql-desktop" in env
+    assert "DESKTOP_IMAGE_TAG=nightly" in env
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "classifier"),
+    [
+        ("Darwin", "x86_64", "mac"),
+        ("MINGW64_NT-10.0", "x86_64", "win"),
+        # Anything unrecognised gets the commonest machine there is, which at
+        # least starts somewhere rather than refusing to pull at all.
+        ("SunOS", "sparc", "linux"),
+    ],
+)
+def test_the_tag_pulled_names_the_machine_this_is(run_setup, system, machine, classifier):
+    """Three of the five branches cannot happen on the machine the suite runs
+    on, and a tag that is wrong for a platform is a jar that will not start."""
+    result = run_setup("--desktop", env={"FAKE_UNAME_S": system, "FAKE_UNAME_M": machine})
+
+    assert result.called(f"pull mcfaddja/nl2sql-desktop-build:v4_5-{classifier}")
+

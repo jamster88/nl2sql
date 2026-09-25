@@ -32,7 +32,7 @@ WITH_DESKTOP=0
 # Flags handed on. The interface itself is decided after parsing, because
 # --desktop replaces the web one rather than adding to it.
 LAUNCH_ARGS=()
-SETUP_ARGS=(--gui)
+SETUP_ARGS=()
 
 step() { [[ $QUIET -eq 1 ]] || printf '\n==> %s\n' "$1"; }
 info() { [[ $QUIET -eq 1 ]] || printf '    %s\n' "$1"; }
@@ -107,8 +107,10 @@ done
 # what macOS ships.
 if [[ $WITH_DESKTOP -eq 1 ]]; then
     LAUNCH_ARGS=(--desktop ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"})
+    SETUP_ARGS=(--desktop ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"})
 else
     LAUNCH_ARGS=(--gui ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"})
+    SETUP_ARGS=(--gui ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"})
 fi
 
 # --- Prerequisites ---------------------------------------------------------

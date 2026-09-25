@@ -228,10 +228,18 @@ Three decisions are worth knowing because they look arbitrary otherwise:
 ## Building it
 
 ```bash
-./launch.sh --desktop                       # Docker builds it
-docker compose --profile desktop run --rm desktop      # the same thing
+./launch.sh --desktop                       # fetch it, or build it
+docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
+
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64`
+and four siblings -- so the usual path is a 33 MB pull rather than a Maven
+build. The image carries the jar and nothing that could have produced it: the
+builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
+the stage that ships is alpine and one file. `launch.sh` builds locally only
+when there is nothing to pull, which is what an unpinned checkout and an
+offline machine have in common.
 
 The jar is built **in a container for a machine that is not the container**.
 OpenJFX publishes its native code under one of five classifiers and picks the
@@ -242,8 +250,13 @@ passes the answer in as `-Djavafx.platform=`.
 One jar is one platform. The same library file names are used on macOS
 x86-64 and on arm64, so a jar carrying both would carry one of them twice
 under one name and load whichever came first. `launch.sh` records which
-platform the jar was built for beside it and rebuilds when that changes or
-when a source file is newer.
+platform the jar was built for beside it, and fetches again when that changes
+or when a source file is newer.
+
+Every one of those tags is itself multi-architecture, which is a second axis
+and an easy one to confuse with the first: that is the machine the *image*
+runs on to copy the jar out, while the platform in the tag is the machine the
+*jar* will draw on.
 
 JavaFX **21** rather than the newest: it is the long-term-support line and
 runs on every JDK from 17 upwards, while 25 refuses to load on anything below

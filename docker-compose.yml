@@ -163,12 +163,16 @@ services:
       LITERALS_ENABLED: ${LITERALS_ENABLED:-true}
       AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
       NARRATE_ENABLED: ${NARRATE_ENABLED:-true}
+      # The arch5 Completeness Reviewer after execution, and its one
+      # reflective model call (arch5 section 6.6).
+      REVIEW_ENABLED: ${REVIEW_ENABLED:-true}
+      REVIEW_REFLECTION_ENABLED: ${REVIEW_REFLECTION_ENABLED:-true}
       # "vector" is the Schema Retriever (DDL-chunk vectors + FK closure);
       # "llm" restores v3's table-selection model call for comparison.
       SCHEMA_RETRIEVAL: ${SCHEMA_RETRIEVAL:-vector}
-      # One counter for every failure source: 4 generations, so one draft
-      # and three repairs.
-      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-4}
+      # One counter for every failure source: 7 generations, so one draft
+      # and six repairs (arch5 section 6.4).
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-7}
       # Estimated-plan cost ceiling, calibrated against this dataset.
       MAX_PLAN_COST: ${MAX_PLAN_COST:-1000000}
       # --- forwarded, not overridden ----------------------------------

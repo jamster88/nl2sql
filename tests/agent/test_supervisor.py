@@ -249,3 +249,52 @@ def test_each_framing_names_the_calculation_rather_than_the_output():
     assert "grain" in intent_framing("aggregate")
     assert "difference" in intent_framing("compare")
     assert "period" in intent_framing("trend")
+
+
+# ---------------------------------------------------------------------------
+# The answer contract's three fields (arch5 section 4.1)
+# ---------------------------------------------------------------------------
+
+
+def test_the_supervisor_reads_what_a_complete_answer_is_about():
+    state = screen(
+        _llm(verdict="proceed", intent="aggregate", entities=["sku"], measure="net sales", period=""),
+        "top 10 SKUs",
+    )
+    assert state["entities"] == ["sku"]
+    assert state["measure"] == "net sales"
+    assert state["period"] == ""
+
+
+def test_the_contract_fields_default_to_empty_when_the_model_leaves_them_out():
+    state = screen(_llm(verdict="proceed", intent="lookup"), "which vendor supplies Dairy & Eggs")
+    assert (state["entities"], state["measure"], state["period"]) == ([], "", "")
+
+
+def test_malformed_contract_fields_make_a_smaller_contract_not_a_crash():
+    llm = FakeScreeningLLM(SimpleNamespace(
+        verdict="proceed", intent="aggregate", clarification="",
+        entities="store", measure=None, period=7,
+    ))
+    state = screen(llm, "top stores")
+    assert state["entities"] == ["store"]
+    assert (state["measure"], state["period"]) == ("", "")
+
+    llm = FakeScreeningLLM(SimpleNamespace(
+        verdict="proceed", intent="aggregate", clarification="",
+        entities={"store": 1}, measure="  net sales ", period=" FY2024 ",
+    ))
+    state = screen(llm, "top stores")
+    assert state["entities"] == []
+    assert (state["measure"], state["period"]) == ("net sales", "FY2024")
+
+    llm = FakeScreeningLLM(SimpleNamespace(
+        verdict="proceed", intent="aggregate", clarification="",
+        entities=["sku", "", None, " store "],
+    ))
+    assert screen(llm, "q")["entities"] == ["sku", "store"]
+
+
+def test_an_unreachable_supervisor_leaves_the_contract_empty():
+    state = screen(FakeScreeningLLM(error=RuntimeError("down")), "top 10 SKUs")
+    assert (state["entities"], state["measure"], state["period"]) == ([], "", "")

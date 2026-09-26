@@ -33,7 +33,7 @@ class FeedbackBarTest {
     }
 
     @Test
-    void either_button_reports_its_verdict() {
+    void each_button_reports_its_verdict() {
         FxToolkit.onFx(() -> {
             List<Models.Verdict> votes = new ArrayList<>();
             FeedbackBar bar = new FeedbackBar();
@@ -41,8 +41,35 @@ class FeedbackBarTest {
 
             bar.yes().fire();
             bar.no().fire();
+            bar.incomplete().fire();
 
-            assertEquals(List.of(Models.Verdict.YES, Models.Verdict.NO), votes);
+            assertEquals(List.of(Models.Verdict.YES, Models.Verdict.NO, Models.Verdict.INCOMPLETE), votes);
+        });
+    }
+
+    @Test
+    void the_three_options_read_correct_wrong_and_correct_but_incomplete() {
+        FxToolkit.onFx(() -> {
+            FeedbackBar bar = new FeedbackBar();
+
+            assertEquals("Correct", bar.yes().getText());
+            assertEquals("Wrong", bar.no().getText());
+            assertEquals("Correct but incomplete", bar.incomplete().getText());
+        });
+    }
+
+    @Test
+    void a_correct_but_incomplete_verdict_is_marked_and_asked_what_was_missing() {
+        FxToolkit.onFx(() -> {
+            FeedbackBar bar = new FeedbackBar();
+
+            bar.show(record(Models.Verdict.INCOMPLETE, SyncState.SAVED, ""));
+
+            assertTrue(bar.incomplete().getPseudoClassStates().contains(Styles.CHOSEN));
+            assertFalse(bar.yes().getPseudoClassStates().contains(Styles.CHOSEN));
+            assertFalse(bar.no().getPseudoClassStates().contains(Styles.CHOSEN));
+            assertTrue(Nodes.says(bar.node(), "What was missing?"));
+            assertEquals("e.g. the product names beside the SKUs", bar.comment().getPromptText());
         });
     }
 

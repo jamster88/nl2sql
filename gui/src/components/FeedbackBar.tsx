@@ -1,7 +1,12 @@
 /**
  * Was that right?
  *
- * Two buttons, and -- once one is pressed -- somewhere to say why. The
+ * Three buttons -- correct, wrong, and correct but incomplete -- and, once
+ * one is pressed, somewhere to say why. The third exists because "right"
+ * was two answers: a query that was wrong needs correcting, and one that
+ * was right but left out what a reader needed (a name beside an id, the
+ * figure a ranking was ranked by) needs fleshing out, and a reviewer
+ * cannot tell those apart from a "no". The
  * ordering is deliberate: the verdict is one click and is recorded on that
  * click, and the comment box only appears afterwards. Asking for prose up
  * front turns a one-click courtesy into a form, and a feedback widget that
@@ -12,7 +17,7 @@
  * the one that POSTs (see `feedback/apiStore.ts`).
  *
  * Clicking the verdict already recorded withdraws it. A user who misclicks
- * "No" on a good answer should not have to hunt for an undo, and a verdict
+ * "Wrong" on a good answer should not have to hunt for an undo, and a verdict
  * that cannot be taken back is a verdict people stop giving.
  *
  * The send state is shown rather than hidden. A verdict that failed to reach
@@ -41,6 +46,24 @@ export interface FeedbackBarProps {
   error?: string | undefined;
   disabled?: boolean;
 }
+
+/**
+ * The three options, in the order a reader weighs them. The wire values are
+ * the API's: `yes` and `no` predate the third and are kept, so every verdict
+ * already recorded still means what it did.
+ */
+export const OPTIONS: readonly { verdict: Verdict; label: string }[] = [
+  { verdict: "yes", label: "Correct" },
+  { verdict: "no", label: "Wrong" },
+  { verdict: "incomplete", label: "Correct but incomplete" },
+];
+
+/** What the comment box asks, which depends on what was wrong, if anything. */
+const ASK: Record<Verdict, { label: string; placeholder: string }> = {
+  yes: { label: "Anything worth noting?", placeholder: "e.g. worth keeping as an example" },
+  no: { label: "What was wrong?", placeholder: "e.g. the fiscal month is off by one" },
+  incomplete: { label: "What was missing?", placeholder: "e.g. the product names beside the SKUs" },
+};
 
 const NOTE: Record<SyncState, string> = {
   local: "click again to withdraw",
@@ -77,26 +100,19 @@ export function FeedbackBar({
         <span className="feedback-prompt">
           {verdict === undefined ? "Was this answer right?" : "Thanks — recorded as"}
         </span>
-        <button
-          type="button"
-          className="button button-vote"
-          aria-pressed={verdict === "yes"}
-          data-verdict="yes"
-          disabled={disabled}
-          onClick={() => onVote("yes")}
-        >
-          Yes
-        </button>
-        <button
-          type="button"
-          className="button button-vote"
-          aria-pressed={verdict === "no"}
-          data-verdict="no"
-          disabled={disabled}
-          onClick={() => onVote("no")}
-        >
-          No
-        </button>
+        {OPTIONS.map((option) => (
+          <button
+            key={option.verdict}
+            type="button"
+            className="button button-vote"
+            aria-pressed={verdict === option.verdict}
+            data-verdict={option.verdict}
+            disabled={disabled}
+            onClick={() => onVote(option.verdict)}
+          >
+            {option.label}
+          </button>
+        ))}
         {verdict !== undefined && (
           <span className="feedback-note muted" data-sync={state}>
             {recordedAt ? `${new Date(recordedAt).toLocaleTimeString()} · ` : ""}
@@ -127,7 +143,7 @@ export function FeedbackBar({
           }}
         >
           <label className="feedback-comment-label" htmlFor="feedback-comment">
-            {verdict === "no" ? "What was wrong?" : "Anything worth noting?"}
+            {ASK[verdict].label}
             <span className="muted"> (optional)</span>
           </label>
           <div className="feedback-row">
@@ -136,11 +152,7 @@ export function FeedbackBar({
               className="input"
               type="text"
               value={comment}
-              placeholder={
-                verdict === "no"
-                  ? "e.g. the fiscal month is off by one"
-                  : "e.g. worth keeping as an example"
-              }
+              placeholder={ASK[verdict].placeholder}
               onChange={(event) => setComment(event.target.value)}
               disabled={disabled}
             />

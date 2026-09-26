@@ -27,6 +27,7 @@ import type {
   State,
   SubmissionList,
   SubmissionModel,
+  Verdict,
 } from "./types";
 
 export class ApiError extends Error {
@@ -58,7 +59,7 @@ export interface ClientOptions {
 
 export interface ListOptions {
   state?: State | undefined;
-  verdict?: "yes" | "no" | undefined;
+  verdict?: Verdict | undefined;
   limit?: number | undefined;
   offset?: number | undefined;
   signal?: AbortSignal | undefined;

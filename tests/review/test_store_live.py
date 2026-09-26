@@ -44,6 +44,8 @@ from nl2sql_review.store import (
     STATES,
     SUBMISSIONS,
     SUBMISSION_COLUMNS,
+    VERDICT_CHECK,
+    VERDICTS,
     WRITER_ROLE,
     Repository,
     Submission,
@@ -204,9 +206,53 @@ def test_the_agent_writes_exactly_the_columns_the_schema_has(repo, owner):
     assert set(SUBMISSION_COLUMNS) <= columns
 
 
+def test_a_table_from_before_the_third_verdict_is_widened_in_place(repo, owner):
+    """The staging table on a running stack was created when a verdict was
+    yes or no, with an inline CHECK that `CREATE TABLE IF NOT EXISTS` never
+    revisits. Setup must widen it, keeping the rows it already holds."""
+    with psycopg.connect(owner) as conn:
+        conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP CONSTRAINT {VERDICT_CHECK}")
+        conn.execute(
+            f"ALTER TABLE {SUBMISSIONS} ADD CONSTRAINT {VERDICT_CHECK} CHECK (verdict IN ('yes', 'no'))"
+        )
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) VALUES ('old', 'job-old', 'no', 'q')"
+        )
+        conn.commit()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) "
+                "VALUES ('new', 'job-new', 'incomplete', 'q')"
+            )
+        conn.rollback()
+
+    repo.setup(WRITER_PASSWORD)
+
+    with psycopg.connect(owner) as conn:
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) "
+            "VALUES ('new', 'job-new', 'incomplete', 'q')"
+        )
+        conn.commit()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) "
+                "VALUES ('bad', 'job-bad', 'maybe', 'q')"
+            )
+    assert repo.get_by_job("job-old").verdict == "no"
+
+
 # ---------------------------------------------------------------------------
 # Capture, as the writer role
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("verdict", VERDICTS)
+def test_each_verdict_can_be_recorded_by_the_writer(repo, sink, verdict):
+    item = capture(verdict=verdict)
+    sink.record(item)
+    assert repo.get_by_job(item.job_id).verdict == verdict
+    assert len(repo.listing(verdict=verdict)) == 1
 
 
 def test_a_verdict_can_be_recorded_and_read_back_by_the_owner(repo, sink):

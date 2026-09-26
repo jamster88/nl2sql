@@ -116,8 +116,10 @@ class HistoryViewTest {
             history.remember(answered("job-1", "a good one"));
             history.remember(answered("job-2", "a bad one"));
             history.remember(answered("job-3", "no opinion"));
+            history.remember(answered("job-4", "a thin one"));
             store.vote("job-1", "a good one", Models.Verdict.YES);
             store.vote("job-2", "a bad one", Models.Verdict.NO);
+            store.vote("job-4", "a thin one", Models.Verdict.INCOMPLETE);
             history.refresh();
 
             javafx.stage.Stage stage = FxToolkit.render(new javafx.scene.layout.VBox(history.node()));
@@ -125,6 +127,7 @@ class HistoryViewTest {
             List<String> rows = Nodes.texts(history.node());
             assertTrue(rows.stream().anyMatch(row -> row.startsWith("✓") && row.endsWith("a good one")));
             assertTrue(rows.stream().anyMatch(row -> row.startsWith("✗") && row.endsWith("a bad one")));
+            assertTrue(rows.stream().anyMatch(row -> row.startsWith("◐") && row.endsWith("a thin one")));
             assertTrue(rows.contains("no opinion"));
             stage.close();
         });

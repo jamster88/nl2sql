@@ -1,4 +1,4 @@
-"""The v4 multi-agent pipeline, as a LangGraph state graph.
+"""The multi-agent pipeline, as a LangGraph state graph (arch5).
 
 Four stages, one shared state object (`state.py`), one retry loop:
 
@@ -12,7 +12,9 @@ Four stages, one shared state object (`state.py`), one retry loop:
         ┌─────────────┘   └─ attempts < max ─┐          ▼
         │                                    └──► planner_gate ─► execute
         │                                                            │
-        └──────── semantic_issue ── audit ◄── narrate ◄── visualise ◄─┘
+        │                          incomplete ◄── review ◄───────────┘
+        │                                           │ complete
+        └──────── semantic_issue ── audit ◄── narrate ◄── visualise
 
 What changed from v3 and why, in one line each:
 
@@ -33,6 +35,12 @@ What changed from v3 and why, in one line each:
 * **The model's semantic review moved after execution.** It is the Audit
   Checker's `semantic_issue`, raised with rows in hand rather than guessed
   from the schema, and it spends the shared budget like anything else.
+* **A result that ran is not yet an answer (arch5).** The Supervisor's
+  reading of the question becomes an answer contract -- a label beside every
+  id, the measure a ranking was ranked by, the period a total covers -- that
+  the generator is shown before it writes and the Completeness Reviewer
+  checks after the query has run. An incomplete result is one more failure
+  source into the same Repair Agent and the same budget.
 
 Every stage the architecture makes optional is a setting, so an ablation is
 an environment change rather than a code change.
@@ -48,8 +56,9 @@ from typing import Any, Callable
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 
-from . import present, repair as repair_agent, supervisor
+from . import completeness as reviewer, contract as answer_contract, present, repair as repair_agent, supervisor
 from .config import Settings
+from .contract import ContractResources
 from .database import Database, strip_sql
 from .examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING, GoldenPairLibrary
 from .literals import LiteralMatcher, build_catalog, render_literal_map
@@ -58,6 +67,7 @@ from .prompts import (
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
     TABLE_SELECTION_PROMPT,
+    contract_block,
     example_messages,
     knowledge_block,
     literal_block,
@@ -71,6 +81,7 @@ from .state import (
     RUNTIME,
     STATIC,
     AgentState,
+    AnswerContract,
     Attempt,
     AuditReport,
     Issue,
@@ -94,10 +105,11 @@ ProgressFn = Callable[[str, str], None]
 #: so the four concurrent retrievers report to the right run too.
 _progress: ContextVar[ProgressFn | None] = ContextVar("nl2sql_progress", default=None)
 
-#: LangGraph stops a run that exceeds this many supersteps. The loop is about
-#: six nodes deep per attempt, so the default of 25 would abort a run that was
-#: still inside its own retry budget -- a failure that looks like a hang.
-RECURSION_LIMIT = 80
+#: LangGraph stops a run that exceeds this many supersteps. The loop is up to
+#: nine nodes deep per attempt when an attempt reaches the audit, and there
+#: are seven attempts, so the default of 25 would abort a run that was still
+#: inside its own retry budget -- a failure that looks like a hang.
+RECURSION_LIMIT = 100
 
 #: How many times the narrator may be asked to rewrite claims the audit could
 #: not verify. One, per section 7.3: a second failure means the rows do not
@@ -125,6 +137,7 @@ STEP_LABELS = {
     "validate_static": "validation",
     "planner_gate": "planner",
     "execute_query": "result",
+    "review": "completeness",
     "repair": "repair",
     "give_up": "gave up",
     "visualise": "chart",
@@ -150,6 +163,7 @@ class Nl2SqlAgent:
         example_library: GoldenPairLibrary | None = None,
         schema_retriever: SchemaRetriever | None = None,
         literal_matcher: LiteralMatcher | None = None,
+        contract_resources: ContractResources | None = None,
         on_progress: ProgressFn | None = None,
     ) -> None:
         self.settings = settings
@@ -166,6 +180,8 @@ class Nl2SqlAgent:
         self._literal_matcher = literal_matcher
         self._literal_catalog_built = literal_matcher is not None
         self._literal_lock = threading.Lock()
+        self._contract = contract_resources
+        self._contract_lock = threading.Lock()
         self.tools = build_tools(
             self.db, self.llm, settings, self.knowledge_base, self.example_library
         )
@@ -267,6 +283,19 @@ class Nl2SqlAgent:
                     self._literal_matcher = None
             return self._literal_matcher
 
+    def _contract_resources(self) -> ContractResources:
+        """The label map and the fiscal calendar, read once on first use.
+
+        Like the literal catalog, this reads the catalog and not a question,
+        so once per process is enough; and like it, a failure costs the
+        feature and nothing else -- the contract says less, and the reviewer
+        has fewer keys to ask labels for.
+        """
+        with self._contract_lock:
+            if self._contract is None:
+                self._contract = answer_contract.load_resources(self.db)
+            return self._contract
+
     # --- running ------------------------------------------------------------
 
     def run(
@@ -336,6 +365,7 @@ class Nl2SqlAgent:
         graph.add_node("validate_static", self._traced("validate_static", self._validate_static))
         graph.add_node("planner_gate", self._traced("planner_gate", self._planner_gate))
         graph.add_node("execute_query", self._traced("execute_query", self._execute_query))
+        graph.add_node("review", self._traced("review", self._review))
         graph.add_node("repair", self._traced("repair", self._repair))
         graph.add_node("give_up", self._traced("give_up", self._give_up))
         graph.add_node("visualise", self._traced("visualise", self._visualise))
@@ -373,6 +403,12 @@ class Nl2SqlAgent:
         graph.add_conditional_edges(
             "execute_query",
             self._route_after_execution,
+            {"review": "review", "repair": "repair"},
+        )
+        # arch5: the one gate that can send back a query that ran correctly.
+        graph.add_conditional_edges(
+            "review",
+            self._route_after_review,
             {"present": "visualise", "repair": "repair"},
         )
         # One budget, checked in one place.
@@ -394,18 +430,45 @@ class Nl2SqlAgent:
     # --- stage 1: intake ----------------------------------------------------
 
     def _supervise(self, state: AgentState) -> dict:
-        """Screen for injection and scope, and classify intent."""
+        """Screen for injection and scope, classify intent, and write the contract.
+
+        The contract is built here rather than in a node of its own because
+        it is a pure function of what the Supervisor just read out of the
+        question: deterministic code, no model call, and nothing to wait for.
+        With the Supervisor off it is built from the question's own wording,
+        which still finds a ranking and its N.
+        """
         if not self.settings.supervisor_enabled:
-            return {_DETAIL: "disabled"}
+            contract = self._build_contract(state["question"])
+            return {
+                "answer_contract": contract,
+                _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
+            }
         update = supervisor.screen(
             self.llm,
             state["question"],
             clarify_enabled=self.settings.clarify_enabled,
             tables=self.db.table_names(),
         )
+        contract = self._build_contract(
+            state["question"],
+            intent=update["intent"],
+            entities=update.pop("entities", []),
+            measure=update.pop("measure", ""),
+            period=update.pop("period", ""),
+        )
+        update["answer_contract"] = contract
         update[_MODEL_CALLS] = 0 if update.get("retrieval_errors") else 1
-        update[_DETAIL] = f"{update['verdict']} / {update['intent']}"
+        update[_DETAIL] = (
+            f"{update['verdict']} / {update['intent']}; "
+            f"contract: {answer_contract.describe(contract)}"
+        )
         return update
+
+    def _build_contract(self, question: str, **fields: Any) -> AnswerContract:
+        return answer_contract.build_contract(
+            question, resources=self._contract_resources(), **fields
+        )
 
     def _route_after_supervisor(self, state: AgentState) -> list[str] | str:
         if state.get("verdict", "proceed") != "proceed":
@@ -530,8 +593,12 @@ class Nl2SqlAgent:
         """
         known = set(self.db.table_names())
         proposed: list[str] = []
+        # The answer contract's tables go first, so the cap never takes
+        # them: a contract that asks for `product_name` with `dim_product`
+        # out of scope sends the generator into the table allowlist.
         for name in (
-            list(state.get("schema_tables", []))
+            answer_contract.contract_tables(state.get("answer_contract"))
+            + list(state.get("schema_tables", []))
             + list(state.get("knowledge_tables", []))
             + list(state.get("example_tables", []))
         ):
@@ -574,6 +641,7 @@ class Nl2SqlAgent:
             knowledge=knowledge_block(state.get("knowledge", "")),
             literals=literal_block(render_literal_map(state.get("literal_map", []))),
             task=task_block(supervisor.intent_framing(state.get("intent", ""))),
+            contract=contract_block(answer_contract.render_contract(state.get("answer_contract"))),
             examples=example_messages([_shot_dict(s) for s in shots]),
             question=state["question"],
             feedback=feedback,
@@ -654,6 +722,72 @@ class Nl2SqlAgent:
         }
 
     def _route_after_execution(self, state: AgentState) -> str:
+        return "repair" if state.get("issues") else "review"
+
+    def _review(self, state: AgentState) -> dict:
+        """The Completeness Reviewer: rules, then one reflection (arch5 section 6.6).
+
+        Off, it still records the default period when the generator applied
+        one: `assumptions` is what makes the narrative say which year a total
+        covers, and switching the gate off is an ablation of the gate, not of
+        telling the reader.
+        """
+        result = state.get("result") or QueryResult()
+        contract = state.get("answer_contract") or AnswerContract()
+        if not self.settings.review_enabled:
+            assumptions = reviewer.assumptions_for(contract, state.get("sql", ""), result)
+            return {"assumptions": assumptions, _DETAIL: "disabled"}
+        outcome = reviewer.review(
+            question=state["question"],
+            sql=state.get("sql", ""),
+            result=result,
+            contract=contract,
+            label_map=self._contract_resources().label_map,
+            intent=state.get("intent", ""),
+            prior=state.get("completeness"),
+            llm=self.llm,
+            reflect_enabled=self.settings.review_reflection_enabled,
+            schema=state.get("schema", ""),
+            last_attempt=state.get("attempts", 0) >= self.settings.max_attempts,
+        )
+        update: dict[str, Any] = {
+            "completeness": outcome.report,
+            "assumptions": outcome.assumptions,
+            "issues": [outcome.issue] if outcome.issue else [],
+            _MODEL_CALLS: outcome.model_calls,
+            _DETAIL: reviewer.describe(outcome.report),
+        }
+        if outcome.issue:
+            update.update(self._widen_scope(state, outcome.report))
+        return update
+
+    def _widen_scope(self, state: AgentState, report: Any) -> dict:
+        """Bring the tables a gap names into scope before the generator tries.
+
+        A result can carry a key the contract did not foresee -- `store_key`
+        out of the sales fact, with `dim_store` never retrieved -- and the
+        hint "add `dim_store.store_name`" is then one the table allowlist
+        rejects, spending a second attempt to learn nothing. The label map
+        already knows which table supplies the label, so the scope grows by
+        that table, past the cap if it must: one dimension is a few lines of
+        prompt, and a gap nobody can close is a wasted budget.
+        """
+        selected = list(state.get("selected_tables", []))
+        known = set(self.db.table_names())
+        extra = []
+        for gap in report.missing:
+            if gap.table and gap.table in known and gap.table not in selected + extra:
+                extra.append(gap.table)
+        if not extra:
+            return {}
+        tables = selected + extra
+        return {
+            "selected_tables": tables,
+            "schema": self.tools["get_schema_and_data"].invoke({"tables": tables}),
+            _DETAIL: f"{reviewer.describe(report)} (scope +{', '.join(extra)})",
+        }
+
+    def _route_after_review(self, state: AgentState) -> str:
         return "repair" if state.get("issues") else "present"
 
     def _repair(self, state: AgentState) -> dict:
@@ -725,7 +859,12 @@ class Nl2SqlAgent:
             return {"claims": [], _DETAIL: "disabled"}
         shots = state.get("example_shots", [])
         report = state.get("audit")
-        rejected = list(report.drop_reasons) if report else []
+        rejected = (
+            list(report.drop_reasons)
+            + [f"no claim stated this assumption: {a}" for a in report.missing_assumptions]
+            if report
+            else []
+        )
         try:
             claims = present.narrate(
                 self.llm,
@@ -735,6 +874,7 @@ class Nl2SqlAgent:
                 reasoning_target=shots[0].reasoning_target if shots else "",
                 max_rows=self.settings.max_rows,
                 rejected=rejected,
+                assumptions=state.get("assumptions", []),
             )
         except Exception as exc:
             return {"claims": [], "retrieval_errors": {"narrator": str(exc)}, _DETAIL: str(exc)}
@@ -754,7 +894,10 @@ class Nl2SqlAgent:
         # The question is part of the semantic check: an empty result is only
         # suspicious when the question implied there would be rows.
         report = present.audit(
-            state.get("claims", []), result, question=state.get("question", "")
+            state.get("claims", []),
+            result,
+            question=state.get("question", ""),
+            assumptions=state.get("assumptions", []),
         )
         update: dict[str, Any] = {"audit": report}
         if report.semantic_issue:
@@ -762,6 +905,8 @@ class Nl2SqlAgent:
             # and it spends the same budget as every other failure.
             update["issues"] = [Issue(source=AUDIT, message=report.semantic_issue)]
         detail = "passed" if report.passed else f"{len(report.unsupported_claims)} unsupported"
+        if report.missing_assumptions:
+            detail += f", {len(report.missing_assumptions)} assumption(s) unstated"
         update[_DETAIL] = report.semantic_issue or detail
         return update
 
@@ -773,7 +918,15 @@ class Nl2SqlAgent:
             # The audit judged the query wrong, not the prose. That is a
             # repair, and it spends the shared budget like any other failure.
             return "repair"
-        if report.drop_reasons and state.get("narration_retries", 0) < MAX_NARRATION_RETRIES:
+        # Rule 4 and, since arch5, rule 5: a dropped claim or an unstated
+        # assumption goes back to the narrator once. With narration off there
+        # is nobody to send it to, and the renderer states the assumption.
+        wants_rewrite = report.drop_reasons or report.missing_assumptions
+        if (
+            wants_rewrite
+            and self.settings.narrate_enabled
+            and state.get("narration_retries", 0) < MAX_NARRATION_RETRIES
+        ):
             return "renarrate"
         return "finish"
 
@@ -783,7 +936,13 @@ class Nl2SqlAgent:
         claims = present.surviving_claims(state.get("claims", []), report)
         narrative = " ".join(c.text for c in claims)
         answer = present.render_answer(
-            state["question"], result, claims, state.get("chart"), report
+            state["question"],
+            result,
+            claims,
+            state.get("chart"),
+            report,
+            assumptions=state.get("assumptions", []),
+            completeness=state.get("completeness"),
         )
         return {"narrative": narrative, "answer": answer, _DETAIL: f"{len(answer):,} characters"}
 

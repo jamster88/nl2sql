@@ -245,10 +245,11 @@ def test_every_field_the_architecture_names_exists_in_the_state():
     assert documented <= set(get_type_hints(AgentState, include_extras=True))
 
 
-def test_the_four_issue_sources_are_the_four_the_repair_loop_handles():
-    """Every failure routes to the Repair Agent under one budget. A fifth
-    source would be a path out of the loop that nothing counts.
+def test_the_five_issue_sources_are_the_five_the_repair_loop_handles():
+    """Every failure routes to the Repair Agent under one budget. A sixth
+    source would be a path out of the loop that nothing counts. The fifth,
+    `completeness`, is arch5's: the one a query that ran correctly can raise.
     """
-    from nl2sql_agent.state import AUDIT, PLANNER, RUNTIME, STATIC, IssueSource
+    from nl2sql_agent.state import AUDIT, COMPLETENESS, PLANNER, RUNTIME, STATIC, IssueSource
 
-    assert set(get_args(IssueSource)) == {STATIC, PLANNER, RUNTIME, AUDIT}
+    assert set(get_args(IssueSource)) == {STATIC, PLANNER, RUNTIME, COMPLETENESS, AUDIT}

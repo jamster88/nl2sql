@@ -23,14 +23,18 @@ import java.util.function.Consumer;
 /**
  * Was that right?
  *
- * <p>Two buttons, and -- once one is pressed -- somewhere to say why. The
- * ordering is deliberate: the verdict is one click and is recorded on that
+ * <p>Three buttons -- correct, wrong, and correct but incomplete -- and,
+ * once one is pressed, somewhere to say why. The third exists because
+ * "right" was two answers: a query that was wrong needs correcting, and one
+ * that was right but left out what a reader needed (a name beside an id,
+ * the figure a ranking was ranked by) needs fleshing out, and a reviewer
+ * cannot tell those apart from a "no". The ordering is deliberate: the verdict is one click and is recorded on that
  * click, and the comment box only appears afterwards. Asking for prose up
  * front turns a one-click courtesy into a form, and a feedback widget that
  * looks like a form is one people scroll past.
  *
  * <p>Clicking the verdict already recorded withdraws it. A user who misclicks
- * "No" on a good answer should not have to hunt for an undo, and a verdict
+ * "Wrong" on a good answer should not have to hunt for an undo, and a verdict
  * that cannot be taken back is a verdict people stop giving.
  *
  * <p>The send state is shown rather than hidden. A verdict that failed to
@@ -44,8 +48,9 @@ import java.util.function.Consumer;
 public final class FeedbackBar {
 
     private final Label prompt = new Label();
-    private final Button yes = new Button("Yes");
-    private final Button no = new Button("No");
+    private final Button yes = new Button("Correct");
+    private final Button no = new Button("Wrong");
+    private final Button incomplete = new Button("Correct but incomplete");
     private final Label note = new Label();
     private final Button retry = new Button("Retry");
     private final Label failure = new Label();
@@ -70,8 +75,10 @@ public final class FeedbackBar {
         prompt.getStyleClass().add("feedback-prompt");
         yes.getStyleClass().addAll("button", "button-vote");
         no.getStyleClass().addAll("button", "button-vote");
+        incomplete.getStyleClass().addAll("button", "button-vote");
         yes.setOnAction(event -> onVote.accept(Models.Verdict.YES));
         no.setOnAction(event -> onVote.accept(Models.Verdict.NO));
+        incomplete.setOnAction(event -> onVote.accept(Models.Verdict.INCOMPLETE));
 
         note.getStyleClass().addAll("feedback-note", "muted");
         note.setWrapText(true);
@@ -80,10 +87,10 @@ public final class FeedbackBar {
         failure.getStyleClass().add("feedback-error");
         failure.setWrapText(true);
 
-        // A FlowPane, not an HBox: the prompt, two buttons, a timestamp and
-        // a Retry do not fit on one line of a narrow window, and an HBox
+        // A FlowPane, not an HBox: the prompt, three buttons, a timestamp
+        // and a Retry do not fit on one line of a narrow window, and an HBox
         // would push the last of them off the end rather than below.
-        FlowPane row = new FlowPane(8, 4, prompt, yes, no, note, retry);
+        FlowPane row = new FlowPane(8, 4, prompt, yes, no, incomplete, note, retry);
         row.setAlignment(Pos.CENTER_LEFT);
         row.getStyleClass().add("feedback-row");
 
@@ -148,6 +155,7 @@ public final class FeedbackBar {
         prompt.setText(record == null ? "Was this answer right?" : "Thanks — recorded as");
         yes.pseudoClassStateChanged(Styles.CHOSEN, recorded == Models.Verdict.YES);
         no.pseudoClassStateChanged(Styles.CHOSEN, recorded == Models.Verdict.NO);
+        incomplete.pseudoClassStateChanged(Styles.CHOSEN, recorded == Models.Verdict.INCOMPLETE);
 
         SyncState state = record == null ? SyncState.LOCAL : record.sync();
         note.setText(record == null ? "" : at(record.at()) + state.note());
@@ -159,23 +167,32 @@ public final class FeedbackBar {
         visible(failure, failed && !record.error().isEmpty());
 
         if (record != null) {
-            commentLabel.setText(record.verdict() == Models.Verdict.NO
-                    ? "What was wrong? (optional)"
-                    : "Anything worth noting? (optional)");
-            comment.setPromptText(record.verdict() == Models.Verdict.NO
-                    ? "e.g. the fiscal month is off by one"
-                    : "e.g. worth keeping as an example");
+            // What the box asks depends on what was wrong, if anything.
+            switch (record.verdict()) {
+                case NO -> ask("What was wrong?", "e.g. the fiscal month is off by one");
+                case INCOMPLETE -> ask("What was missing?", "e.g. the product names beside the SKUs");
+                default -> ask("Anything worth noting?", "e.g. worth keeping as an example");
+            }
         }
         layout();
     }
 
-    /** The two buttons and the comment field, for tests that press them. */
+    private void ask(String question, String example) {
+        commentLabel.setText(question + " (optional)");
+        comment.setPromptText(example);
+    }
+
+    /** The three buttons and the comment field, for tests that press them. */
     public Button yes() {
         return yes;
     }
 
     public Button no() {
         return no;
+    }
+
+    public Button incomplete() {
+        return incomplete;
     }
 
     public Button retry() {

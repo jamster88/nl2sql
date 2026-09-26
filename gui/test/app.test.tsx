@@ -138,7 +138,7 @@ describe("App", () => {
     const { store } = mount();
     await askAndAnswer();
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(store.get("job-1")?.verdict).toBe("yes");
 
     const history = screen.getByLabelText("Earlier questions");
@@ -285,7 +285,7 @@ describe("feedback failures reach the status bar", () => {
     render(<App client={client} watch={watch} />);
     await askAndAnswer();
 
-    await userEvent.click(await screen.findByRole("button", { name: "Yes" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Correct" }));
     expect(client.submitFeedback).not.toHaveBeenCalled();
     // And nothing under the answer claims a failure.
     expect(screen.queryByText(/not sent/)).not.toBeInTheDocument();
@@ -300,7 +300,7 @@ describe("feedback failures reach the status bar", () => {
     render(<App client={client} watch={watch} />);
     await askAndAnswer();
 
-    await userEvent.click(await screen.findByRole("button", { name: "No" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Wrong" }));
 
     expect(await screen.findByText(/feedback: cannot reach the API/)).toBeInTheDocument();
   });

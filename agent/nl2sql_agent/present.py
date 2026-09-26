@@ -17,6 +17,13 @@ Three components live here and exactly one of them calls a model:
   It never asks a model; there is no semantic reviewer here, only a short
   list of signals that are wrong on their face.
 
+arch5 adds one obligation to the last two. The pipeline sometimes answers a
+question the user did not finish asking -- "top 10 SKUs" has no year, and
+the answer covers FY2025 -- and a default the user is not told about is a
+wrong answer that looks right. So the narrator is handed `assumptions` and
+must state each one, the audit checks that a surviving claim does (rule 5
+of section 7.3), and the renderer states any it still cannot find.
+
 Two boundaries in this file are load-bearing:
 
 * `formula` arrives from a language model, so it is evaluated by a whitelist
@@ -40,7 +47,7 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
-from .state import AUDIT, AuditReport, ChartSpec, Claim, Issue, QueryResult
+from .state import AUDIT, AuditReport, ChartSpec, Claim, CompletenessReport, Issue, QueryResult
 
 # The row cap in the section 7.1 shape table, and the cap on what the narrator
 # is shown. Above it a chart is unreadable and a "total" is a total of a
@@ -320,6 +327,7 @@ NARRATION_PROMPT = ChatPromptTemplate.from_messages(
             "Chart chosen for this result: {chart}\n\n"
             "Result, {row_count} rows:\n{table}\n\n"
             "{rule}"
+            "{assumptions}"
             "{rejected}"
             "Write the claims.",
         ),
@@ -360,6 +368,26 @@ TRUNCATION_WARNING = (
 #: is the sentence naming the trap this kind of question has, and the narrator
 #: needs it for the same reason the generator does.
 RULE_BLOCK = "Rule that applies here: {rule}\n\n"
+
+
+#: arch5 section 7.2. An assumption is stated in a claim of its own, with no
+#: value: it is a qualifier on every number, not a number itself, and a
+#: sentence that tried to be both would be audited as the number.
+ASSUMPTIONS_BLOCK = (
+    "The question did not say everything the answer depends on, so these were "
+    "assumed. State each one in plain words, in a claim of its own with no "
+    "value -- for example \"These figures cover FY2025, the latest complete "
+    "fiscal year, since the question did not name one.\" -- because a reader "
+    "who is not told the period will assume a different one:\n{assumptions}\n\n"
+)
+
+
+def assumptions_block(assumptions: Sequence[str]) -> str:
+    """The assumptions the narrator must state, or nothing when there are none."""
+    kept = [a.strip() for a in assumptions if a and a.strip()]
+    if not kept:
+        return ""
+    return ASSUMPTIONS_BLOCK.format(assumptions="\n".join(f"  - {a}" for a in kept))
 
 
 def _rule_block(reasoning_target: str) -> str:
@@ -406,12 +434,14 @@ def narrate(
     reasoning_target: str = "",
     max_rows: int = MAX_CHART_ROWS,
     rejected: Sequence[str] = (),
+    assumptions: Sequence[str] = (),
 ) -> list[Claim]:
     """The narrator's one model call, returned as `Claim`s the audit can check.
 
     `rejected` carries the reasons the audit dropped the previous attempt's
     claims. The architecture allows exactly one such retry; the caller counts
-    it, so this function stays a pure single call.
+    it, so this function stays a pure single call. `assumptions` are the
+    defaults the answer rests on, each of which a claim must state.
     """
     shown = min(result.row_count, max_rows)
     messages = NARRATION_PROMPT.format_messages(
@@ -421,6 +451,7 @@ def narrate(
         row_count=result.row_count,
         table=_indexed_table(result, max_rows=max_rows),
         rule=_rule_block(reasoning_target),
+        assumptions=assumptions_block(assumptions),
         rejected=rejected_block(rejected),
     )
     narration = llm.with_structured_output(Narrative).invoke(messages)
@@ -618,12 +649,34 @@ def _question_numbers(question: str) -> list[float]:
     return [float(m.group(1).replace(",", "")) for m in _NUMBER_TOKEN.finditer(question or "")]
 
 
-def _stray_numbers(claim: Claim, result: QueryResult, question: str = "") -> list[str]:
+def _assumption_numbers(assumptions: Sequence[str]) -> list[float]:
+    """Every number an assumption carries, dates taken apart.
+
+    Section 7.3 rule 2: a number that appears in an assumption is exempt, as
+    one echoed from the question is. "FY2025 (2024-04-01 to 2025-03-31)" is
+    as likely to be said as "April 1, 2024 to March 31, 2025", so a date's
+    day and month count as well as the date.
+    """
+    numbers: list[float] = []
+    for text in assumptions:
+        for iso in re.findall(r"(\d{4})-(\d{2})-(\d{2})", text or ""):
+            numbers.extend(float(part) for part in iso)
+        numbers.extend(_question_numbers(text or ""))
+    return numbers
+
+
+def _stray_numbers(
+    claim: Claim, result: QueryResult, question: str = "", assumptions: Sequence[str] = ()
+) -> list[str]:
     """The numbers in the sentence that nothing backs."""
     text = claim.text or ""
     skip = _exempt_spans(text)
     counted = {m.start(1) for m in _COUNT_PHRASE.finditer(text)}
-    backing = _backing_numbers(claim, result) + _question_numbers(question)
+    backing = (
+        _backing_numbers(claim, result)
+        + _question_numbers(question)
+        + _assumption_numbers(assumptions)
+    )
     stray: list[str] = []
     for match in _NUMBER_TOKEN.finditer(text):
         start, end = match.span(1)
@@ -671,6 +724,7 @@ def check_claim(
     *,
     sensitive_columns: Sequence[str] = (),
     question: str = "",
+    assumptions: Sequence[str] = (),
 ) -> str | None:
     """Why this claim cannot be published, or None when it can.
 
@@ -713,7 +767,7 @@ def check_claim(
             if not any(_values_match(n, float(claim.value)) for n in numbers):
                 return f"states {claim.value:.4g}, which is none of the cells it cites"
 
-    stray = _stray_numbers(claim, result, question)
+    stray = _stray_numbers(claim, result, question, assumptions)
     if stray:
         return "says " + ", ".join(stray) + ", which no cited cell or value backs"
     return None
@@ -776,12 +830,38 @@ def _semantic_issues(claims: Sequence[Claim], result: QueryResult, question: str
     return signals
 
 
+_FISCAL_YEAR_MARK = re.compile(r"\b(?:FY\s*-?\s*|fiscal\s+year\s+)(\d{4})\b", re.IGNORECASE)
+
+
+def states_assumption(assumption: str, text: str) -> bool:
+    """Does `text` say this assumption, in any of the ways a person would?
+
+    An assumption about a fiscal year is stated when the year is named as a
+    fiscal year -- "FY2025", "FY 2025", "fiscal year 2025" -- which is the
+    part a reader could otherwise get wrong. Anything else is matched on its
+    wording, case and spacing aside.
+    """
+    years = _FISCAL_YEAR_MARK.findall(assumption or "")
+    if years:
+        said = {year for year in _FISCAL_YEAR_MARK.findall(text or "")}
+        return all(year in said for year in years)
+    wanted = re.sub(r"\s+", " ", (assumption or "").strip().lower())
+    return not wanted or wanted in re.sub(r"\s+", " ", (text or "").lower())
+
+
+def missing_assumptions(assumptions: Sequence[str], claims: Sequence[Claim]) -> list[str]:
+    """The assumptions no claim states."""
+    said = " ".join(claim.text or "" for claim in claims)
+    return [a for a in assumptions if a and a.strip() and not states_assumption(a, said)]
+
+
 def audit(
     claims: Sequence[Claim],
     result: QueryResult,
     *,
     sensitive_columns: Sequence[str] = (),
     question: str = "",
+    assumptions: Sequence[str] = (),
 ) -> AuditReport:
     """Verify every claim against the rows, and judge the rows themselves.
 
@@ -798,6 +878,11 @@ def audit(
 
     `question` is optional because only one signal needs it -- an empty
     result is a bug in the SQL unless the question was an existence check.
+
+    `assumptions` is rule 5 (arch5): every default the pipeline chose must be
+    stated by a claim that survived. One that is not is recorded in
+    `missing_assumptions` and fails the audit, which sends it back to the
+    narrator under the same once-only rule as a dropped claim.
     """
     report = AuditReport()
     sensitive = {c.lower() for c in sensitive_columns}
@@ -805,15 +890,26 @@ def audit(
 
     for claim in claims:
         reason = check_claim(
-            claim, result, sensitive_columns=sensitive_columns, question=question
+            claim,
+            result,
+            sensitive_columns=sensitive_columns,
+            question=question,
+            assumptions=assumptions,
         )
         if reason:
             report.unsupported_claims.append(claim.text)
             report.drop_reasons.append(f"{claim.text} -- {reason}")
 
+    report.missing_assumptions = missing_assumptions(
+        assumptions, surviving_claims(claims, report)
+    )
     signals = _semantic_issues(claims, result, question)
     report.semantic_issue = "; ".join(signals) if signals else None
-    report.passed = not report.unsupported_claims and report.semantic_issue is None
+    report.passed = (
+        not report.unsupported_claims
+        and not report.missing_assumptions
+        and report.semantic_issue is None
+    )
     return report
 
 
@@ -854,12 +950,20 @@ def render_answer(
     claims: Sequence[Claim],
     chart: ChartSpec | None = None,
     audit_report: AuditReport | None = None,
+    *,
+    assumptions: Sequence[str] = (),
+    completeness: CompletenessReport | None = None,
 ) -> str:
     """The markdown answer: the claims that survived the audit, then the table.
 
     Every piece of it is escaped on the way in -- the question is the user's
     text and the cells are the database's, and neither has been anywhere that
     would have escaped them already.
+
+    Two arch5 notes close it. An assumption no surviving claim states is
+    stated here, so the reader is told regardless of what the narrator did;
+    and a gap the Completeness Reviewer accepted rather than send back again
+    is named, so a reader is told what is missing rather than left to guess.
     """
     report = audit_report if audit_report is not None else AuditReport()
     kept = surviving_claims(claims, report)
@@ -877,6 +981,12 @@ def render_answer(
             blocks.append(table)
 
     notes: list[str] = []
+    for assumption in missing_assumptions(assumptions, kept):
+        notes.append(f"*Assumed: {_escape_text(assumption)}.*")
+    gaps = completeness.accepted_gaps if completeness is not None else []
+    if gaps:
+        named = ", ".join(_escape_text(gap.column) for gap in gaps)
+        notes.append(f"*This answer could not be completed with {named} in the attempts allowed.*")
     if report.redactions:
         withheld = ", ".join(_escape_text(c) for c in report.redactions)
         notes.append(f"*Withheld as sensitive, aggregates only: {withheld}.*")

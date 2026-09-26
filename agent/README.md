@@ -51,12 +51,14 @@ curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
 
 Four stages, one shared state object, one retry loop, defined in
 [`nl2sql_agent/graph.py`](nl2sql_agent/graph.py) and drawn in full by
-[`arch_diagrams/arch_v4.svg`](../arch_diagrams/arch_v4.svg), with
+[`arch_diagrams/arch_v5.svg`](../arch_diagrams/arch_v5.svg), with
+[`arch_v4.svg`](../arch_diagrams/arch_v4.svg),
 [`arch_v3.svg`](../arch_diagrams/arch_v3.svg),
 [`arch_v2.svg`](../arch_diagrams/arch_v2.svg) and
 [`arch_v1.svg`](../arch_diagrams/arch_v1.svg) alongside it for the earlier
 versions. The design and the reasoning behind each departure from it are in
-[`Multi-Agent_NL2SQL_arch4.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md).
+[`Multi-Agent_NL2SQL_arch5.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md),
+which is arch4 plus the answer contract and the Completeness Reviewer.
 
 ```
 supervise --+-- retrieve_schema ----+
@@ -70,27 +72,30 @@ supervise --+-- retrieve_schema ----+
                  ^   |                               |  planner_gate --> execute_query
                  |   +-- attempts < max --> generate_sql                      |
                  |                                                            v
+                 +---------- incomplete -------------------------------- review
+                 |                                                            | complete
                  +---------- semantic_issue -- audit <-- narrate <-- visualise
 ```
 
 | Stage | Node | What it does | LLM |
 |---|---|---|---|
-| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent | screens |
+| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period) | screens |
 | 1. Intake | `refuse` | Answers a refused or ambiguous question without touching the database | -- |
 | 1. Context | `retrieve_schema` | Tables from the DDL-chunk vectors | -- |
 | 1. Context | `retrieve_literals` | Phrases in the question resolved to real values | -- |
 | 1. Context | `retrieve_knowledge` | Business rules and data-dictionary chunks | -- |
 | 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
-| 1. Join | `aggregate` | One table set: deduplicated, foreign-key closed, capped, described | -- |
+| 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described | -- |
 | 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
 | 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope | -- |
 | 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
 | 3. Execute | `execute_query` | Reader role, READ ONLY, statement timeout, row cap | -- |
+| 3. Review | `review` | The Completeness Reviewer: a label beside every id, the measure a ranking was ranked by, the period, the row count; then one reflection | once, when the rows name something |
 | 3. Repair | `repair` | Classifies the failure into a hint; asks the model only when it cannot | rarely |
 | 3. Repair | `give_up` | Returns the last SQL and every attempt that was made | -- |
 | 4. Present | `visualise` | Chart choice from the result's shape, as a lookup | -- |
-| 4. Present | `narrate` | Structured claims, each pointing at the cells it came from | narrates |
-| 4. Present | `audit` | Verifies every number against those cells | -- |
+| 4. Present | `narrate` | Structured claims, each pointing at the cells it came from, stating every assumption | narrates |
+| 4. Present | `audit` | Verifies every number against those cells, and that every assumption is stated | -- |
 | 4. Present | `finish` | Renders the markdown answer | -- |
 
 The four Stage 1 retrievers are branches of one LangGraph superstep, so they
@@ -99,16 +104,38 @@ cannot reach its store records why in `retrieval_errors` and the run continues
 without it. With all of them down the pipeline degrades to schema-only, which
 is exactly what v1 was.
 
-**Three model calls on the happy path**: `supervise`, `generate_sql`,
-`narrate`. v3 also made three, but two of them were table selection and
-validation review, which cost 364 and 499 of 1499 benchmark seconds and
-neither of which wrote the answer. Validation is now an AST parse and a
-planner call, both deterministic and both measured in milliseconds.
+**Three model calls on the happy path, or four**: `supervise`,
+`generate_sql`, `narrate`, and -- when the rows identify an entity it could
+flesh out -- the Completeness Reviewer's one reflection. v3 also made three,
+but two of them were table selection and validation review, which cost 364
+and 499 of 1499 benchmark seconds and neither of which wrote the answer.
+Validation is now an AST parse and a planner call, both deterministic and
+both measured in milliseconds.
+
+**A result that ran is not yet an answer** (arch5). "Top 10 SKUs" used to
+come back as ten `sku_id` values: correct, and useless without a second
+query. The Supervisor now also reads what the answer is about -- entities,
+measure, period -- and [`contract.py`](nl2sql_agent/contract.py) turns that
+into an *answer contract*: the label beside every key (read from the
+catalog's key constraints: `sku_id` -> `product_name`, `store_id` ->
+`store_name`), the measure a ranking was ranked by (net sales when the
+question names none), the latest complete fiscal year when it names no
+period, and the N it asked for. The generator is shown the contract as one
+line before it writes; [`completeness.py`](nl2sql_agent/completeness.py)
+checks the result against it after it runs -- rules R1-R4 first, at no
+cost, then one bounded reflection that may only add a column about an
+entity the rows already name. A gap is sent back once; if it survives, or
+the budget runs out, the answer is shown with the gap named. A default the
+pipeline chose, such as the fiscal year, is written to `assumptions`, and
+the narrator must state it -- the audit checks, and the answer states it
+itself if the narrative did not.
 
 **One retry budget.** A failure from any gate -- the AST check, the planner, a
-runtime error, or the audit -- becomes an `Issue`, routes to `repair`, and
-spends the same `attempts` counter. There is no path that loops without being
-counted, and `MAX_ATTEMPTS` (default 4) is one draft and three repairs.
+runtime error, the Completeness Reviewer, or the audit -- becomes an
+`Issue`, routes to `repair`, and spends the same `attempts` counter. There
+is no path that loops without being counted, and `MAX_ATTEMPTS` (default 7)
+is one draft and six repairs: arch4's 4 paid for four failure sources, and
+the reviewer is a fifth.
 
 The Repair Agent does not write SQL. It turns a failure into a hint and hands
 it back to the generator, which keeps a single component responsible for the
@@ -139,13 +166,13 @@ invoked at fixed points:
 
 The 15-question benchmark, same questions and same model as v3:
 
-| | v3 | v4 |
-|---|---|---|
-| Execution accuracy | 15/15 | 15/15 |
-| Total | 1499s | 909.7s |
-| Median per question | 100.5s | 61.2s |
-| Model calls per question | 3 | 3.7 |
-| Narrative traced to cells | not measured | 84.6% |
+| | v3 | v4 | v5 (arch5) |
+|---|---|---|---|
+| Execution accuracy | 15/15 | 15/15 | 15/15 |
+| Total | 1499s | 909.7s | 991.6s |
+| Median per question | 100.5s | 61.2s | 63.8s |
+| Model calls per question | 3 | 3.7 | 3.7 |
+| Narrative traced to cells | not measured | 84.6% | 83.3% |
 
 The two model calls v4 removes are what that difference is made of:
 
@@ -171,6 +198,21 @@ Treat the totals as one run. Wall time against a shared Ollama host varied by
 about 30% across three runs of the same 15 questions; what does not vary is the
 shape, and the shape is that generation is most of the time and the gates are
 none of it.
+
+**What the Completeness Reviewer costs.** On the v5 run it reflected on
+three of the fifteen questions -- the three whose rows name an entity (B09's
+allowance types, B10's SKUs, B13's competitors) -- for 16.1s in all. B09 and
+B10 passed on their first draft, which is what the architecture predicted of
+the contract line. B13 used a second generation; the benchmark does not keep
+attempt histories, but traced separately that retry came from v4's audit (a
+first draft ranked the wrong way round and reported 115% of our price), not
+from the reviewer. The run that
+produced these numbers was the fourth; the three before it are why the
+contract line never restates a measure the question names (B13's ratio was
+paraphrased into a difference and computed as one), names no entity for a
+"how many" question (B01 was answered with ten named stores), and brings the
+calendar into scope for any period, named or not (B11 lost a draft to the
+table allowlist).
 
 Re-measure with `python benchmarks/run_benchmark.py`, which now reports
 per-agent timing, model calls per node, and the fraction of the narrative the
@@ -269,7 +311,7 @@ Every setting is an environment variable with a CLI override:
 | `DATABASE_URL` | `--database-url` | the compose Postgres, as the read-only `nl2sql_reader` role |
 | `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |
-| `MAX_ATTEMPTS` | `--max-attempts` | 4 generations: one draft, three repairs |
+| `MAX_ATTEMPTS` | `--max-attempts` | 7 generations: one draft, six repairs (arch5; arch4 used 4) |
 | `SAMPLE_ROWS` | `--sample-rows` | 3 |
 | `STATEMENT_TIMEOUT_MS` | -- | 30000 |
 | `RAG_ENABLED` | `--rag` / `--no-rag` | on |
@@ -599,6 +641,8 @@ optional, so an ablation is an environment change rather than a code change:
 | `MAX_PLAN_COST` | -- | 1000000 |
 | `NARRATE_ENABLED` | -- | on |
 | `AUDIT_ENABLED` | -- | on |
+| `REVIEW_ENABLED` | -- | on: the arch5 Completeness Reviewer. Off, results go straight to presentation, but a default fiscal year the generator applied is still stated |
+| `REVIEW_REFLECTION_ENABLED` | -- | on: the reviewer's one reflective model call. Off keeps its rules and drops the call |
 | `MAX_SQL_ATTEMPTS` | -- | v3's name for `MAX_ATTEMPTS`; still honoured |
 
 `MAX_PLAN_COST` is calibrated against this dataset rather than chosen: the most

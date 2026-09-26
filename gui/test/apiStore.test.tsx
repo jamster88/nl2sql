@@ -298,21 +298,36 @@ describe("FeedbackBar with a sending store", () => {
     render(<Harness store={makeStore(makeClient())} jobId="job-1" />);
     expect(screen.queryByLabelText(/what was wrong/i)).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
     expect(await screen.findByLabelText(/what was wrong/i)).toBeInTheDocument();
   });
 
   it("asks a different question after a positive verdict", async () => {
     render(<Harness store={makeStore(makeClient())} jobId="job-1" />);
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(await screen.findByLabelText(/anything worth noting/i)).toBeInTheDocument();
+  });
+
+  it("asks what was missing after a correct-but-incomplete verdict, and sends it as one", async () => {
+    const client = makeClient();
+    render(<Harness store={makeStore(client)} jobId="job-1" />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Correct but incomplete" }));
+    const box = await screen.findByLabelText(/what was missing/i);
+    expect(box).toHaveAttribute("placeholder", "e.g. the product names beside the SKUs");
+    await userEvent.type(box, "no store names");
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() =>
+      expect(client.submitFeedback).toHaveBeenCalledWith("job-1", "incomplete", "no store names"),
+    );
   });
 
   it("sends the comment and thanks the user", async () => {
     const client = makeClient();
     render(<Harness store={makeStore(client)} jobId="job-1" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
     await userEvent.type(await screen.findByLabelText(/what was wrong/i), "off by one");
     await userEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -325,7 +340,7 @@ describe("FeedbackBar with a sending store", () => {
   it("will not send an empty comment", async () => {
     const client = makeClient();
     render(<Harness store={makeStore(client)} jobId="job-1" />);
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
 
     const send = screen.getByRole("button", { name: "Send" });
     expect(send).toBeDisabled();
@@ -342,7 +357,7 @@ describe("FeedbackBar with a sending store", () => {
       .mockResolvedValue({ id: "s1" });
     render(<Harness store={makeStore(makeClient({ submitFeedback }))} jobId="job-1" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(await screen.findByText(/not sent/)).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("cannot reach the API");
 
@@ -352,10 +367,10 @@ describe("FeedbackBar with a sending store", () => {
 
   it("clears the comment box when the verdict changes", async () => {
     render(<Harness store={makeStore(makeClient())} jobId="job-1" />);
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     await userEvent.type(await screen.findByLabelText(/anything worth noting/i), "keep this");
 
-    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
     expect(await screen.findByLabelText(/what was wrong/i)).toHaveValue("");
   });
 
@@ -365,7 +380,7 @@ describe("FeedbackBar with a sending store", () => {
     // does on Enter in a text input.
     const client = makeClient();
     render(<Harness store={makeStore(client)} jobId="job-1" />);
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
 
     const input = await screen.findByLabelText(/anything worth noting/i);
     await userEvent.type(input, "   ");
@@ -380,7 +395,7 @@ describe("FeedbackBar with a sending store", () => {
     const store = makeStore(client);
     render(<Harness store={store} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(client.submitFeedback).not.toHaveBeenCalled();
   });
 });
@@ -401,7 +416,7 @@ describe("FeedbackBar with a browser-only store", () => {
       );
     }
     render(<Local />);
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
 
     expect(screen.getByText(/click again to withdraw/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Send" })).not.toBeInTheDocument();

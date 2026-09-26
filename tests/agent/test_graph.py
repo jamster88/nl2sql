@@ -45,6 +45,7 @@ def make_agent(
     *,
     schema_retriever: SchemaRetriever | None = "unset",  # type: ignore[assignment]
     literal_matcher=None,
+    contract_resources=None,
     on_progress=None,
     **settings_kwargs,
 ) -> Nl2SqlAgent:
@@ -67,6 +68,7 @@ def make_agent(
         example_library=example_library,
         schema_retriever=schema_retriever,
         literal_matcher=literal_matcher,
+        contract_resources=contract_resources,
         on_progress=on_progress,
     )
     agent.db = db
@@ -128,7 +130,9 @@ def test_the_happy_path_costs_exactly_three_model_calls():
     """The architecture's central economic claim: v4 makes the same three
     calls v3 did, but they are the Supervisor, the Generator and the
     Narrator, rather than table selection, generation and validation. The two
-    it dropped were the two that did not write the answer.
+    it dropped were the two that did not write the answer. A count identifies
+    no entity, so arch5's reflection has nothing it could add and is not
+    asked (see the four-call test below for when it is).
     """
     db = FakeDatabase(tables=TABLES)
     llm = scripted(["SELECT count(*) AS n FROM dim_store"])
@@ -295,10 +299,12 @@ def test_a_plan_over_the_cost_ceiling_is_repaired_before_it_ever_runs():
 
 def test_a_runtime_error_is_repaired_like_any_other_failure():
     db = FakeDatabase(tables=TABLES, run_select_error=RuntimeError("division by zero"))
-    llm = scripted(["SELECT 1/0 AS n FROM dim_store"] * 4)
+    llm = scripted(["SELECT 1/0 AS n FROM dim_store"] * 7)
     state = make_agent(db, llm).run("q")
 
     assert state["error"] is not None
+    # The default budget, spent: one draft and six repairs (arch5 section 6.4).
+    assert state["attempts"] == 7
     assert state["attempt_history"][0].issues[0].source == "runtime"
     assert "NULLIF" in state["attempt_history"][0].issues[0].hint
 
@@ -340,6 +346,19 @@ def test_the_budget_is_spent_then_the_run_gives_up_with_its_history():
     assert state["result"] is None
     assert "4 attempts" in state["error"]
     assert len(state["attempt_history"]) == 4
+
+
+def test_a_first_failure_is_not_announced_as_a_repeat_but_a_second_one_is():
+    """The graph records the failing attempt before asking for a hint. The
+    repeat warning must look only at the attempts before it, or every first
+    failure is told the approach itself must change."""
+    db = FakeDatabase(tables=TABLES, explain_error='column "nope" does not exist')
+    llm = scripted(["SELECT nope AS n FROM dim_store"] * 2)
+    state = make_agent(db, llm, max_attempts=2).run("q")
+
+    first, second = (a.issues[0].hint for a in state["attempt_history"])
+    assert not first.startswith("Attempt")
+    assert second.startswith("Attempt 1 has already failed with this same error")
 
 
 def test_a_smaller_budget_gives_up_sooner():
@@ -898,3 +917,258 @@ def test_two_concurrent_runs_never_cross_their_progress():
         assert "retrieve_schema" in log, f"{key} lost the fan-out nodes"
         assert len(log) == len(set(log)), f"{key} saw a node twice -- the other run's"
     assert len(logs["a"]) == len(logs["b"])
+
+
+# ---------------------------------------------------------------------------
+# arch5: the answer contract and the Completeness Reviewer
+# ---------------------------------------------------------------------------
+
+from datetime import date  # noqa: E402
+
+from nl2sql_agent.completeness import Reflection, ReflectedColumn  # noqa: E402
+from nl2sql_agent.contract import ContractResources, build_label_map  # noqa: E402
+from nl2sql_agent.repair import COMPLETENESS_HINT  # noqa: E402
+
+from .test_contract import CATALOG  # noqa: E402
+
+PRODUCT_SCHEMA = """=== dim_product ===
+columns:
+  product_key (integer, NOT NULL)
+  sku_id (character varying(50), NOT NULL)
+  product_name (character varying(255), NOT NULL)
+  brand_name (character varying(100), NOT NULL)
+"""
+
+FY_DEFAULT = (
+    "FY2025 (2024-04-01 to 2025-03-31), the latest complete fiscal year, "
+    "since the question did not name a period"
+)
+
+
+def resources(*, calendar: bool = False) -> ContractResources:
+    return ContractResources(
+        label_map=build_label_map(CATALOG),
+        fiscal_year=2025 if calendar else None,
+        fiscal_year_start=date(2024, 4, 1) if calendar else None,
+        fiscal_year_end=date(2025, 3, 31) if calendar else None,
+    )
+
+
+def product_rows(*columns: str) -> DbRows:
+    values = {"sku_id": "SKU-1", "product_name": "Whole Milk", "brand_name": "Acme", "net_sales": 12.5}
+    return DbRows(columns=list(columns), rows=[tuple(values[c] for c in columns)], truncated=False)
+
+
+def sku_llm(sql: list[str], **kwargs) -> ScriptedLLM:
+    return ScriptedLLM(
+        sql_responses=sql,
+        screening=Screening(verdict="proceed", intent="lookup", entities=["sku"]),
+        **kwargs,
+    )
+
+
+def test_the_contract_line_reaches_the_generator():
+    db = FakeDatabase(tables=TABLES, run_select_result=product_rows("sku_id", "product_name", "net_sales"))
+    llm = sku_llm(["SELECT sku_id, product_name, net_sales FROM dim_product"])
+    state = make_agent(db, llm, contract_resources=resources(), narrate_enabled=False).run("top 10 SKUs")
+
+    human = llm.plain_invocations[0][-1].content
+    assert "A complete answer includes: each sku named by `product_name` beside any `sku_id`" in human
+    assert state["answer_contract"].limit == 10
+    by_node = {e.node: e for e in state["trace"]}
+    assert "contract: sku_id->product_name" in by_node["supervise"].detail
+
+
+def test_a_bare_id_is_sent_back_and_the_next_draft_names_it():
+    db = FakeDatabase(
+        tables=TABLES,
+        run_select_result=[product_rows("sku_id"), product_rows("sku_id", "product_name")],
+    )
+    llm = sku_llm(["SELECT sku_id FROM dim_product", "SELECT sku_id, product_name FROM dim_product"])
+    state = make_agent(db, llm, contract_resources=resources(), narrate_enabled=False).run("which SKU?")
+
+    assert state["attempts"] == 2 and state["error"] is None
+    first = state["attempt_history"][0].issues[0]
+    assert first.source == "completeness" and first.hint == COMPLETENESS_HINT
+    assert "no `product_name`" in first.message
+    # The reviewer's list reached the second draft verbatim.
+    assert "no `product_name`" in llm.plain_invocations[1][-1].content
+    assert state["completeness"].passed
+    # Tier 1 is free; the one reflection ran on the result that passed it.
+    calls = [(e.node, e.model_calls) for e in state["trace"] if e.node in ("review", "repair")]
+    assert calls == [("review", 0), ("repair", 0), ("review", 1)]
+
+
+def test_a_gap_the_generator_will_not_close_is_accepted_once_and_told_to_the_reader():
+    db = FakeDatabase(tables=TABLES, run_select_result=product_rows("sku_id", "product_name"))
+    db.schema_text = PRODUCT_SCHEMA
+    llm = sku_llm(
+        ["SELECT sku_id, product_name FROM dim_product"] * 2,
+        reflection=Reflection(complete=False, missing=[ReflectedColumn(column="dim_product.brand_name")]),
+    )
+    state = make_agent(db, llm, contract_resources=resources(), narrate_enabled=False).run("which SKU?")
+
+    assert state["attempts"] == 2 and state["error"] is None
+    assert [g.column for g in state["completeness"].accepted_gaps] == ["dim_product.brand_name"]
+    assert "could not be completed with dim_product.brand_name" in state["answer"]
+    assert sum(e.model_calls for e in state["trace"] if e.node == "review") == 1
+
+
+def test_on_the_last_attempt_an_incomplete_result_is_shown_rather_than_given_up():
+    db = FakeDatabase(tables=TABLES, run_select_result=product_rows("sku_id"))
+    llm = sku_llm(["SELECT sku_id FROM dim_product"])
+    state = make_agent(
+        db, llm, contract_resources=resources(), narrate_enabled=False, max_attempts=1
+    ).run("which SKU?")
+
+    assert state["error"] is None and state["result"] is not None
+    assert "could not be completed with product_name" in state["answer"]
+
+
+def test_the_reviewer_can_be_switched_off():
+    db = FakeDatabase(tables=TABLES, run_select_result=product_rows("sku_id"))
+    llm = sku_llm(["SELECT sku_id FROM dim_product"])
+    state = make_agent(
+        db, llm, contract_resources=resources(), narrate_enabled=False, review_enabled=False
+    ).run("which SKU?")
+
+    assert state["attempts"] == 1
+    by_node = {e.node: e for e in state["trace"]}
+    assert by_node["review"].detail == "disabled" and by_node["review"].model_calls == 0
+
+
+def test_rows_that_name_an_entity_cost_exactly_four_model_calls():
+    """arch5 adds exactly one call -- the Completeness Reviewer's reflection
+    -- when the rows identify something it could flesh out, and the budget
+    for it is that one, not one per attempt (arch5 section 9)."""
+    db = FakeDatabase(tables=TABLES, run_select_result=product_rows("sku_id", "product_name"))
+    llm = sku_llm(["SELECT sku_id, product_name FROM dim_product"],
+                  narration=Narrative(claims=[NarratedClaim(text="Whole Milk is SKU-1.")]))
+    state = make_agent(db, llm, contract_resources=resources()).run("which SKU?")
+
+    calls = {e.node: e.model_calls for e in state["trace"] if e.model_calls}
+    assert calls == {"supervise": 1, "generate_sql": 1, "review": 1, "narrate": 1}
+
+
+def test_the_reflection_can_be_switched_off_keeping_the_rules():
+    db = FakeDatabase(tables=TABLES, run_select_result=product_rows("sku_id"))
+    llm = sku_llm(["SELECT sku_id FROM dim_product"])
+    state = make_agent(
+        db, llm, contract_resources=resources(), narrate_enabled=False,
+        review_reflection_enabled=False, max_attempts=1,
+    ).run("which SKU?")
+
+    calls = {e.node: e.model_calls for e in state["trace"] if e.model_calls}
+    assert calls == {"supervise": 1, "generate_sql": 1}
+    # The rules still ran: the bare id was caught, and on the last attempt told.
+    assert [g.column for g in state["completeness"].accepted_gaps] == ["product_name"]
+
+
+FY_TOTAL = (
+    "SELECT SUM(net_sales_amt) AS n FROM fact_pos_retail_sales "
+    "WHERE sales_date_key BETWEEN 20240401 AND 20250331"
+)
+
+
+def total_llm(claims: list[str]) -> ScriptedLLM:
+    llm = scripted([FY_TOTAL], claims=claims)
+    llm.screening = Screening(verdict="proceed", intent="aggregate", measure="net sales")
+    return llm
+
+
+def test_the_default_year_is_told_to_the_narrator_and_stated_when_it_forgets():
+    db = FakeDatabase(tables=TABLES)
+    llm = total_llm(["The total is 1."])
+    state = make_agent(db, llm, contract_resources=resources(calendar=True)).run("total net sales?")
+
+    assert state["assumptions"] == [FY_DEFAULT]
+    assert "State each one in plain words" in "\n".join(
+        m.content for m in llm.structured_invocations[-1][1]
+    )
+    # Rule 5: sent back to the narrator once, then stated by the renderer.
+    assert state["narration_retries"] == 1
+    assert state["audit"].missing_assumptions == [FY_DEFAULT]
+    assert "*Assumed: FY2025" in state["answer"]
+    audit_detail = [e.detail for e in state["trace"] if e.node == "audit"][-1]
+    assert "1 assumption(s) unstated" in audit_detail
+
+
+def test_a_narrative_that_states_the_default_year_is_not_asked_again():
+    db = FakeDatabase(tables=TABLES)
+    llm = total_llm(["The total is 1.", "These figures cover FY2025, the latest complete fiscal year."])
+    state = make_agent(db, llm, contract_resources=resources(calendar=True)).run("total net sales?")
+
+    assert state["narration_retries"] == 0 and state["audit"].passed
+    assert "Assumed:" not in state["answer"]
+
+
+def test_with_the_reviewer_off_the_default_year_is_still_told():
+    db = FakeDatabase(tables=TABLES)
+    llm = total_llm(["The total is 1."])
+    state = make_agent(
+        db, llm, contract_resources=resources(calendar=True), review_enabled=False, narrate_enabled=False
+    ).run("total net sales?")
+    assert state["assumptions"] == [FY_DEFAULT]
+    assert "*Assumed: FY2025" in state["answer"]
+
+
+def test_with_the_supervisor_off_the_contract_is_read_from_the_question():
+    db = FakeDatabase(tables=TABLES)
+    llm = ScriptedLLM(sql_responses=["SELECT count(*) AS n FROM dim_store"])
+    state = make_agent(
+        db, llm, contract_resources=resources(), supervisor_enabled=False, narrate_enabled=False
+    ).run("top 10 SKUs")
+
+    contract = state["answer_contract"]
+    assert contract.ranked and contract.limit == 10 and contract.measure == "net sales"
+    assert [e.detail for e in state["trace"] if e.node == "supervise"][0].startswith("disabled; contract:")
+
+
+def test_the_label_map_and_calendar_are_read_once_per_agent():
+    db = FakeDatabase(tables=TABLES)
+    agent = make_agent(db, scripted(["SELECT count(*) AS n FROM dim_store"] * 2), narrate_enabled=False)
+    agent.run("q")
+    agent.run("q")
+    assert db.catalog_calls == 1
+
+
+def test_the_contracts_tables_are_in_scope_before_the_first_draft():
+    """The contract asks for `product_name` and a `fiscal_year` filter; the
+    pruned schema has to show `dim_product` and `dim_date`, or the line meant
+    to make the first draft complete sends it into the table allowlist."""
+    db = FakeDatabase(tables=[*TABLES, "dim_date"], run_select_result=product_rows("sku_id", "product_name", "net_sales"))
+    llm = sku_llm(["SELECT sku_id, product_name, net_sales FROM dim_product"])
+    state = make_agent(
+        db, llm, contract_resources=resources(calendar=True), narrate_enabled=False,
+        review_enabled=False,
+    ).run("top 10 SKUs")
+    assert state["selected_tables"][:2] == ["dim_product", "dim_date"]
+
+
+def test_a_label_from_a_table_out_of_scope_widens_the_scope_instead_of_failing_the_allowlist():
+    vendor = DbRows(columns=["vendor_key"], rows=[(7,)], truncated=False)
+    named = DbRows(columns=["vendor_key", "vendor_name"], rows=[(7, "Acme Dairy")], truncated=False)
+    db = FakeDatabase(tables=[*TABLES, "dim_vendor"], run_select_result=[vendor, named])
+    llm = ScriptedLLM(
+        sql_responses=["SELECT 7 AS vendor_key FROM dim_store",
+                       "SELECT v.vendor_key, v.vendor_name FROM dim_vendor v"],
+        screening=Screening(verdict="proceed", intent="lookup"),
+    )
+    state = make_agent(db, llm, contract_resources=resources(), narrate_enabled=False).run(
+        "which vendor supplies Dairy & Eggs?"
+    )
+
+    assert "dim_vendor" in state["selected_tables"]
+    assert state["attempts"] == 2 and state["error"] is None
+    review = [e for e in state["trace"] if e.node == "review"][0]
+    assert review.detail.endswith("(scope +dim_vendor)")
+    # The widened schema is what the second draft was shown.
+    assert "=== dim_vendor ===" in llm.plain_invocations[1][0].content
+
+
+def test_a_gap_whose_table_is_already_in_scope_leaves_the_scope_alone():
+    db = FakeDatabase(tables=TABLES, run_select_result=[product_rows("sku_id"), product_rows("sku_id", "product_name")])
+    llm = sku_llm(["SELECT sku_id FROM dim_product", "SELECT sku_id, product_name FROM dim_product"])
+    state = make_agent(db, llm, contract_resources=resources(), narrate_enabled=False).run("which SKU?")
+    review = [e for e in state["trace"] if e.node == "review"][0]
+    assert "scope" not in review.detail

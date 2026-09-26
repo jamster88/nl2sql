@@ -15,13 +15,14 @@ if a classified issue quietly asks the model anyway.
 from __future__ import annotations
 
 from nl2sql_agent.repair import (
+    COMPLETENESS_HINT,
     GENERIC_HINT,
     classify,
     repair_hint,
     schema_columns,
     schema_tables,
 )
-from nl2sql_agent.state import AUDIT, PLANNER, RUNTIME, STATIC, Attempt, Issue
+from nl2sql_agent.state import AUDIT, COMPLETENESS, PLANNER, RUNTIME, STATIC, Attempt, Issue
 
 from .conftest import ScriptedLLM
 
@@ -224,6 +225,8 @@ def test_an_error_seen_before_is_prefixed_with_the_attempts_that_already_hit_it(
     history = [
         Attempt(sql="SELECT store_nam FROM dim_store", issues=[Issue(RUNTIME, message)]),
         Attempt(sql="SELECT s.store_nam FROM dim_store s", issues=[Issue(RUNTIME, message)]),
+        # The attempt being repaired now is the last entry, as the graph records it.
+        Attempt(sql="SELECT d.store_nam FROM dim_store d", issues=[Issue(RUNTIME, message)]),
     ]
     hint = hint_for(message, history=history)
     assert hint.startswith("Attempts 1 and 2 have already failed with this same error")
@@ -233,9 +236,23 @@ def test_an_error_seen_before_is_prefixed_with_the_attempts_that_already_hit_it(
 
 def test_one_earlier_attempt_is_named_in_the_singular():
     message = "division by zero"
-    history = [Attempt(sql="SELECT 1/0", issues=[Issue(RUNTIME, message)])]
+    history = [
+        Attempt(sql="SELECT 1/0", issues=[Issue(RUNTIME, message)]),
+        Attempt(sql="SELECT 2/0", issues=[Issue(RUNTIME, message)]),
+    ]
     hint = hint_for(message, history=history)
     assert hint.startswith("Attempt 1 has already failed with this same error")
+
+
+def test_the_attempt_that_just_failed_is_not_its_own_precedent():
+    """The graph appends the failing attempt before it asks for a hint, so
+    a first failure arrives with itself as the only entry. It is not a
+    repeat, and saying it was told the generator to throw away a query that
+    needed one fix."""
+    message = 'column "nope" does not exist'
+    history = [Attempt(sql="SELECT nope FROM dim_store", issues=[Issue(PLANNER, message)])]
+    hint = hint_for(message, source=PLANNER, history=history)
+    assert not hint.startswith("Attempt")
 
 
 def test_a_first_time_error_gets_no_repeat_warning():
@@ -438,3 +455,22 @@ def test_a_planner_message_that_merely_mentions_cost_is_not_a_cost_rejection():
     rejection = Issue(source=PLANNER, message="estimated cost 4,200,000 exceeds the ceiling")
     hint = classify(rejection, schema="", allowed_tables=[], history=[])
     assert hint is not None and "4,200,000" in hint
+
+
+def test_a_completeness_gap_is_extended_rather_than_rewritten_and_costs_no_model_call():
+    """arch5 section 6.3: the reviewer already did the thinking. Its message
+    names every gap; the hint only says the query was right as far as it went.
+    """
+    llm = ScriptedLLM()
+    issue = Issue(
+        source=COMPLETENESS,
+        message="The query ran, but the result is not yet a complete answer:\n- add `product_name`",
+    )
+    hinted, calls = repair_hint([issue], llm=llm, schema=SCHEMA)
+    assert calls == 0 and llm.plain_invocations == []
+    assert hinted[0].hint == COMPLETENESS_HINT
+    assert "Keep everything it already returns" in hinted[0].render()
+
+
+def test_an_empty_completeness_message_is_not_classified_as_one():
+    assert classify(Issue(source=COMPLETENESS, message="  ")) is None

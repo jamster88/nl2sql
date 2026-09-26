@@ -354,8 +354,17 @@ Content-Type: application/json
 }
 ```
 
-`verdict` is the whole of the required input: `"yes"` or `"no"`. `comment` is
-optional free text for whoever reviews it.
+`verdict` is the whole of the required input, one of three:
+
+| `verdict` | The GUIs say | Meaning |
+|---|---|---|
+| `"yes"` | Correct | The answer was right |
+| `"no"` | Wrong | The answer was wrong |
+| `"incomplete"` | Correct but incomplete | The SQL was right, and the answer still lacked something a reader needed -- a name beside an id, the figure a ranking was ranked by |
+
+The wire values `"yes"` and `"no"` predate the third and are kept, so
+every verdict already recorded still reads the same. `comment` is optional
+free text for whoever reviews it.
 
 **The question, the SQL and the result shape are not sent.** They are taken
 from the job, which the server still has -- a vote happens while the answer

@@ -115,6 +115,14 @@ def test_the_verdicts_match(types_ts: str):
     assert _union_members(types_ts, "Verdict") == set(get_args(models.Verdict))
 
 
+def test_the_verdicts_match_the_database(types_ts: str):
+    """Like the states: the GUI, the wire model and the CHECK are one list."""
+    from nl2sql_review.store import VERDICTS
+
+    assert _union_members(types_ts, "Verdict") == set(VERDICTS)
+    assert get_args(models.Verdict) == VERDICTS
+
+
 def test_the_states_match_the_database(types_ts: str):
     """The GUI, the wire model and the CHECK constraint are one list.
 

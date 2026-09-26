@@ -252,6 +252,15 @@ def test_the_queue_filters_by_state_and_verdict(make_client, submission):
     assert client.get("/v1/submissions?state=pending&verdict=no").json()["count"] == 0
 
 
+def test_a_correct_but_incomplete_verdict_is_listed_and_filterable(make_client, submission):
+    incomplete = Submission(id="sub-3", job_id="job-3", verdict="incomplete", question="q3")
+    client = make_client(repository=FakeRepository([submission, incomplete]))
+
+    body = client.get("/v1/submissions?verdict=incomplete").json()
+    assert body["count"] == 1
+    assert body["submissions"][0]["verdict"] == "incomplete"
+
+
 @pytest.mark.parametrize("query", ["state=nonsense", "verdict=maybe"])
 def test_an_unknown_filter_is_refused_rather_than_silently_ignored(client, query):
     response = client.get(f"/v1/submissions?{query}")

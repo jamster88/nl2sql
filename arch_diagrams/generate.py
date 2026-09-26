@@ -51,6 +51,10 @@ INDIGO = "#3a4b9c"
 # far enough from PURPLE (a blue-violet) that a model-call pill is never
 # mistaken for a v4 badge.
 MAGENTA = "#9b2f6b"
+# v5's accent, for the answer contract and the Completeness Reviewer. An
+# orange, the one warm hue left: clear of v4's magenta, of AMBER (an olive
+# gold, used for the off-ramps) and of RED (a brick, used for the loop).
+ORANGE = "#c25b00"
 # The success green v1-v3 use as a literal. Named because v4 draws an arrow in
 # it, and an arrowhead needs a marker declared for its colour.
 GREEN = "#2e7d4f"
@@ -1513,9 +1517,278 @@ def build_v4():
                     "\n".join(parts), y + 34, nodes, extra_colors=(GREEN,))
 
 
+# --------------------------------------------------------------------------
+# v5: arch5 -- the answer contract and the Completeness Reviewer
+# --------------------------------------------------------------------------
+
+PG_V5 = {"name": "nl2sql-postgres", "color": BLUE,
+         "desc": "Postgres 18, the same 19 tables. v5 reads two more things from it, once per "
+                 "process: the key constraints every dimension declares, which become the label "
+                 "map (sku_id → product_name), and the latest fiscal year the sales cover in "
+                 "full, which becomes the default period.",
+         "link": "← SQLAlchemy + psycopg · pg_trgm"}
+
+OLLAMA_CHAT_V5 = {"name": "Ollama — chat model", "color": PURPLE,
+                  "desc": "qwen3.8-256k on a remote host, 256k context. In v5 it screens the "
+                          "question and reads its answer contract, writes the SQL, reflects on "
+                          "whether the rows are fleshed out, and narrates the result — and "
+                          "diagnoses a repair only when the classifier cannot.",
+                  "link": "→ 3 prompts, 4 with a reflection"}
+
+V5_ADDED = ("A result that ran is not yet an answer. \"Top 10 SKUs\" came back as ten sku_id "
+            "values — correct SQL, correctly executed, and useless without a second query. The "
+            "Supervisor now reads what a complete answer is about (entities, measure, period); "
+            "deterministic code turns that into an answer contract using a label map read from "
+            "the catalog and the latest complete fiscal year; the generator sees the contract "
+            "before it writes, and a Completeness Reviewer checks the rows against it after they "
+            "run. An incomplete result is a fifth failure source into the same Repair Agent, "
+            "and the budget grows to seven generations to make room for it.")
+
+V5_CALLS = ("supervise, generate_sql and narrate, as in v4 — plus one reflection by the "
+            "Completeness Reviewer when the rows identify an entity it could flesh out, and only "
+            "then: a count or a total has nothing to add a column to, and asking would only risk "
+            "the one thing a reviewer must not do, which is change the answer's grain. Its rules "
+            "cost nothing, and the reflection runs at most once a run, however many retries follow.")
+
+SUPERVISE_WHY_V5 = ("Screening has to happen here or not at all: once retrieval has run, the "
+                    "question is inside a prompt that concatenates retrieved text. The same call "
+                    "now also says what the answer is about, because the Supervisor is the one "
+                    "agent that reads the question before anything else has shaped it. The "
+                    "contract it feeds names columns, never SQL, and never a row count the "
+                    "question did not give: an intent framing that once said \"return both sides\" "
+                    "cost a benchmark answer its LIMIT.")
+
+AGG_WHY_V5 = ("Only here are all three table proposals known, so this is the only place the "
+              "closure and the cap can be applied to their union — and, since v5, the one place "
+              "the contract's tables can be guaranteed a seat. A contract asking for a "
+              "fiscal_year filter with dim_date out of scope sends the generator straight into "
+              "the table allowlist; that happened on the first live run of \"top 10 SKUs\", and "
+              "cost an attempt to learn nothing.")
+
+GEN_WHY_V5 = ("This node, not the top of the graph, is the retry target, and still the only "
+              "place SQL is written. The contract line is expected to make most answers complete "
+              "on the first draft — both motivating questions were — so the reviewer after it is "
+              "a check rather than a second author: the prompt is a hint, the reviewer is a check.")
+
+REVIEW_WHY = ("The gates before this one ask \"did it run?\" and the audit after it \"is the prose "
+              "true to the rows?\"; nothing asked \"are these the rows a person wanted?\". It sits "
+              "after execution because only the rows show the gap, and inside the budget because "
+              "an unbounded \"what else would be nice\" loop is what W3 removed. A gap sent back "
+              "once and still there is accepted and named in the answer, as is any gap left on "
+              "the last attempt: a result that ran and lacks a label is worth showing. Only an "
+              "empty result is sent back every time. The grain bound was added after the first "
+              "benchmark run, where a correct count of stores was turned into a list of them.")
+
+NARRATE_WHY_V5 = ("A narrative nobody can check is this system's worst failure mode, because it "
+                  "looks exactly like an answer — and so is one that silently assumes a period. "
+                  "When the reviewer applied the default fiscal year, the narrator is handed the "
+                  "assumption and must state it in a claim of its own; a default the user is not "
+                  "told about is a wrong answer that looks right.")
+
+AUDIT_WHY_V5 = ("It still asks no model and still drops any claim it cannot reproduce from its "
+                "cells. Rule 5 is new: every assumption must be stated by a surviving claim. An "
+                "omission goes back to the narrator under the same once-only rule as a dropped "
+                "claim, and after that the renderer states it itself — the reader is told "
+                "regardless. Numbers inside an assumption, such as the year and its dates, are "
+                "exempt from the stray-number rule, as the question's own are.")
+
+ONE_LOOP_V5 = ("Five failure sources — the AST check, the planner, the executor, the "
+               "Completeness Reviewer, the audit — route to one agent and spend one counter: "
+               "MAX_ATTEMPTS = 7, one draft and six repairs. The reviewer is the only source a "
+               "correct query can trip, which is why the budget grew with it; the same-result "
+               "guard is what stops it spending the extra room on one gap twice.")
+
+REPAIR_WHY_V5 = ("A repair that called the model would double the model calls of every retry. "
+                 "Most failures do not need one, and a completeness gap never does: the reviewer "
+                 "already named the missing column in the contract's terms, so the hint only says "
+                 "to keep the query and extend it. Every attempt is appended to attempt_history, "
+                 "and the repeat warning reads only the attempts before the one being repaired — "
+                 "counting that one told every first failure it was a repeat.")
+
+ROUTE_WHY_V5 = ("Bounded on purpose, and bounded in one place. Seven generations is the budget "
+                "for the whole run rather than for each gate, because every failure source "
+                "shares the counter. arch4 set four when four things could spend it; arch5 adds "
+                "a fifth, and a run that spends one repair on a planner error and another on a "
+                "missing label has used two of arch4's three before the reflection has spoken.")
+
+ARMS_V5 = [("attempts < max (7 by default)", "generate_sql", RED),
+           ("attempts = max", "give_up", AMBER)]
+
+OUTCOMES_V5 = [("exit 0", "Answered — narrative, table and chart spec, and any assumption or "
+                "unclosed gap stated. A refusal is also exit 0.", GREEN),
+               ("exit 1", "Ran, but could not answer — give_up after seven generations, or the "
+                "query failed at execution.", AMBER),
+               ("exit 2", "Ollama misconfigured. Raised during startup; the graph never runs.",
+                RED)]
+
+OUT_NOTE_V5 = ("`--json` carries the whole state: the verdict and intent, the answer contract, the "
+               "literal map, the selected tables, every attempt with the hint it was given, the "
+               "Completeness Reviewer's report, the assumptions, the claims, the audit report, and "
+               "a trace entry per node with its milliseconds and model calls — which is what lets "
+               "the benchmark say what the reviewer cost rather than assert it.")
+
+
+def build_v5():
+    parts, y = [], 56
+    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                 f'font-weight="700" fill="{INK}">NL2SQL Agent v5 '
+                 f'<tspan fill="{MUTED}" font-weight="400">— a complete answer, not just a '
+                 f'correct one</tspan></text>')
+    y += 26
+    blk, h = text_block(MARGIN, y, "v4's four stages and one repair loop, with one thing added: "
+                        "an answer contract read from the question before the SQL is written, "
+                        "and a Completeness Reviewer that checks the rows against it after they "
+                        "run (arch5). Everything marked in orange is new in v5; magenta is v4's "
+                        "pipeline, teal v2's retrieval and indigo v3's examples, all carried over.",
+                        CONTENT_R - MARGIN, 13.5, MUTED)
+    parts.append(blk); y += h + 26
+
+    svg, h = deployment(y, {"name": "nl2sql-agent",
+                            "desc": "python -m nl2sql_agent, or the same image serving the REST "
+                                    "API. The label map and the fiscal calendar are read from "
+                                    "the catalog once per process, like the literal catalog."},
+                        [PG_V5, VECTORDB_V4, CHUNKDB], [OLLAMA_CHAT_V5, OLLAMA_EMBED_V4])
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v5 adds", V5_ADDED, color=ORANGE, x=MARGIN,
+                      w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
+    svg, h = note_row(y, "Three model calls on the happy path, or four", V5_CALLS, color=PURPLE,
+                      x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 36
+    svg, h = startup(y, STARTUP, FAIL2); parts.append(svg); y += h + 40
+
+    rows = [
+        {"id": "supervise", "kind": "step", "n": 1, "name": "supervise",
+         "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "does": "One structured-output call on the raw question: verdict, intent and the "
+                 "clarification, as in v4 — and now the entities the answer lists, the measure "
+                 "that answers or ranks them, and the period it names. Code turns those into the "
+                 "answer contract: each key's label, the measure as a column, the latest complete "
+                 "fiscal year when no period was named, the N a ranking asked for.",
+         "tags": [("LLM · Supervision", PURPLE), ("answer contract", ORANGE)],
+         "why": SUPERVISE_WHY_V5},
+        {"id": "refuse", "kind": "offramp", "name": "refuse", "color": AMBER,
+         "flow": {"x": STEP_X + 105, "color": AMBER},
+         "does": "Answer with the scope sentence, the refusal, or the clarifying question, and "
+                 "stop. No retrieval, no SQL, no database access. → END",
+         "tag": "terminal · exit 0", "why": REFUSE_WHY},
+        {"id": "retrievers", "kind": "fan", "n": 2, "boxes": V4_FAN, "accent": MAGENTA,
+         "caption": "all four read the question and nothing else — LangGraph joins them "
+                    "at aggregate"},
+        {"id": "fan_note", "kind": "note", "color": MAGENTA, "w": STEP_W,
+         "title": "Stage 1 fans out — and what a store being down costs",
+         "body": FAN_WHY},
+        {"id": "aggregate", "kind": "step", "n": 3, "name": "aggregate",
+         "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "does": "The fan-in. The contract's tables first — the dimension a label comes from, "
+                 "dim_date for a default year — then the union of the three retrievers' "
+                 "proposals; close over foreign keys, cap at max_tables (10) dropping the "
+                 "lowest-ranked non-bridge first, and fetch the schema.",
+         "tags": [("Postgres · pg_constraint", BLUE), ("contract tables", ORANGE)],
+         "why": AGG_WHY_V5},
+        {"id": "generate_sql", "kind": "step", "n": 4, "name": "generate_sql",
+         "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "does": "Ask the model for one SELECT, as in v4, with one more line in the human turn: "
+                 "\"A complete answer includes: each sku named by product_name beside any sku_id "
+                 "it shows; the net sales the rows are ranked by, as a column; FY2025 …\". On a "
+                 "retry, the Repair Agent's hint follows.",
+         "tags": [("stage 2 · synthesis", MAGENTA), ("LLM · free-form", PURPLE),
+                  ("+ contract line", ORANGE)],
+         "why": GEN_WHY_V5},
+        {"id": "validate_static", "kind": "step", "n": 5, "name": "validate_static",
+         "badge": "carried over", "badge_color": SLATE, "accent": MAGENTA,
+         "does": "Parse with pglast and reject: more than one statement, anything that is not a "
+                 "SelectStmt, a CTE that writes, an INTO target, a denylisted function, or a "
+                 "relation outside selected_tables.",
+         "tags": [("stage 3 · validation", MAGENTA), ("pglast · AST", MAGENTA),
+                  ("no model call", MAGENTA)], "why": STATIC_WHY},
+        {"id": "planner_gate", "kind": "step", "n": 6, "name": "planner_gate",
+         "badge": "carried over", "badge_color": SLATE, "accent": MAGENTA,
+         "does": "EXPLAIN (FORMAT JSON) inside a READ ONLY transaction — planned, never run. A "
+                 "planner error goes to the Repair Agent verbatim; a plan cost above "
+                 "max_plan_cost (1,000,000) is rejected as a cross join or an unfiltered scan.",
+         "tags": [("Postgres · EXPLAIN", BLUE), ("cost ceiling", MAGENTA)], "why": PLANNER_WHY},
+        {"id": "execute_query", "kind": "step", "n": 7, "name": "execute_query",
+         "badge": "carried over", "badge_color": SLATE, "accent": SLATE,
+         "does": "run_select() inside SET TRANSACTION READ ONLY with SET LOCAL "
+                 "statement_timeout, fetching max_rows + 1 so truncation is detected rather than "
+                 "guessed at, and SET ROLE <principal> when the state carries one.",
+         "tags": [("Postgres · READ ONLY tx", BLUE)], "why": EXEC_WHY_V4},
+        {"id": "review", "kind": "step", "n": 8, "name": "review",
+         "badge": "new in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "does": "The Completeness Reviewer. Rules first, free: R1 a label beside every key "
+                 "(sku_id → product_name); R2 the measure a ranking was ranked by, and its ORDER "
+                 "BY in the select list; R3 a total over time cut to the named period, or to the "
+                 "latest complete fiscal year, recorded as an assumption; R4 the N rows asked for, "
+                 "and rows at all. Then, once, a reflection: what would the reader ask next — "
+                 "schema columns only, about entities the rows already name.",
+         "tags": [("rules, then LLM once", PURPLE), ("→ repair", RED),
+                  ("same-result guard", ORANGE)],
+         "why": REVIEW_WHY},
+        {"id": "visualise", "kind": "step", "n": 9, "name": "visualise",
+         "badge": "carried over", "badge_color": SLATE, "accent": MAGENTA,
+         "does": "A lookup on the shape of the result: one cell is a scalar, a category and a "
+                 "measure is a bar, a date column and a measure is a line, more than 30 rows is a "
+                 "table. intent breaks the ties. The output is a ChartSpec.",
+         "tags": [("no model call", MAGENTA), ("stage 4 · presentation", MAGENTA)],
+         "why": VIS_WHY},
+        {"id": "narrate", "kind": "step", "n": 10, "name": "narrate",
+         "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "does": "Claims rather than prose: every number points at the result cells it came "
+                 "from. Its prompt gets the question, the capped result, the chart spec, the top "
+                 "exemplar's reasoning_target and, since v5, the assumptions — each of which it "
+                 "must state.",
+         "tags": [("LLM · Claims", PURPLE), ("states the assumptions", ORANGE)],
+         "why": NARRATE_WHY_V5},
+        {"id": "audit", "kind": "step", "n": 11, "name": "audit",
+         "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "does": "Reproduce every claim from the cells it names, to the benchmark's 2-decimal "
+                 "tolerance; drop the ones that do not reproduce; withhold columns tagged "
+                 "sensitive; check every assumption is stated. When the rows say the SQL is "
+                 "wrong — a percentage over 100 — send it to repair.",
+         "tags": [("assumptions stated", ORANGE), ("→ repair on semantic_issue", RED)],
+         "why": AUDIT_WHY_V5},
+        {"id": "loop_note", "kind": "note", "color": RED, "w": STEP_W,
+         "flow": {"color": RED, "dash": "7 5"},
+         "title": "One loop, one counter — five sources", "body": ONE_LOOP_V5},
+        {"id": "repair", "kind": "step", "n": 12, "name": "repair",
+         "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
+         "flow": {"color": RED, "dash": "7 5"},
+         "does": "Turn the failure into a hint and hand it back. A classifier reads Postgres' "
+                 "own message first, and a completeness gap passes through as the reviewer wrote "
+                 "it — keep the query, add what is missing — so the model is called only for "
+                 "what nothing can classify. This agent never writes SQL.",
+         "tags": [("classifier first", MAGENTA), ("LLM only if unclassified", PURPLE)],
+         "why": REPAIR_WHY_V5},
+        {"id": "route", "kind": "decision", "title": "_route_after_repair()", "arms": ARMS_V5,
+         "why": ROUTE_WHY_V5},
+        {"id": "terminals", "kind": "branch", "left": TERM_L_V4, "right": TERM_R_V4,
+         "flow": {"x": STEP_X + (STEP_W - 14) / 4, "color": AMBER}, "why": TERM_WHY_V4},
+    ]
+    svg, h, nodes = pipeline(
+        y, rows,
+        retry_label="retry &#183; one shared attempts budget",
+        loop_from=("validate_static", "planner_gate", "execute_query", "review"),
+        loop_into="repair",
+        rails=[
+            {"from": "audit", "to": ("terminals",), "color": GREEN, "dash": None,
+             "label": "audit passes &#8594; finish", "x": 628, "side": 1},
+        ])
+    parts.append(svg); y += h + 34
+    svg, h = outcomes(y, OUTCOMES_V5, OUT_NOTE_V5); parts.append(svg); y += h + 26
+    svg, h = legend(y, [("solid", "control flow", SLATE),
+                        ("line", "repair loop — one counter", RED),
+                        ("solid", "audit passes — finish", GREEN),
+                        ("pill", "model call", PURPLE), ("pill", "database access", BLUE),
+                        ("pill", "new or changed in v5", ORANGE),
+                        ("pill", "v4's pipeline", MAGENTA)])
+    parts.append(svg); y += h
+    return document("NL2SQL Agent v5 architecture", "Multi-agent pipeline with a completeness check",
+                    "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE))
+
+
 #: What `main` writes, in the order the versions came.
 DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
-            ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"))
+            ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"),
+            ("arch_v5.svg", "build_v5"))
 
 
 def main(output_dir: Path | None = None) -> None:

@@ -20,7 +20,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Verdict = Literal["yes", "no"]
+#: Correct, wrong, correct but incomplete: `store.VERDICTS`, as a type.
+Verdict = Literal["yes", "no", "incomplete"]
 State = Literal["pending", "accepted", "rejected", "promoted"]
 
 

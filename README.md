@@ -229,8 +229,20 @@ the cells they came from, and a deterministic audit checks every number against
 those cells. Any failure -- parse, planner, runtime or audit -- routes to one
 repair agent and spends one shared retry budget.
 
-The design, and every place it departs from the three source documents, is in
-[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md).
+**v5 (arch5) checks that a correct answer is also a complete one.** "Top 10
+SKUs" used to come back as ten `sku_id` values -- right, and useless without a
+second query. The Supervisor now also reads what an answer is about, and an
+*answer contract* built from it says what a complete answer carries: the name
+beside every id (read from the catalog's key constraints), the measure a
+ranking was ranked by, and -- when the question names no period -- the latest
+complete fiscal year, which the answer then states. The generator sees the
+contract before it writes; a Completeness Reviewer checks the rows against it
+after they run and sends a gap back through the same repair loop, whose budget
+grows from four generations to seven.
+
+The design, and every place it departs from the source documents, is in
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md)
+(arch4 plus the answer contract and the Completeness Reviewer).
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -485,7 +497,7 @@ cd gui && npm install && npm run dev      # http://localhost:5173
 
 A JavaFX application in a window on this machine, rather than a page in a
 browser. The same questions, the same progress stream, the same charts and
-the same yes/no verdict as the web interface --
+the same three-way verdict -- correct, wrong, correct but incomplete -- as the web interface --
 [`desktop/README.md`](desktop/README.md) is the whole of it.
 
 **It exists because a contract only one implementation has ever met is a
@@ -790,6 +802,8 @@ each step does, why it is there, and how control flows.
 | [`arch_v1.svg`](arch_diagrams/arch_v1.svg) | The schema-only pipeline |
 | [`arch_v2.svg`](arch_diagrams/arch_v2.svg) | The same pipeline with retrieval in front of it, and that context threaded into three of the five steps |
 | [`arch_v3.svg`](arch_diagrams/arch_v3.svg) | Both retrieval steps, the three-retriever ensemble behind the second, and the two data-flow rails they feed |
+| [`arch_v4.svg`](arch_diagrams/arch_v4.svg) | The multi-agent pipeline: four stages, the parallel retrievers, the deterministic gates, the repair loop, and the presentation trio |
+| [`arch_v5.svg`](arch_diagrams/arch_v5.svg) | v4 plus the answer contract and the Completeness Reviewer inside the repair loop |
 
 All three are laid out identically so the versions can be read side by side --
 everything new or changed is marked, in teal for v2's retrieval and indigo for
@@ -808,8 +822,7 @@ against real font metrics, row heights following their content -- and records
 the nodes it drew in the SVG, which is what lets
 [`tests/docs/test_arch_diagrams.py`](tests/docs/test_arch_diagrams.py) check
 the pictures against `graph.py` and fail when a node is renamed. Edit the
-content in `build_v1()` / `build_v2()` / `build_v3()` and re-run; do not
-hand-edit the SVGs.
+content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
 ## Synthetic data generator
 
@@ -1003,8 +1016,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2187 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2585, including ones that build and run containers
+pytest                                          # 2356 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2762, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1014,13 +1027,13 @@ pytest --run-docker --run-node --run-java       # all 2585, including ones that 
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
-| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 306-test suite run from here |
-| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 376-test Java suite run from here |
-| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 93-test review GUI suite run from here |
+| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
+| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
+| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 95-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 372 tests behind `--run-docker` are the ones that need a working daemon:
+The 380 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, and query the four live databases. The 20 behind `--run-node`
 need npm, and run the two GUIs' own suites. The 6 behind `--run-java` need
@@ -1105,11 +1118,11 @@ cd gui && npm test           # the web interface
 cd review/gui && npm test    # the review interface
 ```
 
-**100% of statements, branches, functions and lines** across 306 tests, with
+**100% of statements, branches, functions and lines** across 312 tests, with
 only `main.tsx` excluded -- it mounts React onto a DOM element that exists
 only in a browser, and a test pins the exclusion list so nothing else joins
 it. The review interface is held to the same thresholds and reaches them in
-93 tests: it decides what goes into the question set the agent is measured
+95 tests: it decides what goes into the question set the agent is measured
 against, so a partially tested path there is a partially tested benchmark.
 
 The thresholds are in each project's `vitest.config.ts` and fail the run
@@ -1137,7 +1150,7 @@ The desktop client is held to the same standard in Java:
 cd desktop && mvn test       # or pytest tests/java --run-java
 ```
 
-**100% of lines and branches** across the desktop client's own 376-test Java
+**100% of lines and branches** across the desktop client's own 379-test Java
 suite, gated by JaCoCo rather than reported by it, with only `Main` excluded
 -- it calls `Application.launch()`, which does not return until the window is
 closed. The interface half is tested through the real toolkit, headless via

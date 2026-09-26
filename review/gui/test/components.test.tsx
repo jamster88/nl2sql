@@ -93,6 +93,11 @@ describe("Queue", () => {
     expect(screen.getByText("No")).toBeInTheDocument();
   });
 
+  it("marks a correct-but-incomplete verdict as its own kind", () => {
+    render(<Queue {...base} submissions={[makeSubmission({ id: "c", verdict: "incomplete" })]} />);
+    expect(screen.getByText("Incomplete")).toHaveClass("verdict-incomplete");
+  });
+
   it("reads a missing count as zero rather than blank", () => {
     render(<Queue {...base} counts={{}} />);
     expect(screen.getByRole("button", { name: /pending 0/ })).toBeInTheDocument();
@@ -122,6 +127,11 @@ describe("Original", () => {
   it("says so when the verdict was negative", () => {
     render(<Original submission={makeSubmission({ verdict: "no" })} />);
     expect(screen.getByText("Marked wrong")).toBeInTheDocument();
+  });
+
+  it("says so when the answer was right but incomplete", () => {
+    render(<Original submission={makeSubmission({ verdict: "incomplete" })} />);
+    expect(screen.getByText("Marked correct but incomplete")).toBeInTheDocument();
   });
 
   it("explains an absent SQL rather than rendering an empty block", () => {

@@ -29,10 +29,13 @@ EXAMPLES_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "examples.py"
 # and writes to; v4 is the first version to have one, so its presence is what
 # says which pipeline is checked out.
 STATE_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "state.py"
+# v5's marker: the Completeness Reviewer's module (arch5).
+COMPLETENESS_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "completeness.py"
 
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
-V4 = DIAGRAMS / "arch_v4.svg"
-ALL_DIAGRAMS = [V1, V2, V3, V4]
+V4, V5 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4, V5]
+IDS = ["v1", "v2", "v3", "v4", "v5"]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
@@ -52,6 +55,10 @@ V4_ADDS = {
     "validate_static", "planner_gate", "repair",        # the deterministic gates
     "visualise", "narrate", "audit", "finish",          # presentation and audit
 }
+
+# v5 is back to the incremental rule: v4 plus one node, the Completeness
+# Reviewer between execution and presentation.
+REVIEW_NODE = "review"
 
 
 def graph_nodes() -> set[str]:
@@ -79,8 +86,14 @@ def this_tree_is_v4() -> bool:
     return STATE_PY.exists()
 
 
+def this_tree_is_v5() -> bool:
+    return COMPLETENESS_PY.exists()
+
+
 def diagram_for_this_tree() -> Path:
     """The diagram that is supposed to describe the code actually checked out."""
+    if this_tree_is_v5():
+        return V5
     if this_tree_is_v4():
         return V4
     if this_tree_is_v3():
@@ -133,6 +146,21 @@ def test_v4_restructures_v3_rather_than_adding_one_more_node():
     assert v4 == (v3 - V4_DROPS) | V4_ADDS
 
 
+def test_v5_is_v4_plus_the_completeness_reviewer():
+    """arch5 adds one gate, inside the repair loop, and changes no node's
+    name: the answer contract lives in the Supervisor's node, and the
+    assumptions in the narrator's and the audit's."""
+    assert diagram_nodes(V5) == diagram_nodes(V4) | {REVIEW_NODE}
+
+
+def test_the_review_node_is_present_exactly_when_the_module_is():
+    node_drawn = REVIEW_NODE in diagram_nodes(diagram_for_this_tree())
+    assert node_drawn is this_tree_is_v5(), (
+        "the review node and completeness.py must appear together: this tree "
+        f"{'has' if this_tree_is_v5() else 'does not have'} completeness.py"
+    )
+
+
 def test_the_retrieval_node_is_present_exactly_when_the_module_is():
     node_drawn = RETRIEVAL_NODE in diagram_nodes(diagram_for_this_tree())
     assert node_drawn is this_tree_is_v2(), (
@@ -163,7 +191,7 @@ def test_the_v4_agents_are_present_exactly_when_the_shared_state_module_is():
         )
 
 
-@pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=["v1", "v2", "v3", "v4"])
+@pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)
 def test_every_node_in_the_metadata_is_actually_drawn(svg: Path):
     """Guards the metadata itself: it is generated from the rows, so a node
     listed there but absent from the rendered text would mean the two drifted.
@@ -189,8 +217,8 @@ def generator():
 @pytest.mark.parametrize(
     "name,builder",
     [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
-     ("arch_v4.svg", "build_v4")],
-    ids=["v1", "v2", "v3", "v4"],
+     ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5")],
+    ids=IDS,
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
     """Catches both halves of the drift: an SVG edited by hand, and a change to
@@ -208,9 +236,10 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v2() == generator.build_v2()
     assert generator.build_v3() == generator.build_v3()
     assert generator.build_v4() == generator.build_v4()
+    assert generator.build_v5() == generator.build_v5()
 
 
-@pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=["v1", "v2", "v3", "v4"])
+@pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)
 def test_diagrams_are_well_formed_svg(svg: Path):
     root = xml.dom.minidom.parse(str(svg)).documentElement
     assert root.tagName == "svg"

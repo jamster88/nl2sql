@@ -8,7 +8,9 @@
  * two indistinguishable at a glance, which is the only glance a queue gets.
  */
 
-import type { State, SubmissionModel } from "../api/types";
+import type { State, SubmissionModel, Verdict } from "../api/types";
+
+const CHIP: Record<Verdict, string> = { yes: "Yes", no: "No", incomplete: "Incomplete" };
 
 export interface QueueProps {
   submissions: SubmissionModel[];
@@ -75,7 +77,7 @@ export function Queue({
               onClick={() => onSelect(submission)}
             >
               <span className={`verdict verdict-${submission.verdict}`}>
-                {submission.verdict === "yes" ? "Yes" : "No"}
+                {CHIP[submission.verdict]}
               </span>
               <span className="queue-question">{submission.question}</span>
               <span className="queue-meta muted">

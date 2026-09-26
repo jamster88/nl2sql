@@ -261,6 +261,16 @@ describe("History", () => {
     expect(screen.getByText("✗")).toBeInTheDocument();
   });
 
+  it("shows a correct-but-incomplete verdict as its own mark, with its words", () => {
+    const feedback = store();
+    feedback.set("job-1", "q", "incomplete");
+    render(
+      <History jobs={[makeJob({ id: "job-1" })]} currentId={undefined} onSelect={vi.fn()} store={feedback} />,
+    );
+    expect(screen.getByText("◐")).toHaveAttribute("title", "Marked correct but incomplete");
+    expect(screen.getByText("◐")).toHaveAttribute("data-verdict", "incomplete");
+  });
+
   it("names a status that is not a success", () => {
     render(
       <History
@@ -566,7 +576,7 @@ describe("AnswerView", () => {
     const feedback = store();
     render(<AnswerView job={makeJob()} store={feedback} pipeline={pipeline} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(feedback.get("job-1")?.verdict).toBe("yes");
     expect(feedback.get("job-1")?.question).toBe(makeJob().question);
   });

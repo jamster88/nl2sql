@@ -52,6 +52,14 @@ WRITER_ROLE = "nl2sql_feedback_writer"
 #: a record of how it got there.
 STATES = ("pending", "accepted", "rejected", "promoted")
 
+#: What a person can say about an answer: correct (`yes`), wrong (`no`), or
+#: correct but incomplete (`incomplete`). The first two wire values predate
+#: the third and are kept, so every verdict already recorded reads the same.
+#: The CHECK constraint is built from this tuple, and the constraint is named
+#: so a table created when there were two can be widened in place.
+VERDICTS = ("yes", "no", "incomplete")
+VERDICT_CHECK = "feedback_submissions_verdict_check"
+
 #: The columns the agent API is allowed to write. Named here rather than in
 #: the API so there is one list; `tests/review/test_writer_contract.py`
 #: checks the API's INSERT against it, because the two live in different
@@ -135,7 +143,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             CREATE TABLE IF NOT EXISTS {} (
                 id               TEXT PRIMARY KEY,
                 job_id           TEXT NOT NULL UNIQUE,
-                verdict          TEXT NOT NULL CHECK (verdict IN ('yes', 'no')),
+                verdict          TEXT NOT NULL,
                 question         TEXT NOT NULL,
                 sql_code         TEXT NOT NULL DEFAULT '',
                 answer           TEXT NOT NULL DEFAULT '',
@@ -157,6 +165,22 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             )
             """
         ).format(sql.Identifier(SUBMISSIONS))
+    )
+    # The verdict CHECK is (re)applied rather than declared inline: a table
+    # created before `incomplete` existed carries the two-value constraint,
+    # and CREATE TABLE IF NOT EXISTS would leave it that way. The name is the
+    # one Postgres gave the old inline constraint, so this replaces it.
+    conn.execute(
+        sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+            sql.Identifier(SUBMISSIONS), sql.Identifier(VERDICT_CHECK)
+        )
+    )
+    conn.execute(
+        sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} CHECK (verdict IN ({}))").format(
+            sql.Identifier(SUBMISSIONS),
+            sql.Identifier(VERDICT_CHECK),
+            sql.SQL(", ").join(sql.Literal(v) for v in VERDICTS),
+        )
     )
     # The review queue is read by state, newest first, on every page load.
     conn.execute(

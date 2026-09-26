@@ -267,6 +267,11 @@ body {
   color: var(--bad);
 }
 
+.verdict-incomplete {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
 /* --- detail ----------------------------------------------------------- */
 
 .detail {

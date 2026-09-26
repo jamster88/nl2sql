@@ -56,6 +56,14 @@ A verdict arrives with a snapshot of the job it is about: the question, the
 generated SQL, the answer, the narrative, the intent, the tables, the result
 shape, and any comment the user added.
 
+The verdict itself is one of three: `yes` (correct), `no` (wrong), or
+`incomplete` (correct but incomplete -- the SQL was right and the answer
+left out something a reader needed). The queue shows and filters all three;
+what promotion does differently with an incomplete one is not decided yet,
+so for now it is queued and reviewed like the others. The table's CHECK
+constraint is re-applied on every start, which is how a staging database
+created when there were only two verdicts learns the third.
+
 The snapshot is taken at vote time rather than looked up later because there
 is no later -- a job is forgotten after `API_JOB_TTL_SECONDS`, and a record
 holding only a job id would be pointing at nothing within the hour. The SQL
@@ -339,7 +347,7 @@ pair built that way tests nothing.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 93 tests, 100% coverage
+npm run test     # review GUI: 95 tests, 100% coverage
 ```
 
 ## Tests

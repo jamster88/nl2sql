@@ -1,7 +1,8 @@
 # The desktop client
 
 A JavaFX front end for the agent's REST API. Same questions, same answers,
-same charts and the same yes/no verdict as [`gui/`](../gui) — in a window
+same charts and the same verdict — correct, wrong, or correct but
+incomplete — as [`gui/`](../gui), in a window
 rather than a browser tab, on a machine rather than a server.
 
 ```bash
@@ -338,7 +339,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-376 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+379 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

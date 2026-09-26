@@ -9,18 +9,24 @@
  * SQL, and a golden pair built that way tests nothing.
  */
 
-import type { SubmissionModel } from "../api/types";
+import type { SubmissionModel, Verdict } from "../api/types";
 
 export interface OriginalProps {
   submission: SubmissionModel;
 }
+
+const MARKED: Record<Verdict, string> = {
+  yes: "Marked correct",
+  no: "Marked wrong",
+  incomplete: "Marked correct but incomplete",
+};
 
 export function Original({ submission }: OriginalProps) {
   return (
     <section className="original" aria-label="What was submitted">
       <header className="original-head">
         <span className={`verdict verdict-${submission.verdict}`}>
-          {submission.verdict === "yes" ? "Marked correct" : "Marked wrong"}
+          {MARKED[submission.verdict]}
         </span>
         <span className="muted">
           {submission.submitted_at

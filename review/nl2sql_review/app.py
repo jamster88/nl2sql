@@ -70,7 +70,7 @@ from .models import (
 from .promote import PromotionError
 from .render import Draft
 from .settings import ReviewSettings
-from .store import STATES, Repository, Submission
+from .store import STATES, VERDICTS, Repository, Submission
 
 __version__ = "4.5.0"
 
@@ -380,7 +380,7 @@ def create_app(
     )
     def list_submissions(
         state: str | None = Query(default=None, description=f"One of {', '.join(STATES)}."),
-        verdict: str | None = Query(default=None, description="'yes' or 'no'."),
+        verdict: str | None = Query(default=None, description=f"One of {', '.join(VERDICTS)}."),
         limit: int = Query(default=50, ge=1, le=500),
         offset: int = Query(default=0, ge=0),
     ) -> SubmissionList:
@@ -390,9 +390,11 @@ def create_app(
                 "invalid_request",
                 f"state must be one of {', '.join(STATES)}",
             )
-        if verdict is not None and verdict not in ("yes", "no"):
+        if verdict is not None and verdict not in VERDICTS:
             raise ReviewHTTPError(
-                HTTP_422_UNPROCESSABLE, "invalid_request", "verdict must be 'yes' or 'no'"
+                HTTP_422_UNPROCESSABLE,
+                "invalid_request",
+                f"verdict must be one of {', '.join(VERDICTS)}",
             )
         found = repo.listing(state=state, verdict=verdict, limit=limit, offset=offset)
         return SubmissionList(

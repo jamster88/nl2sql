@@ -12,8 +12,11 @@
 /** Where a submission is in its life. `promoted` is terminal. */
 export type State = "pending" | "accepted" | "rejected" | "promoted";
 
-/** Was the answer right? What the user actually said. */
-export type Verdict = "yes" | "no";
+/**
+ * Was the answer right? What the user actually said: correct (`yes`), wrong
+ * (`no`), or correct but incomplete (`incomplete`).
+ */
+export type Verdict = "yes" | "no" | "incomplete";
 
 /**
  * One captured verdict, with the snapshot that outlives the job.

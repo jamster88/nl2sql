@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from nl2sql_agent.completeness import Reflection
 from nl2sql_agent.database import QueryResult
 from nl2sql_agent.examples import ExamplesUnavailableError, GoldenPair
 from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
@@ -38,6 +39,13 @@ class FakeDatabase:
         self.plan_cost = plan_cost
         self.run_select_result = run_select_result or QueryResult(columns=["n"], rows=[(1,)], truncated=False)
         self.run_select_error = run_select_error
+        # arch5: what the answer contract reads once per process.
+        self.tables_detail: list = []
+        self.fiscal_year = None
+        self.catalog_calls = 0
+        # A rendered schema block, for tests whose agents read column names
+        # out of it (the Completeness Reviewer's reflection does).
+        self.schema_text: str | None = None
 
         self.explain_calls: list[str] = []
         self.run_select_calls: list[str] = []
@@ -56,6 +64,8 @@ class FakeDatabase:
 
     def schema_and_samples(self, tables: list[str], sample_rows: int) -> str:
         self.schema_and_samples_calls.append((list(tables), sample_rows))
+        if self.schema_text is not None:
+            return self.schema_text
         return "\n".join(f"=== {t} ===\ncolumns: id" for t in tables)
 
     def explain(self, sql: str) -> str | None:
@@ -77,11 +87,24 @@ class FakeDatabase:
             return value.pop(0) if value else None
         return value
 
+    def catalog(self) -> list:
+        """No key constraints, so an empty label map, unless a test scripts one."""
+        self.catalog_calls += 1
+        return list(self.tables_detail)
+
+    def latest_complete_fiscal_year(self):
+        """No calendar, so no default period, unless a test scripts one."""
+        return self.fiscal_year
+
     def run_select(self, sql: str, *, principal: str | None = None) -> QueryResult:
         self.run_select_principals.append(principal)
         self.run_select_calls.append(sql)
         if self.run_select_error is not None:
             raise self.run_select_error
+        # A list scripts one result per execution, so a test can show the
+        # Completeness Reviewer a bare result and then the complete one.
+        if isinstance(self.run_select_result, list):
+            return self.run_select_result.pop(0)
         return self.run_select_result
 
 
@@ -102,6 +125,15 @@ class _StructuredBinding:
             return self._llm.table_selection
         if self._schema is Screening:
             return self._llm.screening or Screening(verdict="proceed", intent="aggregate")
+        if self._schema is Reflection:
+            # A list scripts one verdict per call; the default finds the
+            # result complete, which is the happy path.
+            reflection = self._llm.reflection
+            if isinstance(reflection, Exception):
+                raise reflection
+            if isinstance(reflection, list):
+                return reflection.pop(0)
+            return reflection if reflection is not None else Reflection(complete=True)
         # The narrator's output model is matched structurally rather than by
         # import, so this fake does not depend on the internal naming of the
         # module it stands in front of.
@@ -128,6 +160,8 @@ class ScriptedLLM:
       `table_selection`.
     - `.with_structured_output(Screening).invoke(...)` returns `screening`.
     - The narrator's claims model returns `narration`.
+    - The Completeness Reviewer's reflection returns `reflection`, or
+      "complete" when none is scripted.
     """
 
     def __init__(
@@ -137,11 +171,13 @@ class ScriptedLLM:
         table_selection: TableSelection | None = None,
         screening: Any = None,
         narration: Any = None,
+        reflection: Any = None,
     ) -> None:
         self.sql_responses = list(sql_responses or [])
         self.table_selection = table_selection if table_selection is not None else TableSelection(tables=[])
         self.screening = screening
         self.narration = narration
+        self.reflection = reflection
         self.plain_invocations: list[Any] = []
         self.structured_invocations: list[tuple[type, Any]] = []
 

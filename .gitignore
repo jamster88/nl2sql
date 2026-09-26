@@ -11,6 +11,7 @@ data_gen/old_ddl.sql
 basic_agent_steps.md
 data_gen/detailed_data_dictionary.md
 data_gen/index_descriptions.md
+Screenshot.png
 .coverage
 # Per-process data files from a subprocess-measuring run (see .coveragerc).
 .coverage.*

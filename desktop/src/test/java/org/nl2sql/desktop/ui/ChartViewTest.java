@@ -183,4 +183,25 @@ class ChartViewTest {
             stage.close();
         });
     }
+
+    @Test
+    void a_chart_gives_way_to_the_column_rather_than_holding_it_open() {
+        // A chart asks for room for its axis labels and reports that as its
+        // minimum, which in a narrow column is a chart drawn wider than the
+        // card it sits in. It is the one thing here that can be read at any
+        // size, so it is the one that gives.
+        FxToolkit.onFx(() -> {
+            Region drawn = ChartView.of(Fakes.table(),
+                    spec("bar", "department", List.of("net_sales"), null));
+            javafx.scene.layout.VBox card = new javafx.scene.layout.VBox(drawn);
+            card.setMinWidth(0);
+            javafx.stage.Stage stage = FxToolkit.render(card, 180, 500);
+
+            assertTrue(drawn.minWidth(-1) < 180,
+                    "the chart will not shrink below " + drawn.minWidth(-1));
+            assertTrue(Nodes.width(drawn) <= Nodes.width(card) + 1,
+                    "the chart is " + Nodes.width(drawn) + " wide in " + Nodes.width(card));
+            stage.close();
+        });
+    }
 }

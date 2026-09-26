@@ -534,6 +534,54 @@ COMPOSE_FILES = {
 }
 
 
+#: compose service -> the test files that assert on it. A service is not a
+#: file, so the `git ls-files` inventories above cannot see one: a service
+#: added to docker-compose.yml and asserted on by nothing is not reported as
+#: uncovered, it is simply absent -- which reads exactly like one that passes.
+#: `desktop` sat in that gap for a day, examined by two test files and named
+#: by neither of the compose ones.
+COMPOSE_SERVICES = {
+    "postgres": ("tests/docker/test_compose_config.py",),
+    "vectordb": ("tests/docker/test_compose_config.py",),
+    "chunkdb": ("tests/docker/test_compose_config.py",),
+    "feedbackdb": ("tests/review/test_review_compose.py",),
+    "agent": ("tests/docker/test_compose_config.py",),
+    "api": ("tests/docker/test_api_compose.py",),
+    "gui": ("tests/docker/test_gui_compose.py",),
+    "review": ("tests/review/test_review_compose.py",),
+    "reviewgui": ("tests/review/test_review_compose.py",),
+    "apitest": ("tests/docker/test_api_compose.py",),
+    "desktop": (
+        "tests/java/test_desktop_project.py",
+        "tests/docker/test_desktop_image.py",
+    ),
+}
+
+
+def _compose_services() -> set[str]:
+    """The service names, read without resolving the file.
+
+    `docker compose config` would need a daemon and every profile named at
+    once; the keys under `services:` are what is being inventoried and they
+    are one indent level in, which the volumes below are not.
+    """
+    text = (REPO_ROOT / "docker-compose.yml").read_text()
+    body = text[: text.index("\nvolumes:")]
+    return set(re.findall(r"^  ([a-z][a-z0-9_-]*):$", body, re.MULTILINE))
+
+
+def test_the_inventory_lists_every_compose_service():
+    assert _compose_services() == set(COMPOSE_SERVICES)
+
+
+@pytest.mark.parametrize("service", sorted(COMPOSE_SERVICES))
+def test_each_service_is_named_by_the_tests_said_to_cover_it(service: str):
+    for driver in COMPOSE_SERVICES[service]:
+        source = REPO_ROOT / driver
+        assert source.is_file(), driver
+        assert service in source.read_text(), f"{driver} never mentions the {service} service"
+
+
 def test_every_shell_file_in_the_repository_is_measured():
     """`docker/init_db.sh` was tracked, was shell, and was in none of the
     lists above -- so the measurement reported 100% of eleven scripts while a

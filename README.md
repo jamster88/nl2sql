@@ -1003,21 +1003,21 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2167 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2565, including ones that build and run containers
+pytest                                          # 2182 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2580, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
-| [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
+| [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 306-test suite run from here |
-| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 375-test Java suite run from here |
+| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 376-test Java suite run from here |
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 93-test review GUI suite run from here |
-| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
+| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
 The 372 tests behind `--run-docker` are the ones that need a working daemon:
@@ -1061,7 +1061,7 @@ COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
 coverage combine && coverage report --show-missing --skip-covered
 ```
 
-**100% of every Python file in the repository** -- 6,629 statements, none
+**100% of every Python file in the repository** -- 6,635 statements, none
 missed. Not four packages with the scripts left out: the agent and its REST
 server, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
@@ -1121,7 +1121,7 @@ The desktop client is held to the same standard in Java:
 cd desktop && mvn test       # or pytest tests/java --run-java
 ```
 
-**100% of lines and branches** across the desktop client's own 365-test Java
+**100% of lines and branches** across the desktop client's own 376-test Java
 suite, gated by JaCoCo rather than reported by it, with only `Main` excluded
 -- it calls `Application.launch()`, which does not return until the window is
 closed. The interface half is tested through the real toolkit, headless via
@@ -1177,7 +1177,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1009 of 1009**.
+  the traces mention -- **1010 of 1010**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -1186,6 +1186,13 @@ script, by a measurement of their own:
   shell, and in no list, so the measurement said 100% of eleven scripts while
   a twelfth had never been run by anything. The same check now covers the
   Dockerfiles and both compose files.
+
+  Compose *services* are inventoried the same way, and for a reason
+  `git ls-files` cannot reach: a service is not a file. One added to
+  `docker-compose.yml` and asserted on by nothing is absent rather than
+  uncovered, which again reads like one that passes. `desktop` sat there for
+  a day -- examined by two test files and named by neither of the compose
+  ones.
 
   Two more file kinds are checked the same way, and driven straight off
   `git ls-files` with no list to keep in step at all: every

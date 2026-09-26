@@ -89,7 +89,10 @@ def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedPr
     text = (REPO_ROOT / doc).read_text()
     quoted = [
         int(number)
-        for pattern in (r"(\d+)-test review GUI suite", r"review GUI: (\d+) tests")
+        # Whitespace rather than spaces: a line break must not be able to
+        # hide a count that has drifted. See tests/gui/test_gui_suite.py.
+        for pattern in (r"(\d+)-test\s+review\s+GUI\s+suite",
+                        r"review\s+GUI:\s+(\d+)\s+tests")
         for number in re.findall(pattern, text, re.MULTILINE)
     ]
     assert quoted, f"{doc} no longer quotes a review GUI test count"

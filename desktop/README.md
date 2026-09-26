@@ -336,7 +336,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-375 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+376 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

@@ -99,9 +99,13 @@ def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedPr
     # quotes four other counts and the GUI's own test reads the same file
     # looking for "N-test suite". An interface-specific phrase is the only
     # thing that keeps two of these tests from failing each other.
+    # `\s+` rather than a space: a count that has drifted can hide behind a
+    # line break, and one did -- "365-test Java\nsuite" sat wrong in the
+    # README for four releases because the pattern wanted them adjacent.
     quoted = [
         int(number)
-        for pattern in (r"(\d+)-test Java suite", r"^(\d+) tests, 100% of lines and branches")
+        for pattern in (r"(\d+)-test\s+Java\s+suite",
+                        r"^(\d+)\s+tests, 100% of lines and branches")
         for number in re.findall(pattern, text, re.MULTILINE)
     ]
     assert quoted, f"{doc} no longer quotes a desktop test count"

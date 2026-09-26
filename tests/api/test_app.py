@@ -19,6 +19,7 @@ import time
 
 import pytest
 from nl2sql_agent import __version__
+from nl2sql_agent.api.models import MAX_METADATA_ENTRIES, MAX_QUESTION_LENGTH
 from nl2sql_agent.api.settings import ApiSettings
 from nl2sql_agent.config import Settings
 from nl2sql_agent.llm import LlmUnavailableError
@@ -142,6 +143,47 @@ def test_meta_publishes_everything_a_client_needs_to_configure_itself(make_clien
     assert body["pipeline"]["schema_retrieval"] == "vector"
     assert "generate_sql" in body["pipeline"]["nodes"]
     assert body["intents"]
+
+
+def test_meta_publishes_the_two_limits_that_describe_the_request(make_client, fake_agent):
+    """A browser learns these from a 422 in its network tab. A desktop client
+    shows the user whatever it was handed, and "422 Unprocessable Entity" is
+    not an explanation of a text box forty characters too long -- which is
+    why they are published at all.
+    """
+    client = make_client(agent_factory=lambda: fake_agent)
+    limits = client.get("/v1/meta").json()["limits"]
+
+    assert limits["max_question_length"] == MAX_QUESTION_LENGTH
+    assert limits["max_metadata_entries"] == MAX_METADATA_ENTRIES
+
+
+def test_the_published_question_length_is_the_one_actually_enforced(client):
+    """The number is only worth publishing if a client can act on it. A
+    server advertising 2000 while refusing at 1500 is worse than one that
+    advertises nothing: the client stops the user at the wrong place and the
+    server rejects what it said it would take.
+    """
+    limit = client.get("/v1/meta").json()["limits"]["max_question_length"]
+
+    assert client.post("/v1/questions", json={"question": "a" * limit}).status_code != 422
+    over = client.post("/v1/questions", json={"question": "a" * (limit + 1)})
+    assert over.status_code == 422
+    assert over.json()["error"]["code"] == "invalid_request"
+
+
+def test_the_published_metadata_count_is_the_one_actually_enforced(client):
+    limit = client.get("/v1/meta").json()["limits"]["max_metadata_entries"]
+    at_the_limit = {str(index): "x" for index in range(limit)}
+
+    assert client.post(
+        "/v1/questions", json={"question": "how many stores?", "metadata": at_the_limit}
+    ).status_code != 422
+    over = client.post(
+        "/v1/questions",
+        json={"question": "how many stores?", "metadata": {**at_the_limit, "one": "more"}},
+    )
+    assert over.status_code == 422
 
 
 def test_meta_still_answers_when_the_database_is_down(make_client):

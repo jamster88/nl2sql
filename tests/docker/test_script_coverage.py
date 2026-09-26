@@ -534,49 +534,63 @@ COMPOSE_FILES = {
 }
 
 
-#: compose service -> the test files that assert on it. A service is not a
-#: file, so the `git ls-files` inventories above cannot see one: a service
-#: added to docker-compose.yml and asserted on by nothing is not reported as
-#: uncovered, it is simply absent -- which reads exactly like one that passes.
-#: `desktop` sat in that gap for a day, examined by two test files and named
-#: by neither of the compose ones.
+#: compose file -> service -> the test files that assert on it. A service is
+#: not a file, so the `git ls-files` inventories above cannot see one: a
+#: service added to a compose file and asserted on by nothing is not reported
+#: as uncovered, it is simply absent -- which reads exactly like one that
+#: passes. `desktop` sat in that gap for a day, examined by two test files and
+#: named by neither of the compose ones.
 COMPOSE_SERVICES = {
-    "postgres": ("tests/docker/test_compose_config.py",),
-    "vectordb": ("tests/docker/test_compose_config.py",),
-    "chunkdb": ("tests/docker/test_compose_config.py",),
-    "feedbackdb": ("tests/review/test_review_compose.py",),
-    "agent": ("tests/docker/test_compose_config.py",),
-    "api": ("tests/docker/test_api_compose.py",),
-    "gui": ("tests/docker/test_gui_compose.py",),
-    "review": ("tests/review/test_review_compose.py",),
-    "reviewgui": ("tests/review/test_review_compose.py",),
-    "apitest": ("tests/docker/test_api_compose.py",),
-    "desktop": (
-        "tests/java/test_desktop_project.py",
-        "tests/docker/test_desktop_image.py",
-    ),
+    "docker-compose.yml": {
+        "postgres": ("tests/docker/test_compose_config.py",),
+        "vectordb": ("tests/docker/test_compose_config.py",),
+        "chunkdb": ("tests/docker/test_compose_config.py",),
+        "feedbackdb": ("tests/review/test_review_compose.py",),
+        "agent": ("tests/docker/test_compose_config.py",),
+        "api": ("tests/docker/test_api_compose.py",),
+        "gui": ("tests/docker/test_gui_compose.py",),
+        "review": ("tests/review/test_review_compose.py",),
+        "reviewgui": ("tests/review/test_review_compose.py",),
+        "apitest": ("tests/docker/test_api_compose.py",),
+        "desktop": (
+            "tests/java/test_desktop_project.py",
+            "tests/docker/test_desktop_image.py",
+        ),
+    },
+    "rag/docker-compose.yml": {
+        "chunkdb": ("tests/rag/test_rag_images.py",),
+        "vectordb": ("tests/rag/test_rag_images.py",),
+    },
 }
 
 
-def _compose_services() -> set[str]:
+def _compose_services(compose_file: str) -> set[str]:
     """The service names, read without resolving the file.
 
     `docker compose config` would need a daemon and every profile named at
     once; the keys under `services:` are what is being inventoried and they
     are one indent level in, which the volumes below are not.
     """
-    text = (REPO_ROOT / "docker-compose.yml").read_text()
+    text = (REPO_ROOT / compose_file).read_text()
     body = text[: text.index("\nvolumes:")]
     return set(re.findall(r"^  ([a-z][a-z0-9_-]*):$", body, re.MULTILINE))
 
 
-def test_the_inventory_lists_every_compose_service():
-    assert _compose_services() == set(COMPOSE_SERVICES)
+def test_every_compose_file_has_its_services_inventoried():
+    assert set(COMPOSE_SERVICES) == set(COMPOSE_FILES)
 
 
-@pytest.mark.parametrize("service", sorted(COMPOSE_SERVICES))
-def test_each_service_is_named_by_the_tests_said_to_cover_it(service: str):
-    for driver in COMPOSE_SERVICES[service]:
+@pytest.mark.parametrize("compose_file", sorted(COMPOSE_SERVICES))
+def test_the_inventory_lists_every_compose_service(compose_file: str):
+    assert _compose_services(compose_file) == set(COMPOSE_SERVICES[compose_file])
+
+
+@pytest.mark.parametrize(
+    ("compose_file", "service"),
+    [(f, s) for f, services in sorted(COMPOSE_SERVICES.items()) for s in sorted(services)],
+)
+def test_each_service_is_named_by_the_tests_said_to_cover_it(compose_file: str, service: str):
+    for driver in COMPOSE_SERVICES[compose_file][service]:
         source = REPO_ROOT / driver
         assert source.is_file(), driver
         assert service in source.read_text(), f"{driver} never mentions the {service} service"

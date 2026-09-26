@@ -107,3 +107,36 @@ def test_the_published_tags_are_this_version():
     assert tagged == __version__.split(".")[: len(tagged)], (
         f"setup.sh pulls v{'_'.join(tagged)}, but this checkout is {__version__}"
     )
+
+
+#: Images that exist only from the v4 interfaces onward, so no document has a
+#: reason to name an older tag of one. The agent is not here: `v1` is the
+#: baseline the retrieval comparison is measured against, and named on purpose.
+_INTERFACE_IMAGE = re.compile(
+    r"mcfaddja/nl2sql-(?:gui|review|review-gui|desktop-build):(v[\d_]+)"
+)
+#: A publish of any of the five images `setup.sh` moves together. The dataset
+#: and knowledge-base images are versioned on their own and are not among them.
+_PUBLISH = re.compile(
+    r"--push\s+-t\s+mcfaddja/nl2sql-(?:agent|gui|review|review-gui|desktop-build):(v[\d_]+)"
+)
+
+
+def test_the_documents_name_the_tag_this_checkout_publishes():
+    """`gui/README.md` told people to pull `v4_2` and publish as `v4_4` well
+    after `setup.sh` had moved to `v4_5` -- nothing read it, because the tag
+    check above reads `setup.sh` and nothing else. A publish command with the
+    wrong tag is the worse of the two: followed, it moves a tag that must not
+    move.
+    """
+    current = re.search(
+        r'^AGENT_TAG="(v[\d_]+)"', (REPO_ROOT / "setup.sh").read_text(), re.MULTILINE
+    ).group(1)
+    stale = [
+        f"{path}: {match.group(0)}"
+        for path in sorted(_tracked("*.md"))
+        for pattern in (_INTERFACE_IMAGE, _PUBLISH)
+        for match in pattern.finditer((REPO_ROOT / path).read_text())
+        if not match.group(1).startswith(current)
+    ]
+    assert stale == [], f"documents name a tag other than {current}: {stale}"

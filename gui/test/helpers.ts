@@ -227,17 +227,3 @@ export function hostileStorage(): Storage {
     setItem: boom,
   };
 }
-
-/** A `fetch` that answers one canned response. */
-export function fakeFetch(
-  status: number,
-  body: unknown,
-  init: { json?: boolean } = {},
-): typeof fetch {
-  return vi.fn(async () =>
-    new Response(init.json === false ? "not json" : JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  ) as unknown as typeof fetch;
-}

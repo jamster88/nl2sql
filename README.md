@@ -1003,8 +1003,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2182 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2580, including ones that build and run containers
+pytest                                          # 2187 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2585, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1013,7 +1013,7 @@ pytest --run-docker --run-node --run-java       # all 2580, including ones that 
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 306-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 376-test Java suite run from here |
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 93-test review GUI suite run from here |
@@ -1096,8 +1096,9 @@ way the golden pairs reach either store -- the base `SemanticChunker` that
 generator and both loaders. Those have tests now, against throwaway databases
 and stub embedders.
 
-The other two languages are measured separately, because they have different
-runners, and to the same standard:
+The other two languages -- TypeScript and Java -- are measured separately,
+because they have different runners, and to the same standard. First the two
+web interfaces:
 
 ```bash
 cd gui && npm test           # the web interface
@@ -1114,6 +1115,21 @@ against, so a partially tested path there is a partially tested benchmark.
 The thresholds are in each project's `vitest.config.ts` and fail the run
 rather than printing a number, and `pytest --run-node` runs both suites from
 the Python one so neither can go stale unnoticed.
+
+Getting there deleted code in the same way. Four guards came out that no
+input could reach: a poll that re-checked a flag every caller had already
+checked, a stream reconnect guarded three times over, and two index lookups
+written as `?? []` to satisfy `noUncheckedIndexedAccess` on a list built from
+the very keys being looked up. The third of those was replaced by carrying
+the map's entries instead of a list of labels beside it, which removed the
+possibility rather than the check.
+
+One of the branches that would not cover turned out to be a real bug. The
+guard against a stale answer compared job ids, and job ids are only known
+*after* the POST returns -- so two questions in flight at once could have the
+first one's answer overwrite the second's. Counting attempts instead fixed
+it, and the test that could not be written before now drives exactly that
+race.
 
 The desktop client is held to the same standard in Java:
 
@@ -1133,29 +1149,14 @@ test time -- the encrypted path is where a client's mistakes stay invisible
 until deployment, and a committed private key is a private key in every
 clone.
 
-Getting there deleted code there too, and found a bug. Three guards came out
-that nothing could reach: a second `finished` check in the watcher that both
+Getting the Java to 100% deleted code as well, and found a bug. Three guards
+came out that nothing could reach: a second `finished` check in the watcher that both
 of its callers had already made, a `finished` in the pause before the next
 poll that the poll returns before reaching, and a lower bound on the HTTP
 status that `HttpResponse` never reports. The bug was next to the last of
 those -- an empty body was treated as success *before* the status was looked
 at, so a 500 with no body parsed into a document of defaults instead of
 raising. The test that found it is now the one that pins the order.
-
-Getting there deleted code in the same way. Four guards came out that no
-input could reach: a poll that re-checked a flag every caller had already
-checked, a stream reconnect guarded three times over, and two index lookups
-written as `?? []` to satisfy `noUncheckedIndexedAccess` on a list built from
-the very keys being looked up. The third of those was replaced by carrying
-the map's entries instead of a list of labels beside it, which removed the
-possibility rather than the check.
-
-One of the branches that would not cover turned out to be a real bug. The
-guard against a stale answer compared job ids, and job ids are only known
-*after* the POST returns -- so two questions in flight at once could have the
-first one's answer overwrite the second's. Counting attempts instead fixed
-it, and the test that could not be written before now drives exactly that
-race.
 
 #### The parts a coverage report cannot see
 
@@ -1187,9 +1188,9 @@ script, by a measurement of their own:
   a twelfth had never been run by anything. The same check now covers the
   Dockerfiles and both compose files.
 
-  Compose *services* are inventoried the same way, and for a reason
-  `git ls-files` cannot reach: a service is not a file. One added to
-  `docker-compose.yml` and asserted on by nothing is absent rather than
+  Compose *services* are inventoried the same way, in both compose files,
+  and for a reason `git ls-files` cannot reach: a service is not a file. One
+  added to either file and asserted on by nothing is absent rather than
   uncovered, which again reads like one that passes. `desktop` sat there for
   a day -- examined by two test files and named by neither of the compose
   ones.

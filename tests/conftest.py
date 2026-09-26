@@ -70,11 +70,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(scope="session")
-def repo_root() -> Path:
-    return ROOT
-
-
-@pytest.fixture(scope="session")
 def docker_cli() -> str | None:
     """Path to the docker binary, or None if it isn't on PATH."""
     return shutil.which("docker")

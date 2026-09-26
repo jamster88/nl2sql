@@ -32,11 +32,6 @@ def _shipped_tag(name: str) -> str:
     return match.group(1)
 
 
-@pytest.fixture(scope="module")
-def setup_source() -> str:
-    return (REPO_ROOT / "setup.sh").read_text()
-
-
 # ---------------------------------------------------------------------------
 # Static checks (no execution)
 # ---------------------------------------------------------------------------

@@ -313,7 +313,9 @@ runs on to copy the jar out, while the platform in the tag is the machine the
 JavaFX **21** rather than the newest: it is the long-term-support line and
 runs on every JDK from 17 upwards, while 25 refuses to load on anything below
 25 — which would make the floor for *running* this the newest JDK rather than
-the oldest supported one.
+the oldest supported one. The floor is 21 rather than 17 because of the
+client's own code, which is compiled for 21; the toolkit is not what sets
+it.
 
 One warning is expected on start-up:
 

@@ -1,0 +1,413 @@
+/*
+ * One stylesheet, written against roles rather than colours.
+ *
+ * The palette is the web interface's, value for value (`gui/src/styles.css`,
+ * and `gui/src/charts/palette.ts` for the eight series hues and what was
+ * checked about them). Two clients of one agent should look like two views of
+ * one thing, and a second palette invented here would be a second set of
+ * contrast ratios nobody measured.
+ *
+ * JavaFX has no custom properties, so the roles are `-fx-` looked-up colours
+ * declared on the root. Everything below refers to those rather than to a hex
+ * value, which is what makes the dark variant at the bottom one block rather
+ * than a second stylesheet.
+ */
+
+.root {
+    -surface: #fcfcfb;
+    -surface-raised: #ffffff;
+    -surface-sunken: #f4f3f0;
+    -border: #dedcd6;
+    -border-strong: #b9b6ad;
+
+    -text-primary: #0b0b0b;
+    -text-secondary: #52514e;
+    -text-muted: #77756d;
+
+    -accent: #2a78d6;
+    -accent-contrast: #ffffff;
+    -good: #008300;
+    -bad: #c62a2a;
+    -warn: #9a6400;
+
+    -fx-background-color: -surface;
+    -fx-font-family: "SF Pro Text", "Segoe UI", system, sans-serif;
+    -fx-font-size: 13px;
+    -fx-text-fill: -text-primary;
+
+    /*
+     * The eight validated categorical slots, in order. JavaFX names its
+     * series `.default-color0` upwards, which is the only hook a chart gives.
+     */
+    CHART_COLOR_1: #2a78d6;
+    CHART_COLOR_2: #eb6834;
+    CHART_COLOR_3: #1baf7a;
+    CHART_COLOR_4: #eda100;
+    CHART_COLOR_5: #e87ba4;
+    CHART_COLOR_6: #008300;
+    CHART_COLOR_7: #4a3aa7;
+    CHART_COLOR_8: #e34948;
+}
+
+.label {
+    -fx-text-fill: -text-primary;
+}
+
+.muted {
+    -fx-text-fill: -text-muted;
+}
+
+/* --- the frame --------------------------------------------------------- */
+
+.masthead {
+    -fx-padding: 14 18 12 18;
+    -fx-background-color: -surface-raised;
+    -fx-border-color: transparent transparent -border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.masthead-title {
+    -fx-font-size: 19px;
+    -fx-font-weight: bold;
+}
+
+.masthead-sub {
+    -fx-text-fill: -text-muted;
+}
+
+.main {
+    -fx-padding: 18;
+}
+
+.main-scroll {
+    -fx-background-color: -surface;
+    -fx-background: -surface;
+}
+
+.status {
+    -fx-padding: 8 18 8 18;
+    -fx-background-color: -surface-sunken;
+    -fx-border-color: -border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.status-service {
+    -fx-font-weight: bold;
+}
+
+.status-warning {
+    -fx-text-fill: -warn;
+}
+
+.status-error {
+    -fx-text-fill: -bad;
+    -fx-font-weight: bold;
+}
+
+/* --- asking ------------------------------------------------------------ */
+
+.ask-label {
+    -fx-font-weight: bold;
+}
+
+.ask-input {
+    -fx-font-size: 14px;
+}
+
+.ask-input .content {
+    -fx-background-color: -surface-raised;
+}
+
+.button {
+    -fx-background-radius: 8;
+    -fx-padding: 6 14 6 14;
+    -fx-cursor: hand;
+}
+
+.button-primary {
+    -fx-background-color: -accent;
+    -fx-text-fill: -accent-contrast;
+    -fx-font-weight: bold;
+}
+
+.button-quiet {
+    -fx-background-color: -surface-sunken;
+    -fx-border-color: -border;
+    -fx-border-radius: 8;
+}
+
+.chip {
+    -fx-background-color: -surface-sunken;
+    -fx-border-color: -border;
+    -fx-border-radius: 14;
+    -fx-background-radius: 14;
+    -fx-padding: 4 10 4 10;
+    -fx-font-size: 12px;
+    -fx-cursor: hand;
+}
+
+.ask-examples-label {
+    -fx-text-fill: -text-muted;
+    -fx-padding: 4 4 4 0;
+}
+
+/* --- progress ---------------------------------------------------------- */
+
+.progress {
+    -fx-padding: 10 12 10 12;
+    -fx-background-color: -surface-sunken;
+    -fx-background-radius: 10;
+}
+
+.progress-current {
+    -fx-font-weight: bold;
+}
+
+.progress-step {
+    -fx-padding: 2 8 2 8;
+    -fx-background-radius: 10;
+    -fx-font-size: 12px;
+}
+
+.progress-step.pending {
+    -fx-background-color: -surface;
+    -fx-text-fill: -text-muted;
+}
+
+.progress-step.done {
+    -fx-background-color: -accent;
+    -fx-text-fill: -accent-contrast;
+}
+
+/* --- the answer -------------------------------------------------------- */
+
+.answer {
+    -fx-padding: 16;
+    -fx-background-color: -surface-raised;
+    -fx-background-radius: 10;
+    -fx-border-color: -border;
+    -fx-border-radius: 10;
+}
+
+.answer-question {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+}
+
+.answer-headline {
+    -fx-font-size: 15px;
+    -fx-line-spacing: 2;
+}
+
+/*
+ * A Text node rather than a Label, so that TextFlow can break it across
+ * lines -- which means `-fx-fill` rather than `-fx-text-fill`, and an
+ * underline rather than a background, because a Text has no background to
+ * colour.
+ */
+.claim {
+    -fx-fill: -text-primary;
+}
+
+.claim:hover {
+    -fx-fill: -accent;
+    -fx-underline: true;
+    -fx-cursor: hand;
+}
+
+.notice {
+    -fx-padding: 12;
+    -fx-background-radius: 8;
+}
+
+.notice-headline {
+    -fx-font-weight: bold;
+}
+
+.notice-error {
+    -fx-background-color: derive(-bad, 88%);
+}
+
+.notice-error .label {
+    -fx-text-fill: -bad;
+}
+
+.notice-verdict {
+    -fx-background-color: -surface-sunken;
+}
+
+.notice-quiet {
+    -fx-background-color: -surface-sunken;
+    -fx-text-fill: -text-secondary;
+}
+
+.audit {
+    -fx-padding: 8 10 8 10;
+    -fx-background-radius: 8;
+}
+
+.audit-passed {
+    -fx-background-color: derive(-good, 88%);
+    -fx-text-fill: -good;
+}
+
+.audit-failed {
+    -fx-background-color: derive(-warn, 86%);
+}
+
+.sql {
+    -fx-font-family: "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-size: 12px;
+}
+
+.result-table .table-cell:highlighted {
+    -fx-background-color: derive(-accent, 78%);
+    -fx-font-weight: bold;
+}
+
+.scalar {
+    -fx-padding: 12 0 12 0;
+}
+
+.scalar-value {
+    -fx-font-size: 34px;
+    -fx-font-weight: bold;
+}
+
+.scalar-label {
+    -fx-text-fill: -text-muted;
+}
+
+.trace-node {
+    -fx-font-family: "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-size: 12px;
+}
+
+.trace-bar {
+    -fx-background-color: -accent;
+    -fx-background-radius: 3;
+    -fx-min-height: 8;
+    -fx-pref-height: 8;
+}
+
+.trace-ms {
+    -fx-text-fill: -text-secondary;
+}
+
+.disclosure > .title {
+    -fx-background-color: -surface-sunken;
+}
+
+/* --- feedback ---------------------------------------------------------- */
+
+.feedback {
+    -fx-padding: 12 0 0 0;
+    -fx-border-color: -border transparent transparent transparent;
+    -fx-border-width: 1 0 0 0;
+}
+
+.feedback-prompt {
+    -fx-font-weight: bold;
+}
+
+.button-vote {
+    -fx-background-color: -surface-sunken;
+    -fx-border-color: -border-strong;
+    -fx-border-radius: 8;
+    -fx-min-width: 56;
+}
+
+.button-vote:chosen {
+    -fx-background-color: -accent;
+    -fx-text-fill: -accent-contrast;
+    -fx-border-color: -accent;
+}
+
+.feedback-error {
+    -fx-text-fill: -bad;
+}
+
+/* --- the session list -------------------------------------------------- */
+
+.history-panel {
+    -fx-padding: 14 12 14 18;
+    -fx-background-color: -surface-sunken;
+}
+
+.history-heading {
+    -fx-font-weight: bold;
+    -fx-text-fill: -text-secondary;
+}
+
+.history {
+    -fx-background-color: transparent;
+}
+
+.history .list-cell {
+    -fx-background-color: transparent;
+    -fx-padding: 6 8 6 8;
+    -fx-text-fill: -text-secondary;
+}
+
+.history .list-cell:selected {
+    -fx-background-color: -accent;
+    -fx-text-fill: -accent-contrast;
+    -fx-background-radius: 6;
+}
+
+/* --- charts ------------------------------------------------------------ */
+
+.answer-chart {
+    -fx-padding: 6;
+}
+
+.answer-chart .chart-plot-background {
+    -fx-background-color: -surface-raised;
+}
+
+.answer-chart .chart-vertical-grid-lines,
+.answer-chart .chart-horizontal-grid-lines {
+    -fx-stroke: -border;
+}
+
+.answer-chart .axis {
+    -fx-tick-label-fill: -text-muted;
+}
+
+.answer-chart .chart-legend {
+    -fx-background-color: transparent;
+}
+
+/*
+ * Dark, declared once. JavaFX has no media query for the system theme, so
+ * this is reached by adding `dark` to the root -- which nothing does yet. It
+ * is here because every rule above was written against a role for exactly
+ * this, and leaving the roles undefined for dark would be leaving the work
+ * half finished rather than leaving it out.
+ */
+.root.dark {
+    -surface: #1a1a19;
+    -surface-raised: #232322;
+    -surface-sunken: #131312;
+    -border: #383835;
+    -border-strong: #55544f;
+
+    -text-primary: #ffffff;
+    -text-secondary: #c3c2b7;
+    -text-muted: #96958c;
+
+    -accent: #3987e5;
+    -accent-contrast: #0b0b0b;
+    -good: #35b535;
+    -bad: #e66767;
+    -warn: #d9a441;
+
+    CHART_COLOR_1: #3987e5;
+    CHART_COLOR_2: #d95926;
+    CHART_COLOR_3: #199e70;
+    CHART_COLOR_4: #c98500;
+    CHART_COLOR_5: #d55181;
+    CHART_COLOR_6: #008300;
+    CHART_COLOR_7: #9085e9;
+    CHART_COLOR_8: #e66767;
+}

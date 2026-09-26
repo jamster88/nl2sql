@@ -262,10 +262,5 @@ def fake_db() -> FakeDatabase:
 
 
 @pytest.fixture
-def fake_kb() -> FakeKnowledgeBase:
-    return FakeKnowledgeBase()
-
-
-@pytest.fixture
 def scripted_llm() -> ScriptedLLM:
     return ScriptedLLM()

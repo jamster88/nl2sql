@@ -22,13 +22,19 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v4_4"
+AGENT_TAG="v4_5"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v4_4"
+GUI_TAG="v4_5"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v4_4"
+REVIEW_TAG="v4_5"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v4_4"
+REVIEW_GUI_TAG="v4_5"
+# The desktop client's jar, one published tag per JavaFX platform. Nothing is
+# pulled here: launch.sh --desktop is what fetches it, and only for the
+# platform this machine turns out to be. Pinning it costs two lines of .env
+# and saves everyone who asks for it a Maven build.
+DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
+DESKTOP_TAG="v4_5"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -46,6 +52,7 @@ BUILD_AGENT=0
 # from this checkout instead, which is slower but needs no registry.
 WITH_GUI=0
 WITH_REVIEW=0
+WITH_DESKTOP=0
 WITH_RAG=1
 VERIFY=1
 RESET=0
@@ -62,19 +69,26 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v4_4)
+      --agent-tag TAG    Agent image tag to pull (default: v4_5)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v4_4)
+      --gui-tag TAG      GUI image tag to pull (default: v4_5)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v4_4)
+      --review-tag TAG   Review service image tag (default: v4_5)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v4_4)
+      --review-gui-tag TAG   Review interface image tag (default: v4_5)
+      --desktop          Also pull and pin the desktop client's jar, for this
+                         machine's platform, so ./launch.sh --desktop takes it
+                         from the image instead of building it here
+      --desktop-image N  Desktop client image
+                         (default: mcfaddja/nl2sql-desktop-build)
+      --desktop-tag TAG  Desktop client image tag (default: v4_5). The JavaFX
+                         platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3)
       --context-image N  Context store image (default: mcfaddja/nl2sql-rag-chunkdb)
@@ -115,6 +129,9 @@ while [[ $# -gt 0 ]]; do
         --review-tag) REVIEW_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-gui-image) REVIEW_GUI_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-gui-tag) REVIEW_GUI_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
+        --desktop) WITH_DESKTOP=1; shift ;;
+        --desktop-image) DESKTOP_IMAGE="$2"; WITH_DESKTOP=1; shift 2 ;;
+        --desktop-tag) DESKTOP_TAG="$2"; WITH_DESKTOP=1; shift 2 ;;
         --vector-image) VECTOR_IMAGE="$2"; shift 2 ;;
         --vector-tag) VECTOR_TAG="$2"; shift 2 ;;
         --context-image) CONTEXT_IMAGE="$2"; shift 2 ;;
@@ -270,6 +287,9 @@ fi
 if [[ $WITH_REVIEW -eq 0 && -n "$(env_value REVIEW_IMAGE_NAME)" ]]; then
     WITH_REVIEW=1
 fi
+if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
+    WITH_DESKTOP=1
+fi
 
 step "Writing .env"
 if [[ -f .env ]]; then
@@ -295,6 +315,13 @@ fi
         echo "REVIEW_IMAGE_TAG=$REVIEW_TAG"
         echo "REVIEW_GUI_IMAGE_NAME=$REVIEW_GUI_IMAGE"
         echo "REVIEW_GUI_IMAGE_TAG=$REVIEW_GUI_TAG"
+    fi
+    # Same reasoning again. Unpinned, compose resolves the desktop service to
+    # a local tag with nowhere to be pulled from, and launch.sh builds the
+    # jar here instead.
+    if [[ $WITH_DESKTOP -eq 1 ]]; then
+        echo "DESKTOP_IMAGE_NAME=$DESKTOP_IMAGE"
+        echo "DESKTOP_IMAGE_TAG=$DESKTOP_TAG"
     fi
     echo "VECTOR_IMAGE_NAME=$VECTOR_IMAGE"
     echo "VECTOR_IMAGE_TAG=$VECTOR_TAG"
@@ -354,6 +381,32 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
             warn "./launch.sh --review will build it from source instead."
         fi
     done
+fi
+
+# The desktop client, whose image is tagged by JavaFX platform rather than by
+# architecture: it carries a jar, and a jar carries native code for the
+# machine it will draw on. Only this machine's is pulled -- the other four
+# are 33 MB each of no use here.
+javafx_platform() {
+    case "$(uname -s)" in
+        Darwin) [[ "$(uname -m)" == "arm64" ]] && printf 'mac-aarch64' || printf 'mac' ;;
+        Linux)
+            case "$(uname -m)" in
+                aarch64|arm64) printf 'linux-aarch64' ;;
+                *) printf 'linux' ;;
+            esac ;;
+        MINGW*|MSYS*|CYGWIN*) printf 'win' ;;
+        *) printf 'linux' ;;
+    esac
+}
+
+if [[ $WITH_DESKTOP -eq 1 ]]; then
+    desktop_pair="$DESKTOP_IMAGE:$DESKTOP_TAG-$(javafx_platform)"
+    step "Pulling $desktop_pair (the desktop client)"
+    if ! docker pull "$desktop_pair"; then
+        warn "could not pull $desktop_pair (private repo, not logged in, or no"
+        warn "tag for this platform); ./launch.sh --desktop will build it instead."
+    fi
 fi
 
 # --- Start the databases ---------------------------------------------------

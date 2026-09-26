@@ -493,6 +493,35 @@ services:
       - apitls:/etc/nl2sql/tls:ro
     profiles: ["api"]
 
+  # A build, not a deployment.
+  #
+  # The desktop client draws a window on somebody's own machine, so nothing
+  # runs it in a container. What this service does is produce its jar, which
+  # keeps the promise the rest of this file makes: Docker and nothing else.
+  # Requiring Maven as well, for one component, would make that false.
+  #
+  # `docker compose --profile desktop run --rm desktop` builds the jar and
+  # copies it into ./desktop/target. `launch.sh --desktop` does exactly that,
+  # having first worked out which platform to build for.
+  desktop:
+    build:
+      context: .
+      dockerfile: desktop/Dockerfile
+      args:
+        # The machine the jar is *for*, which is not the one building it.
+        # launch.sh reads it from `uname`; the default is what a Linux
+        # container would otherwise assume about itself.
+        JAVAFX_PLATFORM: ${JAVAFX_PLATFORM:-linux}
+    # Tagged by platform: one jar is one platform, and a cached image built
+    # for another machine is a jar that will not start on this one. The tag
+    # is a version *and* a platform, which is how the published ones are
+    # named -- `v4_5-mac-aarch64`. Unpinned it says `local`, which has
+    # nowhere to be pulled from and is built here instead.
+    image: ${DESKTOP_IMAGE_NAME:-nl2sql-desktop-build}:${DESKTOP_IMAGE_TAG:-local}-${JAVAFX_PLATFORM:-linux}
+    volumes:
+      - ./desktop/target:/out
+    profiles: ["desktop"]
+
 volumes:
   apitls:
     # The REST server's certificate and key. Named so a generated development

@@ -216,6 +216,18 @@ pipeline steps while it works, draws whatever chart the Visual Formatter
 asked for, and takes a yes/no verdict on the answer.
 [`gui/README.md`](../gui/README.md) explains how it is put together.
 
+The same thing is also a desktop application, for anyone who would rather
+not use a browser:
+
+```bash
+./start.sh --desktop
+```
+
+It starts the same services, builds the JavaFX client if there is no jar for
+this platform yet, and opens it -- a Java runtime of 21 or later is all it
+needs. Verdicts from it land in the same review queue as the web interface's.
+[`desktop/README.md`](../desktop/README.md) explains it.
+
 ## Asking over the network instead
 
 The same agent also answers over HTTPS, for a GUI of your own or anything
@@ -252,8 +264,8 @@ A question takes about a minute, so `POST /v1/questions` without `?wait=`
 returns a job straight away and `GET /v1/questions/{id}/events` streams the
 pipeline's progress as it happens. [`API.md`](API.md) is the full contract --
 every endpoint, the response shapes, the error codes, the settings, and
-client snippets for TypeScript, Python and Java, with [`gui/`](../gui) as a
-worked example at full size.
+client snippets for TypeScript, Python and Java, with [`gui/`](../gui) and
+[`desktop/`](../desktop) as worked examples at full size.
 
 Two settings are worth knowing before this leaves your own machine:
 `API_TOKEN` requires a bearer token on every question, and

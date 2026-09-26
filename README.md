@@ -3,13 +3,22 @@
 ## Quick start
 
 ```bash
-./start.sh
+./start.sh              # the web interface, in your browser
+./start.sh --desktop    # the Java desktop client instead, in a window
 ```
 
 That is the whole thing. [`start.sh`](start.sh) pulls what is missing, starts
-every container, waits until the page answers, and opens it in your browser
-at <http://localhost:8080>. First run is a few minutes and about 3 GB of
-images; afterwards it is seconds.
+every container, and puts an interface in front of you. Which interface is
+the only choice it asks you to make, and it has a default: with no flag it
+waits until the page actually answers and opens it in your browser at
+<http://localhost:8080>; with `--desktop` it fetches the desktop client's jar
+(building it if there is no published one for this machine), copies the API's
+certificate out for the client to verify against, and opens the window
+instead. Either way `--review` brings the feedback system up as well and
+opens the review page beside whichever you chose.
+
+First run is a few minutes and about 3 GB of images; afterwards it is
+seconds.
 
 Prefer a terminal?
 
@@ -32,24 +41,27 @@ Either way the same containers come up:
 | `nl2sql-review` | The service that turns reviewed feedback into golden questions, with `--review` |
 | `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 
-The agent and the GUI are published images (`v4_2`); the rest are built or
-pulled by `setup.sh` as well. [Pulling the images](#pulling-the-images) has
+The agent, the GUI, both halves of the review system and the desktop client's
+jar are published images (`v4_5`); the rest are built or pulled by `setup.sh`
+as well. [Pulling the images](#pulling-the-images) has
 the tags.
 
 ### Three scripts
 
 | | When | What it does |
 |---|---|---|
-| [`./start.sh`](start.sh) | You just want to use it | Runs the two below, waits for the page, opens your browser. `--review` brings the feedback system up too and opens that as well |
+| [`./start.sh`](start.sh) | You just want to use it | Runs the two below and opens an interface: the web one in your browser by default, or the Java desktop client with `--desktop`. `--review` brings the feedback system up as well and opens the review page beside either |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
 | [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
 
-`start.sh` adds nothing of its own -- it runs the other two and opens a
-browser. Use them directly when you want the parts separately: a terminal
+`start.sh` adds nothing of its own -- it runs the other two and opens an
+interface. Use them directly when you want the parts separately: a terminal
 session with no API, a different agent tag, no knowledge base.
 
 ```bash
 ./start.sh --review        # and the review interface, in a second page
+./start.sh --desktop       # the Java desktop client instead of the web one
+./start.sh --desktop --review   # the window, and the review page beside it
 ./start.sh --feedback      # keep verdicts, without the review interface
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
@@ -84,6 +96,15 @@ interface and lets them be turned into golden questions -- see
 ```bash
 ./start.sh --review        # both pages, opened for you
 ./launch.sh --review       # the same containers, without the browser step
+```
+
+Or in a window rather than a browser -- the same questions, the same answers
+and the same verdicts, from a Java application on this machine; see
+[The desktop client](#the-desktop-client):
+
+```bash
+./start.sh --desktop       # builds it, trusts the API, opens it
+./launch.sh --desktop      # build it and stop there
 ```
 
 Or as a REST server for something else to talk to, which is the same agent
@@ -239,9 +260,19 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v4_2     # the agent, and the REST API
-docker pull mcfaddja/nl2sql-gui:v4_2       # the web interface
+docker pull mcfaddja/nl2sql-agent:v4_5       # the agent, and the REST API
+docker pull mcfaddja/nl2sql-gui:v4_5         # the web interface
+docker pull mcfaddja/nl2sql-review:v4_5      # the review service
+docker pull mcfaddja/nl2sql-review-gui:v4_5  # the review interface
 ```
+
+The desktop client is published too, but by platform rather than by
+architecture, because a jar carries native code for the machine it will draw
+on: `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64` and the four siblings
+named in [The desktop client](#the-desktop-client). The image holds the jar
+and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
+and `./launch.sh --desktop` pulls the one this machine needs, falling back to
+building it when there is nothing to pull.
 
 `setup.sh` pulls the agent for you and pins it in `.env`. The GUI is opt-in,
 because most people ask questions from a terminal and an image for a
@@ -282,14 +313,40 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_4 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_4 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v4_4 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v4_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v4_4 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v4_5 .
 ```
+
+The desktop client is published along a second axis as well. Every tag is
+multi-architecture like the four above -- that is the machine the image
+*runs* on, to copy the jar out -- but the jar inside carries native code for
+one JavaFX platform, so there is a tag per platform:
+
+```bash
+for platform in mac-aarch64 mac linux linux-aarch64 win; do
+  docker buildx build --platform linux/amd64,linux/arm64 \
+    -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
+    --push -t mcfaddja/nl2sql-desktop-build:v4_5-$platform .
+done
+```
+
+The builder stage is pinned to `$BUILDPLATFORM` because its output is the
+same bytes whatever it runs on; the stage that ships is not, because that is
+the one a manifest needs a variant of.
+
+A published tag does not move. A correction to something already published
+is a new patch version and a new tag -- `v4_5_1` -- rather than a re-push of
+`v4_5`, because a tag that changes under somebody is the one kind of breakage
+they cannot debug from their own checkout. The tag is the version with its
+dots turned into underscores, truncated to however many components the tag
+carries: `v4_5` is 4.5.x and `v4_5_1` is exactly 4.5.1, and
+[`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds the
+fourteen places that say so to the same number.
 
 The two database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
 and the two RAG stores version independently, because their *content* changes
@@ -308,7 +365,8 @@ has to ask.
 
 | Tag | Use |
 |---|---|
-| `v4_4` | Adds the feedback system: verdicts staged from the web interface, and the review service and interface that promote them into the golden questions. Pinned -- what `setup.sh` pulls. |
+| `v4_5` | Adds the Java desktop client, and the two request limits in `/v1/meta` it needed. Pinned -- what `setup.sh` pulls. |
+| `v4_4` | Adds the feedback system: verdicts staged from the web interface, and the review service and interface that promote them into the golden questions. Pinned. |
 | `v4_2` | The multi-agent pipeline, the REST API, and the web interface. Pinned. |
 | `v4_1` | The same pipeline and REST API, before the GUI. Pinned. |
 | `v4` | The multi-agent pipeline, CLI only. Pinned; `./launch.sh --api` cannot run against it, and says so. |
@@ -391,11 +449,11 @@ showing an empty grid would report a failure that did not happen. An
 ambiguous question comes back with a clarification, which is a question for
 the user, so it goes where the answer would.
 
-**Feedback is two buttons.** Yes or no, per answer, kept in the browser and
-shown back in the answer and in the session list. This version does nothing
-else with it -- but the store behind it is an interface with one
-implementation, so the version that sends it somewhere is a new
-implementation and one line, rather than a change to every component.
+**Feedback is two buttons.** Yes or no, per answer, shown back in the answer
+and in the session list. With the staging database up (`--feedback` or
+`--review`) the verdict is also sent to the API and waits to be reviewed; on
+a server without one it is kept in the browser and says so, because a button
+whose every click fails is worse than no button. See [Feedback](#feedback).
 
 The container also holds the API token and verifies the API's certificate, so
 the browser sees neither. That is not a requirement of the API -- it answers
@@ -419,10 +477,91 @@ For development against a running API:
 cd gui && npm install && npm run dev      # http://localhost:5173
 ```
 
+## The desktop client
+
+```bash
+./start.sh --desktop
+```
+
+A JavaFX application in a window on this machine, rather than a page in a
+browser. The same questions, the same progress stream, the same charts and
+the same yes/no verdict as the web interface --
+[`desktop/README.md`](desktop/README.md) is the whole of it.
+
+**It exists because a contract only one implementation has ever met is a
+contract nobody has checked.** [`agent/API.md`](agent/API.md) claims the
+interface is framework-agnostic, and until this was written the only things
+that had ever read it were a React application and a curl script. Writing the
+second client found something immediately: `/v1/meta` published the limits
+that describe the *answer* and not the two that describe the *request*,
+because a browser discovers those from a 422 in its network tab and a desktop
+application shows the user whatever it was handed. Both are now in `limits`,
+and this client reads them before it will let a question be sent.
+
+**Verdicts take the same route as the web interface's.** The same endpoint,
+the same staging table, the same row-level security fence, the same review
+queue. A reviewer sees one queue because there is only one -- not because two
+writers were made to agree -- which is what the API's design buys: the client
+sends an opinion and nothing else, and the server reads the snapshot off the
+job it still has. There is no Java half of the review interface and there
+should not be: the thing that can rewrite the golden question set is one
+service with one token.
+
+**It has to decide for itself whether to believe the server**, which a
+browser never does here. The web interface is served by the nginx that
+proxies the API, so it talks to its own origin and the proxy holds both the
+token and the trust decision. This one opens the connection itself, so
+`./launch.sh --desktop` copies the API's certificate out and the client is
+run with `--cacert`. `--fingerprint` and `--insecure` are the other two
+answers, and the status bar says which of them is in force for as long as it
+is true.
+
+**Docker fetches it; Java runs it.** Nothing runs a desktop application in a
+container, so what the `desktop` image does is *carry* a jar -- and that keeps
+the promise the rest of this repository makes, that Docker is the only thing
+anyone has to install. Running it needs a Java runtime of 21 or later and
+nothing else; JavaFX is inside the jar.
+
+**The window outlives the command that opened it**, which took two things
+rather than one. `nohup` is what survives the terminal being closed
+afterwards; the subshell it is started in is what survives `start.sh` itself
+exiting, because a process backgrounded directly is a job of that shell and
+is reaped with its process group moments later. `start.sh` also waits a beat
+and checks the window is still there before it claims to have opened one --
+the same promise its browser half makes by waiting for the page to answer --
+and prints what the client said if it stopped. Run it again and it says the
+client is already open rather than putting a second window onto the same
+API.
+
+The jar is built in a Linux container for a machine that is not the
+container, so `launch.sh` reads `uname`, pulls the tag for what it finds, and
+builds locally only when there is nothing to pull:
+
+```bash
+./launch.sh --desktop        # fetch it and copy the certificate out
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+```
+
+One jar is one platform. The same native library file names are used on macOS
+x86-64 and arm64, so a jar carrying both would carry one of them twice under
+one name and load whichever came first. That is why there is a published tag
+per platform --
+
+| Tag | For |
+|---|---|
+| `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v4_5-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v4_5-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v4_5-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v4_5-win` | Windows |
+
+-- and why `launch.sh` records which platform the jar beside it was built
+for, and fetches again when that or a source file changes.
+
 ## Feedback
 
-The web interface asks whether an answer was right. This is where those
-answers go.
+The web interface and the desktop client both ask whether an answer was
+right. This is where those answers go.
 
 ```bash
 ./start.sh --review
@@ -864,29 +1003,33 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                             # 2036 tests, no Docker, npm or network needed
-pytest --run-docker --run-node     # all 2422, including ones that build and run containers
+pytest                                          # 2187 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2585, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
-| [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
+| [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 306-test suite run from here |
+| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 376-test Java suite run from here |
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 93-test review GUI suite run from here |
-| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe |
+| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 366 tests behind `--run-docker` are the ones that need a working daemon:
-they build the agent and GUI images and run them, resolve the real compose
-file, and query the four live databases. The 20 behind `--run-node` need npm,
-and run the two GUIs' own suites. Two flags rather than one because the two needs
-are different -- a clone with Docker but no npm should still be able to run
-every container test, and a GUI developer with npm and no Docker daemon
-should still be able to run the interface's. Everything else runs offline in
+The 372 tests behind `--run-docker` are the ones that need a working daemon:
+they build the agent, GUI and desktop images and run them, resolve the real
+compose file, and query the four live databases. The 20 behind `--run-node`
+need npm, and run the two GUIs' own suites. The 6 behind `--run-java` need
+Maven and a JDK of 21 or later, and run the desktop client's. Three flags
+rather than one because the three needs are different -- a clone with Docker
+but no npm should still be able to run every container test, a GUI developer
+with npm and no Docker daemon should still be able to run the interface's,
+and neither of them should be asked for a JDK to run the Python ones.
+Everything else runs offline in
 about 20 seconds -- `setup.sh` included, since it is exercised against fake
 binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
@@ -918,7 +1061,7 @@ COVERAGE_FILE=$PWD/.coverage COVERAGE_PROCESS_START=$PWD/.coveragerc \
 coverage combine && coverage report --show-missing --skip-covered
 ```
 
-**100% of every Python file in the repository** -- 6,629 statements, none
+**100% of every Python file in the repository** -- 6,635 statements, none
 missed. Not four packages with the scripts left out: the agent and its REST
 server, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
@@ -953,8 +1096,9 @@ way the golden pairs reach either store -- the base `SemanticChunker` that
 generator and both loaders. Those have tests now, against throwaway databases
 and stub embedders.
 
-Both web interfaces are measured separately, because they are a different
-language with a different runner, and to the same standard:
+The other two languages -- TypeScript and Java -- are measured separately,
+because they have different runners, and to the same standard. First the two
+web interfaces:
 
 ```bash
 cd gui && npm test           # the web interface
@@ -987,9 +1131,36 @@ first one's answer overwrite the second's. Counting attempts instead fixed
 it, and the test that could not be written before now drives exactly that
 race.
 
+The desktop client is held to the same standard in Java:
+
+```bash
+cd desktop && mvn test       # or pytest tests/java --run-java
+```
+
+**100% of lines and branches** across the desktop client's own 376-test Java
+suite, gated by JaCoCo rather than reported by it, with only `Main` excluded
+-- it calls `Application.launch()`, which does not return until the window is
+closed. The interface half is tested through the real toolkit, headless via
+Monocle, on the toolkit's own thread: a button is pressed with `fire()` and
+the scene graph read afterwards, which exercises the handlers a click would
+with nothing to wait for. `HttpApiClient` is driven against a real
+`HttpsServer` on a loopback port with a certificate `keytool` generates at
+test time -- the encrypted path is where a client's mistakes stay invisible
+until deployment, and a committed private key is a private key in every
+clone.
+
+Getting the Java to 100% deleted code as well, and found a bug. Three guards
+came out that nothing could reach: a second `finished` check in the watcher that both
+of its callers had already made, a `finished` in the pause before the next
+poll that the poll returns before reaching, and a lower bound on the HTTP
+status that `HttpResponse` never reports. The bug was next to the last of
+those -- an empty body was treated as success *before* the status was looked
+at, so a 500 with no body parsed into a document of defaults instead of
+raising. The test that found it is now the one that pins the order.
+
 #### The parts a coverage report cannot see
 
-Twelve shell scripts, two nginx entrypoint fragments, two compose files, nine
+Twelve shell scripts, two nginx entrypoint fragments, two compose files, ten
 Dockerfiles and two nginx templates, none of them Python. They are covered by
 reading and by running -- and, since nothing in coverage.py can see a shell
 script, by a measurement of their own:
@@ -1007,7 +1178,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **869 of 869**.
+  the traces mention -- **1010 of 1010**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -1016,6 +1187,13 @@ script, by a measurement of their own:
   shell, and in no list, so the measurement said 100% of eleven scripts while
   a twelfth had never been run by anything. The same check now covers the
   Dockerfiles and both compose files.
+
+  Compose *services* are inventoried the same way, in both compose files,
+  and for a reason `git ls-files` cannot reach: a service is not a file. One
+  added to either file and asserted on by nothing is absent rather than
+  uncovered, which again reads like one that passes. `desktop` sat there for
+  a day -- examined by two test files and named by neither of the compose
+  ones.
 
   Two more file kinds are checked the same way, and driven straight off
   `git ls-files` with no list to keep in step at all: every

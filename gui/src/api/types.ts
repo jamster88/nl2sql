@@ -143,6 +143,14 @@ export interface JobList {
   count: number;
 }
 
+/**
+ * What a client may not exceed, so it can stop before the server does.
+ *
+ * The last two are for the clients that cannot find them out any other way:
+ * a browser sees a 422 in its network tab, while the desktop client
+ * (`desktop/`) shows the user whatever it was given, and "422 Unprocessable
+ * Entity" is not an explanation of a text box forty characters too long.
+ */
 export interface Limits {
   max_rows: number;
   max_attempts: number;
@@ -150,6 +158,8 @@ export interface Limits {
   statement_timeout_ms: number;
   max_concurrency: number;
   max_wait_seconds: number;
+  max_question_length: number;
+  max_metadata_entries: number;
 }
 
 /**

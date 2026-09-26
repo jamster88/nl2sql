@@ -50,6 +50,8 @@ from ..supervisor import INTENT_FRAMING, describe_scope
 from .jobs import Job, JobStore, StreamChunk
 from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable, build_sink
 from .models import (
+    MAX_METADATA_ENTRIES,
+    MAX_QUESTION_LENGTH,
     ApiError,
     AskRequest,
     Check,
@@ -389,6 +391,8 @@ def create_app(
                 statement_timeout_ms=settings.statement_timeout_ms,
                 max_concurrency=api.max_concurrency,
                 max_wait_seconds=api.max_wait_seconds,
+                max_question_length=MAX_QUESTION_LENGTH,
+                max_metadata_entries=MAX_METADATA_ENTRIES,
             ),
             pipeline=Pipeline(
                 supervisor=settings.supervisor_enabled,

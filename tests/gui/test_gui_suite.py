@@ -95,12 +95,18 @@ def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedPr
     is quoted in two places, which is twice as many chances."""
     counted = _test_count(suite)
     text = (REPO_ROOT / doc).read_text()
+    # Whitespace rather than spaces between the words: a count that has
+    # drifted can otherwise hide behind a line break, and one did -- the
+    # desktop client's was wrong in the README for four releases because its
+    # pattern wanted the words adjacent.
+    #
     # Anchored on the three phrasings rather than on any three-digit number:
     # the root README also quotes the Python counts, and "356 tests behind
     # --run-docker" is not this number.
     quoted = [
         int(number)
-        for pattern in (r"(\d+)-test suite", r"across (\d+) tests", r"^(\d+) tests, 100%")
+        for pattern in (r"(\d+)-test\s+suite", r"across\s+(\d+)\s+tests",
+                        r"^(\d+)\s+tests, 100%")
         for number in re.findall(pattern, text, re.MULTILINE)
     ]
     assert quoted, f"{doc} no longer quotes a GUI test count"

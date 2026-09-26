@@ -37,6 +37,7 @@ WITH_API=0
 WITH_GUI=0
 WITH_FEEDBACK=0
 WITH_REVIEW=0
+WITH_DESKTOP=0
 RESTART=0
 QUIET=0
 
@@ -58,6 +59,8 @@ Usage: ./launch.sh [options]
                    web interface are kept instead of staying in the browser
       --review     Also start the review interface, where staged feedback is
                    turned into golden questions (implies --feedback)
+      --desktop    Also build the desktop client and copy the API's
+                   certificate out, so the client can run on this machine
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -79,6 +82,9 @@ while [[ $# -gt 0 ]]; do
         # The review interface is nothing without the service behind it, and
         # the service is nothing without the database in front of it.
         --review) WITH_REVIEW=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
+        # The desktop client talks to the API directly rather than through a
+        # proxy of its own, so that is the one thing it cannot do without.
+        --desktop) WITH_DESKTOP=1; WITH_API=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -416,6 +422,91 @@ repair_proxy() {  # repair_proxy NAME PORT PROFILES...
     proxy_reaches_api "$port"
 }
 
+# --- The desktop client ----------------------------------------------------
+# A jar, not a container. The desktop client draws a window on this machine,
+# so what Docker does for it is build it -- which keeps the promise the rest
+# of this script makes, that Docker is the only thing anyone has to install.
+DESKTOP_JAR="desktop/target/nl2sql-desktop.jar"
+DESKTOP_CERT="nl2sql-api.crt"
+
+javafx_platform() {
+    # OpenJFX publishes its native code under one of five classifiers, and
+    # the jar is built in a Linux container for whatever this machine is.
+    # Anything unrecognised falls back to a 64-bit Linux build, which is what
+    # the container would have assumed on its own.
+    case "$(uname -s)" in
+        Darwin) [[ "$(uname -m)" == "arm64" ]] && printf 'mac-aarch64' || printf 'mac' ;;
+        Linux)
+            case "$(uname -m)" in
+                aarch64|arm64) printf 'linux-aarch64' ;;
+                *) printf 'linux' ;;
+            esac ;;
+        MINGW*|MSYS*|CYGWIN*) printf 'win' ;;
+        *) printf 'linux' ;;
+    esac
+}
+
+desktop_jar_is_current() {  # desktop_jar_is_current PLATFORM
+    [[ -f "$DESKTOP_JAR" ]] || return 1
+    # A jar built for another machine will not start on this one, and the
+    # only thing that says which it was built for is this file.
+    [[ "$(cat desktop/target/.platform 2>/dev/null)" == "$1" ]] || return 1
+    # Any source newer than the jar means the jar is not this checkout.
+    [[ -z "$(find desktop/src desktop/pom.xml -newer "$DESKTOP_JAR" -print -quit 2>/dev/null)" ]]
+}
+
+desktop_image() {  # desktop_image PLATFORM -- what compose resolves for it
+    printf '%s:%s-%s' \
+        "$(compose_env DESKTOP_IMAGE_NAME nl2sql-desktop-build)" \
+        "$(compose_env DESKTOP_IMAGE_TAG local)" "$1"
+}
+
+build_desktop_jar() {  # build_desktop_jar PLATFORM -- or take it from the image
+    # Compose builds a service that has a `build:` section only when its
+    # image is missing, so a `setup.sh --desktop` that pulled one turns this
+    # into a copy. Nothing is pulled here: launch.sh is the fast path, and a
+    # download in it would be a download on every start.
+    JAVAFX_PLATFORM="$1" docker compose --profile desktop run --rm desktop >/dev/null 2>&1 || return 1
+    printf '%s' "$1" > desktop/target/.platform
+    [[ -f "$DESKTOP_JAR" ]]
+}
+
+if [[ $WITH_DESKTOP -eq 1 ]]; then
+    step "Preparing the desktop client"
+    desktop_platform=$(javafx_platform)
+    mkdir -p desktop/target
+    if desktop_jar_is_current "$desktop_platform"; then
+        info "$DESKTOP_JAR is already built for $desktop_platform"
+    else
+        if docker image inspect "$(desktop_image "$desktop_platform")" >/dev/null 2>&1; then
+            info "Taking it from $(desktop_image "$desktop_platform")"
+        else
+            info "Building it for $desktop_platform -- a few minutes the first time"
+        fi
+        if build_desktop_jar "$desktop_platform"; then
+            info "Built $DESKTOP_JAR"
+        else
+            warn "the desktop client's jar could not be built."
+            warn "Check what it said: JAVAFX_PLATFORM=$desktop_platform docker compose \\"
+            warn "  --profile desktop run --rm desktop"
+            WITH_DESKTOP=0
+        fi
+    fi
+fi
+
+if [[ $WITH_DESKTOP -eq 1 ]]; then
+    # The client verifies the API's certificate rather than skipping the
+    # check, so it needs the certificate. It is the same file the API writes
+    # itself on first start, copied out of the volume it lives in.
+    if docker compose --profile api cp api:/etc/nl2sql/tls/server.crt "./$DESKTOP_CERT" >/dev/null 2>&1; then
+        info "Copied the API certificate to ./$DESKTOP_CERT"
+    else
+        warn "could not copy the API's certificate out of the container."
+        warn "Without it the client has nothing to verify against; --insecure is"
+        warn "the fallback, and it says so in the status bar for as long as it is on."
+    fi
+fi
+
 # --- The web interface -----------------------------------------------------
 # nginx serving the built page, and proxying /v1 to the API over TLS. It is
 # started after the API because it waits on the API's health check, and it
@@ -580,6 +671,24 @@ EOF
 
     docker compose --profile feedback --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
+EOF
+    fi
+    if [[ $WITH_DESKTOP -eq 1 ]]; then
+        cat <<EOF
+
+==> The desktop client is built:
+
+    java -jar $DESKTOP_JAR --cacert ./$DESKTOP_CERT \\
+         --url $api_scheme://localhost:$api_port
+
+    It needs a Java runtime of 21 or later on this machine and nothing else;
+    JavaFX is inside the jar. ./start.sh --desktop runs that line for you.
+
+    Verdicts given in it take the same route as verdicts given in the web
+    interface -- the same endpoint, the same staging table, the same review
+    queue -- so a reviewer sees one queue whichever was used.
+
+    desktop/README.md explains how it is put together.
 EOF
     fi
     if [[ $WITH_GUI -eq 1 ]]; then

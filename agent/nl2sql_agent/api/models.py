@@ -24,6 +24,21 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
+#: The longest question this API will accept, in characters.
+#:
+#: Named rather than written into the validator because it is published in
+#: `/v1/meta` as well, and the two must be the same number. A client that
+#: learns the rule from `Limits` and then hits a 422 has been lied to, which
+#: is worse than not publishing it at all.
+MAX_QUESTION_LENGTH = 2000
+
+#: How many `metadata` entries a caller may attach to a question.
+MAX_METADATA_ENTRIES = 20
+
+#: How long a single metadata key and value may be.
+MAX_METADATA_KEY_LENGTH = 64
+MAX_METADATA_VALUE_LENGTH = 256
+
 
 class AskRequest(BaseModel):
     """A question, and the few things a caller may say about how to run it."""
@@ -39,7 +54,7 @@ class AskRequest(BaseModel):
 
     question: str = Field(
         min_length=1,
-        max_length=2000,
+        max_length=MAX_QUESTION_LENGTH,
         description="The natural-language question.",
     )
     principal: str | None = Field(
@@ -55,7 +70,7 @@ class AskRequest(BaseModel):
         description=(
             "Opaque key/value pairs echoed back on the job. For a GUI to "
             "correlate a job with whatever it calls a conversation turn. "
-            "At most 20 entries, and nothing the server reads."
+            f"At most {MAX_METADATA_ENTRIES} entries, and nothing the server reads."
         ),
     )
 
@@ -82,10 +97,10 @@ class AskRequest(BaseModel):
         loop; unbounded caller-supplied data held in memory is how that
         becomes a problem.
         """
-        if len(value) > 20:
-            raise ValueError("at most 20 metadata entries")
+        if len(value) > MAX_METADATA_ENTRIES:
+            raise ValueError(f"at most {MAX_METADATA_ENTRIES} metadata entries")
         for key, item in value.items():
-            if len(key) > 64 or len(item) > 256:
+            if len(key) > MAX_METADATA_KEY_LENGTH or len(item) > MAX_METADATA_VALUE_LENGTH:
                 raise ValueError(f"metadata entry {key!r} is too long")
         return value
 
@@ -276,12 +291,23 @@ class FeedbackModel(BaseModel):
 
 
 class Limits(BaseModel):
+    """What a client may not exceed, so it can stop before the server does.
+
+    `max_question_length` and `max_metadata_entries` are here for the clients
+    that cannot find them out any other way. A browser sees a 422 in its
+    network tab; a desktop application shows the user whatever it was given,
+    and "422 Unprocessable Entity" is not an explanation of a text box that
+    is forty characters too long.
+    """
+
     max_rows: int
     max_attempts: int
     max_plan_cost: float
     statement_timeout_ms: int
     max_concurrency: int
     max_wait_seconds: float
+    max_question_length: int = MAX_QUESTION_LENGTH
+    max_metadata_entries: int = MAX_METADATA_ENTRIES
 
 
 class Pipeline(BaseModel):

@@ -226,6 +226,20 @@ about (`tables`, `scope`), what it must respect (`limits.max_rows`), and what
 to render (`pipeline.narrate` false means there is no paragraph to show,
 `pipeline.audit` false means no verification badge).
 
+Two of those limits describe the request rather than the answer:
+
+| Field | Default | What |
+| --- | --- | --- |
+| `limits.max_question_length` | `2000` | Characters. A longer question is `422`, not a truncated one |
+| `limits.max_metadata_entries` | `20` | Pairs. Keys are capped at 64 characters and values at 256 |
+
+They are published because of who needs them. A browser that sends an
+over-long question sees the `422` in its network tab; a desktop client shows
+the user whatever it was handed, and "422 Unprocessable Entity" is not an
+explanation of a text box forty characters too long. `desktop/` reads both on
+start-up and refuses the question in the box, which is the only place the
+user can still do something about it.
+
 ---
 
 ## The answer
@@ -418,10 +432,24 @@ show the SQL it tried and the attempts it made.
 
 Nothing below imports anything from this repository.
 
-[`gui/`](../gui) is a complete one -- React and TypeScript, every endpoint
-here, the event stream with its resume and its fallback, and the whole answer
-rendered including the charts. It is worth reading before writing another:
-the snippets below are the shape, and it is the shape at full size.
+There are two complete ones, in two languages, and they are worth reading
+before writing a third: the snippets below are the shape, and those are the
+shape at full size.
+
+[`gui/`](../gui) is React and TypeScript -- every endpoint here, the event
+stream with its resume and its fallback, and the whole answer rendered
+including the charts. [`desktop/`](../desktop) is Java and JavaFX, and is the
+one that proves the claim this page makes: a contract only one implementation
+has ever met is a contract nobody has checked. Writing it found that the two
+limits describing the *request* were not published, because a browser
+discovers those from a 422 in its network tab and a desktop application shows
+the user whatever it was handed. They are in `limits` now.
+
+The differences between the two are worth more than the similarities. The
+browser is served by the nginx that proxies this API, so it talks to its own
+origin and the proxy holds both the token and the trust decision; the desktop
+client opens the connection itself and has to be told which certificate to
+believe. Anything written against this page will be one or the other.
 
 ### TypeScript / React
 

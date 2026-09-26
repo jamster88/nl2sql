@@ -232,12 +232,13 @@ gets its branches covered.
 then does it again against the packaged container, reached by a curl-only
 image over verified TLS.
 
-The other client of this package is [`gui/`](../gui), a React and TypeScript
-front end that imports nothing from it -- every endpoint, the event stream
-with its resume and its fallback to polling, and the whole answer rendered
-including the charts. It is the longest worked example of the contract in
-[`API.md`](API.md), and a useful thing to read before writing a client of
-your own.
+The other clients of this package are [`gui/`](../gui), a React and
+TypeScript front end, and [`desktop/`](../desktop), a JavaFX one, and neither
+imports anything from it -- every endpoint, the event stream with its resume
+and its fallback to polling, and the whole answer rendered including the
+charts. They are the two worked examples of the contract in
+[`API.md`](API.md), in two languages, and a useful thing to read before
+writing a client of your own.
 
 ## Configuration
 

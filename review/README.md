@@ -2,8 +2,9 @@
 
 Turning "that answer was wrong" into a golden question.
 
-The web interface asks whether an answer was right. This is where the
-answers to that question go, and where they are turned into the thing they
+The web interface and the desktop client both ask whether an answer was
+right. This is where the answers to that question go -- from either of them,
+into one queue -- and where they are turned into the thing they
 are worth turning into: a verified question/SQL pair in the set the agent is
 measured and prompted against.
 
@@ -11,7 +12,7 @@ Two processes and a database:
 
 ```
 browser ──nginx──▶ agent API   POST /v1/questions/{id}/feedback
-                       │
+desktop ─────────────▶ │
                        └── INSERT only ──▶ feedbackdb  (staging)
                                                 │
 reviewer ──nginx──▶ review service ──owner──────┘

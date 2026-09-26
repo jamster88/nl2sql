@@ -761,3 +761,153 @@ def test_a_review_proxy_a_restart_does_not_fix_is_reported_too(run_launch):
     assert "cannot reach the review service" in result.output
     assert "Review interface is healthy" not in result.output
     assert "docker compose --profile reviewgui logs reviewgui" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The desktop client
+# ---------------------------------------------------------------------------
+
+
+def test_the_desktop_client_needs_the_api_and_says_so_by_starting_it(run_launch):
+    """It talks to the API directly rather than through a proxy of its own,
+    so that is the one thing it cannot do without."""
+    result = run_launch("--desktop")
+    assert result.returncode == 0
+    assert result.calls_matching("compose --profile api up -d api")
+
+
+def test_it_builds_the_jar_for_this_machine_and_copies_the_certificate_out(run_launch):
+    result = run_launch("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert "Building it for mac-aarch64" in result.output
+    assert result.calls_matching("run --rm desktop")
+    assert "Copied the API certificate" in result.output
+    assert result.calls_matching("cp api:/etc/nl2sql/tls/server.crt")
+    assert (result.workdir / "nl2sql-api.crt").is_file()
+    assert (result.workdir / "desktop/target/nl2sql-desktop.jar").is_file()
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "classifier"),
+    [
+        ("Darwin", "arm64", "mac-aarch64"),
+        ("Darwin", "x86_64", "mac"),
+        ("Linux", "x86_64", "linux"),
+        ("Linux", "aarch64", "linux-aarch64"),
+        ("MINGW64_NT-10.0", "x86_64", "win"),
+        # Anything unrecognised gets what the container would have assumed
+        # about itself, which at least starts on the commonest machine there
+        # is rather than refusing to build at all.
+        ("SunOS", "sparc", "linux"),
+    ],
+)
+def test_the_jar_is_built_for_the_machine_it_will_run_on(run_launch, system, machine, classifier):
+    """One jar is one platform: the same library file names are used on macOS
+    x86-64 and arm64, so a jar carrying both would carry one of them twice
+    under one name and load whichever came first."""
+    result = run_launch("--desktop", env={"FAKE_UNAME_S": system, "FAKE_UNAME_M": machine})
+
+    assert f"Building it for {classifier}" in result.output
+    assert (result.workdir / "desktop/target/.platform").read_text() == classifier
+
+
+def test_a_jar_already_built_from_these_sources_is_not_built_again(run_launch):
+    """The build takes minutes. Doing it on every start would make the fast
+    path the slow one."""
+    first = run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+    assert "Building it for" in first.output
+
+    second = run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+    assert "already built for linux" in second.output
+
+
+def test_a_jar_built_for_another_machine_is_built_again(run_launch):
+    """It would not start on this one, and nothing but the note beside it
+    says which machine it was for."""
+    run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    moved = run_launch("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert "Building it for mac-aarch64" in moved.output
+
+
+def test_a_source_newer_than_the_jar_is_built_again(run_launch):
+    result = run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+    (result.workdir / "desktop" / "src" / "Main.java").write_text("// edited\n")
+
+    again = run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert "Building it for linux" in again.output
+
+
+def test_a_build_that_failed_says_how_to_see_why(run_launch):
+    result = run_launch("--desktop", env={"FAKE_DESKTOP_BUILD_FAILS": "1"})
+
+    assert result.returncode == 0
+    assert "could not be built" in result.output
+    assert "docker compose" in result.output
+    # And the closing notes do not then tell the user to run a jar that is
+    # not there.
+    assert "The desktop client is built" not in result.output
+
+
+def test_a_certificate_that_could_not_be_copied_names_the_fallback(run_launch):
+    """Without it the client has nothing to verify against. --insecure is the
+    answer and it says so in the status bar for as long as it is on."""
+    result = run_launch("--desktop", env={"FAKE_CERT_COPY_FAILS": "1"})
+
+    assert "could not copy the API's certificate" in result.output
+    assert "--insecure is" in result.output
+
+
+def test_the_closing_notes_say_how_to_run_it(run_launch):
+    result = run_launch("--desktop")
+
+    assert "java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt" in result.output
+    assert "Java runtime of 21 or later" in result.output
+    # The point of the whole thing: one queue, whichever client was used.
+    assert "the same staging table, the same review" in result.output
+
+
+DESKTOP_PINNED_ENV = (
+    "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
+    "IMAGE_TAG=v1\n"
+    "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
+    "AGENT_IMAGE_TAG=v4_5\n"
+    "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build\n"
+    "DESKTOP_IMAGE_TAG=v4_5\n"
+    "RAG_ENABLED=true\n"
+)
+
+
+def test_a_pinned_image_that_is_here_is_copied_from_rather_than_rebuilt(run_launch):
+    """`setup.sh --desktop` pulled it. Compose builds a service only when its
+    image is missing, so this turns a Maven build into a copy."""
+    result = run_launch("--desktop", env_file=DESKTOP_PINNED_ENV,
+                        env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64",
+                             "FAKE_DESKTOP_IMAGE_PRESENT": "1"})
+
+    assert "Taking it from mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64" in result.output
+    assert "Building it for" not in result.output
+    # And it never asks a registry: launch.sh is the fast path.
+    assert not result.calls_matching("pull ")
+
+
+def test_a_pinned_image_that_is_not_here_is_built_instead(run_launch):
+    """A tag that is not published yet, a machine that never ran setup with
+    --desktop, or one that is offline. The jar is still what was asked for."""
+    result = run_launch("--desktop", env_file=DESKTOP_PINNED_ENV,
+                        env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert "Building it for linux" in result.output
+    assert (result.workdir / "desktop/target/nl2sql-desktop.jar").is_file()
+
+
+def test_an_unpinned_checkout_looks_for_a_local_tag(run_launch):
+    """`nl2sql-desktop-build:local-linux` has nowhere to be pulled from, which
+    is what .env naming no image means."""
+    result = run_launch("--desktop", env={"FAKE_UNAME_S": "Linux", "FAKE_UNAME_M": "x86_64"})
+
+    assert result.calls_matching("image inspect nl2sql-desktop-build:local-linux")
+    assert "Building it for linux" in result.output
+

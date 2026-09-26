@@ -98,6 +98,8 @@ export function makeMeta(overrides: Partial<Meta> = {}): Meta {
       statement_timeout_ms: 30000,
       max_concurrency: 2,
       max_wait_seconds: 900,
+      max_question_length: 2000,
+      max_metadata_entries: 20,
     },
     pipeline: {
       supervisor: true,
@@ -224,18 +226,4 @@ export function hostileStorage(): Storage {
     removeItem: boom,
     setItem: boom,
   };
-}
-
-/** A `fetch` that answers one canned response. */
-export function fakeFetch(
-  status: number,
-  body: unknown,
-  init: { json?: boolean } = {},
-): typeof fetch {
-  return vi.fn(async () =>
-    new Response(init.json === false ? "not json" : JSON.stringify(body), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  ) as unknown as typeof fetch;
 }

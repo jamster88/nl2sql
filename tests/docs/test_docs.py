@@ -320,10 +320,11 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     first thing a contributor checks a run against, so a wrong one reads as a
     broken checkout.
     """
-    total = _collected("--run-docker", "--run-node")
+    total = _collected("--run-docker", "--run-node", "--run-java")
     docker_only = _collected("--run-docker", "-m", "docker")
     node_only = _collected("--run-node", "-m", "node")
-    offline = total - docker_only - node_only
+    java_only = _collected("--run-java", "-m", "java")
+    offline = total - docker_only - node_only - java_only
 
     quoted = _quoted_counts(root_readme)
 
@@ -331,20 +332,23 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     assert quoted["total"] == total, f"README says {quoted['total']} total, there are {total}"
     assert quoted["docker"] == docker_only, f"README says {quoted['docker']} docker tests, there are {docker_only}"
     assert quoted["node"] == node_only, f"README says {quoted['node']} node tests, there are {node_only}"
+    assert quoted["java"] == java_only, f"README says {quoted['java']} java tests, there are {java_only}"
 
 
 def _quoted_counts(root_readme: str) -> dict[str, int]:
     return {
         "offline": int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1)),
-        "total": int(re.search(r"--run-node\s+#\s*all (\d+)", root_readme).group(1)),
+        "total": int(re.search(r"--run-java\s+#\s*all (\d+)", root_readme).group(1)),
         "docker": int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1)),
         "node": int(re.search(r"The (\d+) behind `--run-node`", root_readme).group(1)),
+        "java": int(re.search(r"The (\d+) behind `--run-java`", root_readme).group(1)),
     }
 
 
 def test_the_quoted_counts_are_internally_consistent(root_readme: str):
     quoted = _quoted_counts(root_readme)
-    assert quoted["offline"] + quoted["docker"] + quoted["node"] == quoted["total"]
+    assert (quoted["offline"] + quoted["docker"] + quoted["node"] + quoted["java"]
+            == quoted["total"])
 
 
 # ---------------------------------------------------------------------------

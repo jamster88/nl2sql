@@ -44,9 +44,9 @@ Either way the same containers come up:
 | `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 
 The agent, the GUI, both halves of the review system and the desktop client's
-jar are published images (`v5_1_1`); the rest are built or pulled by `setup.sh`
+jar are published images (`v5_1_2`); the rest are built or pulled by `setup.sh`
 as well. [Pulling the images](#pulling-the-images) has
-the tags.
+the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
 
 ### Three scripts
 
@@ -282,15 +282,15 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v5_1_1     # the agent, and the REST API
-docker pull mcfaddja/nl2sql-gui:v5_1_1       # the web interface
-docker pull mcfaddja/nl2sql-review:v5_1_1    # the review service
-docker pull mcfaddja/nl2sql-review-gui:v5_1_1  # the review interface
+docker pull mcfaddja/nl2sql-agent:v5_1_2     # the agent, and the REST API
+docker pull mcfaddja/nl2sql-gui:v5_1_2       # the web interface
+docker pull mcfaddja/nl2sql-review:v5_1_2    # the review service
+docker pull mcfaddja/nl2sql-review-gui:v5_1_2  # the review interface
 ```
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v5_1_1-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v5_1_2-mac-aarch64` and the four siblings
 named in [The desktop client](#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
@@ -341,13 +341,13 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_1_1 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_1_2 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1_1 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1_2 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_1_1 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_1_2 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_1_1 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_1_2 .
 ```
 
 The desktop client is published along a second axis as well. Every tag is
@@ -359,7 +359,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v5_1_1-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v5_1_2-$platform .
 done
 ```
 
@@ -368,11 +368,12 @@ same bytes whatever it runs on; the stage that ships is not, because that is
 the one a manifest needs a variant of.
 
 A published tag does not move. A correction to something already published
-is a new patch version and a new tag -- `v5_1_1`, the escaping fix -- rather
-than a re-push of `v5_1`, because a tag that changes under somebody is the one
-kind of breakage they cannot debug from their own checkout. The tag is the
+is a new patch version and a new tag -- `v5_1_1` for the escaping fix, then
+`v5_1_2` -- rather than a re-push of `v5_1`, because a tag that changes under
+somebody is the one kind of breakage they cannot debug from their own
+checkout. The tag is the
 version with its dots turned into underscores, truncated to however many
-components the tag carries: `v5_1_1` is exactly 5.1.1, `v5_1` is 5.1.x and
+components the tag carries: `v5_1_2` is exactly 5.1.2, `v5_1` is 5.1.x and
 `v5` is 5.x, and
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds the
 fourteen places that say so to the same number.
@@ -396,9 +397,15 @@ none of them can drift. They are built from one checkout and only ever tested
 together, so "which GUI goes with which API" should not be a question anyone
 has to ask.
 
+What each version changed is in
+[`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md), one line per change, and
+[`CHANGELOG.md`](CHANGELOG.md), every artifact each version created, updated or
+fixed -- both back to v1, including the versions that published no tag.
+
 | Tag | Use |
 |---|---|
-| `v5_1_1` | A fix to `v5_1`: the narrator was shown HTML-escaped rows and copied the entities into its claims, so the CLI printed `Meat &amp; Seafood` and the markdown answer carried `&amp;amp;`. The narrator now reads the rows as the database has them, and the answer is escaped once, on the way out. Pinned -- what `setup.sh` pulls. |
+| `v5_1_2` | `v5_1_1` with code nothing reached taken out -- `Database.explain`, which only its own tests called, and five guards that could never be false -- found when branch coverage was switched on and gated at 100%. No behaviour changes. Pinned -- what `setup.sh` pulls. |
+| `v5_1_1` | A fix to `v5_1`: the narrator was shown HTML-escaped rows and copied the entities into its claims, so the CLI printed `Meat &amp; Seafood` and the markdown answer carried `&amp;amp;`. The narrator now reads the rows as the database has them, and the answer is escaped once, on the way out. Pinned. |
 | `v5_1` | arch5.1: the review service handles each verdict its own way -- correct answers promoted into the golden set, wrong and correct-but-incomplete ones fixed, validated against the live retail database, and stored in the corrections and completions stores. Pinned. |
 | `v5` | arch5: the answer contract and the Completeness Reviewer, a seven-generation retry budget, and a third verdict -- correct but incomplete -- in the web and desktop clients and the review queue. Pinned. |
 | `v4_5` | Adds the Java desktop client, and the two request limits in `/v1/meta` it needed. Pinned. |
@@ -590,11 +597,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v5_1_1-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v5_1_1-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v5_1_1-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_1_1-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_1_1-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v5_1_2-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v5_1_2-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v5_1_2-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_1_2-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_1_2-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.
@@ -1118,8 +1125,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2491 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2963, including ones that build and run containers
+pytest                                          # 2498 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2970, including ones that build and run containers
 ```
 
 | Directory | Covers |

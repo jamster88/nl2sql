@@ -140,3 +140,56 @@ def test_the_documents_name_the_tag_this_checkout_publishes():
         if not match.group(1).startswith(current)
     ]
     assert stale == [], f"documents name a tag other than {current}: {stale}"
+
+
+# ---------------------------------------------------------------------------
+# The changelogs
+# ---------------------------------------------------------------------------
+
+#: The detailed history and its one-line companion. Both are read for their
+#: entry headings -- `## v5_1_2 (5.1.2) -- 2026-09-26` -- because a release
+#: that adds itself to one and not the other, or to neither, is exactly the
+#: drift this file exists to catch.
+CHANGELOGS = ("CHANGELOG.md", "CHANGELOG_SIMPLE.md")
+_ENTRY = re.compile(r"^## (v[\d_]+)(?: \(([\d.]+)\))? -- (\d{4}-\d{2}-\d{2})", re.MULTILINE)
+
+
+def _entries(path: str) -> list[tuple[str, str, str]]:
+    return _ENTRY.findall((REPO_ROOT / path).read_text())
+
+
+def _as_tuple(tag: str) -> tuple[int, ...]:
+    parts = [int(part) for part in tag[1:].split("_")]
+    return tuple(parts + [0] * (3 - len(parts)))
+
+
+@pytest.mark.parametrize("path", CHANGELOGS)
+def test_the_changelog_opens_with_the_version_this_checkout_publishes(path: str):
+    current = re.search(
+        r'^AGENT_TAG="(v[\d_]+)"', (REPO_ROOT / "setup.sh").read_text(), re.MULTILINE
+    ).group(1)
+    tag, number, _ = _entries(path)[0]
+    assert (tag, number) == (current, __version__)
+
+
+@pytest.mark.parametrize("path", CHANGELOGS)
+def test_the_changelog_runs_newest_first_with_no_version_twice(path: str):
+    tags = [tag for tag, _, _ in _entries(path)]
+    assert tags[-1] == "v1", "the history goes back to v1"
+    assert tags == sorted(set(tags), key=_as_tuple, reverse=True)
+
+
+def test_both_changelogs_tell_the_same_history():
+    detailed, simple = (_entries(path) for path in CHANGELOGS)
+    assert detailed == simple
+
+
+@pytest.mark.parametrize("path", CHANGELOGS)
+def test_every_agent_tag_the_readme_lists_has_an_entry(path: str):
+    """The README's agent tag table is the list of what was published; the
+    `latest` row is an alias, not a version."""
+    readme = (REPO_ROOT / "README.md").read_text()
+    table = readme.split("| Tag | Use |", 1)[1].split("\n\n", 1)[0]
+    published = set(re.findall(r"^\| `(v[\d_]+)` \|", table, re.MULTILINE))
+    assert published, "the README's agent tag table was not found"
+    assert published <= {tag for tag, _, _ in _entries(path)}

@@ -107,13 +107,13 @@ def test_default_run_writes_env_pinning_every_image(run_setup):
     """
     env = run_setup().env_file()
     assert env["IMAGE_NAME"] == "mcfaddja/nl2sql-retail-postgres"
-    assert env["IMAGE_TAG"] == "v1"
+    assert env["IMAGE_TAG"] == _shipped_tag("POSTGRES_TAG")
     assert env["AGENT_IMAGE_NAME"] == "mcfaddja/nl2sql-agent"
     assert env["AGENT_IMAGE_TAG"] == _shipped_tag("AGENT_TAG")
     assert env["VECTOR_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-vectordb"
-    assert env["VECTOR_IMAGE_TAG"] == "v3"
+    assert env["VECTOR_IMAGE_TAG"] == _shipped_tag("VECTOR_TAG")
     assert env["CONTEXT_IMAGE_NAME"] == "mcfaddja/nl2sql-rag-chunkdb"
-    assert env["CONTEXT_IMAGE_TAG"] == "v3"
+    assert env["CONTEXT_IMAGE_TAG"] == _shipped_tag("CONTEXT_TAG")
     assert env["RAG_ENABLED"] == "true"
 
 
@@ -220,7 +220,7 @@ def test_no_rag_skips_the_embedding_model_check(run_setup):
 
 def test_the_default_run_pulls_the_dataset_rather_than_regenerating_it(run_setup):
     result = run_setup()
-    assert result.called("pull mcfaddja/nl2sql-retail-postgres:v1")
+    assert f"pull mcfaddja/nl2sql-retail-postgres:{_shipped_tag('POSTGRES_TAG')}" in result.calls
     assert not result.called("compose build postgres")
 
 

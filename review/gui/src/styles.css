@@ -556,3 +556,111 @@ textarea.input {
 .status-warn {
   color: var(--warn);
 }
+
+/* --- one pane per verdict ------------------------------------------- */
+
+.panes {
+  display: flex;
+  gap: 4px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.pane-tab {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pane-tab[aria-selected="true"] {
+  color: var(--text-primary);
+}
+
+.pane-yes[aria-selected="true"] {
+  border-bottom-color: var(--good);
+}
+
+.pane-no[aria-selected="true"] {
+  border-bottom-color: var(--bad);
+}
+
+.pane-incomplete[aria-selected="true"] {
+  border-bottom-color: var(--warn);
+}
+
+.pane-goes {
+  font-weight: 400;
+  font-size: 0.85rem;
+}
+
+/* --- fixing a wrong or incomplete answer ---------------------------- */
+
+.fix {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.fix h3 {
+  margin: 0;
+}
+
+.fix textarea {
+  font-family: var(--mono);
+  font-size: 0.85rem;
+}
+
+.validation {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.validation-ok {
+  border-color: color-mix(in srgb, var(--good) 45%, var(--border));
+}
+
+.validation-failed {
+  border-color: color-mix(in srgb, var(--bad) 55%, var(--border));
+  background: color-mix(in srgb, var(--bad) 6%, transparent);
+}
+
+.validation p {
+  margin: 0 0 6px;
+}
+
+.validation-warnings {
+  color: var(--warn);
+}
+
+.result-table {
+  overflow-x: auto;
+  max-height: 320px;
+}
+
+.result-table table {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.result-table th,
+.result-table td {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+

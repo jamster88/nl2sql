@@ -356,11 +356,11 @@ Content-Type: application/json
 
 `verdict` is the whole of the required input, one of three:
 
-| `verdict` | The GUIs say | Meaning |
-|---|---|---|
-| `"yes"` | Correct | The answer was right |
-| `"no"` | Wrong | The answer was wrong |
-| `"incomplete"` | Correct but incomplete | The SQL was right, and the answer still lacked something a reader needed -- a name beside an id, the figure a ranking was ranked by |
+| `verdict` | The GUIs say | Meaning | Reviewed into |
+|---|---|---|---|
+| `"yes"` | Correct | The answer was right | The golden question set |
+| `"no"` | Wrong | The answer was wrong | The corrections store, with the query that should have been generated |
+| `"incomplete"` | Correct but incomplete | The SQL was right, and the answer still lacked something a reader needed -- a name beside an id, the figure a ranking was ranked by | The completions store, with the query that would have carried it |
 
 The wire values `"yes"` and `"no"` predate the third and are kept, so
 every verdict already recorded still reads the same. `comment` is optional
@@ -401,13 +401,14 @@ Four rules are worth knowing:
 This process writes one row and can do nothing else with it. It connects as
 `nl2sql_feedback_writer`, a role that may insert a submission, replace one
 that is still pending, delete one that is still pending, and read back three
-of its columns. Rows a curator has accepted, rejected or promoted are
+of its columns. Rows a curator has accepted, rejected, promoted or fixed are
 invisible to it -- by a row-level security policy, so the guarantee does not
 rest on the SQL in this package being careful.
 
 Everything else -- reading the queue, editing a draft pair, writing the
-golden question document -- belongs to a separate service on a separate port
-with a separate token. See [`review/README.md`](../review/README.md).
+golden question document, validating a reviewer's corrected SQL and storing
+it as a correction or a completion -- belongs to a separate service on a
+separate port with a separate token. See [`review/README.md`](../review/README.md).
 
 
 ## Errors

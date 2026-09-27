@@ -1,11 +1,12 @@
 /**
- * The review queue.
+ * The review queue, for one pane's verdict.
  *
- * Filtered by state, because the four states are four different jobs:
- * `pending` is the inbox, `accepted` is the shortlist waiting to be turned
- * into pairs, `rejected` is the record of what was looked at and passed
- * over, and `promoted` is history. Showing them mixed would make the first
- * two indistinguishable at a glance, which is the only glance a queue gets.
+ * Filtered by state, because the states are different jobs: `pending` is
+ * the inbox, `accepted` is the shortlist waiting to be turned into a pair or
+ * a fix, `rejected` is the record of what was looked at and passed over, and
+ * `promoted` and `corrected` are history. Showing them mixed would make the
+ * first two indistinguishable at a glance, which is the only glance a queue
+ * gets.
  */
 
 import type { State, SubmissionModel, Verdict } from "../api/types";

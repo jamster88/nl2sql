@@ -447,7 +447,7 @@ def test_the_closing_lines_say_what_each_page_is_for(run_start):
     the one nobody has seen before."""
     output = run_start("--review").output
     assert "say whether the answer was right" in output
-    assert "promote the good ones" in output
+    assert "promote, correct, complete" in output
 
 
 def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_start):

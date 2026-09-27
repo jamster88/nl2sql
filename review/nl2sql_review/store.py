@@ -48,9 +48,12 @@ PROMOTIONS = "feedback_promotions"
 WRITER_ROLE = "nl2sql_feedback_writer"
 
 #: Every state a submission can be in, in the order it travels through them.
-#: `promoted` is terminal: the pair is in the golden set and the row is now
-#: a record of how it got there.
-STATES = ("pending", "accepted", "rejected", "promoted")
+#: `promoted` and `corrected` are terminal: the pair is in the golden set, or
+#: the fix is in the corrections or completions store, and the row is now a
+#: record of how it got there. The CHECK is re-applied on every start under a
+#: fixed name, for the same reason as the verdict's below.
+STATES = ("pending", "accepted", "rejected", "promoted", "corrected")
+STATE_CHECK = "feedback_submissions_state_check"
 
 #: What a person can say about an answer: correct (`yes`), wrong (`no`), or
 #: correct but incomplete (`incomplete`). The first two wire values predate
@@ -155,8 +158,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 comment          TEXT NOT NULL DEFAULT '',
                 agent_version    TEXT NOT NULL DEFAULT '',
                 submitted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-                state            TEXT NOT NULL DEFAULT 'pending'
-                                   CHECK (state IN ('pending', 'accepted', 'rejected', 'promoted')),
+                state            TEXT NOT NULL DEFAULT 'pending',
                 reviewer         TEXT NOT NULL DEFAULT '',
                 review_note      TEXT NOT NULL DEFAULT '',
                 reviewed_at      TIMESTAMPTZ,
@@ -166,22 +168,25 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             """
         ).format(sql.Identifier(SUBMISSIONS))
     )
-    # The verdict CHECK is (re)applied rather than declared inline: a table
-    # created before `incomplete` existed carries the two-value constraint,
-    # and CREATE TABLE IF NOT EXISTS would leave it that way. The name is the
-    # one Postgres gave the old inline constraint, so this replaces it.
-    conn.execute(
-        sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
-            sql.Identifier(SUBMISSIONS), sql.Identifier(VERDICT_CHECK)
+    # Both CHECKs are (re)applied rather than declared inline: a table
+    # created before `incomplete` or `corrected` existed carries the narrower
+    # constraint, and CREATE TABLE IF NOT EXISTS would leave it that way. The
+    # names are the ones Postgres gave the old inline constraints, so this
+    # replaces them.
+    for column, name, values in (("verdict", VERDICT_CHECK, VERDICTS), ("state", STATE_CHECK, STATES)):
+        conn.execute(
+            sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                sql.Identifier(SUBMISSIONS), sql.Identifier(name)
+            )
         )
-    )
-    conn.execute(
-        sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} CHECK (verdict IN ({}))").format(
-            sql.Identifier(SUBMISSIONS),
-            sql.Identifier(VERDICT_CHECK),
-            sql.SQL(", ").join(sql.Literal(v) for v in VERDICTS),
+        conn.execute(
+            sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} CHECK ({} IN ({}))").format(
+                sql.Identifier(SUBMISSIONS),
+                sql.Identifier(name),
+                sql.Identifier(column),
+                sql.SQL(", ").join(sql.Literal(v) for v in values),
+            )
         )
-    )
     # The review queue is read by state, newest first, on every page load.
     conn.execute(
         sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (state, submitted_at DESC)").format(
@@ -355,13 +360,23 @@ def counts(conn: psycopg.Connection) -> dict[str, int]:
     Every state is present whether or not anything is in it, so a queue
     badge reads `0` rather than disappearing.
     """
+    by_verdict = counts_by_verdict(conn)
+    return {state: sum(by_verdict[v][state] for v in VERDICTS) for state in STATES}
+
+
+def counts_by_verdict(conn: psycopg.Connection) -> dict[str, dict[str, int]]:
+    """The same counts, per verdict: one queue per verdict in the review GUI.
+
+    Every verdict and every state is present, zeros included, for the same
+    reason as above.
+    """
     rows = conn.execute(
-        sql.SQL("SELECT state, count(*) AS n FROM {} GROUP BY state").format(
+        sql.SQL("SELECT verdict, state, count(*) AS n FROM {} GROUP BY verdict, state").format(
             sql.Identifier(SUBMISSIONS)
         )
     ).fetchall()
-    found = {row["state"]: row["n"] for row in rows}
-    return {state: found.get(state, 0) for state in STATES}
+    found = {(row["verdict"], row["state"]): row["n"] for row in rows}
+    return {v: {state: found.get((v, state), 0) for state in STATES} for v in VERDICTS}
 
 
 def review(
@@ -446,6 +461,30 @@ def mark_promoted(
     conn.commit()
 
 
+def mark_corrected(
+    conn: psycopg.Connection,
+    submission_id: str,
+    *,
+    fix_id: str,
+    reviewer: str,
+    review_note: str,
+) -> Submission | None:
+    """Move a submission to `corrected`, naming the fix that came of it.
+
+    `promoted_pair_id` holds the fix's id -- W0001, I0001 -- so one column
+    says where every terminal submission went, whichever store that was.
+    """
+    row = conn.execute(
+        sql.SQL(
+            "UPDATE {} SET state = 'corrected', promoted_pair_id = %s, reviewer = %s, "
+            "review_note = %s, reviewed_at = now() WHERE id = %s RETURNING *"
+        ).format(sql.Identifier(SUBMISSIONS)),
+        (fix_id, reviewer, review_note, submission_id),
+    ).fetchone()
+    conn.commit()
+    return _row_to_submission(row) if row else None
+
+
 def promotions(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, Any]]:
     rows = conn.execute(
         sql.SQL("SELECT * FROM {} ORDER BY promoted_at DESC LIMIT %s").format(
@@ -500,6 +539,14 @@ class Repository:
     def counts(self) -> dict[str, int]:
         with connection(self.url) as conn:
             return counts(conn)
+
+    def counts_by_verdict(self) -> dict[str, dict[str, int]]:
+        with connection(self.url) as conn:
+            return counts_by_verdict(conn)
+
+    def mark_corrected(self, submission_id: str, **kwargs: Any) -> Submission | None:
+        with connection(self.url) as conn:
+            return mark_corrected(conn, submission_id, **kwargs)
 
     def review(self, submission_id: str, **kwargs: Any) -> Submission | None:
         with connection(self.url) as conn:

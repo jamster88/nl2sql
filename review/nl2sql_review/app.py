@@ -15,10 +15,23 @@ INSERT-only role on one table, and everything else is here, behind its own
 token, on its own port, in its own container.
 
 The routes are shaped around what a review actually is: look at a queue,
-open one, judge it, and -- for the ones worth keeping -- build a golden pair
-out of it and write that pair into the document. The last step is the only
-one with consequences outside this database, and it is the only one that is
-a POST to a named action rather than a field on a PATCH.
+open one, judge it, and -- for the ones worth keeping -- act on it. What
+acting means depends on the verdict the user gave, and since 5.1 each
+verdict has one way forward:
+
+* **correct** -- build a golden pair out of it and write that pair into the
+  question document (`/promote`);
+* **wrong** -- write the query the agent should have generated, run it
+  against the live retail database (`/validate`), and store the fix in the
+  corrections store (`/fix`);
+* **correct but incomplete** -- the same, into the completions store.
+
+The golden set is what the agent is measured against, so a wrong or
+incomplete answer never reaches it, however well it is fixed; and a fix is
+stored only if the query runs, which `/fix` checks again for itself rather
+than taking the browser's word for it. Promotion and fixing are the only
+steps with consequences outside the staging database, and they are the only
+ones that are POSTs to a named action rather than a field on a PATCH.
 """
 
 from __future__ import annotations
@@ -48,9 +61,25 @@ HTTP_422_UNPROCESSABLE = 422
 
 from . import promote as promotion_module
 from . import render
+from . import validation as validation_module
+from .corrections import (
+    BY_SLUG,
+    COMPLETIONS,
+    CORRECTIONS,
+    KINDS,
+    AlreadyFixed,
+    EmbedResult,
+    Fix,
+    FixStore,
+)
 from .models import (
     ApiError,
     Check,
+    FixKind,
+    FixList,
+    FixModel,
+    FixRequest,
+    FixResultModel,
     GoldenPairModel,
     GoldenSet,
     Health,
@@ -66,13 +95,20 @@ from .models import (
     StepModel,
     SubmissionList,
     SubmissionModel,
+    ValidateRequest,
+    ValidationModel,
 )
 from .promote import PromotionError
 from .render import Draft
 from .settings import ReviewSettings
 from .store import STATES, VERDICTS, Repository, Submission
 
-__version__ = "4.5.0"
+__version__ = "5.1.0"
+
+#: What each verdict's submissions are for, in the words a refusal uses.
+#: `yes` is promoted into the golden set; the other two are fixed into the
+#: store for their verdict.
+GOLDEN_VERDICT = "yes"
 
 #: Same envelope as the agent API, so one client parses both services.
 FALLBACK_CODES = {
@@ -134,35 +170,89 @@ def _to_model(submission: Submission) -> SubmissionModel:
     return SubmissionModel(**submission.as_dict())
 
 
+def default_embedder(config: ReviewSettings) -> Any:
+    """The embedder the golden set's loaders use, pointed where they point.
+
+    `ragproc`'s, imported the way promotion imports it, so a fix's question
+    and a golden pair's are embedded by the same code with the same model --
+    which is what makes their vectors comparable when an agent reads both.
+    """
+    promotion_module._ensure_importable(config.rag_dir)
+    from ragproc.embedder import build_embedder  # type: ignore[import-not-found]
+
+    return build_embedder("ollama", config.embed_model, config.ollama_url)
+
+
+def default_validator(config: ReviewSettings) -> Callable[[str, str], validation_module.Validation]:
+    def run(sql: str, reference: str) -> validation_module.Validation:
+        return validation_module.validate(
+            sql,
+            url=config.retail_db_url,
+            reference=reference,
+            timeout_ms=config.validate_timeout_ms,
+            max_rows=config.validate_max_rows,
+        )
+
+    return run
+
+
+def default_retail_pinger(config: ReviewSettings) -> Callable[[], None]:
+    def ping() -> None:
+        import psycopg
+
+        with psycopg.connect(config.retail_db_url, connect_timeout=5) as conn:
+            conn.execute("SELECT 1").fetchone()
+
+    return ping
+
+
 def create_app(
     *,
     settings: ReviewSettings | None = None,
     repository: Repository | None = None,
     promoter: Callable[[ReviewSettings, Draft], promotion_module.Promotion] | None = None,
     previewer: Callable[[ReviewSettings, Draft], tuple[str, str, list[str]]] | None = None,
+    fix_stores: dict[str, FixStore] | None = None,
+    validator: Callable[[str, str], validation_module.Validation] | None = None,
+    embedder_factory: Callable[[], Any] | None = None,
+    retail_pinger: Callable[[], None] | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
     `promoter` and `previewer` are separated from the repository because they
     are the two things that touch the filesystem. A test that wants to prove
     the routes behave when a promotion fails should not have to arrange for a
-    real markdown file to be unwritable.
+    real markdown file to be unwritable. The fix path is split the same way:
+    the two stores, the validator that runs SQL against the retail database,
+    and the embedder are each handed in, so the routes can be driven with no
+    database and no model.
     """
     config = settings or ReviewSettings.from_env()
     repo = repository if repository is not None else Repository(config.feedback_db_url)
     do_promote = promoter or promotion_module.promote
     do_preview = previewer or promotion_module.preview
+    stores = fix_stores if fix_stores is not None else {
+        CORRECTIONS.slug: FixStore(CORRECTIONS, config.corrections_db_url),
+        COMPLETIONS.slug: FixStore(COMPLETIONS, config.completions_db_url),
+    }
+    do_validate = validator or default_validator(config)
+    make_embedder = embedder_factory or (lambda: default_embedder(config))
+    ping_retail = retail_pinger or default_retail_pinger(config)
     started = time.monotonic()
 
     app = FastAPI(
         title="NL2SQL feedback review",
         version=__version__,
-        summary="Review captured feedback and promote it into the golden question set.",
+        summary="Review captured feedback: promote the correct, fix the wrong and the incomplete.",
         description=(
             "Feedback from the web GUI lands in a staging database. This service "
-            "is where it is read, judged, edited into a golden question/SQL pair "
-            "and written into `context_questions/translated_questions.md`, which "
-            "is the source of truth the retrieval stores are built from."
+            "is where it is read and judged. A *correct* answer is edited into a "
+            "golden question/SQL pair and written into "
+            "`context_questions/translated_questions.md`, the source of truth the "
+            "retrieval stores are built from. A *wrong* answer, or a *correct but "
+            "incomplete* one, is fixed instead: the reviewer writes the SQL that "
+            "should have been generated, it is validated against the live retail "
+            "database, and it is stored in the corrections or completions store."
         ),
         root_path=config.root_path,
         docs_url="/docs" if config.docs_enabled else None,
@@ -234,6 +324,27 @@ def create_app(
             )
         return found
 
+    def _require_fixable(submission_id: str) -> Submission:
+        """A submission whose verdict is wrong or incomplete, and so is fixed."""
+        found = _require(submission_id)
+        if found.verdict == GOLDEN_VERDICT:
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "wrong_workflow",
+                f"{submission_id} was marked correct; a correct answer is promoted into "
+                "the golden set (POST /v1/submissions/{id}/promote), not fixed",
+            )
+        return found
+
+    def _fix_counts() -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for slug, store in stores.items():
+            try:
+                counts[slug] = store.count()
+            except Exception:  # noqa: BLE001 - meta must answer with a store down
+                counts[slug] = 0
+        return counts
+
     def _golden() -> GoldenSet:
         """The set as the document holds it, or why it could not be read."""
         try:
@@ -296,6 +407,9 @@ def create_app(
                 "submission": "/v1/submissions/{id}",
                 "preview": "POST /v1/submissions/{id}/preview",
                 "promote": "POST /v1/submissions/{id}/promote",
+                "validate": "POST /v1/submissions/{id}/validate",
+                "fix": "POST /v1/submissions/{id}/fix",
+                "fixes": "/v1/fixes/{corrections|completions}",
                 "golden": "/v1/golden",
                 "promotions": "/v1/promotions",
                 "health": "/healthz",
@@ -334,6 +448,20 @@ def create_app(
         writable = _writable(config)
         checks["document_writable"] = Check(ok=writable[0], detail=writable[1])
 
+        # The fix path needs three more databases: the retail one a fix is
+        # validated against, and the two stores fixes are kept in.
+        try:
+            ping_retail()
+            checks["retail_database"] = Check(ok=True, detail=_redacted(config.retail_db_url))
+        except Exception as exc:  # noqa: BLE001 - the detail is the whole point
+            checks["retail_database"] = Check(ok=False, detail=f"{type(exc).__name__}: {exc}")
+        for slug, store in stores.items():
+            try:
+                store.ping()
+                checks[f"{slug}_store"] = Check(ok=True, detail=_redacted(store.url))
+            except Exception as exc:  # noqa: BLE001
+                checks[f"{slug}_store"] = Check(ok=False, detail=f"{type(exc).__name__}: {exc}")
+
         ready = all(check.ok for check in checks.values())
         if not ready:
             response.status_code = HTTP_503_SERVICE_UNAVAILABLE
@@ -352,8 +480,10 @@ def create_app(
         golden = _golden()
         try:
             counts = repo.counts()
+            by_verdict = repo.counts_by_verdict()
         except Exception:  # noqa: BLE001 - meta must answer even with no database
             counts = {state: 0 for state in STATES}
+            by_verdict = {verdict: dict(counts) for verdict in VERDICTS}
         return ReviewMeta(
             version=__version__,
             states=list(STATES),
@@ -361,11 +491,16 @@ def create_app(
             golden_count=golden.count,
             next_pair_id=golden.next_pair_id,
             counts=counts,
+            verdicts=list(VERDICTS),
+            counts_by_verdict=by_verdict,
+            fixes=_fix_counts(),
             reload_context=config.reload_context,
             reload_vectors=config.reload_vectors,
             limits=ReviewLimits(
                 max_pair_number=render.MAX_PAIR_NUMBER,
                 reload_timeout_seconds=config.reload_timeout_seconds,
+                validate_timeout_ms=config.validate_timeout_ms,
+                validate_max_rows=config.validate_max_rows,
             ),
             authentication="bearer" if config.token else "none",
             warnings=config.warnings(),
@@ -401,6 +536,7 @@ def create_app(
             submissions=[_to_model(s) for s in found],
             count=len(found),
             counts=repo.counts(),
+            counts_by_verdict=repo.counts_by_verdict(),
         )
 
     @app.get(
@@ -440,6 +576,13 @@ def create_app(
                 "already_promoted",
                 f"{submission_id} is already in the golden set as "
                 f"{found.promoted_pair_id}; its record is not editable",
+            )
+        if found.state == "corrected":
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "already_fixed",
+                f"{submission_id} is already fixed as {found.promoted_pair_id}; "
+                "its record is not editable",
             )
         updated = repo.review(
             submission_id,
@@ -492,6 +635,19 @@ def create_app(
         reviewer: str = Header(default="", alias="X-Reviewer"),
     ) -> PromotionModel:
         found = _require(submission_id)
+        if found.verdict != GOLDEN_VERDICT:
+            # A wrong or incomplete answer is fixed into its own store. The
+            # golden set is what the agent is measured against, and a pair
+            # built from a mistake does not belong in it however well the
+            # mistake was corrected.
+            store = KINDS[found.verdict].slug
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "wrong_workflow",
+                f"{submission_id} was marked {KINDS[found.verdict].label}; it is fixed into "
+                f"the {store} store (POST /v1/submissions/{{id}}/fix), not promoted into "
+                "the golden set",
+            )
         if found.state == "promoted":
             raise ReviewHTTPError(
                 HTTP_409_CONFLICT,
@@ -542,6 +698,149 @@ def create_app(
             reloaded=result.reloaded,
             steps=[StepModel(**step.__dict__) for step in result.steps],
         )
+
+    # --- fixing a wrong or incomplete answer --------------------------------
+
+    @app.post(
+        "/v1/submissions/{submission_id}/validate",
+        tags=["fixes"],
+        response_model=ValidationModel,
+        dependencies=guarded,
+        summary="Run a corrected query against the live retail database",
+        responses={HTTP_404_NOT_FOUND: {"model": ApiError}, HTTP_409_CONFLICT: {"model": ApiError}},
+    )
+    def validate_fix(submission_id: str, body: ValidateRequest) -> ValidationModel:
+        found = _require_fixable(submission_id)
+        return ValidationModel(**do_validate(body.sql, found.sql_code).as_dict())
+
+    @app.post(
+        "/v1/submissions/{submission_id}/fix",
+        tags=["fixes"],
+        response_model=FixResultModel,
+        dependencies=guarded,
+        summary="Store a validated fix in the corrections or completions store",
+        responses={
+            HTTP_404_NOT_FOUND: {"model": ApiError},
+            HTTP_409_CONFLICT: {"model": ApiError},
+            HTTP_422_UNPROCESSABLE: {"model": ApiError},
+            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
+        },
+    )
+    def fix_submission(
+        submission_id: str,
+        body: FixRequest,
+        reviewer: str = Header(default="", alias="X-Reviewer"),
+    ) -> FixResultModel:
+        found = _require_fixable(submission_id)
+        if found.state == "corrected":
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "already_fixed",
+                f"{submission_id} is already fixed as {found.promoted_pair_id}",
+            )
+        if found.state == "rejected":
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "rejected",
+                f"{submission_id} was rejected; accept it before fixing it",
+            )
+
+        # Validated again, here, whatever the browser was told a moment ago:
+        # the rule is that only SQL that runs is stored, and a rule the
+        # client enforces is a suggestion.
+        checked = do_validate(body.sql, found.sql_code)
+        if not checked.valid:
+            raise ReviewHTTPError(
+                HTTP_422_UNPROCESSABLE, "not_valid", "; ".join(checked.problems)
+            )
+
+        kind = KINDS[found.verdict]
+        store = stores[kind.slug]
+        who = reviewer or found.reviewer
+        record = Fix(
+            fix_id="",
+            submission_id=found.id,
+            job_id=found.job_id,
+            question=found.question,
+            incorrect_sql=found.sql_code,
+            incorrect_answer=found.answer or found.narrative,
+            incorrect_columns=list(found.columns),
+            incorrect_row_count=found.row_count,
+            corrected_sql=checked.sql,
+            corrected_columns=checked.columns,
+            corrected_rows=checked.rows,
+            corrected_row_count=checked.row_count,
+            corrected_truncated=checked.truncated,
+            plan_cost=checked.plan_cost,
+            user_comment=found.comment,
+            reviewer=who,
+            review_note=body.review_note,
+            agent_version=found.agent_version,
+        )
+        try:
+            stored = store.save(record)
+        except AlreadyFixed as exc:
+            # The store has it and the staging row does not say so: a save
+            # that stored the record and then lost its connection. Heal the
+            # row, and say it was already done rather than doing it twice.
+            repo.mark_corrected(
+                submission_id, fix_id=exc.fix_id, reviewer=who, review_note=body.review_note
+            )
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "already_fixed",
+                f"{submission_id} is already fixed as {exc.fix_id}",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - reported, and nothing was marked
+            raise ReviewHTTPError(
+                HTTP_503_SERVICE_UNAVAILABLE,
+                "unavailable",
+                f"the {kind.slug} store could not be written: {type(exc).__name__}: {exc}",
+            ) from exc
+
+        submission = repo.mark_corrected(
+            submission_id, fix_id=stored.fix_id, reviewer=who, review_note=body.review_note
+        )
+
+        # The RAG half. Best-effort: the record is the fact, and a vector the
+        # embedding host could not produce now is produced by the next save.
+        if config.embed_fixes:
+            try:
+                embedded = store.embed_pending(make_embedder())
+            except Exception as exc:  # noqa: BLE001 - the embedder could not even be built
+                embedded = EmbedResult(ran=False, error=f"{type(exc).__name__}: {exc}")
+        else:
+            embedded = EmbedResult(ran=False)
+        stored.embedded = embedded.ran and embedded.error is None and embedded.pending == 0
+
+        return FixResultModel(
+            kind=kind.slug,
+            fix=FixModel(**stored.as_dict()),
+            validation=ValidationModel(**checked.as_dict()),
+            submission=_to_model(submission if submission is not None else found),
+            embedded=stored.embedded,
+            embed_detail=embedded.detail,
+        )
+
+    @app.get(
+        "/v1/fixes/{kind}",
+        tags=["fixes"],
+        response_model=FixList,
+        dependencies=guarded,
+        summary="What one store holds, newest first",
+        responses={HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError}},
+    )
+    def fixes(kind: FixKind, limit: int = Query(default=50, ge=1, le=500)) -> FixList:
+        store = stores[BY_SLUG[kind].slug]
+        try:
+            found = store.listing(limit)
+        except Exception as exc:  # noqa: BLE001
+            raise ReviewHTTPError(
+                HTTP_503_SERVICE_UNAVAILABLE,
+                "unavailable",
+                f"the {kind} store could not be read: {type(exc).__name__}: {exc}",
+            ) from exc
+        return FixList(kind=kind, fixes=[FixModel(**f.as_dict()) for f in found], count=len(found))
 
     @app.get(
         "/v1/golden",

@@ -1,5 +1,5 @@
 /**
- * The HTTP client. Eight calls and an error class.
+ * The HTTP client. Twelve calls and an error class.
  *
  * Deliberately thin, like the web GUI's: the API is already a good client
  * interface, and wrapping it in a layer with opinions of its own would only
@@ -8,15 +8,20 @@
  * `{"error": {"code", "message"}}` -- because code that unwraps that at each
  * call site eventually forgets to somewhere.
  *
- * `promote` is the only call here with consequences outside this service's
- * own database, and it is the only one that is a POST to a named action
- * rather than a field on a PATCH. That is not decoration: it is what stops
- * a form that saves as you type from writing the golden question set.
+ * `promote` and `fix` are the only calls here with consequences outside the
+ * staging database -- one writes the golden question set, the other a
+ * corrections or completions store -- and they are the only ones that are a
+ * POST to a named action rather than a field on a PATCH. That is not
+ * decoration: it is what stops a form that saves as you type from writing
+ * either. `validate` is a POST too, but it only runs the query.
  */
 
 import type {
   ApiErrorBody,
   DraftModel,
+  FixKind,
+  FixList,
+  FixResultModel,
   GoldenSet,
   PreviewModel,
   PromotionList,
@@ -27,6 +32,7 @@ import type {
   State,
   SubmissionList,
   SubmissionModel,
+  ValidationModel,
   Verdict,
 } from "./types";
 
@@ -76,6 +82,11 @@ export interface Client {
   promote(id: string, draft: DraftModel, reviewer?: string, signal?: AbortSignal): Promise<PromotionModel>;
   golden(signal?: AbortSignal): Promise<GoldenSet>;
   promotions(limit?: number, signal?: AbortSignal): Promise<PromotionList>;
+  /** Runs the SQL against the live retail database. Stores nothing. */
+  validate(id: string, sql: string, signal?: AbortSignal): Promise<ValidationModel>;
+  /** Validates again, server side, then stores the fix. Not undoable here. */
+  fix(id: string, sql: string, reviewer?: string, note?: string, signal?: AbortSignal): Promise<FixResultModel>;
+  fixes(kind: FixKind, limit?: number, signal?: AbortSignal): Promise<FixList>;
 }
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
@@ -191,6 +202,32 @@ export function createClient(options: ClientOptions = {}): Client {
 
     promotions: (limit = 50, signal) =>
       request<PromotionList>("/v1/promotions", {
+        headers: headers(),
+        query: { limit },
+        signal: signal ?? null,
+      }),
+
+    validate: (value, sql, signal) =>
+      request<ValidationModel>(`/v1/submissions/${id(value)}/validate`, {
+        method: "POST",
+        headers: headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ sql }),
+        signal: signal ?? null,
+      }),
+
+    fix: (value, sql, reviewer, note = "", signal) =>
+      request<FixResultModel>(`/v1/submissions/${id(value)}/fix`, {
+        method: "POST",
+        headers: headers({
+          "Content-Type": "application/json",
+          ...(reviewer ? { "X-Reviewer": reviewer } : {}),
+        }),
+        body: JSON.stringify({ sql, review_note: note }),
+        signal: signal ?? null,
+      }),
+
+    fixes: (kind, limit = 50, signal) =>
+      request<FixList>(`/v1/fixes/${kind}`, {
         headers: headers(),
         query: { limit },
         signal: signal ?? null,

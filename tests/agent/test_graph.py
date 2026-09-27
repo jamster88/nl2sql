@@ -1172,3 +1172,17 @@ def test_a_gap_whose_table_is_already_in_scope_leaves_the_scope_alone():
     state = make_agent(db, llm, contract_resources=resources(), narrate_enabled=False).run("which SKU?")
     review = [e for e in state["trace"] if e.node == "review"][0]
     assert "scope" not in review.detail
+
+
+def test_every_node_has_a_progress_label_and_every_label_a_node():
+    """The GUIs and the CLI show `STEP_LABELS`, never raw node names. A node
+    registered without a label leaks its graph name into an interface; a
+    label with no node is a step the event stream can never send."""
+    from nl2sql_agent.graph import STEP_LABELS, step_label
+
+    agent = make_agent(FakeDatabase(tables=TABLES), scripted([]))
+    nodes = {name for name in agent._graph.nodes if not name.startswith("__")}
+
+    assert nodes == set(STEP_LABELS)
+    assert step_label("review") == "completeness"
+    assert step_label("not_a_node") == "not_a_node"

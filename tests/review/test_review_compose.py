@@ -87,7 +87,7 @@ def api(config: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("service", ["feedbackdb", "review", "reviewgui"])
+@pytest.mark.parametrize("service", ["feedbackdb", "correctionsdb", "completionsdb", "review", "reviewgui"])
 def test_nothing_is_started_unless_it_is_asked_for(tmp_path_factory, service: str):
     """Most people ask questions from a terminal and never review anything.
 
@@ -106,7 +106,13 @@ def test_nothing_is_started_unless_it_is_asked_for(tmp_path_factory, service: st
 
 @pytest.mark.parametrize(
     "service,profile",
-    [("feedbackdb", "feedback"), ("review", "review"), ("reviewgui", "reviewgui")],
+    [
+        ("feedbackdb", "feedback"),
+        ("correctionsdb", "review"),
+        ("completionsdb", "review"),
+        ("review", "review"),
+        ("reviewgui", "reviewgui"),
+    ],
 )
 def test_each_service_is_in_the_profile_it_is_named_for(config: dict, service: str, profile: str):
     assert config["services"][service]["profiles"] == [profile]
@@ -325,5 +331,81 @@ def test_the_review_service_is_health_checked_on_the_scheme_it_serves(review: di
 
 
 def test_every_new_service_restarts_unless_stopped(config: dict):
-    for name in ("feedbackdb", "review", "reviewgui"):
+    for name in ("feedbackdb", "correctionsdb", "completionsdb", "review", "reviewgui"):
         assert config["services"][name]["restart"] == "unless-stopped"
+
+
+# ---------------------------------------------------------------------------
+# The corrections and completions stores (5.1)
+# ---------------------------------------------------------------------------
+
+FIX_STORES = {
+    "correctionsdb": ("correctionsdata", "nl2sql_corrections", "CORRECTIONS_DB_URL"),
+    "completionsdb": ("completionsdata", "nl2sql_completions", "COMPLETIONS_DB_URL"),
+}
+
+
+@pytest.mark.parametrize("service", sorted(FIX_STORES))
+def test_each_fix_store_is_pgvector_in_its_own_volume(config: dict, service: str):
+    """Records and RAG side by side, so the image has to carry pgvector;
+    and data a person typed, so it keeps it in a volume of its own."""
+    spec = config["services"][service]
+    volume, database, _ = FIX_STORES[service]
+    assert spec["image"].startswith("pgvector/pgvector:")
+    assert spec["environment"]["POSTGRES_DB"] == database
+    assert {m["target"]: m["source"] for m in spec["volumes"]} == {"/var/lib/postgresql/data": volume}
+    assert volume in config["volumes"]
+    assert "pg_isready" in " ".join(spec["healthcheck"]["test"])
+
+
+def test_the_fix_stores_are_apart_from_the_golden_set_and_from_each_other(config: dict):
+    """The golden set is what the agent is measured against; a record of its
+    mistakes is not a benchmark answer. And a wrong join and a missing label
+    are different lessons, kept apart for whatever reads them next."""
+    services = config["services"]
+    names = {services[s]["container_name"] for s in ("correctionsdb", "completionsdb", "chunkdb", "vectordb", "feedbackdb")}
+    assert len(names) == 5
+    volumes = {services[s]["volumes"][0]["source"] for s in ("correctionsdb", "completionsdb", "chunkdb", "vectordb", "feedbackdb")}
+    assert len(volumes) == 5
+    published = {
+        service: {p["published"] for p in services[service].get("ports", [])} for service in services
+    }
+    for store in FIX_STORES:
+        for other, ports in published.items():
+            if other != store:
+                assert published[store].isdisjoint(ports), f"{store} shares a port with {other}"
+
+
+@pytest.mark.parametrize("service", sorted(FIX_STORES))
+def test_the_review_service_waits_for_and_reaches_each_store(review: dict, service: str):
+    _, database, variable = FIX_STORES[service]
+    assert review["depends_on"][service]["condition"] == "service_healthy"
+    assert f"nl2sql-{service}:5432/{database}" in review["environment"][variable]
+
+
+def test_only_the_review_service_is_given_a_way_into_the_fix_stores(tmp_path_factory):
+    """Least access, one level up from the database roles. The agent reads
+    as `nl2sql_reader`; the API writes verdicts as an INSERT-only role; and
+    neither is handed the stores' address or credentials, so no SQL either
+    of them runs can reach a fix. Rendered over every profile -- the CLI
+    agent's and the desktop build's included -- because a service in a
+    profile nobody tested is still a service somebody starts.
+    """
+    everything = _compose_config(tmp_path_factory.mktemp("all"), *PROFILES, "agent", "desktop")
+    assert "agent" in everything["services"]
+    markers = ("nl2sql-correctionsdb", "nl2sql-completionsdb", "nl2sql_corrections", "nl2sql_completions")
+    reaching = {
+        name
+        for name, spec in everything["services"].items()
+        if any(marker in json.dumps(spec.get("environment", {})) for marker in markers)
+    }
+    assert reaching - set(FIX_STORES) == {"review"}
+
+
+def test_a_fix_is_validated_on_the_retail_database_as_the_reader(review: dict):
+    """It runs SQL a person typed, so it runs it as the role that can only read."""
+    assert review["depends_on"]["postgres"]["condition"] == "service_healthy"
+    url = review["environment"]["RETAIL_DB_URL"]
+    assert url.startswith("postgresql://nl2sql_reader:") and "@nl2sql-postgres:5432/nl2sql_retail" in url
+    for knob in ("REVIEW_VALIDATE_TIMEOUT_MS", "REVIEW_VALIDATE_MAX_ROWS", "REVIEW_EMBED_FIXES"):
+        assert knob in review["environment"]

@@ -58,7 +58,9 @@ Usage: ./launch.sh [options]
       --feedback   Also start the staging database, so verdicts given in the
                    web interface are kept instead of staying in the browser
       --review     Also start the review interface, where staged feedback is
-                   turned into golden questions (implies --feedback)
+                   turned into golden questions, corrections and completions,
+                   and the two stores those fixes are kept in (implies
+                   --feedback)
       --desktop    Also build the desktop client and copy the API's
                    certificate out, so the client can run on this machine
       --restart    Recreate the containers instead of reusing what is running
@@ -560,6 +562,17 @@ start_feedbackdb() {
     await_health nl2sql-feedbackdb
 }
 
+# The two stores a reviewer's fixes go into: corrections of wrong answers
+# and completions of incomplete ones. Started, and waited on, before the
+# review service so its start-up can create their schemas -- the same order
+# the staging database gets for the same reason.
+start_fixstores() {
+    docker compose --profile feedback --profile review up -d correctionsdb completionsdb \
+        >/dev/null 2>&1 || return 1
+    await_health nl2sql-correctionsdb || return 1
+    await_health nl2sql-completionsdb
+}
+
 start_review() {
     docker compose --profile feedback --profile review up -d review >/dev/null 2>&1 || return 1
     await_health nl2sql-review
@@ -586,6 +599,16 @@ if [[ $WITH_FEEDBACK -eq 1 ]]; then
 fi
 
 if [[ $WITH_REVIEW -eq 1 ]]; then
+    step "Starting the corrections and completions stores"
+    if start_fixstores; then
+        info "Corrections store is healthy on port $(compose_env CORRECTIONS_DB_PORT 5436)"
+        info "Completions store is healthy on port $(compose_env COMPLETIONS_DB_PORT 5437)"
+    else
+        warn "the corrections and completions stores did not both become healthy."
+        warn "Fixes cannot be saved until they are; golden-set promotion still works."
+        warn "Check what they said: docker compose --profile feedback --profile review logs correctionsdb completionsdb"
+    fi
+
     step "Starting the review service"
     if start_review; then
         case "$(compose_env REVIEW_TLS_ENABLED true)" in
@@ -659,15 +682,22 @@ EOF
 
     open http://localhost:$review_gui_port
 
-    Verdicts given in the web interface land in the staging database and wait
-    here. A reviewer reads what was asked, what the agent answered and what
-    the user thought of it, writes the three fields a thumbs-up cannot carry
-    -- keywords, reasoning target, expected result -- and promotes the pair.
+    Verdicts given in the web and desktop interfaces land in the staging
+    database and wait here, one pane per verdict:
 
-    Promoting appends it to context_questions/translated_questions.md in this
+      Correct                  write the three fields a verdict cannot carry
+                               -- keywords, reasoning target, expected result
+                               -- and promote the golden pair.
+      Wrong                    write the SQL that should have been generated,
+                               validate it against the live retail database,
+                               and add it to the corrections store.
+      Correct but incomplete   the same, into the completions store.
+
+    Promoting appends to context_questions/translated_questions.md in this
     checkout, so it shows up in \`git diff\` like any other edit and is
     committed the same way. The previous version is kept beside it as
-    translated_questions.md.bak.
+    translated_questions.md.bak. Fixes go to their own databases instead --
+    ports $(compose_env CORRECTIONS_DB_PORT 5436) and $(compose_env COMPLETIONS_DB_PORT 5437) -- never into the golden set.
 
     docker compose --profile feedback --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.

@@ -1,8 +1,8 @@
 """Isolation for the tests that write to the real RAG databases.
 
 The context and vector stores hold published data -- the 45 golden pairs and
-their embeddings are what `mcfaddja/nl2sql-rag-chunkdb:v3` and
-`mcfaddja/nl2sql-rag-vectordb:v3` ship. These tests must not be able to touch
+their embeddings are what `mcfaddja/nl2sql-rag-chunkdb:v3_1` and
+`mcfaddja/nl2sql-rag-vectordb:v3_1` ship. These tests must not be able to touch
 it, and "must not" has to be structural rather than careful: `rebuild_bm25_index`
 truncates, and every function in `ragproc` addresses tables unqualified, so a
 scratch *schema* with `public` still on the search_path would let an unqualified

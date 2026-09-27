@@ -414,8 +414,35 @@ def side_box(x, y, b):
     return "\n".join(s), h
 
 
-def deployment(y, hub, lefts, rights):
-    s = [label(MARGIN, y, "deployment — what runs where")]
+def panes_row(y, title, boxes):
+    """Cards side by side under a heading, with no flow drawn between them.
+
+    For things that are alternatives rather than steps -- v5.1's review panes,
+    one per verdict -- where `fan_row`'s brackets would claim a superstep that
+    does not exist.
+    """
+    gap = 16
+    w = CONTENT_R - MARGIN
+    bw = (w - (len(boxes) - 1) * gap) / len(boxes)
+    iw = bw - 28
+    bh = max(12 + 17 + 4 + block_h(b["does"], iw, 11.5, 16) + 26 + 12 for b in boxes)
+    s = [label(MARGIN, y, title)]
+    top = y + 14
+    for i, b in enumerate(boxes):
+        bx = MARGIN + i * (bw + gap)
+        col = b["color"]
+        s.append(card(bx, top, bw, bh, fill=f"{col}0a", stroke=f"{col}66", sw=1.4))
+        s.append(f'<text x="{bx+14}" y="{top+12+14:.1f}" font-family="{MONO}" font-size="13" '
+                 f'font-weight="700" fill="{col}">{esc(b["name"])}</text>')
+        blk, _ = text_block(bx + 14, top + 12 + 17 + 4 + 10, b["does"], iw, 11.5, MUTED, lh=16)
+        s.append(blk)
+        pl, _ = pill(bx + 14, top + bh - 12 - 21, b["tag"], col)
+        s.append(pl)
+    return "\n".join(s), 14 + bh
+
+
+def deployment(y, hub, lefts, rights, title="deployment — what runs where"):
+    s = [label(MARGIN, y, title)]
     top = y + 20
 
     def stack(x, boxes):
@@ -1629,18 +1656,94 @@ OUT_NOTE_V5 = ("`--json` carries the whole state: the verdict and intent, the an
 
 
 def build_v5():
+    return _build_v5()
+
+
+def build_v5_1():
+    return _build_v5(review=True)
+
+
+# --- v5.1: the review side ------------------------------------------------
+
+REVIEW_HUB = {"name": "nl2sql-review",
+              "desc": "The review service and its GUI, on their own port behind their own token: "
+                      "the only process that can write the golden question set. One pane per "
+                      "verdict; a fix is validated on the retail database before it is stored."}
+
+FEEDBACKDB_V51 = {"name": "nl2sql-feedbackdb", "color": SLATE,
+                  "desc": "The staging database. Each verdict with a snapshot of its job; the "
+                          "agent's API holds an INSERT-only role and cannot read one back.",
+                  "link": "← owner: schema, grants, review"}
+
+RETAIL_READER_V51 = {"name": "nl2sql-postgres", "color": BLUE,
+                     "desc": "The retail database, as nl2sql_reader: a fix is planned and run in "
+                             "a READ ONLY transaction under a timeout and a row cap.",
+                     "link": "← validation only, never writes"}
+
+GOLDEN_V51 = {"name": "golden set", "color": GREEN,
+              "desc": "context_questions/translated_questions.md, rewritten in the checkout and "
+                      "reloaded into chunkdb and vectordb. Correct answers only.",
+              "link": "← promote"}
+
+CORRECTIONSDB_V51 = {"name": "nl2sql-correctionsdb", "color": RED,
+                     "desc": "pgvector. Wrong answers: the question, the incorrect answer, the "
+                             "validated fix -- and a vector of each question beside both queries.",
+                     "link": "→ records + RAG"}
+
+COMPLETIONSDB_V51 = {"name": "nl2sql-completionsdb", "color": AMBER,
+                     "desc": "pgvector. Correct-but-incomplete answers and their validated "
+                             "completions, in a database and RAG of their own.",
+                     "link": "→ records + RAG"}
+
+EMBED_V51 = {"name": "Ollama — embedding model", "color": TEAL,
+             "desc": "bge-m3, the golden set's own model, so a fix's vector and a golden pair's "
+                     "are comparable. Best-effort: a stored fix is embedded by the next save.",
+             "link": "→ one embed per save"}
+
+V51_PANES = [
+    {"name": "Correct", "color": GREEN, "tag": "→ golden set",
+     "does": "Build the golden pair -- keywords, reasoning target, expected result -- and "
+             "promote it once the loader's own parser accepts it."},
+    {"name": "Wrong", "color": RED, "tag": "→ corrections",
+     "does": "Write the SQL that should have been generated, starting from the agent's; "
+             "validate it on the retail database; only SQL that runs is added."},
+    {"name": "Correct but incomplete", "color": AMBER, "tag": "→ completions",
+     "does": "The same treatment, in its own pane and into its own store: the SQL that would "
+             "also have carried what the answer left out."},
+]
+
+V51_RULE = ("Only a query that runs is stored. The reviewer validates it -- one statement, a "
+            "SELECT, not the agent's own query, then planned and run as nl2sql_reader in a READ "
+            "ONLY transaction under a timeout -- and the save route runs it again rather than "
+            "taking the browser's word. Neither fix store feeds the golden set: that is what "
+            "the agent is measured against, and a record of its mistakes is not a benchmark "
+            "answer. Nothing reads the fix stores yet; an agent to sanity-check the reviewer's "
+            "SQL, and then one to help write it, come next.")
+
+
+def _build_v5(review: bool = False):
     parts, y = [], 56
-    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
-                 f'font-weight="700" fill="{INK}">NL2SQL Agent v5 '
-                 f'<tspan fill="{MUTED}" font-weight="400">— a complete answer, not just a '
-                 f'correct one</tspan></text>')
+    if review:
+        parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                     f'font-weight="700" fill="{INK}">NL2SQL Agent v5.1 '
+                     f'<tspan fill="{MUTED}" font-weight="400">— and what a person says about '
+                     f'the answer</tspan></text>')
+    else:
+        parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                     f'font-weight="700" fill="{INK}">NL2SQL Agent v5 '
+                     f'<tspan fill="{MUTED}" font-weight="400">— a complete answer, not just a '
+                     f'correct one</tspan></text>')
     y += 26
-    blk, h = text_block(MARGIN, y, "v4's four stages and one repair loop, with one thing added: "
-                        "an answer contract read from the question before the SQL is written, "
-                        "and a Completeness Reviewer that checks the rows against it after they "
-                        "run (arch5). Everything marked in orange is new in v5; magenta is v4's "
-                        "pipeline, teal v2's retrieval and indigo v3's examples, all carried over.",
-                        CONTENT_R - MARGIN, 13.5, MUTED)
+    intro = ("v4's four stages and one repair loop, with one thing added: "
+             "an answer contract read from the question before the SQL is written, "
+             "and a Completeness Reviewer that checks the rows against it after they "
+             "run (arch5). Everything marked in orange is new in v5; magenta is v4's "
+             "pipeline, teal v2's retrieval and indigo v3's examples, all carried over.")
+    if review:
+        intro += (" v5.1 changes no agent: it adds the review side at the foot of the page, "
+                  "where a user's verdict on an answer -- correct, wrong, or correct but "
+                  "incomplete -- becomes a golden pair, a correction or a completion.")
+    blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
     parts.append(blk); y += h + 26
 
     svg, h = deployment(y, {"name": "nl2sql-agent",
@@ -1774,6 +1877,17 @@ def build_v5():
         ])
     parts.append(svg); y += h + 34
     svg, h = outcomes(y, OUTCOMES_V5, OUT_NOTE_V5); parts.append(svg); y += h + 26
+    if review:
+        svg, h = deployment(y, REVIEW_HUB, [FEEDBACKDB_V51, RETAIL_READER_V51, GOLDEN_V51],
+                            [CORRECTIONSDB_V51, COMPLETIONSDB_V51, EMBED_V51],
+                            title="after the answer — the review side (v5.1)")
+        parts.append(svg); y += h + 22
+        svg, h = panes_row(y, "one pane per verdict — what the user said decides where it can go",
+                           V51_PANES)
+        parts.append(svg); y += h + 18
+        svg, h = note_row(y, "Only SQL that runs is stored", V51_RULE, color=RED, x=MARGIN,
+                          w=CONTENT_R - MARGIN, dashed=False)
+        parts.append(svg); y += h + 26
     svg, h = legend(y, [("solid", "control flow", SLATE),
                         ("line", "repair loop — one counter", RED),
                         ("solid", "audit passes — finish", GREEN),
@@ -1781,6 +1895,10 @@ def build_v5():
                         ("pill", "new or changed in v5", ORANGE),
                         ("pill", "v4's pipeline", MAGENTA)])
     parts.append(svg); y += h
+    if review:
+        return document("NL2SQL Agent v5.1 architecture",
+                        "Multi-agent pipeline with a completeness check, and human review",
+                        "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE))
     return document("NL2SQL Agent v5 architecture", "Multi-agent pipeline with a completeness check",
                     "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE))
 
@@ -1788,7 +1906,7 @@ def build_v5():
 #: What `main` writes, in the order the versions came.
 DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
             ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"),
-            ("arch_v5.svg", "build_v5"))
+            ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"))
 
 
 def main(output_dir: Path | None = None) -> None:

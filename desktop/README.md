@@ -214,8 +214,10 @@ that was wrong.
 
 Identical to the web interface's, deliberately: `POST
 /v1/questions/{id}/feedback`, the same staging table, the same row-level
-security fence, the same review queue. **A reviewer sees one queue because
-there is only one**, not because two writers were made to agree — which is
+security fence, the same review queue -- and so the same three review panes,
+and the same destinations: the golden set for a correct answer, the
+corrections store for a wrong one, the completions store for an incomplete
+one. **A reviewer sees one queue because there is only one**, not because two writers were made to agree — which is
 the whole point of the client sending an opinion and nothing else and the
 server reading the snapshot off the job it still has.
 
@@ -286,7 +288,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v5_1-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and

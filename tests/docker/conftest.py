@@ -75,6 +75,10 @@ case "$1" in
             echo "${FAKE_GUI_HEALTH:-healthy}"
         elif [[ "$*" == *nl2sql-feedbackdb* ]]; then
             echo "${FAKE_FEEDBACK_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-correctionsdb* ]]; then
+            echo "${FAKE_CORRECTIONS_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-completionsdb* ]]; then
+            echo "${FAKE_COMPLETIONS_HEALTH:-healthy}"
         # The review GUI's container name contains the review service's, so
         # the longer name is matched first or every review-gui inspect would
         # be answered as the service.

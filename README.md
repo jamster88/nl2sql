@@ -38,11 +38,13 @@ Either way the same containers come up:
 | `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
 | `nl2sql-gui` | The web interface, and the proxy in front of the API, with `--gui` |
 | `nl2sql-feedbackdb` | Verdicts from the web interface, waiting to be reviewed, with `--feedback` |
-| `nl2sql-review` | The service that turns reviewed feedback into golden questions, with `--review` |
+| `nl2sql-correctionsdb` | pgvector: wrong answers and the validated queries that fix them, with `--review` |
+| `nl2sql-completionsdb` | pgvector: incomplete answers and the validated queries that complete them, with `--review` |
+| `nl2sql-review` | The service that turns reviewed feedback into golden questions or fixes, with `--review` |
 | `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 
 The agent, the GUI, both halves of the review system and the desktop client's
-jar are published images (`v4_5`); the rest are built or pulled by `setup.sh`
+jar are published images (`v5_1`); the rest are built or pulled by `setup.sh`
 as well. [Pulling the images](#pulling-the-images) has
 the tags.
 
@@ -240,9 +242,17 @@ contract before it writes; a Completeness Reviewer checks the rows against it
 after they run and sends a gap back through the same repair loop, whose budget
 grows from four generations to seven.
 
+**v5.1 (arch5.1) gives each verdict its own treatment.** The agent is
+unchanged; what happens to a reviewed answer is not. A correct one is promoted
+into the golden set as before; a wrong or correct-but-incomplete one is fixed
+-- a reviewer writes the query that should have been generated, validates it
+against the live database, and it goes into a corrections or completions store
+of its own. [Feedback](#feedback) has the whole of it.
+
 The design, and every place it departs from the source documents, is in
-[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md)
-(arch4 plus the answer contract and the Completeness Reviewer).
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
+(arch4 plus the answer contract and the Completeness Reviewer, plus the human
+review of section 14).
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -272,15 +282,15 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v4_5       # the agent, and the REST API
-docker pull mcfaddja/nl2sql-gui:v4_5         # the web interface
-docker pull mcfaddja/nl2sql-review:v4_5      # the review service
-docker pull mcfaddja/nl2sql-review-gui:v4_5  # the review interface
+docker pull mcfaddja/nl2sql-agent:v5_1     # the agent, and the REST API
+docker pull mcfaddja/nl2sql-gui:v5_1       # the web interface
+docker pull mcfaddja/nl2sql-review:v5_1    # the review service
+docker pull mcfaddja/nl2sql-review-gui:v5_1  # the review interface
 ```
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v5_1-mac-aarch64` and the four siblings
 named in [The desktop client](#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
@@ -319,19 +329,25 @@ Without that step, `./start.sh --review` on an older checkout brings up an
 agent that has no feedback routes, and the review interface sits at an empty
 queue forever.
 
+Going from `v5` to `v5_1`, the same two commands also bring up two new
+containers, `nl2sql-correctionsdb` and `nl2sql-completionsdb`, each on a new
+empty volume. The review service creates their schemas on its first start and
+widens the staging table to the new `corrected` state, so nothing is migrated
+by hand and every verdict already staged is still there, in its pane.
+
 To publish new ones, build both architectures in the same step so the tags
 stay multi-arch, as every earlier tag is:
 
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v4_5 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_5 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v4_5 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v4_5 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_1 .
 ```
 
 The desktop client is published along a second axis as well. Every tag is
@@ -343,7 +359,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v4_5-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v5_1-$platform .
 done
 ```
 
@@ -352,20 +368,24 @@ same bytes whatever it runs on; the stage that ships is not, because that is
 the one a manifest needs a variant of.
 
 A published tag does not move. A correction to something already published
-is a new patch version and a new tag -- `v4_5_1` -- rather than a re-push of
-`v4_5`, because a tag that changes under somebody is the one kind of breakage
+is a new patch version and a new tag -- `v5_1_1` -- rather than a re-push of
+`v5_1`, because a tag that changes under somebody is the one kind of breakage
 they cannot debug from their own checkout. The tag is the version with its
 dots turned into underscores, truncated to however many components the tag
-carries: `v4_5` is 4.5.x and `v4_5_1` is exactly 4.5.1, and
+carries: `v5_1` is 5.1.x, `v5` is 5.x and `v5_1_1` would be exactly 5.1.1, and
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds the
 fourteen places that say so to the same number.
 
-The two database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
-and the two RAG stores version independently, because their *content* changes
-independently of the code -- and the RAG stores are published by
-[`rag/publish_db_image.sh`](rag/publish_db_image.sh), which tars a stopped
-container's data directory. That is a snapshot of one machine, so those two
-tags are arm64 only.
+The database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
+(`v1_1`) and the two RAG stores (`v3_1`) version independently, because their
+*content* changes independently of the code. All three are multi-arch, and
+[`tests/docker/test_published_images.py`](tests/docker/test_published_images.py)
+asks the registry so. The RAG stores used not to be: they are published by
+[`rag/publish_db_image.sh`](rag/publish_db_image.sh), which used to tar a
+stopped container's data directory -- one machine's, so `v3` is arm64 only. It
+now dumps the store and restores the dump inside the image build, once per
+platform; `v3_1` is `v3` republished that way, checked table by table and
+nearest neighbour by nearest neighbour against it on both architectures.
 
 The agent's version label comes from `AGENT_VERSION` in
 [`agent/Dockerfile`](agent/Dockerfile) and the GUI's from
@@ -377,7 +397,9 @@ has to ask.
 
 | Tag | Use |
 |---|---|
-| `v4_5` | Adds the Java desktop client, and the two request limits in `/v1/meta` it needed. Pinned -- what `setup.sh` pulls. |
+| `v5_1` | arch5.1: the review service handles each verdict its own way -- correct answers promoted into the golden set, wrong and correct-but-incomplete ones fixed, validated against the live retail database, and stored in the corrections and completions stores. Pinned -- what `setup.sh` pulls. |
+| `v5` | arch5: the answer contract and the Completeness Reviewer, a seven-generation retry budget, and a third verdict -- correct but incomplete -- in the web and desktop clients and the review queue. Pinned. |
+| `v4_5` | Adds the Java desktop client, and the two request limits in `/v1/meta` it needed. Pinned. |
 | `v4_4` | Adds the feedback system: verdicts staged from the web interface, and the review service and interface that promote them into the golden questions. Pinned. |
 | `v4_2` | The multi-agent pipeline, the REST API, and the web interface. Pinned. |
 | `v4_1` | The same pipeline and REST API, before the GUI. Pinned. |
@@ -416,14 +438,15 @@ docker pull mcfaddja/nl2sql-agent:v1
 The two retrieval databases are separate images, started for you by compose:
 
 ```bash
-docker pull mcfaddja/nl2sql-rag-vectordb:v3    # pgvector: knowledge + golden-pair vectors
-docker pull mcfaddja/nl2sql-rag-chunkdb:v3     # context store: golden pairs + BM25 statistics
+docker pull mcfaddja/nl2sql-rag-vectordb:v3_1    # pgvector: knowledge + golden-pair vectors
+docker pull mcfaddja/nl2sql-rag-chunkdb:v3_1     # context store: golden pairs + BM25 statistics
 ```
 
 | Tag | Holds |
 |---|---|
-| `nl2sql-rag-vectordb:v3` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each |
-| `nl2sql-rag-chunkdb:v3` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function |
+| `nl2sql-rag-vectordb:v3_1` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each. `linux/amd64` and `linux/arm64`; what `setup.sh` pulls |
+| `nl2sql-rag-chunkdb:v3_1` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function. `linux/amd64` and `linux/arm64`; what `setup.sh` pulls |
+| `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | The same contents, arm64 only. Pinned, and superseded by `v3_1` |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
 
 ## The web interface
@@ -461,8 +484,12 @@ showing an empty grid would report a failure that did not happen. An
 ambiguous question comes back with a clarification, which is a question for
 the user, so it goes where the answer would.
 
-**Feedback is two buttons.** Yes or no, per answer, shown back in the answer
-and in the session list. With the staging database up (`--feedback` or
+**Feedback is three buttons.** Correct, wrong, or correct but incomplete, per
+answer, shown back in the answer and in the session list. The third is for an
+answer whose SQL was right and which still left out something a reader
+needed -- a name beside an id, the figure a ranking was ranked by -- because
+that calls for fleshing out rather than correcting, and a plain "no" cannot
+say which. With the staging database up (`--feedback` or
 `--review`) the verdict is also sent to the API and waits to be reviewed; on
 a server without one it is kept in the browser and says so, because a button
 whose every click fails is worse than no button. See [Feedback](#feedback).
@@ -561,11 +588,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v4_5-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v4_5-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v4_5-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v4_5-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v5_1-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v5_1-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v5_1-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_1-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_1-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.
@@ -580,14 +607,20 @@ right. This is where those answers go.
 ```
 
 That is the whole thing: databases, the API, the web interface, the staging
-database, the review service and the review interface -- and both pages
-opened in your browser. [`./launch.sh --review`](launch.sh) is the same
+database, the corrections and completions stores, the review service and the
+review interface -- and both pages opened in your browser. [`./launch.sh --review`](launch.sh) is the same
 containers without the browser step.
 
 Without it, a verdict stays in the browser and nothing is lost -- the buttons
 still work, the verdict is still shown, and `/v1/meta` tells the page not to
-claim it was sent anywhere. With it, a verdict is staged, reviewed, and
-possibly promoted into the golden question set.
+claim it was sent anywhere. With it, a verdict is staged and reviewed, and
+where it goes depends on what it said:
+
+| Verdict | Review pane | Where it ends up |
+|---|---|---|
+| **Correct** | Correct → golden set | Promoted into the golden question set, as before |
+| **Wrong** | Wrong → corrections | A corrected query, validated against the live database, in `nl2sql-correctionsdb` |
+| **Correct but incomplete** | Correct but incomplete → completions | A completed query, validated the same way, in `nl2sql-completionsdb` |
 
 ### Why bother
 
@@ -596,8 +629,11 @@ The 45 golden pairs in
 are the best-understood thing in this repository. The agent retrieves worked
 examples from them, the benchmark scores against them, and every question
 they *don't* cover is a gap that only shows up as an answer somebody
-disagrees with. A thumbs-down in the web interface is the cheapest possible
-report of such a gap; the work is turning it into a pair.
+disagrees with. A *wrong* or *correct but incomplete* verdict in either client
+is the cheapest possible report of such a gap. A *correct* one is a new pair
+waiting to be written; the other two are a mistake and its fix, which is a
+different thing and is kept apart from the set the agent is measured
+against.
 
 ### What happens to a verdict
 
@@ -605,8 +641,9 @@ report of such a gap; the work is turning it into a pair.
 |---|---|
 | **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
 | **Staged** | In `nl2sql-feedbackdb`, its own Postgres, in its own volume. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
-| **Reviewed** | In a second web interface: what was asked, what the agent answered, what the user thought, and a form for building a golden pair out of it |
-| **Promoted** | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
+| **Reviewed** | In a second web interface, one pane per verdict: what was asked, what the agent answered and the SQL it wrote, what the user thought -- and beside it a form for building a golden pair, or an editor for the query that should have been generated |
+| **Promoted** *(correct)* | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
+| **Fixed** *(wrong, incomplete)* | The reviewer's query is run against the live retail database, read-only, as the agent's own role; only one that runs can be saved. The question, the incorrect answer and the corrected query go into that verdict's own store, with an embedding of the question beside them for retrieval |
 
 ### The three fields nobody can guess
 
@@ -633,6 +670,24 @@ parser and every field compared to what went in -- because that parser is one
 regular expression over the whole file, and a pair that does not match it is
 not reported as malformed, it is simply not seen.
 
+### Only SQL that runs is stored
+
+A fix for a wrong answer is a query a person wrote, and a query nobody has
+run is a guess. So the review interface has a **Validate against the live
+database** button that runs it -- as `nl2sql_reader`, in a read-only
+transaction, under a timeout and a row cap -- and shows the rows it returned
+or Postgres's reason it did not. The save stays disabled until the exact text
+in the editor has passed, and the service runs it again before storing it,
+whatever the browser said. A query identical to the agent's is refused: that
+is a verdict with no fix in it.
+
+Corrections and completions each get their own Postgres -- records and RAG
+side by side, on ports 5436 and 5437 -- because they are different lessons,
+and neither is a golden pair. Nothing reads them yet; they are what a later
+agent will retrieve from ("a question like this one was answered wrongly
+before, and this is what fixed it"), and a later version adds an agent to
+sanity-check a reviewer's query and another to help write it.
+
 ### Who can do what
 
 The internet-facing process can add a verdict and nothing else. It connects
@@ -640,7 +695,7 @@ to the staging database as a role that cannot read a submission back, cannot
 change a review, and cannot see any row a curator has already judged -- by a
 row-level security policy, not by the SQL in the API being careful. The
 powers that matter belong to a separate service, on a separate port, behind a
-separate token.
+separate token, and it is the only client of the two fix stores.
 
 [`review/README.md`](review/README.md) has the whole of it.
 
@@ -785,6 +840,17 @@ The retries are not a regression either: v3 had none because its LLM validator
 passed everything it did not reject outright, while v4's planner catches three
 real errors and repairs them without a model call.
 
+**v5 holds 15/15 and adds one model call where it can matter.** The answer
+contract costs nothing -- a label map and a fiscal calendar read from the
+catalog once -- and the Completeness Reviewer's rules cost nothing either. Its
+one reflective call ran on the three questions whose rows name an entity, 16s
+in all, for a run of 991.6s against v4's 909.7s (and wall time against the
+shared Ollama host varies by about 30% between identical runs). Getting there
+took four runs, each of which changed the design: the contract never restates
+a measure the question names, names no entity for a "how many" question, and
+brings the calendar into scope for any period. [`agent/README.md`](agent/README.md)
+has the details.
+
 `select_tables` and `validate_sql` together cost more than generation itself.
 Two model calls that do not write the answer take the majority of the time,
 which is the obvious latency lever -- well ahead of anything in the RAG layer.
@@ -804,8 +870,9 @@ each step does, why it is there, and how control flows.
 | [`arch_v3.svg`](arch_diagrams/arch_v3.svg) | Both retrieval steps, the three-retriever ensemble behind the second, and the two data-flow rails they feed |
 | [`arch_v4.svg`](arch_diagrams/arch_v4.svg) | The multi-agent pipeline: four stages, the parallel retrievers, the deterministic gates, the repair loop, and the presentation trio |
 | [`arch_v5.svg`](arch_diagrams/arch_v5.svg) | v4 plus the answer contract and the Completeness Reviewer inside the repair loop |
+| [`arch_v5_1.svg`](arch_diagrams/arch_v5_1.svg) | The v5 pipeline unchanged, with the review side added to the deployment: one pane per verdict, the golden set, and the corrections and completions stores |
 
-All three are laid out identically so the versions can be read side by side --
+All of them are laid out identically so the versions can be read side by side --
 everything new or changed is marked, in teal for v2's retrieval and indigo for
 v3's examples. Each shows the deployment (what runs where), the startup
 preflight, every LangGraph node paired with the reasoning behind it, the retry
@@ -859,13 +926,32 @@ The cluster has two application roles, and the agent only ever uses the second:
 | Role | Password | Can | Used by |
 |---|---|---|---|
 | `nl2sql` | `nl2sql` | everything: owns the database and every table | the build (`ddl.sql`, the `COPY` load) and you, at a `psql` prompt |
-| `nl2sql_reader` | `nl2sql_reader` | `SELECT` on every table in `public`, nothing else | the agent, the benchmark, the live tests |
+| `nl2sql_reader` | `nl2sql_reader` | `SELECT` on every table in `public`, nothing else | the agent, the review service's validation of a reviewer's SQL, the benchmark, the live tests |
 
 The reader is created by [`docker/reader_role.sql`](docker/reader_role.sql):
 a plain login role with no `CREATE`, `INSERT`, `UPDATE` or `DELETE` anywhere,
 whose sessions also start read-only. Tables the owner adds later are readable
 too, through a default privilege. The agent's own `SET TRANSACTION READ ONLY`
 still runs on top of that; the grants are what hold if anything gets past it.
+
+Two things every role gets by default are taken away, because every reader
+session -- the API's, each `docker compose run`, the review service's -- is
+the *same* role, and Postgres lets a role cancel or terminate backends of its
+own role:
+
+* **`pg_cancel_backend` and `pg_terminate_backend`** are revoked from PUBLIC
+  in the retail database, so one query cannot end everyone else's. Before,
+  `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename =
+  current_user` from any reader session did exactly that. The agent's static
+  validator already refused both names; the review service's validator never
+  had that list, and the server is the boundary either way.
+* **`CONNECT` on every other database** -- `postgres`, `template1`, anything
+  created later -- is revoked from PUBLIC, so the reader's password opens the
+  retail database and nothing else. A function privilege is per database, and
+  a pid is not, so an open `postgres` database would have been the way round
+  the first revoke.
+
+The superuser keeps both, and nothing that reads the dataset needs either.
 
 The image build creates the role, and so do `setup.sh` and `launch.sh` on every
 start, because a volume created from an older image keeps the roles it had.
@@ -886,9 +972,13 @@ tested against the live cluster by
 [`tests/agent/test_least_privilege_live.py`](tests/agent/test_least_privilege_live.py):
 it reads the role's attributes and grants back out of the catalog, tries every
 kind of write directly in a `READ WRITE` transaction, checks that a table the
-owner adds later is readable but not writable, and confirms the agent's own
-database layer runs as the reader. Pointed at the owner instead, 23 of its
-29 checks fail. Run it with `pytest tests/agent/test_least_privilege_live.py --run-docker`
+owner adds later is readable but not writable, tries the other databases and
+tries to cancel and kill another reader session, and confirms the agent's own
+database layer runs as the reader. Pointed at the owner instead, 25 of its
+44 checks fail. The review service's side -- a reviewer's query run through
+its validator, trying to switch the transaction to read-write, become the
+owner, lift its own timeout, read the server's files or end another session
+-- is in [`tests/review/test_validation.py`](tests/review/test_validation.py). Run it with `pytest tests/agent/test_least_privilege_live.py --run-docker`
 against a started stack.
 
 ### How the build works
@@ -951,7 +1041,7 @@ dataset is published, so pulling it avoids building anything -- no Python, no
 generator run -- and everyone gets byte-identical data:
 
 ```bash
-docker pull mcfaddja/nl2sql-retail-postgres:v1
+docker pull mcfaddja/nl2sql-retail-postgres:v1_1
 ```
 
 The repository is public, so no `docker login` is needed. It is multi-arch
@@ -959,12 +1049,13 @@ The repository is public, so no `docker login` is needed. It is multi-arch
 automatically. Expect roughly a 290 MB download that expands to about 1.4 GB on
 disk.
 
-Two tags are published:
+Three tags are published:
 
 | Tag | Use |
 |---|---|
-| `v1` | Pinned. Use this for reproducible testing -- it will not change underneath you. |
-| `latest` | Moves to the newest publish. |
+| `v1_1` | The same dataset as `v1`, byte for byte, with the agent's read-only role built in -- and that role unable to connect to the cluster's other databases or to cancel or kill another session (see [Roles](#roles)). Pinned -- what `setup.sh` pulls. |
+| `v1` | The first publish. Pinned; it predates the read-only role, which `setup.sh` and `launch.sh` create on every start. |
+| `latest` | Moves to the newest publish: `v1_1` today. |
 
 #### Run it directly
 
@@ -972,7 +1063,7 @@ Two tags are published:
 docker run -d --name nl2sql-postgres \
   -p 5432:5432 \
   -v nl2sql-pgdata:/var/lib/pgdata \
-  mcfaddja/nl2sql-retail-postgres:v1
+  mcfaddja/nl2sql-retail-postgres:v1_1
 ```
 
 The volume must be mounted at `/var/lib/pgdata`, which is where this image puts
@@ -985,16 +1076,17 @@ psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail
 ```
 
 The credentials are baked into the published cluster, so treat them as public --
-fine for synthetic test data, and not to be reused elsewhere. The `v1` image
-predates the agent's read-only role, so create it as shown under
-[Roles](#roles) before running the agent against a container started this way.
+fine for synthetic test data, and not to be reused elsewhere. `v1_1` carries
+the agent's read-only role; the older `v1` predates it, so with that tag create
+it as shown under [Roles](#roles) before running the agent against a container
+started this way.
 
 #### Use it with compose
 
 To point compose at the published image without running `setup.sh`:
 
 ```bash
-export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1
+export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1_1
 docker compose pull postgres
 docker compose up -d --no-build
 ```
@@ -1004,38 +1096,48 @@ table above, and `down -v` to reset to the pristine dataset.
 
 ### Publishing an update
 
-Rebuilding and pushing replaces the published dataset. Build both architectures
-in one step so the tag stays multi-arch:
+A published tag never moves, so an update is a new tag: a patch (`v1_2`) for
+a change to the image around the same dataset, as `v1_1` was, and a new major
+(`v2`) for a new dataset. Build both architectures in one step so the tag stays
+multi-arch, then move `latest` onto it without rebuilding:
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f docker/Dockerfile --push -t mcfaddja/nl2sql-retail-postgres:v2 .
+docker buildx imagetools create -t mcfaddja/nl2sql-retail-postgres:latest \
+  mcfaddja/nl2sql-retail-postgres:v2
 ```
+
+The generator is seeded, so a rebuild of an unchanged `data_gen/` is the same
+data; compare a checksum of every table against the previous tag before
+calling a patch a patch.
 
 ## Tests
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2356 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2762, including ones that build and run containers
+pytest                                          # 2464 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 2938, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
-| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
+| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
-| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- the compose wiring that no single file shows, and the review interface's own 95-test review GUI suite run from here |
+| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows, and the review interface's own 128-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 
-The 380 tests behind `--run-docker` are the ones that need a working daemon:
+The 448 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
-compose file, and query the four live databases. The 20 behind `--run-node`
+compose file, query the four live databases, and ask Docker Hub whether the
+tags `setup.sh` pins were really published -- which also needs the network,
+and skips rather than fails without it. The 20 behind `--run-node`
 need npm, and run the two GUIs' own suites. The 6 behind `--run-java` need
 Maven and a JDK of 21 or later, and run the desktop client's. Three flags
 rather than one because the three needs are different -- a clone with Docker
@@ -1122,7 +1224,7 @@ cd review/gui && npm test    # the review interface
 only `main.tsx` excluded -- it mounts React onto a DOM element that exists
 only in a browser, and a test pins the exclusion list so nothing else joins
 it. The review interface is held to the same thresholds and reaches them in
-95 tests: it decides what goes into the question set the agent is measured
+128 tests: it decides what goes into the question set the agent is measured
 against, so a partially tested path there is a partially tested benchmark.
 
 The thresholds are in each project's `vitest.config.ts` and fail the run

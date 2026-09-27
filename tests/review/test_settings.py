@@ -28,6 +28,12 @@ ENVIRONMENT = {
     "FEEDBACK_DB_URL": "postgresql://u:p@host/db",
     "FEEDBACK_WRITER_PASSWORD": "wpw",
     "REVIEW_MANAGE_SCHEMA": "false",
+    "RETAIL_DB_URL": "postgresql://r/db",
+    "REVIEW_VALIDATE_TIMEOUT_MS": "5000",
+    "REVIEW_VALIDATE_MAX_ROWS": "20",
+    "CORRECTIONS_DB_URL": "postgresql://w/db",
+    "COMPLETIONS_DB_URL": "postgresql://i/db",
+    "REVIEW_EMBED_FIXES": "false",
     "REVIEW_DOCUMENT": "/doc.md",
     "REVIEW_RAG_DIR": "/rag",
     "REVIEW_RELOAD_CONTEXT": "false",
@@ -143,6 +149,11 @@ def test_embedding_without_loading_is_reported_as_the_mistake_it_is():
     assert any("find nothing new to embed" in note for note in notes)
 
 
+def test_storing_fixes_without_their_vectors_is_reported():
+    notes = ReviewSettings(embed_fixes=False).warnings()
+    assert any("REVIEW_EMBED_FIXES is off" in note for note in notes)
+
+
 def test_a_well_configured_service_warns_about_nothing(tmp_path):
     crt, key = tmp_path / "s.crt", tmp_path / "s.key"
     crt.write_text("c")
@@ -196,6 +207,9 @@ def test_a_flag_nobody_passed_does_not_override_anything(monkeypatch):
         (["--root-path", "/p"], "root_path", "/p"),
         (["--log-level", "debug"], "log_level", "debug"),
         (["--feedback-db-url", "postgresql://x/y"], "feedback_db_url", "postgresql://x/y"),
+        (["--retail-db-url", "postgresql://r/y"], "retail_db_url", "postgresql://r/y"),
+        (["--corrections-db-url", "postgresql://w/y"], "corrections_db_url", "postgresql://w/y"),
+        (["--completions-db-url", "postgresql://i/y"], "completions_db_url", "postgresql://i/y"),
     ],
 )
 def test_every_flag_reaches_its_setting(flags, field, expected):
@@ -220,6 +234,20 @@ def test_the_banner_never_prints_the_database_password():
     text = server.banner(ReviewSettings(feedback_db_url="postgresql://u:hunter2@h/db"))
     assert "hunter2" not in text
     assert "u:***@h/db" in text
+
+
+def test_the_banner_names_where_fixes_are_validated_and_kept_without_passwords():
+    text = server.banner(
+        ReviewSettings(
+            retail_db_url="postgresql://reader:pw1@retail/db",
+            corrections_db_url="postgresql://w:pw2@wrong/db",
+            completions_db_url="postgresql://i:pw3@incomplete/db",
+        )
+    )
+    assert "validates on   postgresql://reader:***@retail/db" in text
+    assert "corrections    postgresql://w:***@wrong/db" in text
+    assert "completions    postgresql://i:***@incomplete/db" in text
+    assert not any(pw in text for pw in ("pw1", "pw2", "pw3"))
 
 
 @pytest.mark.parametrize(
@@ -262,9 +290,50 @@ def test_preparing_reports_a_database_that_is_not_up_yet(monkeypatch):
         def setup(self, password):
             raise OSError("connection refused")
 
+    class StoresUp:
+        def __init__(self, kind, url):
+            self.kind = kind
+
+        def setup(self):
+            pass
+
     monkeypatch.setattr(server, "Repository", Refuses)
+    monkeypatch.setattr(server, "FixStore", StoresUp)
     notes = server.prepare(ReviewSettings())
-    assert notes == ["schema: NOT ready -- OSError: connection refused"]
+    assert notes == [
+        "schema: NOT ready -- OSError: connection refused",
+        "corrections: ready",
+        "completions: ready",
+    ]
+
+
+def test_preparing_sets_up_each_fix_store_on_its_own(monkeypatch):
+    """One store down stops neither the other nor the golden-set work."""
+    made: list[tuple[str, str]] = []
+
+    class Records:
+        def __init__(self, url):
+            pass
+
+        def setup(self, password):
+            pass
+
+    class Stores:
+        def __init__(self, kind, url):
+            self.kind = kind
+            made.append((kind.slug, url))
+
+        def setup(self):
+            if self.kind.slug == "completions":
+                raise OSError("still starting")
+
+    monkeypatch.setattr(server, "Repository", Records)
+    monkeypatch.setattr(server, "FixStore", Stores)
+    notes = server.prepare(
+        ReviewSettings(corrections_db_url="postgresql://w/db", completions_db_url="postgresql://i/db")
+    )
+    assert made == [("corrections", "postgresql://w/db"), ("completions", "postgresql://i/db")]
+    assert notes[1:] == ["corrections: ready", "completions: NOT ready -- OSError: still starting"]
 
 
 def test_preparing_says_so_when_it_is_not_managing_the_schema():
@@ -282,7 +351,15 @@ def test_preparing_resets_the_writer_role(monkeypatch):
         def setup(self, password):
             calls.append(password)
 
+    class StoresUp:
+        def __init__(self, kind, url):
+            pass
+
+        def setup(self):
+            pass
+
     monkeypatch.setattr(server, "Repository", Records)
+    monkeypatch.setattr(server, "FixStore", StoresUp)
     notes = server.prepare(ReviewSettings(feedback_db_url="postgresql://x/y", writer_password="pw"))
     assert calls == ["postgresql://x/y", "pw"]
     assert WRITER_ROLE in notes[0]

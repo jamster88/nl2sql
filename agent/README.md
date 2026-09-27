@@ -1,4 +1,4 @@
-# NL2SQL Agent (v4, multi-agent)
+# NL2SQL Agent (v5, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -11,6 +11,13 @@ business index. The chunks that come back carry the things a schema alone
 cannot tell a model: fiscal-calendar semantics, which columns are
 pre-aggregated, and which joins fan out. That context is what lets it answer
 questions v1 got confidently wrong (see [Why retrieval](#why-retrieval)).
+
+**v5 checks that a correct answer is also a complete one** (arch5). An
+answer contract read from the question -- the name beside every id, the
+measure a ranking was ranked by, the latest complete fiscal year when no
+period is named -- is shown to the generator before it writes, and a
+Completeness Reviewer checks the rows against it after they run. See
+[The pipeline](#the-pipeline).
 
 **v4.1 adds a REST interface.** The same image also runs as an HTTPS server
 (`python -m nl2sql_agent.api`) so a GUI -- in any language, with no client
@@ -59,6 +66,9 @@ Four stages, one shared state object, one retry loop, defined in
 versions. The design and the reasoning behind each departure from it are in
 [`Multi-Agent_NL2SQL_arch5.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md),
 which is arch4 plus the answer contract and the Completeness Reviewer.
+[`Multi-Agent_NL2SQL_arch5_1.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
+supersedes it without changing anything in this package: it adds the human
+review of section 14, where a reviewed answer goes depending on its verdict.
 
 ```
 supervise --+-- retrieve_schema ----+
@@ -543,12 +553,18 @@ Generated SQL is untrusted, so execution has three independent layers:
    [`docker/reader_role.sql`](../docker/reader_role.sql)). The owner that loads
    the data is never in the agent's `DATABASE_URL`, so a write that somehow got
    past the first two layers is refused by Postgres itself with
-   `permission denied`.
+   `permission denied`. The role also cannot connect to the cluster's other
+   databases, and cannot cancel or terminate another session: every reader
+   session is the same role, and Postgres lets a role signal its own, so the
+   two signalling functions are revoked in the retail database. The static
+   check's function denylist refuses both names too, but a denylist is the
+   agent being careful; the revoke is the server saying no.
 
 Layers 1 and 2 are tested in `tests/agent/test_database_safety.py` and
 `tests/agent/test_database_live.py`; layer 3 in
 `tests/agent/test_least_privilege_live.py`, which asks the live catalog what
-the role holds and then tries every write path anyway. The last two need a
+the role holds and then tries every write path anyway -- and the other
+databases, and ending another reader's session. The last two need a
 started stack and `pytest --run-docker`.
 
 Results are capped at `--max-rows`, and the flag reports when output was

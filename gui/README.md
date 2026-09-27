@@ -76,7 +76,7 @@ does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 
-    docker pull mcfaddja/nl2sql-gui:v4_5
+    docker pull mcfaddja/nl2sql-gui:v5_1
     ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -84,7 +84,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_5 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -247,8 +247,11 @@ such as the product name beside a SKU: that calls for fleshing out rather
 than correcting, and a plain "no" could not say which. On the wire the three
 are `yes`, `no` and `incomplete`; the first two predate the third and are
 kept so every verdict already recorded reads the same. The verdict is shown back in the answer panel and beside the question in
-the session list, and it is sent to the API, where it is staged for review
-and possibly promoted into the golden question set. See
+the session list, and it is sent to the API, where it is staged for review.
+Which button was pressed decides what review does with it: a correct answer
+may be promoted into the golden question set, a wrong one is fixed into the
+corrections store and an incomplete one into the completions store, each
+with a query a reviewer validated against the live database. See
 [`review/README.md`](../review/README.md) for what happens to it after that.
 
 The earlier version kept the verdict in the browser and did nothing else with

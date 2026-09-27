@@ -31,11 +31,13 @@ EXAMPLES_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "examples.py"
 STATE_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "state.py"
 # v5's marker: the Completeness Reviewer's module (arch5).
 COMPLETENESS_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "completeness.py"
+# v5.1's: the review service's corrections and completions stores (arch5.1).
+CORRECTIONS_PY = REPO_ROOT / "review" / "nl2sql_review" / "corrections.py"
 
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
-V4, V5 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg"
-ALL_DIAGRAMS = [V1, V2, V3, V4, V5]
-IDS = ["v1", "v2", "v3", "v4", "v5"]
+V4, V5, V5_1 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg", DIAGRAMS / "arch_v5_1.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1]
+IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1"]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
@@ -90,8 +92,14 @@ def this_tree_is_v5() -> bool:
     return COMPLETENESS_PY.exists()
 
 
+def this_tree_is_v5_1() -> bool:
+    return CORRECTIONS_PY.exists()
+
+
 def diagram_for_this_tree() -> Path:
     """The diagram that is supposed to describe the code actually checked out."""
+    if this_tree_is_v5_1():
+        return V5_1
     if this_tree_is_v5():
         return V5
     if this_tree_is_v4():
@@ -151,6 +159,20 @@ def test_v5_is_v4_plus_the_completeness_reviewer():
     name: the answer contract lives in the Supervisor's node, and the
     assumptions in the narrator's and the audit's."""
     assert diagram_nodes(V5) == diagram_nodes(V4) | {REVIEW_NODE}
+
+
+def test_v5_1_changes_no_agent_node():
+    """arch5.1 adds the review side -- after the answer, in another service
+    -- and leaves the pipeline's graph exactly as v5 drew it."""
+    assert diagram_nodes(V5_1) == diagram_nodes(V5)
+
+
+def test_v5_1_draws_the_review_side():
+    text = V5_1.read_text()
+    for name in ("nl2sql-review", "nl2sql-correctionsdb", "nl2sql-completionsdb", "nl2sql-feedbackdb"):
+        assert f">{name}</text>" in text
+    for pane in ("Correct", "Wrong", "Correct but incomplete"):
+        assert f">{pane}</text>" in text
 
 
 def test_the_review_node_is_present_exactly_when_the_module_is():
@@ -217,7 +239,7 @@ def generator():
 @pytest.mark.parametrize(
     "name,builder",
     [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
-     ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5")],
+     ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1")],
     ids=IDS,
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
@@ -237,6 +259,7 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v3() == generator.build_v3()
     assert generator.build_v4() == generator.build_v4()
     assert generator.build_v5() == generator.build_v5()
+    assert generator.build_v5_1() == generator.build_v5_1()
 
 
 @pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)

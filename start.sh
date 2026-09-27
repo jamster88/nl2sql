@@ -23,8 +23,9 @@
 #     ./start.sh --desktop
 #
 # With --review it does the same for the feedback system: the staging
-# database that keeps verdicts, the service that promotes them into the
-# golden questions, and a second page at http://localhost:8081. That page
+# database that keeps verdicts, the service that promotes the correct ones
+# into the golden questions and fixes the wrong and incomplete ones into
+# their own stores, and a second page at http://localhost:8081. That page
 # opens whichever interface was chosen, because reviewing happens in one
 # place and there is no desktop half of it.
 #
@@ -67,9 +68,10 @@ Brings up the whole stack and opens the web interface in your browser.
                      builds its jar, copies the API's certificate out and runs
                      it. Needs a Java runtime of 21 or later on this machine
       --review       Also bring up the feedback system -- the staging database
-                     that keeps verdicts, the service that promotes them into
-                     the golden questions, and the review interface -- and open
-                     that in a second browser window as well
+                     that keeps verdicts, the service that turns them into
+                     golden questions, corrections and completions, the two
+                     stores for those fixes, and the review interface -- and
+                     open that in a second browser window as well
       --feedback     Keep verdicts without the review interface: starts the
                      staging database only, so votes are staged for later
       --no-browser   Start everything, but print the URLs instead of opening them
@@ -378,7 +380,7 @@ EOF
     fi
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
-    $review_url                     review what people said, and promote the good ones
+    $review_url                     review what people said: promote, correct, complete
 
 EOF
     fi
@@ -392,10 +394,12 @@ elif [[ $QUIET -eq 0 ]]; then
         cat <<EOF
 
     $url                     ask questions, and say whether the answer was right
-    $review_url                     review what people said, and promote the good ones
+    $review_url                     review what people said: promote, correct, complete
 
     Promoting appends to context_questions/translated_questions.md in this
     checkout -- it shows up in \`git diff\` and is committed like any other edit.
+    Correcting or completing a wrong answer writes to its own store instead,
+    never to the golden set.
 
     docker compose --profile api --profile gui --profile feedback \\
       --profile review --profile reviewgui down          stop everything

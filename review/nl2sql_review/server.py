@@ -7,7 +7,9 @@ agent API wrote), no job store to shut down, no pipeline to warm.
 What it does do before binding is create its schema and reset the writer
 role the agent API connects as. That ordering is the point -- the public
 process's grants are whatever this file's `ensure_writer_role` last said,
-so widening them by hand does not survive a restart.
+so widening them by hand does not survive a restart. Since 5.1 it also
+creates the tables of the corrections and completions stores, each in its
+own database.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from dataclasses import replace
 from typing import Sequence
 
 from .app import __version__, create_app
+from .corrections import COMPLETIONS, CORRECTIONS, FixStore
 from .settings import SERVICE_HOSTNAME, ReviewSettings
 from .store import WRITER_ROLE, Repository
 
@@ -41,6 +44,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     p.add_argument("--root-path")
     p.add_argument("--token")
     p.add_argument("--feedback-db-url")
+    p.add_argument("--retail-db-url")
+    p.add_argument("--corrections-db-url")
+    p.add_argument("--completions-db-url")
     p.add_argument("--document")
     p.add_argument("--rag-dir")
     p.add_argument("--log-level")
@@ -86,6 +92,9 @@ def settings_from_args(args: argparse.Namespace) -> ReviewSettings:
             ("root_path", args.root_path),
             ("token", args.token),
             ("feedback_db_url", args.feedback_db_url),
+            ("retail_db_url", args.retail_db_url),
+            ("corrections_db_url", args.corrections_db_url),
+            ("completions_db_url", args.completions_db_url),
             ("document", args.document),
             ("rag_dir", args.rag_dir),
             ("log_level", args.log_level),
@@ -106,6 +115,9 @@ def banner(settings: ReviewSettings, *, version: str = __version__) -> str:
         f"  staging db     {_redacted(settings.feedback_db_url)}",
         f"  writer role    {WRITER_ROLE} (INSERT only, reset on start)",
         f"  golden set     {settings.document}",
+        f"  validates on   {_redacted(settings.retail_db_url)}",
+        f"  corrections    {_redacted(settings.corrections_db_url)}",
+        f"  completions    {_redacted(settings.completions_db_url)}",
         f"  reload         context={settings.reload_context} vectors={settings.reload_vectors}",
         f"  auth           {'bearer token' if settings.authenticated else 'NONE'}",
     ]
@@ -135,11 +147,24 @@ def prepare(settings: ReviewSettings) -> list[str]:
     """
     if not settings.manage_schema:
         return ["schema: not managed (REVIEW_MANAGE_SCHEMA=false)"]
+    notes: list[str] = []
     try:
         Repository(settings.feedback_db_url).setup(settings.writer_password)
+        notes.append(f"schema: ready, {WRITER_ROLE} reset to INSERT-only")
     except Exception as exc:  # noqa: BLE001 - reported in the banner and /readyz
-        return [f"schema: NOT ready -- {type(exc).__name__}: {exc}"]
-    return [f"schema: ready, {WRITER_ROLE} reset to INSERT-only"]
+        notes.append(f"schema: NOT ready -- {type(exc).__name__}: {exc}")
+    # Each store on its own: one being down does not stop the other, or the
+    # golden-set work that needs neither.
+    for kind, url in (
+        (CORRECTIONS, settings.corrections_db_url),
+        (COMPLETIONS, settings.completions_db_url),
+    ):
+        try:
+            FixStore(kind, url).setup()
+            notes.append(f"{kind.slug}: ready")
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"{kind.slug}: NOT ready -- {type(exc).__name__}: {exc}")
+    return notes
 
 
 def build(argv: Sequence[str] | None = None):

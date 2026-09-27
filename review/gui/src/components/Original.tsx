@@ -9,6 +9,7 @@
  * SQL, and a golden pair built that way tests nothing.
  */
 
+import { plainText } from "../api/text";
 import type { SubmissionModel, Verdict } from "../api/types";
 
 export interface OriginalProps {
@@ -32,7 +33,9 @@ export function Original({ submission }: OriginalProps) {
           {submission.submitted_at
             ? new Date(submission.submitted_at).toLocaleString()
             : "no timestamp"}
-          {submission.agent_version ? ` · agent ${submission.agent_version}` : ""}
+          {submission.agent_version
+            ? ` · agent ${submission.agent_version}`
+            : ""}
         </span>
       </header>
 
@@ -44,7 +47,9 @@ export function Original({ submission }: OriginalProps) {
         </blockquote>
       )}
 
-      {submission.narrative && <p className="original-narrative">{submission.narrative}</p>}
+      {submission.narrative && (
+        <p className="original-narrative">{plainText(submission.narrative)}</p>
+      )}
 
       {submission.sql_code ? (
         <pre className="code">
@@ -52,8 +57,8 @@ export function Original({ submission }: OriginalProps) {
         </pre>
       ) : (
         <p className="muted">
-          No SQL was captured. The run refused the question or failed before writing any, so
-          there is nothing here to build a pair from.
+          No SQL was captured. The run refused the question or failed before
+          writing any, so there is nothing here to build a pair from.
         </p>
       )}
 
@@ -70,7 +75,9 @@ export function Original({ submission }: OriginalProps) {
           <dt>Rows</dt>
           <dd>
             {submission.row_count}
-            {submission.columns.length > 0 ? ` (${submission.columns.join(", ")})` : ""}
+            {submission.columns.length > 0
+              ? ` (${submission.columns.join(", ")})`
+              : ""}
           </dd>
         </div>
         <div>

@@ -266,6 +266,79 @@ def test_the_reader_cannot_reach_the_server_filesystem(reader):
 
 
 # ---------------------------------------------------------------------------
+# Beyond the tables: other databases, other sessions
+# ---------------------------------------------------------------------------
+
+# Every reader session is the same role -- the API's pool, each compose run,
+# the review service validating a reviewer's SQL -- and Postgres lets a role
+# signal backends of its own role. docker/reader_role.sql takes that away, and
+# closes the cluster's other databases, where the function privileges it
+# revokes would still apply.
+
+SIGNALS = ("pg_cancel_backend(integer)", "pg_terminate_backend(integer,bigint)")
+
+
+def _other_databases(reader: sqlalchemy.Engine) -> list[str]:
+    with reader.connect() as conn:
+        return list(conn.execute(
+            text("SELECT datname FROM pg_database WHERE datallowconn AND datname <> current_database()")
+        ).scalars())
+
+
+def test_the_reader_may_connect_to_the_retail_database_and_no_other(reader):
+    others = _other_databases(reader)
+    assert "postgres" in others, "the cluster should have its maintenance database"
+    with reader.connect() as conn:
+        assert conn.execute(
+            text("SELECT has_database_privilege(:role, current_database(), 'CONNECT')"), {"role": READER}
+        ).scalar() is True
+        for database in others:
+            assert conn.execute(
+                text("SELECT has_database_privilege(:role, :db, 'CONNECT')"), {"role": READER, "db": database}
+            ).scalar() is False, database
+
+
+@pytest.mark.parametrize("database", ["postgres", "template1"])
+def test_the_readers_password_opens_no_other_database(database):
+    """The catalog says no; this is the server saying it at the door."""
+    other = sqlalchemy.create_engine(make_url(POSTGRES_URL).set(database=database))
+    try:
+        with pytest.raises(sqlalchemy.exc.OperationalError, match="CONNECT privilege"):
+            with other.connect():
+                pass
+    finally:
+        other.dispose()
+
+
+@pytest.mark.parametrize("signature", SIGNALS)
+def test_no_role_but_the_superuser_may_signal_a_backend_here(reader, signature):
+    """Revoked from PUBLIC, so the reader holds it by no route: not directly,
+    not through PUBLIC, and not through the owner either."""
+    with reader.connect() as conn:
+        for role in (READER, "public", OWNER):
+            assert conn.execute(
+                text("SELECT has_function_privilege(:role, :fn, 'EXECUTE')"),
+                {"role": role, "fn": f"pg_catalog.{signature}"},
+            ).scalar() is False, role
+
+
+@pytest.mark.parametrize("call", ["pg_cancel_backend({pid})", "pg_terminate_backend({pid})"])
+def test_one_reader_session_cannot_cancel_or_kill_another(reader, call):
+    """The attack this closes: two sessions of the same role, one of them
+    somebody else's question, and a SELECT that ends it."""
+    victim = sqlalchemy.create_engine(POSTGRES_URL)
+    try:
+        with victim.connect() as target:
+            pid = target.exec_driver_sql("SELECT pg_backend_pid()").scalar()
+            with reader.connect() as conn:
+                with pytest.raises(sqlalchemy.exc.ProgrammingError, match="permission denied for function"):
+                    conn.exec_driver_sql(f"SELECT {call.format(pid=pid)}")
+            assert target.exec_driver_sql("SELECT 1").scalar() == 1
+    finally:
+        victim.dispose()
+
+
+# ---------------------------------------------------------------------------
 # The default privilege: tables the owner adds later
 # ---------------------------------------------------------------------------
 

@@ -519,7 +519,7 @@ DOCKERFILES = {
     "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
-    "rag/docker/seeded.Dockerfile": ("tests/rag/test_rag_images.py",),
+    "rag/docker/restore.Dockerfile": ("tests/rag/test_rag_images.py",),
 }
 
 #: Compose file -> the test files that resolve and assert on it.
@@ -546,6 +546,8 @@ COMPOSE_SERVICES = {
         "vectordb": ("tests/docker/test_compose_config.py",),
         "chunkdb": ("tests/docker/test_compose_config.py",),
         "feedbackdb": ("tests/review/test_review_compose.py",),
+        "correctionsdb": ("tests/review/test_review_compose.py",),
+        "completionsdb": ("tests/review/test_review_compose.py",),
         "agent": ("tests/docker/test_compose_config.py",),
         "api": ("tests/docker/test_api_compose.py",),
         "gui": ("tests/docker/test_gui_compose.py",),

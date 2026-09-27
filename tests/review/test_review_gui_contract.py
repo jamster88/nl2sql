@@ -44,6 +44,12 @@ MIRRORED = {
     "Health": models.Health,
     "Check": models.Check,
     "Readiness": models.Readiness,
+    "ValidateRequest": models.ValidateRequest,
+    "ValidationModel": models.ValidationModel,
+    "FixRequest": models.FixRequest,
+    "FixModel": models.FixModel,
+    "FixList": models.FixList,
+    "FixResultModel": models.FixResultModel,
 }
 
 
@@ -121,6 +127,13 @@ def test_the_verdicts_match_the_database(types_ts: str):
 
     assert _union_members(types_ts, "Verdict") == set(VERDICTS)
     assert get_args(models.Verdict) == VERDICTS
+
+
+def test_the_fix_kinds_match(types_ts: str):
+    """Where a fix goes, as the GUI names it and as the route accepts it."""
+    from nl2sql_review.corrections import BY_SLUG
+
+    assert _union_members(types_ts, "FixKind") == set(get_args(models.FixKind)) == set(BY_SLUG)
 
 
 def test_the_states_match_the_database(types_ts: str):

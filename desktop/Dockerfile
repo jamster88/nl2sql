@@ -13,7 +13,7 @@
 # and passes it in. One jar is one platform: the same library file names are
 # used on macOS x86-64 and arm64, so a jar carrying both would carry one of
 # them twice under one name and load whichever came first. The published tags
-# say which -- `v4_5-mac-aarch64`, `v4_5-linux` and so on.
+# say which -- `v5_1-mac-aarch64`, `v5_1-linux` and so on.
 FROM --platform=$BUILDPLATFORM maven:3.9.16-eclipse-temurin-21 AS build
 
 # mac-aarch64, mac, linux, linux-aarch64 or win.
@@ -45,7 +45,7 @@ COPY --from=build /src/target/nl2sql-desktop.jar /opt/nl2sql/nl2sql-desktop.jar
 
 LABEL org.opencontainers.image.title="nl2sql-desktop build" \
       org.opencontainers.image.description="Carries the nl2sql desktop client's jar, built for one JavaFX platform." \
-      org.opencontainers.image.version="4.5.0" \
+      org.opencontainers.image.version="5.1.0" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # The default command copies the jar to a bind mount, which is the whole of

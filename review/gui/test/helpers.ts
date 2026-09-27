@@ -11,11 +11,13 @@ import { vi } from "vitest";
 import type { Client } from "../src/api/client";
 import type {
   DraftModel,
+  FixResultModel,
   GoldenSet,
   PreviewModel,
   PromotionModel,
   ReviewMeta,
   SubmissionModel,
+  ValidationModel,
 } from "../src/api/types";
 
 export function makeSubmission(overrides: Partial<SubmissionModel> = {}): SubmissionModel {
@@ -64,14 +66,22 @@ export function makeMeta(overrides: Partial<ReviewMeta> = {}): ReviewMeta {
   return {
     service: "nl2sql-review",
     version: "4.3.0",
-    states: ["pending", "accepted", "rejected", "promoted"],
+    states: ["pending", "accepted", "rejected", "promoted", "corrected"],
     document: "/app/context_questions/translated_questions.md",
     golden_count: 45,
     next_pair_id: "Q46",
-    counts: { pending: 1, accepted: 0, rejected: 0, promoted: 0 },
+    counts: { pending: 1, accepted: 0, rejected: 0, promoted: 0, corrected: 0 },
+    verdicts: ["yes", "no", "incomplete"],
+    counts_by_verdict: { yes: { pending: 1 }, no: { pending: 2 }, incomplete: { pending: 3 } },
+    fixes: { corrections: 4, completions: 5 },
     reload_context: true,
     reload_vectors: true,
-    limits: { max_pair_number: 99, reload_timeout_seconds: 600 },
+    limits: {
+      max_pair_number: 99,
+      reload_timeout_seconds: 600,
+      validate_timeout_ms: 30000,
+      validate_max_rows: 200,
+    },
     authentication: "bearer",
     warnings: [],
     ...overrides,
@@ -121,6 +131,56 @@ export function makeGolden(overrides: Partial<GoldenSet> = {}): GoldenSet {
   };
 }
 
+export function makeValidation(overrides: Partial<ValidationModel> = {}): ValidationModel {
+  return {
+    sql: "SELECT sku_id, product_name FROM dim_product",
+    valid: true,
+    problems: [],
+    warnings: [],
+    columns: ["sku_id", "product_name"],
+    rows: [["SKU1", "Whole Milk"], ["SKU2", null]],
+    row_count: 2,
+    truncated: false,
+    plan_cost: 4.5,
+    elapsed_ms: 12.5,
+    ...overrides,
+  };
+}
+
+export function makeFixResult(overrides: Partial<FixResultModel> = {}): FixResultModel {
+  const submission = makeSubmission({ verdict: "no", state: "corrected", promoted_pair_id: "W0001" });
+  return {
+    kind: "corrections",
+    fix: {
+      fix_id: "W0001",
+      submission_id: submission.id,
+      job_id: submission.job_id,
+      question: submission.question,
+      incorrect_sql: submission.sql_code,
+      incorrect_answer: submission.answer,
+      incorrect_columns: submission.columns,
+      incorrect_row_count: submission.row_count,
+      corrected_sql: "SELECT sku_id, product_name FROM dim_product",
+      corrected_columns: ["sku_id", "product_name"],
+      corrected_rows: [["SKU1", "Whole Milk"]],
+      corrected_row_count: 1,
+      corrected_truncated: false,
+      plan_cost: 4.5,
+      user_comment: "",
+      reviewer: "ada",
+      review_note: "",
+      agent_version: "5.0.0",
+      created_at: "2026-09-26T10:00:00Z",
+      embedded: true,
+    },
+    validation: makeValidation(),
+    submission,
+    embedded: true,
+    embed_detail: "embedded 1; 0 still to embed",
+    ...overrides,
+  };
+}
+
 /** A client whose every method is a spy, resolved with sensible defaults. */
 export function fakeClient(overrides: Partial<Client> = {}): Client {
   const submission = makeSubmission();
@@ -130,7 +190,10 @@ export function fakeClient(overrides: Partial<Client> = {}): Client {
     submissions: vi.fn().mockResolvedValue({
       submissions: [submission],
       count: 1,
-      counts: { pending: 1, accepted: 0, rejected: 0, promoted: 0 },
+      counts: { pending: 1, accepted: 0, rejected: 0, promoted: 0, corrected: 0 },
+      counts_by_verdict: {
+        yes: { pending: 1, accepted: 0, rejected: 0, promoted: 0, corrected: 0 },
+      },
     }),
     submission: vi.fn().mockResolvedValue({ ...submission, draft: makeDraft() }),
     review: vi.fn().mockResolvedValue({ ...submission, state: "accepted" }),
@@ -138,6 +201,9 @@ export function fakeClient(overrides: Partial<Client> = {}): Client {
     promote: vi.fn().mockResolvedValue(makePromotion()),
     golden: vi.fn().mockResolvedValue(makeGolden()),
     promotions: vi.fn().mockResolvedValue({ promotions: [], count: 0 }),
+    validate: vi.fn().mockResolvedValue(makeValidation()),
+    fix: vi.fn().mockResolvedValue(makeFixResult()),
+    fixes: vi.fn().mockResolvedValue({ kind: "corrections", fixes: [], count: 0 }),
     ...overrides,
   };
 }

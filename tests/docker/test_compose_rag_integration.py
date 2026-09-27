@@ -17,6 +17,7 @@ embedder and so runs whether or not bge-m3 is up.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -54,6 +55,7 @@ print("RESULT " + json.dumps({
 # fail for a reason that has nothing to do with the vector store.
 FAILURE_PROBE = """
 import json
+import os
 from nl2sql_agent.retrieval import KnowledgeBase, KnowledgeUnavailableError
 
 class StubEmbedder:
@@ -77,6 +79,7 @@ except KnowledgeUnavailableError as exc:
 # all -- a URL that resolves on the host says nothing about the container.
 EXAMPLES_PROBE = """
 import json
+import os
 from nl2sql_agent.config import Settings
 from nl2sql_agent.examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING
 from nl2sql_agent.examples import GoldenPairLibrary, build_embedder
@@ -106,10 +109,20 @@ print("RESULT " + json.dumps({
 """
 
 
+#: The name the agent is built and run under here. Compose reads `.env`, and
+#: `.env` pins the *published* image, `mcfaddja/nl2sql-agent:<tag>`, so a
+#: plain `compose build agent` would tag a build of this checkout with the
+#: published name, and the next `launch.sh --restart` would run it in place of
+#: the image that was pulled. The environment outranks `.env`, so both the
+#: build and the probe use a name nothing else does.
+PROBE_IMAGE = {"AGENT_IMAGE_NAME": "nl2sql-agent", "AGENT_IMAGE_TAG": "pytest-compose"}
+
+
 def _compose(*args: str, timeout: int = 300) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "compose", *args],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=timeout,
+        env={**os.environ, **PROBE_IMAGE},
     )
 
 

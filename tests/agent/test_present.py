@@ -589,6 +589,12 @@ def test_a_negative_count_raises_a_semantic_issue():
     assert "cannot be negative" in audit([], result, question="how many baskets?").semantic_issue
 
 
+def test_counts_that_are_not_negative_raise_nothing():
+    """The ordinary case, and every count column is checked, not the first."""
+    result = QueryResult(columns=["basket_count", "store_count"], rows=[[4, 3], [0, 1]])
+    assert audit([], result, question="how many baskets per store?").semantic_issue is None
+
+
 def test_a_negative_amount_does_not():
     # Returns, markdowns and credits are negative money. Flagging them would
     # spend a retry on a correct query, which is the failure mode W3 is for.
@@ -736,6 +742,28 @@ def test_the_answer_escapes_html_a_model_put_in_a_claim():
     answer = render_answer("q", result, [claim], choose_chart(result), report)
     assert "<b onclick" not in answer
     assert "&lt;b onclick" in answer
+
+
+def test_a_null_in_a_cited_row_backs_nothing_and_breaks_nothing():
+    """A cited row's cells are the numbers a sentence may repeat. NULL is
+    neither a number nor a label carrying one, so it adds nothing -- and a
+    claim beside it still stands on the cells that are there."""
+    result = QueryResult(
+        columns=["department_name", "promo_count", "gross_margin_pct"],
+        rows=[["Dairy & Eggs", None, Decimal("31.4")]],
+    )
+    claim = Claim(text="Dairy & Eggs ran a 31.4% gross margin.", value=31.4, cells=[(0, "gross_margin_pct")])
+    report = audit([claim], result)
+    assert report.unsupported_claims == []
+    assert report.passed
+
+
+def test_a_result_with_no_columns_gets_no_table():
+    """Not a scalar and nothing to tabulate: the answer is the sentences,
+    without an empty table header under them."""
+    claim = Claim(text="Nothing matched.", value=None, cells=[])
+    answer = render_answer("q", QueryResult(columns=[], rows=[]), [claim], ChartSpec(kind="table"), AuditReport())
+    assert answer == "Nothing matched."
 
 
 def test_a_scalar_answer_is_a_sentence_and_not_a_one_cell_table():

@@ -369,6 +369,13 @@ def test_an_absent_or_empty_trace_yields_no_stages():
     assert timing_from_trace(None).stages == []
 
 
+def test_an_entry_that_names_no_node_is_not_a_stage():
+    """Neither a trace entry nor a dictionary with a `node` -- a stray value
+    in a hand-edited results file -- is skipped rather than timed as `None`."""
+    timing = timing_from_trace([{"ms": 10.0}, object(), _Entry("narrate", 2000.0)])
+    assert timing.as_dict() == {"narrate": 2.0}
+
+
 def test_an_entry_without_a_duration_still_counts_as_a_stage_that_ran():
     """Better a stage at zero than a stage missing from the breakdown."""
     assert timing_from_trace([_Entry("visualise")]).as_dict() == {"visualise": 0.0}

@@ -415,3 +415,15 @@ def test_the_module_can_be_run_as_a_module(monkeypatch, capsys):
 
     assert raised.value.code == 0
     assert "nl2sql review service" in capsys.readouterr().out
+
+
+def test_importing_the_entry_point_starts_no_server(monkeypatch):
+    """`python -m nl2sql_review` runs the service; importing the module must
+    not."""
+    import runpy
+
+    import nl2sql_review.server as server
+
+    monkeypatch.setattr(server, "main", lambda *a, **k: pytest.fail("importing started the service"))
+    namespace = runpy.run_module("nl2sql_review.__main__", run_name="nl2sql_review.__main__")
+    assert namespace["main"] is server.main

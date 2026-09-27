@@ -609,3 +609,12 @@ def test_the_dockerignore_keeps_what_the_images_actually_need():
     for path in needed:
         assert path not in ignored, f"{path} is excluded but an image copies it"
         assert (root / path).exists(), f"{path} no longer exists"
+
+
+def test_importing_the_emitter_emits_nothing():
+    """Run by the image build with two arguments; loaded as a module it only
+    defines `main` -- which, run here, would have read pytest's argv."""
+    import runpy
+
+    namespace = runpy.run_path(str(DOCKER_DIR / "emit_load_sql.py"), run_name="emit_load_sql")
+    assert callable(namespace["main"])

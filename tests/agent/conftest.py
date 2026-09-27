@@ -68,10 +68,6 @@ class FakeDatabase:
             return self.schema_text
         return "\n".join(f"=== {t} ===\ncolumns: id" for t in tables)
 
-    def explain(self, sql: str) -> str | None:
-        self.explain_calls.append(sql)
-        return self.explain_error
-
     def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
         """The v4 Planner Gate: (estimated cost, error message)."""
         self.explain_calls.append(sql)
@@ -126,13 +122,8 @@ class _StructuredBinding:
         if self._schema is Screening:
             return self._llm.screening or Screening(verdict="proceed", intent="aggregate")
         if self._schema is Reflection:
-            # A list scripts one verdict per call; the default finds the
-            # result complete, which is the happy path.
+            # The default finds the result complete, which is the happy path.
             reflection = self._llm.reflection
-            if isinstance(reflection, Exception):
-                raise reflection
-            if isinstance(reflection, list):
-                return reflection.pop(0)
             return reflection if reflection is not None else Reflection(complete=True)
         # The narrator's output model is matched structurally rather than by
         # import, so this fake does not depend on the internal naming of the

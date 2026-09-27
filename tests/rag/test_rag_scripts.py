@@ -65,9 +65,6 @@ case "$1" in
     volume)
         [[ -n "${FAKE_NO_VOLUME:-}" ]] && exit 1
         exit 0 ;;
-    image)
-        [[ -n "${FAKE_NO_IMAGE:-}" ]] && exit 1
-        exit 0 ;;
     run)
         # `--from`'s throwaway container.
         [[ -n "${FAKE_FAIL_RUN:-}" ]] && exit 1

@@ -637,6 +637,16 @@ def test_an_unlisted_origin_gets_no_permission(make_client):
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_no_origins_configured_means_no_browser_is_allowed(make_client):
+    """An empty list is a server that only non-browser clients may call --
+    the GUI's own proxy is same-origin and needs no permission."""
+    api = ApiSettings(token=None, tls_enabled=False, cors_origins=())
+    client = make_client(api=api)
+    response = client.get("/v1/meta", headers={"Origin": "https://gui.example.com"})
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
+
+
 def test_the_wildcard_default_does_not_claim_to_support_credentials(client):
     """Browsers reject "*" plus credentials outright, so claiming both makes
     every request from a browser fail rather than some of them.

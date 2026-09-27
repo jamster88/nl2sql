@@ -280,6 +280,19 @@ def test_interactive_mode_omits_the_knowledge_line_when_rag_is_off(monkeypatch, 
     assert "Knowledge base:" not in out
 
 
+def test_interactive_mode_names_the_example_store_only_when_examples_are_on(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
+
+    cli.main([])
+    assert "Worked examples:" in capsys.readouterr().out
+
+    cli.main(["--no-examples"])
+    out = capsys.readouterr().out
+    assert "Worked examples:" not in out
+    assert "Ctrl-D to exit" in out
+
+
 def test_interactive_mode_answers_each_question_and_skips_blank_input(monkeypatch, capsys):
     factory = _StubAgentFactory()
     monkeypatch.setattr(cli, "Nl2SqlAgent", factory)

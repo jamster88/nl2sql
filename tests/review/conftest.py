@@ -121,9 +121,6 @@ class FakeRepository:
     def get(self, submission_id):
         return self.submissions.get(submission_id)
 
-    def get_by_job(self, job_id):
-        return next((s for s in self.submissions.values() if s.job_id == job_id), None)
-
     def listing(self, *, state=None, verdict=None, limit=50, offset=0):
         found = list(self.submissions.values())
         if state:

@@ -446,6 +446,14 @@ def test_an_over_long_meta_entry_is_refused(client, draft):
     assert client.post("/v1/submissions/sub-1/preview", json={"draft": payload}).status_code == 422
 
 
+def test_meta_within_the_bounds_is_accepted_and_rendered(client, draft):
+    payload = complete(draft)
+    payload["extra_meta"] = {"source": "feedback", "reviewed.by": "sam"}
+    response = client.post("/v1/submissions/sub-1/preview", json={"draft": payload})
+    assert response.status_code == 200, response.json()
+    assert "source" in response.json()["markdown"]
+
+
 # ---------------------------------------------------------------------------
 # Promotion
 # ---------------------------------------------------------------------------
@@ -624,6 +632,15 @@ def test_cors_is_configurable(make_client, settings):
     client = make_client(settings=replace(settings, cors_origins=("https://review.example",)))
     response = client.get("/v1/meta", headers={"Origin": "https://review.example"})
     assert response.headers["access-control-allow-origin"] == "https://review.example"
+
+
+def test_no_origins_configured_means_no_browser_is_allowed(make_client, settings):
+    """The review interface reaches this through its own nginx, same-origin,
+    so an empty list is a real deployment rather than a misconfiguration."""
+    client = make_client(settings=replace(settings, cors_origins=()))
+    response = client.get("/v1/meta", headers={"Origin": "https://review.example"})
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers
 
 
 # ---------------------------------------------------------------------------

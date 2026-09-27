@@ -325,3 +325,46 @@ def test_running_the_generator_as_a_script_renders_where_it_is_told(tmp_path, ca
     # And nothing in the working tree moved.
     for svg in ALL_DIAGRAMS:
         assert (tmp_path / svg.name).read_text() == svg.read_text()
+
+
+# ---------------------------------------------------------------------------
+# The generator's own options -- the ones no published diagram happens to use
+# ---------------------------------------------------------------------------
+
+STEP = {"kind": "step", "id": "generate_sql", "n": 1, "name": "generate_sql",
+        "does": "writes the SQL", "why": "because"}
+
+
+def test_nothing_to_wrap_is_no_lines(generator):
+    assert generator.wrap("", 300, 13) == []
+
+
+def test_a_step_without_tags_draws_no_pills(generator):
+    tagged, _ = generator.step_row(0, 1, "generate_sql", "writes the SQL", [("LLM", "#123456")], "because")
+    bare, _ = generator.step_row(0, 1, "generate_sql", "writes the SQL", [], "because")
+    assert ">LLM<" in tagged
+    assert ">LLM<" not in bare and "generate_sql" in bare
+
+
+def test_a_branch_box_without_a_tag_draws_no_pill(generator):
+    left = {"name": "refuse", "does": "says no", "color": "#aa0000", "tag": "TERMINAL"}
+    right = {"name": "proceed", "does": "carries on", "color": "#00aa00"}
+    svg, _, _ = generator.branch_row(0, left, right, "because")
+    assert svg.count(">TERMINAL<") == 1
+    assert "proceed" in svg
+
+
+def test_a_pipeline_needs_neither_a_branch_nor_a_retry_rail(generator):
+    """v1 has both; a pipeline of one step has neither, and is still a
+    drawing -- START, the step, END -- rather than a KeyError."""
+    svg, height, drawn = generator.pipeline(0, [dict(STEP)])
+    assert drawn == ["generate_sql"]
+    assert "START" in svg and height > 0
+    assert "retry" not in svg
+
+
+def test_a_row_of_an_unknown_kind_is_refused_rather_than_drawn_as_the_last_one(generator):
+    """Falling through the dispatch used to reuse the previous row's picture
+    and height, silently, so a typo in a kind drew a duplicate."""
+    with pytest.raises(ValueError, match="unknown kind 'stpe'"):
+        generator.pipeline(0, [dict(STEP), {**STEP, "id": "x", "kind": "stpe"}])

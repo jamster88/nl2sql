@@ -136,3 +136,12 @@ def test_cli_labels_the_fiscal_year_it_was_asked_for(tmp_path: Path):
 
     dates = sorted(row["calendar_date"] for row in rows)
     assert dates[0].startswith("2018-04"), dates[0]
+
+
+def test_importing_the_script_generates_nothing():
+    """It is a script, run by docker/Dockerfile; loaded as a module it only
+    defines `main`. Had it run, it would have parsed pytest's own argv."""
+    import runpy
+
+    namespace = runpy.run_path(str(DATA_GEN_DIR / "generate_data.py"), run_name="generate_data")
+    assert callable(namespace["main"])

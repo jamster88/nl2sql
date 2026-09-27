@@ -88,6 +88,17 @@ def test_building_settings_applies_the_configuration_and_the_overrides():
     assert settings.ollama_base_url == "http://h:1"
 
 
+def test_a_host_default_gives_way_to_the_environment(monkeypatch):
+    """The defaults are for running from the host against the compose ports;
+    inside a container, or against another stack, the environment says where
+    the database is and is believed."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://r:r@elsewhere:5432/retail")
+    monkeypatch.delenv("VECTOR_DB_URL", raising=False)
+    settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "schema-only")
+    assert settings.database_url == "postgresql+psycopg://r:r@elsewhere:5432/retail"
+    assert settings.vector_db_url == run_benchmark.HOST_DEFAULTS["vector_db_url"][1]
+
+
 def test_the_default_configuration_is_the_full_agent():
     assert run_benchmark.parse_args([]).config == "multi-shot"
 
@@ -476,6 +487,28 @@ def test_verbose_puts_each_agent_step_on_stderr(monkeypatch, capsys):
     monkeypatch.setattr(graph_module, "Nl2SqlAgent", _build)
     rb.main(["--only", "B01", "-v"])
     assert "[generate_sql] SELECT 1" in capsys.readouterr().err
+
+
+def test_without_verbose_the_agent_steps_are_not_printed(monkeypatch, capsys):
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "reference_rows", lambda db, q: [[10]])
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+
+    monkeypatch.setattr(db_module, "Database", lambda *a, **k: None)
+
+    def _build(settings, *, on_progress=None, **kwargs):
+        on_progress("generate_sql", "SELECT 1")
+        return _StubAgent(
+            {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False},
+             "attempts": 1}
+        )
+
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", _build)
+    rb.main(["--only", "B01"])
+    assert "[generate_sql]" not in capsys.readouterr().err
 
 
 def test_an_unreachable_model_host_stops_the_run_with_a_clean_message(monkeypatch, capsys):

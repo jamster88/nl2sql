@@ -292,6 +292,15 @@ Notes a client author will want:
 * **`claims` and `audit` are the verification story.** Each claim points at
   the cells it was read from, and the audit drops any the rows do not
   support. A GUI can underline a sentence and highlight its cells from this.
+* **`answer` is markdown; `narrative` and each claim's `text` are plain
+  text.** `answer` is the whole document -- the prose, the rows as a
+  markdown table, the caveats -- with `&`, `<` and `>` escaped, because
+  markdown renders raw HTML and the rows are untrusted. Render it as
+  markdown, or draw `narrative`, `claims` and `result` yourself, as text.
+  Before 5.1.1 the narrative and claims could carry `&amp;` as well: the
+  narrator was shown escaped rows and copied what it read. A client that has
+  to work against an older server can undo the three entities, as
+  [`gui/src/api/text.ts`](../gui/src/api/text.ts) does.
 * **`chart` is a suggestion, not a rendering.** Its fields name columns of
   `result`; the GUI owns the chart library.
 * **`trace` is per-node cost.** Useful for a debug panel, and it is what the

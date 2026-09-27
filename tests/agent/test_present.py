@@ -14,8 +14,9 @@ What this file proves, in the order section 7 of the architecture asks for it:
   the graph can spend one shared retry rather than narrate nonsense;
 * `formula` is model output and is **refused, not executed**, when it is
   anything but arithmetic over `cells`;
-* everything rendered is HTML-escaped, which is where the XSS concern in the
-  security table belongs.
+* everything rendered is HTML-escaped, once, which is where the XSS concern
+  in the security table belongs -- and nothing a model is shown is, because
+  the narrator copies what it reads.
 
 No database and no model: the rows are hand-built `QueryResult`s and the
 narrator is a scripted fake.
@@ -268,9 +269,69 @@ def test_narrate_shows_the_question_the_rows_and_the_chart():
     narrate(llm, "how did margins do?", result, chart=choose_chart(result))
     text = prompt_text(llm)
     assert "how did margins do?" in text
-    assert "Dairy &amp; Eggs" in text  # escaped on the way in, as everywhere
+    assert "| 0 | Dairy & Eggs | 31.4 |" in text  # as the database has it
+    assert "&amp;" not in text
     assert "Chart chosen for this result: bar" in text
     assert "| row |" in text  # cells are addressed by a row number it can see
+
+
+class CopyingNarrator:
+    """A narrator that does what a real one does with a name: reads it out
+    of the table it is shown and writes it into its claim."""
+
+    def __init__(self) -> None:
+        self.shown = ""
+
+    def with_structured_output(self, schema):
+        return self
+
+    def invoke(self, messages):
+        self.shown = "\n".join(getattr(m, "content", str(m)) for m in messages)
+        row = next(line for line in self.shown.splitlines() if line.startswith("| 0 | "))
+        name = row.split(" | ")[1]
+        return Narrative(claims=[NarratedClaim(
+            text=f"{name} ran a 31.4% gross margin.",
+            value=31.4,
+            cells=[CellRef(row=0, column="gross_margin_pct")],
+            formula=None,
+        )])
+
+
+def test_a_name_the_narrator_copies_is_escaped_exactly_once_on_the_way_out():
+    """Regression. The narrator was shown `Dairy &amp; Eggs`, wrote it into
+    its claim, and the claim was escaped again into the answer: the CLI
+    printed `&amp;` and the web GUI, undoing one level, showed it too."""
+    result = margins()
+    claims = narrate(CopyingNarrator(), "how did margins do?", result)
+    assert claims[0].text == "Dairy & Eggs ran a 31.4% gross margin."
+
+    report = audit(claims, result)
+    answer = render_answer("how did margins do?", result, claims, choose_chart(result), report)
+    lead = answer.split("\n\n")[0]
+    assert lead == "Dairy &amp; Eggs ran a 31.4% gross margin."
+    assert "&amp;amp;" not in answer
+
+
+def test_the_narrators_table_still_escapes_what_would_split_a_row():
+    """Not escaped for HTML, but still a markdown table: a pipe in a name
+    would otherwise shift every cell after it into the wrong column."""
+    result = QueryResult(columns=["name", "gross_margin_pct"], rows=[["a|b\nc", Decimal("31.4")]])
+    llm = ScriptedLLM(narration=scripted_narrative())
+    narrate(llm, "q", result)
+    assert r"| 0 | a\|b c | 31.4 |" in prompt_text(llm)
+
+
+def test_markup_in_a_cell_reaches_the_narrator_as_text_and_the_answer_escaped():
+    """What changed is where the escaping happens, not whether: a cell of
+    `<b>` is shown to the model as it is, and cannot reach the answer as
+    markup however the model repeats it."""
+    result = QueryResult(columns=["department_name", "gross_margin_pct"], rows=[["<b>Dairy</b>", Decimal("31.4")]])
+    narrator = CopyingNarrator()
+    claims = narrate(narrator, "q", result)
+    assert "| 0 | <b>Dairy</b> | 31.4 |" in narrator.shown
+    answer = render_answer("q", result, claims, choose_chart(result), audit(claims, result))
+    assert "<b>" not in answer
+    assert "&lt;b&gt;Dairy&lt;/b&gt; ran a 31.4% gross margin." in answer
 
 
 def test_narrate_passes_the_top_exemplars_reasoning_target():

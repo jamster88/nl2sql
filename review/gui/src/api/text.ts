@@ -1,11 +1,15 @@
 /**
  * Undoing the agent's markup escaping.
  *
- * The agent's prose is built to be rendered as markdown, and markdown allows
- * raw HTML -- so `present.py` escapes `&`, `<` and `>` on the way in. This
- * application renders it as React text instead, where an escaped ampersand
- * arrives on screen as the five characters `&amp;`. A reviewer judging
- * whether an answer named the right banner should see `Thrift & Table`.
+ * A submission's narrative is a snapshot taken at vote time, so it is
+ * whatever the agent of that day wrote. Before agent 5.1.1 the narrator was
+ * shown HTML-escaped rows and copied the entities into its claims, so every
+ * narrative staged by then reads `Thrift &amp; Table`; from 5.1.1 it is plain
+ * text. This application renders it as React text, where an escaped
+ * ampersand arrives on screen as the five characters `&amp;` -- and a
+ * reviewer judging whether an answer named the right banner should see
+ * `Thrift & Table`, whichever agent wrote it. On plain text this changes
+ * nothing.
  *
  * The same three entities, in the same order, as the web GUI's `plainText`
  * (`gui/src/api/text.ts`): `html.escape(quote=False)` produces exactly

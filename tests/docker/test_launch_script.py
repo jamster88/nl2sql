@@ -917,9 +917,9 @@ DESKTOP_PINNED_ENV = (
     "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
     "IMAGE_TAG=v1\n"
     "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
-    "AGENT_IMAGE_TAG=v5_1\n"
+    "AGENT_IMAGE_TAG=v5_1_1\n"
     "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build\n"
-    "DESKTOP_IMAGE_TAG=v5_1\n"
+    "DESKTOP_IMAGE_TAG=v5_1_1\n"
     "RAG_ENABLED=true\n"
 )
 
@@ -931,7 +931,7 @@ def test_a_pinned_image_that_is_here_is_copied_from_rather_than_rebuilt(run_laun
                         env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64",
                              "FAKE_DESKTOP_IMAGE_PRESENT": "1"})
 
-    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_1-mac-aarch64" in result.output
+    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_1_1-mac-aarch64" in result.output
     assert "Building it for" not in result.output
     # And it never asks a registry: launch.sh is the fast path.
     assert not result.calls_matching("pull ")

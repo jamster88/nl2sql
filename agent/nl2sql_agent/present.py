@@ -29,9 +29,13 @@ Two boundaries in this file are load-bearing:
 * `formula` arrives from a language model, so it is evaluated by a whitelist
   walk over its own AST (`evaluate_formula`) and never by `eval`. Anything
   that is not arithmetic over `cells` is refused unevaluated.
-* Everything that reaches the markdown answer is HTML-escaped here. That is
-  where the XSS row of the security table belongs: the rows and the question
-  are untrusted text, and this is the only place they become output.
+* Everything that reaches the markdown answer is HTML-escaped here, once,
+  on the way out. That is where the XSS row of the security table belongs:
+  the rows and the question are untrusted text, and this is the only place
+  they become output. What a *model* is shown is not escaped -- the narrator
+  copies what it reads into its claims, and an escaped prompt came back as
+  an escaped narrative and a doubly escaped answer. So `narrative` and each
+  claim's `text` are plain text, and `answer` is markdown.
 """
 
 from __future__ import annotations
@@ -156,17 +160,33 @@ def _format_value(value: Any) -> str:
     return f"{value}"
 
 
+def _table_cell(text: str) -> str:
+    """The table's own grammar, not safety: an un-escaped pipe or newline
+    silently splits the row into extra columns."""
+    return text.replace("|", r"\|").replace("\n", " ").replace("\r", " ")
+
+
 def _markdown_cell(value: Any) -> str:
-    """One cell, safe to drop into a markdown table.
+    """One cell, safe to drop into a markdown table a reader will see.
 
     HTML-escaped because the markdown these answers render as allows raw
     HTML, so a product name of `<img src=x onerror=...>` out of the database
-    is live markup at the other end. The pipe and the newline are escaped for
-    the table's own grammar, not for safety: an un-escaped one silently
-    splits the row into extra columns.
+    is live markup at the other end.
     """
-    text = html.escape(_format_value(value), quote=False)
-    return text.replace("|", r"\|").replace("\n", " ").replace("\r", " ")
+    return _table_cell(html.escape(_format_value(value), quote=False))
+
+
+def _prompt_cell(value: Any) -> str:
+    """One cell of a table a model reads -- not escaped for HTML.
+
+    The narrator copies names out of the table it is shown into its claims.
+    Shown `Dairy &amp; Eggs`, it wrote `Dairy &amp; Eggs`: the narrative --
+    plain text, which the CLI prints and the API returns -- carried the
+    entity, and `render_answer`, escaping the claim on its way out as it
+    should, made it `&amp;amp;` in the markdown. Escaping belongs where text
+    becomes output, once; a prompt is not output.
+    """
+    return _table_cell(_format_value(value))
 
 
 def _escape_text(text: str) -> str:
@@ -404,14 +424,16 @@ def _truncation_block(result: QueryResult, shown: int) -> str:
 
 
 def _indexed_table(result: QueryResult, *, max_rows: int) -> str:
-    """The capped rows with an explicit row number, so a cell address is exact."""
+    """The capped rows with an explicit row number, so a cell address is
+    exact. For the narrator to read, so the cells are as the database has
+    them (`_prompt_cell`), not as a browser would need them."""
     header = ["row", *result.columns]
     lines = [
-        "| " + " | ".join(_markdown_cell(c) for c in header) + " |",
+        "| " + " | ".join(_prompt_cell(c) for c in header) + " |",
         "| " + " | ".join("---" for _ in header) + " |",
     ]
     for index, row in enumerate(result.rows[:max_rows]):
-        cells = [str(index), *(_markdown_cell(v) for v in row)]
+        cells = [str(index), *(_prompt_cell(v) for v in row)]
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
 

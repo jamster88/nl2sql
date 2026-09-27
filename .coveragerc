@@ -21,6 +21,10 @@
 # `data_gen/` -- so a relative one scatters per-process data files through the
 # tree instead of collecting them where `coverage combine` will look.
 [run]
+# Branches, not only statements: a line that runs is not a condition that has
+# been seen both ways, and the other two languages here -- vitest and JaCoCo --
+# already hold their code to branches.
+branch = true
 parallel = true
 omit =
     */.venv/*
@@ -29,6 +33,9 @@ omit =
     */__pycache__/*
 
 [report]
+# A gate, as the GUIs' vitest thresholds and the desktop client's JaCoCo rule
+# are: `coverage report` fails below it rather than printing a number.
+fail_under = 100
 # The repository's own code, wherever it lives. Deliberately not a list of
 # packages: half of what ships here is a script rather than an importable
 # module, and those are the ones most likely to go untested.

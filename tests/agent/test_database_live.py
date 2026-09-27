@@ -87,16 +87,6 @@ def test_read_only_transaction_stops_a_data_modifying_cte_the_static_check_misse
     assert after == before
 
 
-def test_explain_returns_none_for_a_valid_query(db: Database):
-    assert db.explain("SELECT * FROM dim_store") is None
-
-
-def test_explain_returns_an_error_message_for_an_unknown_table(db: Database):
-    error = db.explain("SELECT * FROM this_table_does_not_exist")
-    assert error is not None
-    assert "this_table_does_not_exist" in error
-
-
 def test_an_empty_schema_yields_no_tables(db: Database):
     """The early return when the catalog query matches nothing -- otherwise
     the follow-up column query would run with an empty name list.

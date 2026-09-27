@@ -241,13 +241,15 @@ def _walk(node: object) -> Iterator[ast.Node]:
 
     Depth-first over the declared slots, which is how the nesting that makes
     prefix checks wrong -- subqueries, CTEs, join trees, set operations --
-    gets visited at all.
+    gets visited at all. `__slots__` is a class's *own* slots, so the base
+    class's `ancestors` -- a link back up the tree -- is never among them;
+    `tests/agent/test_validate.py` pins that, because walking it would
+    recurse forever.
     """
     if isinstance(node, ast.Node):
         yield node
         for slot in type(node).__slots__:
-            if slot != "ancestors":
-                yield from _walk(getattr(node, slot, None))
+            yield from _walk(getattr(node, slot, None))
     elif isinstance(node, (list, tuple)):
         for item in node:
             yield from _walk(item)

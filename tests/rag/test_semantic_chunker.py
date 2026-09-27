@@ -250,3 +250,19 @@ def test_the_worked_example_at_the_bottom_still_runs(stub_sentence_transformers,
     assert "Loading BAAI/bge-m3" in output
     assert "--- Chunk 1 ---" in output
     assert "Semantic chunking splits text based on meaning." in output
+
+
+def test_a_layout_without_the_chunking_directory_leaves_the_path_alone(tmp_path, monkeypatch):
+    """The review image copies `rag/ragproc` for its embedder and not
+    `chunking/` beside it, since it never chunks. There the lookup finds
+    neither candidate and must change nothing, rather than put a directory
+    that is not there on the path."""
+    import ragproc
+
+    package = tmp_path / "app" / "rag" / "ragproc"
+    package.mkdir(parents=True)
+    monkeypatch.setattr(ragproc, "__file__", str(package / "__init__.py"))
+
+    before = list(sys.path)
+    ragproc._ensure_semantic_chunker_on_path()
+    assert sys.path == before

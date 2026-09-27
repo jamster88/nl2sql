@@ -199,6 +199,13 @@ def test_a_meta_key_the_parser_will_not_read_is_refused(draft):
     assert any("meta key" in p for p in render.problems(draft, "Q46"))
 
 
+def test_meta_keys_the_parser_will_read_raise_nothing(draft):
+    """Every key is checked, not the first, and a dotted or dashed one is
+    one the meta parser reads."""
+    draft.extra_meta = {"source": "feedback", "reviewed.by": "sam", "run-id": "7"}
+    assert not any("meta key" in p for p in render.problems(draft, "Q46"))
+
+
 # ---------------------------------------------------------------------------
 # The draft itself
 # ---------------------------------------------------------------------------

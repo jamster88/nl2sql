@@ -378,7 +378,7 @@ def test_the_agents_database_layer_runs_as_the_reader(reader):
     assert db.run_select("SELECT current_user").rows[0][0] == READER
     assert db.run_select("SELECT current_user").rows[0][0] != OWNER
     assert len(db.table_names()) >= 19
-    assert db.explain("SELECT count(*) FROM fact_pos_retail_sales") is None
+    assert db.explain_plan("SELECT count(*) FROM fact_pos_retail_sales")[1] is None
     assert "sample rows" in db.schema_and_samples(["dim_store"], sample_rows=1)
 
 

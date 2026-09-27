@@ -243,3 +243,15 @@ def test_the_module_can_be_run_as_a_module(certs, monkeypatch, capsys):
         runpy.run_module("nl2sql_agent.api", run_name="__main__")
     assert raised.value.code == 0
     assert "/v1/questions" in capsys.readouterr().out
+
+
+def test_importing_the_entry_point_starts_no_server(monkeypatch):
+    """`python -m nl2sql_agent.api` runs the server; importing the module --
+    as a documentation tool or a test collector would -- must not."""
+    import runpy
+
+    import nl2sql_agent.api.server as server
+
+    monkeypatch.setattr(server, "main", lambda *a, **k: pytest.fail("importing started the server"))
+    namespace = runpy.run_module("nl2sql_agent.api.__main__", run_name="nl2sql_agent.api.__main__")
+    assert namespace["main"] is server.main

@@ -77,10 +77,9 @@ def parse_blocks(markdown: str) -> list[Block]:
     prose: list[str] = []
 
     def flush_prose() -> None:
+        # Blank lines flush rather than join, so a run that exists has text.
         if prose:
-            text = "\n".join(prose).strip()
-            if text:
-                blocks.append(Block("prose", text))
+            blocks.append(Block("prose", "\n".join(prose).strip()))
             prose.clear()
 
     lines = markdown.splitlines()
@@ -259,12 +258,13 @@ class MarkdownSemanticChunker(SemanticChunker):
         buffer: list[str] = []
         buffer_tokens = 0
 
+        # Only ever called with something to flush: inside the loop when the
+        # buffer overflows, and once after it, which appended at least once.
         def flush() -> None:
             nonlocal buffer, buffer_tokens
-            if buffer:
-                pieces.append("\n\n".join(buffer).strip())
-                buffer = []
-                buffer_tokens = 0
+            pieces.append("\n\n".join(buffer).strip())
+            buffer = []
+            buffer_tokens = 0
 
         for block in section.blocks:
             units = (
@@ -306,8 +306,9 @@ class MarkdownSemanticChunker(SemanticChunker):
                 current = [sentences[i + 1]]
             else:
                 current.append(sentences[i + 1])
-        if current:
-            out.append(" ".join(current))
+        # Never empty: it starts with the first sentence, and is only ever
+        # replaced by a list of one.
+        out.append(" ".join(current))
         return out
 
     def _merge_runts(self, chunks: list[Chunk]) -> list[Chunk]:

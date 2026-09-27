@@ -253,11 +253,6 @@ class Database:
     def _quote(self, table_name: str) -> str:
         return f'"{self._schema}"."{table_name}"'
 
-    def explain(self, sql: str) -> str | None:
-        """Plan the query without running it. Returns an error message or None."""
-        _, error = self.explain_plan(sql)
-        return error
-
     def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
         """Plan without executing; return the estimated total cost and any error.
 

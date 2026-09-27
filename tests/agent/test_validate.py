@@ -244,6 +244,29 @@ def test_schema_qualifying_a_denylisted_function_does_not_hide_it():
     assert "pg_sleep" in messages("SELECT pg_catalog.pg_sleep(5)")
 
 
+def test_a_denylisted_function_called_twice_is_reported_once():
+    """One repair can remove every call; two identical issues would only
+    make the hint longer."""
+    issues = [i for i in validate("SELECT pg_sleep(1), pg_sleep(2)") if "pg_sleep" in i.message]
+    assert len(issues) == 1
+
+
+def test_no_concrete_parse_node_declares_the_link_back_up_the_tree():
+    """`_walk` recurses over each node class's own `__slots__`. pglast keeps
+    `ancestors` -- a reference back towards the root -- on the base class
+    alone, which is why the walk needs no guard against it; a pglast that
+    moved it onto the concrete classes would send the walk round in circles,
+    and this is where that would be found."""
+    from pglast import ast
+
+    concrete = [
+        cls for cls in vars(ast).values()
+        if isinstance(cls, type) and issubclass(cls, ast.Node) and cls is not ast.Node
+    ]
+    assert len(concrete) > 100
+    assert [cls.__name__ for cls in concrete if "ancestors" in cls.__slots__] == []
+
+
 def test_the_denylist_matches_regardless_of_case():
     assert "sleep" in messages("SELECT PG_SLEEP(5)")
 

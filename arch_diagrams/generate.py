@@ -565,6 +565,10 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=(),
             svg, h = offramp_row(yy, r["name"], r["does"], r["tag"], r["why"],
                                  r.get("color", AMBER))
             drawn.append(r["name"])
+        else:
+            # Falling through would draw the previous row's picture again, at
+            # the previous row's height, and say nothing.
+            raise ValueError(f"row {r.get('id', r.get('name', '?'))!r} has unknown kind {k!r}")
         # An incoming arrow is the column's flow, so a row may move it (an
         # off-ramp is entered from one side) or recolour it (v4's audit hands
         # its failure down, and that is not the happy path).

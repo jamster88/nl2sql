@@ -68,8 +68,9 @@ class SemanticChunker:
             else:
                 current_chunk.append(sentences[i + 1])
                 
-        if current_chunk:
-            chunks.append(" ".join(current_chunk))
+        # Never empty: it starts with the first sentence, and is only ever
+        # replaced by a list of one.
+        chunks.append(" ".join(current_chunk))
             
         return chunks
 

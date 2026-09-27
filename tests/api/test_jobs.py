@@ -215,6 +215,22 @@ def test_an_idle_stream_emits_keepalives_rather_than_silence(store):
     assert seen.count("keepalive") >= 2
 
 
+def test_a_stream_with_no_timeout_keeps_alive_for_as_long_as_it_takes(store):
+    """No deadline is the default for a client that will wait: keepalives,
+    and never a timeout chunk."""
+    gate = threading.Event()
+    jobs = store(make_runner(steps=(), gate=gate))
+    job = jobs.submit("q")
+    seen = []
+    for chunk in jobs.stream(job, keepalive=0.05):
+        seen.append(chunk.kind)
+        if seen.count("keepalive") >= 3:
+            break
+    gate.set()
+    assert seen.count("keepalive") >= 3
+    assert "timeout" not in seen
+
+
 def test_a_stream_the_server_is_done_holding_open_says_so(store):
     """Rather than closing silently, which a client cannot tell apart from a
     network failure.

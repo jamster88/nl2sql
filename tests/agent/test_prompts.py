@@ -14,6 +14,7 @@ from nl2sql_agent.prompts import (
     SQL_GENERATION_PROMPT,
     SUPERVISOR_PROMPT,
     TABLE_SELECTION_PROMPT,
+    contract_block,
     example_messages,
     knowledge_block,
     literal_block,
@@ -307,3 +308,52 @@ def test_the_supervisor_prompt_states_the_scope_it_screens_against():
     assert "retail sales for FY2024-FY2025" in text
     assert "injection" in text
     assert "ambiguous" in text
+
+
+# ---------------------------------------------------------------------------
+# The answer contract line (arch5 section 5.1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("empty", ["", "   "])
+def test_the_contract_block_renders_nothing_when_there_is_nothing_to_add(empty):
+    assert contract_block(empty) == ""
+
+
+def test_the_contract_block_says_what_a_complete_answer_includes():
+    assert contract_block(" `product_name` beside any `sku_id`. ") == (
+        "A complete answer includes: `product_name` beside any `sku_id`.\n\n"
+    )
+
+
+def test_the_contract_line_sits_after_the_task_and_before_the_question():
+    text = render(
+        SQL_GENERATION_PROMPT.format_messages(
+            dialect="postgresql",
+            schema="s",
+            knowledge="",
+            literals="",
+            task=task_block("This is an aggregate."),
+            contract=contract_block("the net sales the rows are ranked by, as a column."),
+            examples=[],
+            question="top 10 SKUs",
+            feedback="",
+        )
+    )
+    assert text.index("Task:") < text.index("A complete answer includes:") < text.index("top 10 SKUs")
+
+
+def test_a_caller_that_predates_the_contract_renders_the_arch4_prompt():
+    """The template defaults the contract to nothing, so leaving it out is
+    byte-for-byte the prompt arch4 sent."""
+    common = dict(dialect="postgresql", schema="s", knowledge="", literals="", task="",
+                  examples=[], question="q", feedback="")
+    assert render(SQL_GENERATION_PROMPT.format_messages(**common)) == render(
+        SQL_GENERATION_PROMPT.format_messages(contract="", **common)
+    )
+
+
+def test_the_supervisor_prompt_asks_for_the_contracts_three_fields():
+    text = render(SUPERVISOR_PROMPT.format_messages(domain="d", question="q")).lower()
+    assert "entities" in text and "measure" in text and "period" in text
+    assert "write none" in text

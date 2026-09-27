@@ -8,12 +8,17 @@ package org.nl2sql.desktop.ui;
  * answer's sentences are drawn as, and two classes called {@code Text} in one
  * file is a trap rather than a coincidence.
  *
- * <p>The pipeline's prose is built to be rendered as markdown, and markdown
- * allows raw HTML -- so {@code present.py} escapes {@code &}, {@code <} and
- * {@code >} on the way in, which is right for its own output and for anything
- * that renders it as markdown. This application is neither: a JavaFX label
- * draws a string as text, so an escaped ampersand arrives on screen as the
- * five characters {@code &amp;}.
+ * <p>The pipeline's {@code answer} is built to be rendered as markdown, and
+ * markdown allows raw HTML -- so {@code present.py} escapes {@code &},
+ * {@code <} and {@code >} on the way out, which is right for its own output
+ * and for anything that renders it as markdown. This application is neither:
+ * a JavaFX label draws a string as text, so an escaped ampersand arrives on
+ * screen as the five characters {@code &amp;}.
+ *
+ * <p>{@code narrative} and the claims' text are plain text from agent 5.1.1
+ * on. An older agent's narrator copied escaped rows into its claims, so
+ * against an older server they arrive escaped too, and pass through here as
+ * well; on plain text this changes nothing.
  *
  * <p>Three entities, because {@code html.escape(quote=False)} produces exactly
  * three. A general entity decoder is the wrong tool here -- it would also

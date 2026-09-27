@@ -38,7 +38,7 @@ services:
   # document in knowledge/, one collection per document. The image ships the
   # embeddings inside it, the same way the retail image ships its dataset.
   vectordb:
-    image: ${VECTOR_IMAGE_NAME:-mcfaddja/nl2sql-rag-vectordb}:${VECTOR_IMAGE_TAG:-v1}
+    image: ${VECTOR_IMAGE_NAME:-mcfaddja/nl2sql-rag-vectordb}:${VECTOR_IMAGE_TAG:-v3_1}
     container_name: nl2sql-vectordb
     restart: unless-stopped
     stop_grace_period: 1m
@@ -60,7 +60,7 @@ services:
   # and runs the keyword half of its ensemble here; the matching vectors live in
   # vectordb above. Like that one, the image ships its data inside it.
   chunkdb:
-    image: ${CONTEXT_IMAGE_NAME:-mcfaddja/nl2sql-rag-chunkdb}:${CONTEXT_IMAGE_TAG:-v3}
+    image: ${CONTEXT_IMAGE_NAME:-mcfaddja/nl2sql-rag-chunkdb}:${CONTEXT_IMAGE_TAG:-v3_1}
     container_name: nl2sql-chunkdb
     restart: unless-stopped
     stop_grace_period: 1m
@@ -120,6 +120,71 @@ services:
       start_period: 20s
     profiles: ["feedback"]
 
+  # The corrections store: where a *wrong* answer goes once a reviewer has
+  # written, and validated against the retail database, the SQL that should
+  # have been generated. Its records -- the question, the incorrect answer,
+  # the correct one -- and its RAG, an embedding of each question beside the
+  # two queries, live side by side in one Postgres with pgvector.
+  #
+  # Its own service rather than a table in the golden set's stores, for the
+  # reason the golden set exists at all: it is what the agent is measured
+  # against, and a record of the agent's mistakes is not a benchmark answer.
+  # A stock image like feedbackdb's: the review service creates the schema
+  # on every start, so there is nothing to bake in.
+  correctionsdb:
+    image: ${FIXES_IMAGE:-pgvector/pgvector:pg18}
+    container_name: nl2sql-correctionsdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${CORRECTIONS_DB_USER:-corrections}
+      POSTGRES_PASSWORD: ${CORRECTIONS_DB_PASSWORD:-corrections}
+      POSTGRES_DB: ${CORRECTIONS_DB_NAME:-nl2sql_corrections}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${CORRECTIONS_DB_PORT:-5436}:5432"
+    volumes:
+      - correctionsdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${CORRECTIONS_DB_USER:-corrections} -d ${CORRECTIONS_DB_NAME:-nl2sql_corrections}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles: ["review"]
+
+  # The completions store: the same, for an answer that was *correct but
+  # incomplete* -- the SQL was right and the answer left out something a
+  # reader needed. Its own database and RAG again, apart from the
+  # corrections store as well as from the golden set: a missing label and a
+  # wrong join are different lessons, and a later agent will want to ask
+  # for one without being handed the other.
+  completionsdb:
+    image: ${FIXES_IMAGE:-pgvector/pgvector:pg18}
+    container_name: nl2sql-completionsdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${COMPLETIONS_DB_USER:-completions}
+      POSTGRES_PASSWORD: ${COMPLETIONS_DB_PASSWORD:-completions}
+      POSTGRES_DB: ${COMPLETIONS_DB_NAME:-nl2sql_completions}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${COMPLETIONS_DB_PORT:-5437}:5432"
+    volumes:
+      - completionsdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${COMPLETIONS_DB_USER:-completions} -d ${COMPLETIONS_DB_NAME:-nl2sql_completions}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles: ["review"]
+
   agent:
     build:
       context: .
@@ -163,12 +228,16 @@ services:
       LITERALS_ENABLED: ${LITERALS_ENABLED:-true}
       AUDIT_ENABLED: ${AUDIT_ENABLED:-true}
       NARRATE_ENABLED: ${NARRATE_ENABLED:-true}
+      # The arch5 Completeness Reviewer after execution, and its one
+      # reflective model call (arch5 section 6.6).
+      REVIEW_ENABLED: ${REVIEW_ENABLED:-true}
+      REVIEW_REFLECTION_ENABLED: ${REVIEW_REFLECTION_ENABLED:-true}
       # "vector" is the Schema Retriever (DDL-chunk vectors + FK closure);
       # "llm" restores v3's table-selection model call for comparison.
       SCHEMA_RETRIEVAL: ${SCHEMA_RETRIEVAL:-vector}
-      # One counter for every failure source: 4 generations, so one draft
-      # and three repairs.
-      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-4}
+      # One counter for every failure source: 7 generations, so one draft
+      # and six repairs (arch5 section 6.4).
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-7}
       # Estimated-plan cost ceiling, calibrated against this dataset.
       MAX_PLAN_COST: ${MAX_PLAN_COST:-1000000}
       # --- forwarded, not overridden ----------------------------------
@@ -368,6 +437,14 @@ services:
         condition: service_healthy
       vectordb:
         condition: service_healthy
+      # A fix is validated by running it against the retail database, and
+      # stored in one of these two.
+      postgres:
+        condition: service_healthy
+      correctionsdb:
+        condition: service_healthy
+      completionsdb:
+        condition: service_healthy
     environment:
       REVIEW_HOST: ${REVIEW_HOST:-0.0.0.0}
       REVIEW_PORT: ${REVIEW_PORT:-8444}
@@ -387,6 +464,15 @@ services:
       FEEDBACK_DB_URL: ${REVIEW_FEEDBACK_DB_URL:-postgresql://feedback:feedback@nl2sql-feedbackdb:5432/nl2sql_feedback}
       FEEDBACK_WRITER_PASSWORD: ${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}
       REVIEW_MANAGE_SCHEMA: ${REVIEW_MANAGE_SCHEMA:-}
+      # --- fixing wrong and incomplete answers ----------------------
+      # Validation runs the reviewer's SQL as the read-only role the agent
+      # uses, never as the owner: it is SQL a person typed.
+      RETAIL_DB_URL: ${REVIEW_RETAIL_DB_URL:-postgresql://nl2sql_reader:nl2sql_reader@nl2sql-postgres:5432/nl2sql_retail}
+      REVIEW_VALIDATE_TIMEOUT_MS: ${REVIEW_VALIDATE_TIMEOUT_MS:-}
+      REVIEW_VALIDATE_MAX_ROWS: ${REVIEW_VALIDATE_MAX_ROWS:-}
+      CORRECTIONS_DB_URL: ${REVIEW_CORRECTIONS_DB_URL:-postgresql://corrections:corrections@nl2sql-correctionsdb:5432/nl2sql_corrections}
+      COMPLETIONS_DB_URL: ${REVIEW_COMPLETIONS_DB_URL:-postgresql://completions:completions@nl2sql-completionsdb:5432/nl2sql_completions}
+      REVIEW_EMBED_FIXES: ${REVIEW_EMBED_FIXES:-}
       # --- promotion -------------------------------------------------
       REVIEW_DOCUMENT: ${REVIEW_DOCUMENT:-/app/context_questions/translated_questions.md}
       REVIEW_RAG_DIR: ${REVIEW_RAG_DIR:-/app/rag}
@@ -515,7 +601,7 @@ services:
     # Tagged by platform: one jar is one platform, and a cached image built
     # for another machine is a jar that will not start on this one. The tag
     # is a version *and* a platform, which is how the published ones are
-    # named -- `v4_5-mac-aarch64`. Unpinned it says `local`, which has
+    # named -- `v5_1_1-mac-aarch64`. Unpinned it says `local`, which has
     # nowhere to be pulled from and is built here instead.
     image: ${DESKTOP_IMAGE_NAME:-nl2sql-desktop-build}:${DESKTOP_IMAGE_TAG:-local}-${JAVAFX_PLATFORM:-linux}
     volumes:
@@ -531,9 +617,13 @@ volumes:
   pgdata:
     name: nl2sql-pgdata
   feedbackdata:
-    # Staged feedback. The one volume here holding data a person typed
-    # rather than data a build produced, which is what makes it the one
-    # worth backing up.
+    # Staged feedback. With the two below, the volumes holding data a person
+    # typed rather than data a build produced, which is what makes them the
+    # ones worth backing up.
+  correctionsdata:
+    # Reviewed corrections of wrong answers, and their embeddings.
+  completionsdata:
+    # Reviewed completions of incomplete answers, and their embeddings.
   chunkdata:
     # Project-scoped, seeded from the published image on first start -- the
     # same arrangement as vectordata below.

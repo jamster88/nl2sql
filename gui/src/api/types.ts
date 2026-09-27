@@ -232,8 +232,11 @@ export interface AskRequest {
   metadata?: Record<string, string>;
 }
 
-/** Was the answer right? The whole of the required input. */
-export type Verdict = "yes" | "no";
+/**
+ * Was the answer right? The whole of the required input: correct (`yes`),
+ * wrong (`no`), or correct but incomplete (`incomplete`).
+ */
+export type Verdict = "yes" | "no" | "incomplete";
 
 /**
  * What a user says about an answer.

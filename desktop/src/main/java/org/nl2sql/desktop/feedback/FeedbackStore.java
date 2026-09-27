@@ -19,7 +19,8 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Was that answer right? Yes or no, and what became of the answer.
+ * Was that answer right? Correct, wrong, or correct but incomplete, and
+ * what became of the answer.
  *
  * <p>The design is the web interface's, because the behaviour should be: the
  * request is <em>not</em> awaited before the button changes state. A verdict
@@ -110,7 +111,7 @@ public final class FeedbackStore {
      * Record a verdict and a comment together.
      *
      * <p>Separate from {@link #vote} because the comment arrives later than
-     * the verdict: the user clicks Yes or No first and may then explain. Both
+     * the verdict: the user clicks a verdict first and may then explain. Both
      * write the same row, so the second is an amendment rather than a second
      * opinion.
      */

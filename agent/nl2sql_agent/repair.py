@@ -1,13 +1,13 @@
 """The Repair Agent: turn a failure into a hint, and only rarely into a model call.
 
-Section 6.3 of `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md`. One agent
+Section 6.3 of `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md`. One agent
 writes SQL and it is not this one. Every gate in stage 3 -- the Static
-Validator, the Planner Gate, the Safe Executor, the Audit Checker -- reports a
-failure as an `Issue`, and this module's whole job is to fill in that issue's
+Validator, the Planner Gate, the Safe Executor, the Completeness Reviewer, the
+Audit Checker -- reports a failure as an `Issue`, and this module's whole job is to fill in that issue's
 `hint`: the sentence the generator is shown alongside its own rejected query.
 
 The design point is economic. A repair that called the model would double the
-model calls of every retry, and with `MAX_ATTEMPTS = 4` that is three extra
+model calls of every retry, and with `MAX_ATTEMPTS = 7` that is six extra
 round trips on exactly the questions that are already slow. But most failures
 do not need a model to diagnose. Postgres says `column "store_nam" does not
 exist`; the pruned schema says the column is `store_name`; the gap between
@@ -37,7 +37,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
-from .state import AUDIT, PLANNER, STATIC, Attempt, Issue
+from .state import AUDIT, COMPLETENESS, PLANNER, STATIC, Attempt, Issue
 
 #: How much SQL to quote around a syntax error, per side. The spec asks for
 #: "the 40 characters around n"; two of these is that.
@@ -120,8 +120,10 @@ def classify(
     `schema` is the rendered schema block the generator was given (the v3
     `schema_and_samples` format); it is where the column suggestions come from.
     `allowed_tables` is the validator's allowlist, which is where the table
-    suggestions come from. `history` supplies the failed SQL -- and, when an
-    error has already been seen, the line that says so.
+    suggestions come from. `history` ends with the attempt that just failed,
+    which is how the graph records it: that last entry supplies the failed
+    SQL, and the entries before it are what the repeat warning searches.
+    An attempt is never its own precedent.
 
     Returning None is a real answer, not a failure: it routes the issue to the
     one model call this stage is allowed.
@@ -136,7 +138,7 @@ def classify(
     for rule in _RULES:
         hint = rule(failure)
         if hint:
-            return _repeat_prefix(failure.message, history) + hint
+            return _repeat_prefix(failure.message, history[:-1]) + hint
     return None
 
 
@@ -185,7 +187,7 @@ def repair_hint(
     else:
         body, calls = _diagnose(llm, originals, schema, _failed_sql(history)), 1
     return [
-        replace(issue, hint=_repeat_prefix(issue.message or "", history) + body)
+        replace(issue, hint=_repeat_prefix(issue.message or "", history[:-1]) + body)
         for issue in originals
     ], calls
 
@@ -202,6 +204,28 @@ def _audit(failure: _Failure) -> str | None:
     """
     if failure.source == AUDIT and failure.message.strip():
         return failure.message.strip()
+    return None
+
+
+#: The completeness hint. The reviewer's message already names every gap in
+#: the contract's terms, so the hint only has to say what kind of fix it is:
+#: the query was right, and rewriting it from scratch is how a correct join
+#: gets lost on the way to adding a label.
+COMPLETENESS_HINT = (
+    "The query is correct as far as it goes. Keep everything it already returns and "
+    "add what is listed above -- this is not an error in the SQL."
+)
+
+
+def _completeness(failure: _Failure) -> str | None:
+    """A completeness gap is already a diagnosis, written by the reviewer.
+
+    arch5 section 6.3: "No model call: the reviewer already did the
+    thinking." The reviewer's list is the message, shown verbatim; the hint
+    is the one sentence that says to extend the query rather than replace it.
+    """
+    if failure.source == COMPLETENESS and failure.message.strip():
+        return COMPLETENESS_HINT
     return None
 
 
@@ -365,6 +389,7 @@ def _plan_cost(failure: _Failure) -> str | None:
 #: no two rules in the spec's table match the same message.
 _RULES = (
     _audit,
+    _completeness,
     _syntax,
     _group_by,
     _missing_column,
@@ -477,6 +502,12 @@ def _failed_sql(history: Sequence[Attempt]) -> str:
 
 def _repeat_prefix(message: str, history: Sequence[Attempt]) -> str:
     """A line naming the earlier attempts that failed this same way, or "".
+
+    `history` here is the earlier attempts only. The callers strip the one
+    that just failed: counting it made every first failure announce itself
+    as a repeat -- "attempt 1 has already failed with this same error, so the
+    approach itself must change" -- which told the generator to abandon a
+    query that needed one column fixed.
 
     Section 6.3's example is a hint that can say "attempts 1 and 2 both joined
     on date_key; that is the error". The join is a specific this module cannot

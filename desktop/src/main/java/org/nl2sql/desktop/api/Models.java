@@ -75,10 +75,16 @@ public final class Models {
         }
     }
 
-    /** Was the answer right? The whole of the required input. */
+    /**
+     * Was the answer right? The whole of the required input: correct
+     * ({@code yes}), wrong ({@code no}), or correct but incomplete
+     * ({@code incomplete}). The first two wire values predate the third and
+     * are kept, so every verdict already recorded still reads the same.
+     */
     public enum Verdict {
         YES("yes"),
-        NO("no");
+        NO("no"),
+        INCOMPLETE("incomplete");
 
         private final String wire;
 

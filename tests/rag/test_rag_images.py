@@ -3,9 +3,9 @@
 Both halves of the knowledge base are published *with their data inside
 them*, which is unusual and is what makes these files worth pinning. A
 Postgres image normally ships empty and fills up at run time; these ship a
-populated cluster, so `publish_db_image.sh` can tar a volume into a new
-layer and someone else can pull the embeddings rather than spend an hour
-recomputing them.
+populated cluster -- `publish_db_image.sh` dumps a store and the build
+restores it into the image, once per platform -- so someone else can pull
+the embeddings rather than spend an hour recomputing them.
 
 That arrangement rests on one invariant that is invisible unless you know to
 look for it, and silently produces empty images when it is broken -- see
@@ -115,53 +115,76 @@ def test_each_image_says_what_it_is(service: str, dockerfile: str, arg: str, bas
 
 
 # ---------------------------------------------------------------------------
-# seeded.Dockerfile -- the snapshot layer
+# restore.Dockerfile -- the data, restored per platform
 # ---------------------------------------------------------------------------
 
 
-def test_the_snapshot_is_added_rather_than_copied():
-    """`ADD` extracts a local tar into the image; `COPY` would put the tar
-    file itself there, and the published image would contain an archive of a
-    database rather than a database.
-    """
-    source = _dockerfile("seeded.Dockerfile")
-    assert re.search(r"^ADD pgdata\.tar ", source, re.MULTILINE)
-    assert "COPY pgdata.tar" not in source
+def _restore_run() -> str:
+    """The restore's one RUN instruction, continuation lines joined."""
+    source = _dockerfile("restore.Dockerfile")
+    return re.search(r"^RUN (.*?)(?<!\\)$", source, re.MULTILINE | re.DOTALL).group(1)
 
 
-def test_the_snapshot_lands_where_the_server_will_look_for_it():
-    source = _dockerfile("seeded.Dockerfile")
-    assert re.search(rf"^ENV PGDATA={re.escape(PGDATA)}$", source, re.MULTILINE)
-    assert re.search(rf"^ADD pgdata\.tar {re.escape(PGDATA)}/$", source, re.MULTILINE)
+def test_the_restore_continues_the_base_stage_rather_than_starting_one():
+    """publish_db_image.sh appends it to the kind's own Dockerfile. A FROM
+    here would start a second stage without the base's PGDATA and labels --
+    and the image would be that stage."""
+    assert not re.search(r"^FROM ", _dockerfile("restore.Dockerfile"), re.MULTILINE)
 
 
-def test_the_snapshot_layer_is_built_on_whatever_was_running():
-    """`publish_db_image.sh` passes the running container's own image, so a
-    store started from a published image is re-published on top of it rather
-    than on top of a local build.
-    """
-    assert "ARG BASE_IMAGE" in _dockerfile("seeded.Dockerfile")
-    assert "FROM ${BASE_IMAGE}" in _dockerfile("seeded.Dockerfile")
-
-
-def test_the_extracted_cluster_is_owned_and_locked_down_again():
-    """`ADD` preserves the tar's ownership, which came from a container that
-    may number `postgres` differently. Re-applying both is what keeps the
-    published image startable.
-    """
-    source = _dockerfile("seeded.Dockerfile")
-    assert "USER root" in source
-    assert f"chown -R postgres:postgres {PGDATA}" in source
-    assert f"chmod 700 {PGDATA}" in source
-
-
-def test_the_file_the_publish_script_copies_is_the_one_that_exists():
-    """The script copies it into a temporary build directory by name; a
-    rename on either side is a build that fails at `docker build`.
-    """
+def test_the_files_the_publish_script_joins_are_the_ones_that_exist():
     script = (RAG_DIR / "publish_db_image.sh").read_text()
-    assert "docker/seeded.Dockerfile" in script
-    assert (DOCKER_DIR / "seeded.Dockerfile").is_file()
+    assert '"$RAG_DIR/docker/$SERVICE.Dockerfile" "$RAG_DIR/docker/restore.Dockerfile"' in script
+    for service, dockerfile, _, _ in STORES:
+        assert dockerfile == f"{service}.Dockerfile" and (DOCKER_DIR / dockerfile).is_file()
+    assert (DOCKER_DIR / "restore.Dockerfile").is_file()
+
+
+def test_the_cluster_is_initialised_in_the_build_for_its_own_platform():
+    """The point of the file: initdb runs under each platform of a buildx
+    build, where the tar it replaced carried one machine's data directory."""
+    run = _restore_run()
+    assert 'gosu postgres initdb --username="$DB_USER"' in run
+    assert "--encoding=UTF8 --locale=en_US.utf8" in run
+
+
+def test_the_bootstrap_role_is_the_one_the_stores_are_created_with(compose: dict):
+    """initdb makes it and the dump's CREATE of it is dropped, so they have to
+    be the same role -- the one compose's POSTGRES_USER creates."""
+    assert re.search(r"^ARG DB_USER=ragproc$", _dockerfile("restore.Dockerfile"), re.MULTILINE)
+    for service in ("chunkdb", "vectordb"):
+        assert compose["services"][service]["environment"]["POSTGRES_USER"] == "${RAG_DB_USER:-ragproc}"
+
+
+def test_the_restore_stops_at_the_first_error():
+    """psql carries on past a failed statement by default, and a restore that
+    carried on would publish a store missing whatever failed."""
+    assert "-v ON_ERROR_STOP=1" in _restore_run()
+
+
+def test_the_stores_own_pg_hba_is_installed_owned_by_postgres():
+    run = _restore_run()
+    assert 'install -o postgres -g postgres -m 600 /tmp/restore/pg_hba.conf "$PGDATA/pg_hba.conf"' in run
+
+
+def test_nothing_can_connect_while_the_restore_runs():
+    assert """pg_ctl -o "-c listen_addresses=''" -w start""" in _restore_run()
+
+
+def test_the_server_is_shut_down_cleanly_before_the_layer_is_taken():
+    """A layer taken from a server that did not checkpoint is a cluster that
+    replays WAL on its first start -- or does not start."""
+    run = _restore_run()
+    assert "pg_ctl -m fast -w stop" in run
+    assert run.index("psql") < run.index("pg_ctl -m fast -w stop")
+
+
+def test_the_dump_leaves_the_image_in_the_layer_that_used_it():
+    """Removed in a later RUN, the dump would still be in the image, one
+    layer down, doubling what everybody pulls."""
+    run = _restore_run()
+    assert run.rstrip().endswith("rm -rf /tmp/restore")
+    assert len(re.findall(r"^RUN ", _dockerfile("restore.Dockerfile"), re.MULTILINE)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -287,17 +310,6 @@ def test_the_image_override_the_starters_export_is_the_one_compose_reads():
         exported = set(re.findall(r"^\s*export ([A-Z_]+)=", source, re.MULTILINE))
         assert exported == {f"{prefix}_IMAGE", f"{prefix}_TAG"}, script
         assert exported <= read, f"{script} exports {exported - read}, which compose never reads"
-
-
-def test_the_base_image_the_publish_script_picks_is_the_one_compose_would_run():
-    """It reads the same two variables to decide what to layer the snapshot
-    onto, with the same defaults, so publishing after `--image` re-publishes
-    the pulled image rather than a local build.
-    """
-    script = (RAG_DIR / "publish_db_image.sh").read_text()
-    for prefix, default in (("CHUNKDB", "nl2sql-rag-chunkdb"), ("VECTORDB", "nl2sql-rag-vectordb")):
-        assert f"${{{prefix}_IMAGE:-{default}}}:${{{prefix}_TAG:-latest}}" in script
-        assert f"${{{prefix}_IMAGE:-{default}}}" in (RAG_DIR / "docker-compose.yml").read_text()
 
 
 def test_every_variable_compose_reads_is_one_something_sets():

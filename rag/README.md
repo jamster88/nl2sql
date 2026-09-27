@@ -205,31 +205,56 @@ chunk is removed. Re-running with no edits embeds nothing.
 
 Both databases put `PGDATA` at `/var/lib/pgdata`, deliberately outside
 `/var/lib/postgresql`, which the base images declare as a `VOLUME`. Writes to a
-volume path are invisible to `docker commit` and to any image built from the
-container, so a cluster living there could never be published.
+volume path are discarded from the image -- by `docker commit`, and by any
+`RUN` in a build -- so a cluster living there could never be published.
 
 Day to day, the data lives in named volumes (`nl2sql-rag-chunkdb-data`,
 `nl2sql-rag-vectordb-data`) and survives `stop`, `start`, `restart` and
 `docker compose down`. Only `down -v` destroys it.
 
-To publish a database as a self-contained image:
+To publish a database as a self-contained, multi-arch image:
 
 ```bash
-./publish_db_image.sh vectordb mcfaddja/nl2sql-rag-vectordb:v3
-./publish_db_image.sh chunkdb  mcfaddja/nl2sql-rag-chunkdb:v3
+./publish_db_image.sh vectordb mcfaddja/nl2sql-rag-vectordb:v4
+./publish_db_image.sh chunkdb  mcfaddja/nl2sql-rag-chunkdb:v4
 # or, as part of a full run:
-./run_all.sh --publish mcfaddja --tag v3
+./run_all.sh --publish mcfaddja --tag v4
 ```
 
 | Tag | Contents |
 |---|---|
-| `nl2sql-rag-vectordb:v3` | knowledge collections **and** both golden-pair vector tables |
-| `nl2sql-rag-chunkdb:v3` | knowledge chunks **and** `golden_pairs` with its BM25 index |
+| `nl2sql-rag-vectordb:v3_1` | knowledge collections **and** both golden-pair vector tables; amd64 and arm64 |
+| `nl2sql-rag-chunkdb:v3_1` | knowledge chunks **and** `golden_pairs` with its BM25 index; amd64 and arm64 |
+| `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | the same contents, arm64 only |
 | `nl2sql-rag-vectordb:v1` | knowledge collections only -- what the v2 agent searches |
 
-That script stops the container for a clean shutdown checkpoint, tars the
-volume, bakes the tar into a new image layer, restarts the container, and
-pushes. The published image carries the data with it:
+The script dumps the store with `pg_dumpall` -- live, since a dump reads each
+database in one snapshot; a stopped store is started for it and stopped again
+-- and builds the kind's own Dockerfile continued by
+[`docker/restore.Dockerfile`](docker/restore.Dockerfile), which runs `initdb`
+and restores the dump *inside the build*, once for each of `linux/amd64` and
+`linux/arm64`, then pushes both in one `docker buildx build`. `--no-push`
+builds this machine's platform alone and loads it; `PUBLISH_PLATFORMS`
+overrides the pair.
+
+It used to stop the container, tar the volume and add the tar as a layer. That
+was one machine's data directory, and Postgres does not promise a data
+directory moves between architectures -- so `v3` is arm64 only. `v3_1` is `v3`
+republished the new way, from the published images themselves rather than
+from whatever a volume holds today:
+
+```bash
+./publish_db_image.sh vectordb mcfaddja/nl2sql-rag-vectordb:v3_1 --from mcfaddja/nl2sql-rag-vectordb:v3
+./publish_db_image.sh chunkdb  mcfaddja/nl2sql-rag-chunkdb:v3_1  --from mcfaddja/nl2sql-rag-chunkdb:v3
+```
+
+and was checked against `v3` on both architectures before it was pinned: the
+schema, every table's contents, the roles, databases, `pg_hba.conf` and
+settings, a password login over the network, and the HNSW indexes -- rebuilt by
+the restore -- returning the same five nearest neighbours for every stored
+vector.
+
+The published image carries the data with it:
 
 ```bash
 ./01_start_chunk_db.sh  --image mcfaddja/nl2sql-rag-chunkdb:v1
@@ -331,23 +356,26 @@ shell scripts on this page.
 Those last ones are run rather than read. Each gets a throwaway copy of `rag/`
 with a fake `docker` on PATH that records every call and returns scripted
 results, so what is asserted is the decision: which service is started, which
-image is pulled and when, whether a container is stopped before its volume is
-snapshotted and restarted afterwards, and which `die` a bad argument reaches.
+image is pulled and when, whether a stopped store is started for its dump and
+put back afterwards, what the build is handed -- the kind's Dockerfile and the
+restore, the dump without its bootstrap `CREATE ROLE` -- and which `die` a bad
+argument reaches.
 They were untested until they were not, and writing the tests turned up three
 defects -- see the repository README's
 [coverage section](../README.md#the-parts-a-coverage-report-cannot-see).
 
-The two images and `docker-compose.yml` are checked too, including the one
-invariant the whole publishing story rests on: `PGDATA` has to sit outside the
-path the base images declare as a `VOLUME`, or the published image ships a
-perfectly valid, completely empty database.
+The two images, the restore and `docker-compose.yml` are checked too,
+including the one invariant the whole publishing story rests on: `PGDATA` has
+to sit outside the path the base images declare as a `VOLUME`, or the restore's
+writes are discarded and the published image ships a perfectly valid,
+completely empty database.
 
 Everything that writes gets a **throwaway database**, created from `template0`
 and dropped afterwards. A scratch schema would not be enough: every function
 here addresses its tables unqualified, so with `public` still on the search path
 an unqualified `TRUNCATE` in `rebuild_bm25_index` would fall through to the
 published table whenever the scratch copy did not exist yet. The published
-golden pairs and embeddings are what the v3 images ship, and nothing in the
+golden pairs and embeddings are what the v3_1 images ship, and nothing in the
 suite can reach them.
 
 The vector tests use synthetic unit vectors rather than calling bge-m3, so the

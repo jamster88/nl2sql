@@ -166,36 +166,54 @@ Or silence the progress lines entirely with `--quiet`.
 
 ### Structured output for scripts
 
-`--json` prints the question, retrieved chunks, chosen tables, generated SQL,
-and rows as one JSON object:
+`--json` prints the whole run as one JSON object: the Supervisor's verdict and
+intent, the answer contract it produced, the retrieved chunks and worked
+examples, the chosen tables, the SQL and every attempt that preceded it, the
+rows, the Completeness Reviewer's report, the assumptions the answer rests
+on, the claims and their audit, and a trace entry per node. Trimmed, from a
+real run:
 
 ```bash
-docker compose run --rm agent --json "Which 3 promotions had the highest total promo quantity sold?"
+docker compose run --rm agent --json "top 10 SKUs"
 ```
 
 ```json
 {
-  "question": "Which 3 promotions had the highest total promo quantity sold?",
-  "knowledge_chunks": [
-    {
-      "chunk_id": "ddl_index:1f2a...",
-      "source_doc": "ddl_index",
-      "heading_path": "DDL Index > fact_promo_performance",
-      "distance": 0.3417
-    }
-  ],
-  "retrieval_error": null,
-  "selected_tables": ["fact_promo_performance", "dim_promotion"],
-  "sql": "SELECT\n  p.promotion_name,\n  SUM(f.promo_quantity_sold) AS ...",
+  "question": "top 10 SKUs",
+  "verdict": "proceed",
+  "intent": "aggregate",
+  "answer_contract": {
+    "entities": [{"word": "sku", "key": "sku_id", "label": "product_name", "table": "dim_product"}],
+    "measure": "net sales",
+    "period": "FY2025",
+    "period_default": true,
+    "ranked": true,
+    "limit": 10
+  },
+  "retrieval_errors": {},
+  "selected_tables": ["dim_product", "dim_date", "fact_pos_retail_sales", "..."],
+  "sql": "SELECT prod.sku_id,\n       prod.product_name,\n       SUM(sales.net_sales_amt) AS total_net_sales ...",
+  "attempts": 1,
+  "attempt_history": [],
   "error": null,
   "result": {
-    "columns": ["promotion_name", "total_promo_quantity_sold"],
-    "rows": [["Back to School Flash Sale", "203812.674"]],
-    "row_count": 3,
+    "columns": ["sku_id", "product_name", "total_net_sales"],
+    "rows": [["SKU100189", "Ambervale T-Bone Steak", "138685.01"], "..."],
     "truncated": false
-  }
+  },
+  "completeness": {"passed": true, "missing": [], "reflected": true, "accepted_gaps": []},
+  "assumptions": [
+    "FY2025 (2024-04-01 to 2025-03-31), the latest complete fiscal year, since the question did not name a period"
+  ]
 }
 ```
+
+`answer_contract` is what a complete answer had to carry, and `completeness`
+is whether this one did: `missing` lists what the last result lacked and
+`accepted_gaps` what the answer went out without -- a gap sent back once and
+still there, or one left on the last attempt, which the answer then names.
+`assumptions` are the defaults the pipeline chose for the question; the
+narrative states each one.
 
 The exit code is 0 on success and 1 when the agent could not answer, so it
 works in a shell pipeline. Pull out just the SQL with
@@ -213,7 +231,8 @@ command that brings up everything it needs and opens it:
 
 It asks the same questions of the same pipeline, shows the agent's own
 pipeline steps while it works, draws whatever chart the Visual Formatter
-asked for, and takes a yes/no verdict on the answer.
+asked for, and takes a verdict on the answer: correct, wrong, or correct but
+incomplete.
 [`gui/README.md`](../gui/README.md) explains how it is put together.
 
 The same thing is also a desktop application, for anyone who would rather

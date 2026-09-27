@@ -16,10 +16,12 @@ import { App } from "../src/App";
 import {
   fakeClient,
   makeDraft,
+  makeFixResult,
   makeMeta,
   makePreview,
   makePromotion,
   makeSubmission,
+  makeValidation,
 } from "./helpers";
 
 afterEach(cleanup);
@@ -40,20 +42,20 @@ async function openFirst(): Promise<void> {
 describe("the queue", () => {
   it("asks for pending work first", async () => {
     const { client } = mount();
-    await waitFor(() => expect(client.submissions).toHaveBeenCalledWith({ state: "pending" }));
+    await waitFor(() => expect(client.submissions).toHaveBeenCalledWith({ state: "pending", verdict: "yes" }));
   });
 
   it("asks for everything when the filter is cleared", async () => {
     const { client } = mount();
     await screen.findByRole("button", { name: /all/ });
     await userEvent.click(screen.getByRole("button", { name: /all/ }));
-    await waitFor(() => expect(client.submissions).toHaveBeenLastCalledWith({}));
+    await waitFor(() => expect(client.submissions).toHaveBeenLastCalledWith({ verdict: "yes" }));
   });
 
   it("filters by a named state", async () => {
     const { client } = mount();
     await userEvent.click(await screen.findByRole("button", { name: /accepted/ }));
-    await waitFor(() => expect(client.submissions).toHaveBeenLastCalledWith({ state: "accepted" }));
+    await waitFor(() => expect(client.submissions).toHaveBeenLastCalledWith({ state: "accepted", verdict: "yes" }));
   });
 
   it("reports a queue it cannot load", async () => {
@@ -313,5 +315,312 @@ describe("the default client", () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// One pane per verdict, and fixing the wrong and the incomplete
+// ---------------------------------------------------------------------------
+
+function wrong(overrides: Parameters<typeof makeSubmission>[0] = {}) {
+  return makeSubmission({
+    id: "sub-w",
+    verdict: "no",
+    question: "top 10 SKUs",
+    sql_code: "SELECT sku_id FROM dim_product",
+    ...overrides,
+  });
+}
+
+/** A client serving one wrong submission in the Wrong pane. */
+function mountWrong(overrides: Parameters<typeof fakeClient>[0] = {}, submission = wrong()) {
+  return mount({
+    submissions: vi.fn().mockResolvedValue({
+      submissions: [submission],
+      count: 1,
+      counts: {},
+      counts_by_verdict: { no: { pending: 1 } },
+    }),
+    submission: vi.fn().mockResolvedValue({ ...submission, draft: makeDraft() }),
+    ...overrides,
+  });
+}
+
+async function openWrong(pane: RegExp = /^Wrong/): Promise<void> {
+  await userEvent.click(await screen.findByRole("tab", { name: pane }));
+  await userEvent.click(await screen.findByText("top 10 SKUs"));
+  await screen.findByLabelText("Corrected SQL");
+}
+
+describe("the panes", () => {
+  it("offers one pane per verdict, each saying where its answers go", async () => {
+    mount();
+    const tabs = await screen.findAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Correct → golden set1",
+      "Wrong → corrections0",
+      "Correct but incomplete → completions0",
+    ]);
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("counts each pane's pending work from the queue's per-verdict counts", async () => {
+    mount({
+      submissions: vi.fn().mockResolvedValue({
+        submissions: [],
+        count: 0,
+        counts: {},
+        counts_by_verdict: { yes: { pending: 1 }, no: { pending: 2 }, incomplete: { pending: 3 } },
+      }),
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /^Wrong/ })).toHaveTextContent("Wrong → corrections2"),
+    );
+    expect(screen.getByRole("tab", { name: /^Correct but/ })).toHaveTextContent("3");
+  });
+
+  it("asks for the chosen pane's verdict, and closes what was open", async () => {
+    const { client } = mount();
+    await openFirst();
+    await userEvent.click(screen.getByRole("tab", { name: /^Correct but/ }));
+    await waitFor(() =>
+      expect(client.submissions).toHaveBeenLastCalledWith({ state: "pending", verdict: "incomplete" }),
+    );
+    expect(screen.queryByLabelText(/^Title/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Pick something from the queue/)).toBeInTheDocument();
+  });
+
+  it("asks for every state of a pane when the filter is cleared", async () => {
+    const { client } = mount();
+    await userEvent.click(await screen.findByRole("tab", { name: /^Wrong/ }));
+    await userEvent.click(screen.getByRole("button", { name: /all/ }));
+    await waitFor(() => expect(client.submissions).toHaveBeenLastCalledWith({ verdict: "no" }));
+  });
+});
+
+describe("fixing a wrong answer", () => {
+  it("starts from the agent's SQL, with nothing to save until it validates", async () => {
+    mountWrong();
+    await openWrong();
+    expect(screen.getByLabelText("Corrected SQL")).toHaveValue("SELECT sku_id FROM dim_product");
+    expect(screen.getByRole("button", { name: "Add to corrections" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Promote/ })).not.toBeInTheDocument();
+  });
+
+  it("validates the text in the box and shows what it returned", async () => {
+    const { client } = mountWrong();
+    await openWrong();
+    const box = screen.getByLabelText("Corrected SQL");
+    await userEvent.clear(box);
+    await userEvent.type(box, "SELECT sku_id, product_name FROM dim_product");
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+
+    expect(client.validate).toHaveBeenCalledWith("sub-w", "SELECT sku_id, product_name FROM dim_product");
+    const report = await screen.findByLabelText("Validation result");
+    expect(report).toHaveTextContent("It runs. 2 rows · plan cost 4.5 · 12.5 ms");
+    expect(within(report).getByRole("columnheader", { name: "product_name" })).toBeInTheDocument();
+    expect(within(report).getByText("NULL")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add to corrections" })).toBeEnabled();
+  });
+
+  it("disables saving again the moment the validated text is edited", async () => {
+    mountWrong();
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    await screen.findByLabelText("Validation result");
+    await userEvent.type(screen.getByLabelText("Corrected SQL"), " ");
+
+    expect(screen.getByRole("button", { name: "Add to corrections" })).toBeDisabled();
+    expect(screen.getByText(/Edited since it was validated/)).toBeInTheDocument();
+  });
+
+  it("shows why a query cannot be stored, and keeps saving off", async () => {
+    mountWrong({
+      validate: vi.fn().mockResolvedValue(
+        makeValidation({
+          valid: false,
+          problems: ['the database refused it: column "nope" does not exist'],
+          columns: [],
+          rows: [],
+          row_count: 0,
+          plan_cost: null,
+        }),
+      ),
+    });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+
+    const report = await screen.findByRole("alert");
+    expect(report).toHaveTextContent("It cannot be stored.");
+    expect(report).toHaveTextContent('column "nope" does not exist');
+    expect(screen.getByRole("button", { name: "Add to corrections" })).toBeDisabled();
+  });
+
+  it("shows warnings, and says when it is showing a sample of the rows", async () => {
+    mountWrong({
+      validate: vi.fn().mockResolvedValue(
+        makeValidation({
+          warnings: ["it returned more than 200 rows; only the first 200 were read"],
+          rows: [["SKU1", "Whole Milk"]],
+          row_count: 200,
+          truncated: true,
+          plan_cost: null,
+        }),
+      ),
+    });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+
+    const report = await screen.findByLabelText("Validation result");
+    expect(report).toHaveTextContent("It runs. 200+ rows · 12.5 ms");
+    expect(report).toHaveTextContent("more than 200 rows");
+    expect(report).toHaveTextContent("First 1 of 200+ rows.");
+  });
+
+  it("says it is a sample when it shows fewer rows than came back", async () => {
+    mountWrong({
+      validate: vi.fn().mockResolvedValue(makeValidation({ rows: [["SKU1", "Milk"]], row_count: 30 })),
+    });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    expect(await screen.findByLabelText("Validation result")).toHaveTextContent("First 1 of 30 rows.");
+  });
+
+  it("says one row in the singular", async () => {
+    mountWrong({ validate: vi.fn().mockResolvedValue(makeValidation({ rows: [["SKU1", "Milk"]], row_count: 1 })) });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    expect(await screen.findByLabelText("Validation result")).toHaveTextContent("It runs. 1 row ·");
+  });
+
+  it("adds it to the corrections store and reports what that did", async () => {
+    const { client } = mountWrong();
+    await openWrong();
+    await userEvent.type(screen.getByLabelText("Reviewer"), "ada");
+    await userEvent.type(screen.getByLabelText("Review note"), "missing the product name");
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    await screen.findByLabelText("Validation result");
+    await userEvent.click(screen.getByRole("button", { name: "Add to corrections" }));
+
+    expect(client.fix).toHaveBeenCalledWith(
+      "sub-w",
+      "SELECT sku_id FROM dim_product",
+      "ada",
+      "missing the product name",
+    );
+    const result = await screen.findByLabelText("Fix result");
+    expect(result).toHaveTextContent("W0001 added to the corrections store — 1 rows validated");
+    expect(result).toHaveTextContent("embedded — embedded 1; 0 still to embed");
+    expect(screen.getByText(/Already fixed as/)).toHaveTextContent("W0001");
+    await userEvent.click(within(result).getByRole("button", { name: "Close" }));
+    expect(screen.queryByLabelText("Fix result")).not.toBeInTheDocument();
+  });
+
+  it("reports a fix whose vector could not be written as stored, not failed", async () => {
+    mountWrong({
+      fix: vi.fn().mockResolvedValue(
+        makeFixResult({
+          embedded: false,
+          embed_detail: "FAILED: ConnectionError: no route; 1 still to embed",
+          fix: { ...makeFixResult().fix, corrected_truncated: true, embedded: false },
+        }),
+      ),
+    });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    await screen.findByLabelText("Validation result");
+    await userEvent.click(screen.getByRole("button", { name: "Add to corrections" }));
+
+    const result = await screen.findByLabelText("Fix result");
+    expect(result).toHaveTextContent("1+ rows validated");
+    expect(result).toHaveTextContent("not embedded yet — FAILED");
+    expect(result).toHaveTextContent("nothing has been lost");
+  });
+
+  it("surfaces a refusal from validating or saving", async () => {
+    mountWrong({
+      validate: vi.fn().mockRejectedValue(new Error("the retail database is down")),
+    });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("the retail database is down");
+  });
+
+  it("surfaces a refusal from saving", async () => {
+    mountWrong({ fix: vi.fn().mockRejectedValue("the server re-ran it and it failed") });
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    await screen.findByLabelText("Validation result");
+    await userEvent.click(screen.getByRole("button", { name: "Add to corrections" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("the server re-ran it and it failed");
+  });
+
+  it("cannot validate an empty box", async () => {
+    mountWrong({}, wrong({ sql_code: "" }));
+    await openWrong();
+    expect(screen.getByRole("button", { name: /Validate/ })).toBeDisabled();
+  });
+
+  it("judges without sending a golden-pair draft", async () => {
+    const { client } = mountWrong();
+    await openWrong();
+    await userEvent.click(screen.getByRole("button", { name: "Reject" }));
+    await waitFor(() =>
+      expect(client.review).toHaveBeenCalledWith("sub-w", { state: "rejected", reviewer: "", review_note: "" }),
+    );
+  });
+
+  it("says a rejected one has to be accepted before it is fixed", async () => {
+    mountWrong({}, wrong({ state: "rejected" }));
+    await openWrong();
+    expect(screen.getByText(/accept it before fixing it/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    await screen.findByLabelText("Validation result");
+    expect(screen.getByRole("button", { name: "Add to corrections" })).toBeDisabled();
+  });
+
+  it("makes an already-fixed submission read-only", async () => {
+    mountWrong({}, wrong({ state: "corrected", promoted_pair_id: "W0003" }));
+    await userEvent.click(await screen.findByRole("tab", { name: /^Wrong/ }));
+    await userEvent.click(await screen.findByText("top 10 SKUs"));
+    expect(await screen.findByText(/Already fixed as/)).toHaveTextContent("W0003");
+    expect(screen.queryByLabelText("Corrected SQL")).not.toBeInTheDocument();
+  });
+});
+
+describe("fixing an incomplete answer", () => {
+  it("is its own pane, and adds to the completions store", async () => {
+    const incomplete = wrong({ id: "sub-i", verdict: "incomplete" });
+    const { client } = mountWrong(
+      {
+        fix: vi.fn().mockResolvedValue(
+          makeFixResult({
+            kind: "completions",
+            fix: { ...makeFixResult().fix, fix_id: "I0001" },
+          }),
+        ),
+      },
+      incomplete,
+    );
+    await openWrong(/^Correct but incomplete/);
+    expect(screen.getByRole("heading", { name: "The query that would have been complete" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Validate/ }));
+    await screen.findByLabelText("Validation result");
+    await userEvent.click(screen.getByRole("button", { name: "Add to completions" }));
+
+    expect(client.fix).toHaveBeenCalledWith("sub-i", "SELECT sku_id FROM dim_product", "", "");
+    expect(await screen.findByLabelText("Fix result")).toHaveTextContent(
+      "I0001 added to the completions store",
+    );
+  });
+});
+
+describe("the reviewer's name", () => {
+  it("is kept across submissions that were never reviewed", async () => {
+    mountWrong();
+    await userEvent.type(await screen.findByLabelText("Reviewer"), "ada");
+    await openWrong();
+    expect(screen.getByLabelText("Reviewer")).toHaveValue("ada");
   });
 });

@@ -16,7 +16,10 @@
 --        -f docker/reader_role.sql
 --
 -- Idempotent: re-running resets the password to the one given and re-grants.
--- Nothing here drops or revokes anything, and the owner role is untouched.
+-- Nothing here drops anything, and the owner's rights on the data are
+-- untouched. The two revokes at the end take from PUBLIC what reading the
+-- dataset never needs: connecting to the cluster's other databases, and
+-- signalling other sessions.
 \set ON_ERROR_STOP on
 
 SELECT format('CREATE ROLE %I', :'reader')
@@ -38,3 +41,32 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"reader";
 -- readable too, without running this file again.
 ALTER DEFAULT PRIVILEGES FOR ROLE :"owner" IN SCHEMA public
     GRANT SELECT ON TABLES TO :"reader";
+
+-- One database, not every database. CONNECT is PUBLIC's by default on every
+-- database in the cluster, so the reader's password also opened `postgres` and
+-- `template1` -- where the function revokes below do not apply, and from where
+-- a backend in this database is just as reachable, since pids are
+-- cluster-wide. Taken from PUBLIC on every database but this one: the reader
+-- keeps CONNECT here by its own explicit privilege, and the superuser connects
+-- anywhere. Enumerated on each run, so a database created later is closed on
+-- the next start.
+SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', datname)
+FROM pg_database
+WHERE datname <> :'DBNAME' AND datallowconn \gexec
+
+-- Signalling other sessions. EXECUTE on these two is PUBLIC's by default, and
+-- Postgres lets any role cancel or terminate backends of the *same* role --
+-- and every reader session is the same role: the agent API's pool, each
+-- `docker compose run --rm agent`, and the review service validating a
+-- reviewer's SQL. With them, one SELECT could cancel or kill everyone else's:
+--
+--   SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+--   WHERE usename = current_user AND pid <> pg_backend_pid()
+--
+-- The agent's static validator refuses both names, but that is the agent
+-- being careful, and the review service's validator is a second caller that
+-- never learned the list. The server is the boundary, so it is revoked here.
+-- Function privileges are per database: this changes the retail database
+-- only, and the superuser keeps both.
+REVOKE EXECUTE ON FUNCTION pg_catalog.pg_cancel_backend(integer) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION pg_catalog.pg_terminate_backend(integer, bigint) FROM PUBLIC;

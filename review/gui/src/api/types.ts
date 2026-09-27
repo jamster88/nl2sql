@@ -10,10 +10,13 @@
  */
 
 /** Where a submission is in its life. `promoted` is terminal. */
-export type State = "pending" | "accepted" | "rejected" | "promoted";
+export type State = "pending" | "accepted" | "rejected" | "promoted" | "corrected";
 
-/** Was the answer right? What the user actually said. */
-export type Verdict = "yes" | "no";
+/**
+ * Was the answer right? What the user actually said: correct (`yes`), wrong
+ * (`no`), or correct but incomplete (`incomplete`).
+ */
+export type Verdict = "yes" | "no" | "incomplete";
 
 /**
  * One captured verdict, with the snapshot that outlives the job.
@@ -51,6 +54,8 @@ export interface SubmissionList {
   count: number;
   /** Every state present even at zero, so a queue badge reads "0". */
   counts: Record<string, number>;
+  /** The same, per verdict: one pane, and one queue, per verdict. */
+  counts_by_verdict: Record<string, Record<string, number>>;
 }
 
 /**
@@ -161,6 +166,85 @@ export interface GoldenSet {
 export interface ReviewLimits {
   max_pair_number: number;
   reload_timeout_seconds: number;
+  validate_timeout_ms: number;
+  validate_max_rows: number;
+}
+
+/**
+ * Where a fix goes: `corrections` for an answer marked wrong, `completions`
+ * for one marked correct but incomplete. Neither is the golden set.
+ */
+export type FixKind = "corrections" | "completions";
+
+export interface ValidateRequest {
+  sql: string;
+}
+
+/**
+ * What running a query against the live retail database showed. `valid` is
+ * the only field that decides whether it can be stored; the warnings are
+ * for the reviewer to judge.
+ */
+export interface ValidationModel {
+  sql: string;
+  valid: boolean;
+  problems: string[];
+  warnings: string[];
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+  truncated: boolean;
+  plan_cost: number | null;
+  elapsed_ms: number;
+}
+
+export interface FixRequest {
+  sql: string;
+  review_note: string;
+}
+
+/** One stored fix: the question, the incorrect answer and the correct one. */
+export interface FixModel {
+  fix_id: string;
+  submission_id: string;
+  job_id: string;
+  question: string;
+  incorrect_sql: string;
+  incorrect_answer: string;
+  incorrect_columns: string[];
+  incorrect_row_count: number;
+  corrected_sql: string;
+  corrected_columns: string[];
+  corrected_rows: unknown[][];
+  corrected_row_count: number;
+  corrected_truncated: boolean;
+  plan_cost: number | null;
+  user_comment: string;
+  reviewer: string;
+  review_note: string;
+  agent_version: string;
+  created_at: string | null;
+  embedded: boolean;
+}
+
+export interface FixList {
+  kind: FixKind;
+  fixes: FixModel[];
+  count: number;
+}
+
+/**
+ * What saving a fix did. `embedded: false` with a `fix` present is stored
+ * and not yet retrievable -- the next save that reaches the embedding host
+ * catches it up.
+ */
+export interface FixResultModel {
+  kind: FixKind;
+  fix: FixModel;
+  validation: ValidationModel;
+  submission: SubmissionModel;
+  embedded: boolean;
+  embed_detail: string;
 }
 
 export interface ReviewMeta {
@@ -171,6 +255,10 @@ export interface ReviewMeta {
   golden_count: number;
   next_pair_id: string;
   counts: Record<string, number>;
+  verdicts: string[];
+  counts_by_verdict: Record<string, Record<string, number>>;
+  /** How many fixes each store holds. */
+  fixes: Record<string, number>;
   reload_context: boolean;
   reload_vectors: boolean;
   limits: ReviewLimits;

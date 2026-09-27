@@ -20,8 +20,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Verdict = Literal["yes", "no"]
-State = Literal["pending", "accepted", "rejected", "promoted"]
+#: Correct, wrong, correct but incomplete: `store.VERDICTS`, as a type.
+Verdict = Literal["yes", "no", "incomplete"]
+State = Literal["pending", "accepted", "rejected", "promoted", "corrected"]
+#: The two stores a fix can go into: `corrections` for a wrong answer,
+#: `completions` for one that was right and incomplete.
+FixKind = Literal["corrections", "completions"]
 
 
 class SubmissionModel(BaseModel):
@@ -55,6 +59,8 @@ class SubmissionList(BaseModel):
     #: How many sit in each state, every state present even at zero, so a
     #: queue badge reads "0" rather than vanishing.
     counts: dict[str, int] = Field(default_factory=dict)
+    #: The same, per verdict: the review GUI keeps one queue per verdict.
+    counts_by_verdict: dict[str, dict[str, int]] = Field(default_factory=dict)
 
 
 class DraftModel(BaseModel):
@@ -112,6 +118,11 @@ class ReviewRequest(BaseModel):
             raise ValueError(
                 "a submission becomes 'promoted' by POSTing to /v1/submissions/{id}/promote, "
                 "which writes the question document; it cannot be set directly"
+            )
+        if value == "corrected":
+            raise ValueError(
+                "a submission becomes 'corrected' by POSTing a validated fix to "
+                "/v1/submissions/{id}/fix; it cannot be set directly"
             )
         return value
 
@@ -214,6 +225,99 @@ class GoldenSet(BaseModel):
 class ReviewLimits(BaseModel):
     max_pair_number: int
     reload_timeout_seconds: float
+    #: What a validation run is held to: the same kind of limits the agent's
+    #: own queries have.
+    validate_timeout_ms: int = 30000
+    validate_max_rows: int = 200
+
+
+# ---------------------------------------------------------------------------
+# Fixing a wrong or incomplete answer
+# ---------------------------------------------------------------------------
+
+
+class ValidateRequest(BaseModel):
+    """The SQL a reviewer thinks the agent should have written."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql: str = Field(max_length=20000)
+
+
+class ValidationModel(BaseModel):
+    """What running it against the live retail database showed.
+
+    `valid` is the only field that decides anything: a fix is stored only
+    when the query passed the static checks and ran to completion. Warnings
+    -- no rows, more rows than were read -- are for the reviewer to judge.
+    """
+
+    sql: str
+    valid: bool
+    problems: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    row_count: int = 0
+    truncated: bool = False
+    plan_cost: float | None = None
+    elapsed_ms: float = 0.0
+
+
+class FixRequest(BaseModel):
+    """Store a validated fix. The SQL is validated again here, server side."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sql: str = Field(max_length=20000)
+    review_note: str = Field(default="", max_length=4000)
+
+
+class FixModel(BaseModel):
+    """One stored fix: the question, the incorrect answer and the correct one."""
+
+    fix_id: str
+    submission_id: str
+    job_id: str
+    question: str
+    incorrect_sql: str = ""
+    incorrect_answer: str = ""
+    incorrect_columns: list[str] = Field(default_factory=list)
+    incorrect_row_count: int = 0
+    corrected_sql: str = ""
+    corrected_columns: list[str] = Field(default_factory=list)
+    corrected_rows: list[list[Any]] = Field(default_factory=list)
+    corrected_row_count: int = 0
+    corrected_truncated: bool = False
+    plan_cost: float | None = None
+    user_comment: str = ""
+    reviewer: str = ""
+    review_note: str = ""
+    agent_version: str = ""
+    created_at: datetime | None = None
+    embedded: bool = False
+
+
+class FixList(BaseModel):
+    kind: FixKind
+    fixes: list[FixModel]
+    count: int
+
+
+class FixResultModel(BaseModel):
+    """What saving a fix did, including the part that may not have worked.
+
+    `embedded` false with a `fix` present is a real state, like a promotion
+    whose reload failed: the record is stored, and its vector will be
+    written by the next save that can reach the embedding host.
+    """
+
+    kind: FixKind
+    fix: FixModel
+    validation: ValidationModel
+    submission: SubmissionModel
+    embedded: bool = False
+    embed_detail: str = ""
 
 
 class ReviewMeta(BaseModel):
@@ -226,6 +330,10 @@ class ReviewMeta(BaseModel):
     golden_count: int = 0
     next_pair_id: str = ""
     counts: dict[str, int] = Field(default_factory=dict)
+    verdicts: list[str] = Field(default_factory=list)
+    counts_by_verdict: dict[str, dict[str, int]] = Field(default_factory=dict)
+    #: How many fixes each store holds, keyed by store.
+    fixes: dict[str, int] = Field(default_factory=dict)
     reload_context: bool = True
     reload_vectors: bool = True
     limits: ReviewLimits

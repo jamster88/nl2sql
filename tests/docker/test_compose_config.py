@@ -369,10 +369,13 @@ def test_every_v4_pipeline_stage_is_toggleable_from_the_environment(agent_profil
     for flag in (
         "SUPERVISOR_ENABLED", "LITERALS_ENABLED", "AUDIT_ENABLED",
         "NARRATE_ENABLED", "SCHEMA_RETRIEVAL", "MAX_ATTEMPTS", "MAX_PLAN_COST",
+        "REVIEW_ENABLED", "REVIEW_REFLECTION_ENABLED",
     ):
         assert flag in env, f"{flag} is not passed to the agent container"
     assert env["SCHEMA_RETRIEVAL"] == "vector"
-    assert env["MAX_ATTEMPTS"] == "4"
+    assert env["MAX_ATTEMPTS"] == "7"
+    assert env["REVIEW_ENABLED"] == "true"
+    assert env["REVIEW_REFLECTION_ENABLED"] == "true"
 
 
 def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):

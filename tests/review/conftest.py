@@ -16,9 +16,13 @@ from pathlib import Path
 
 import pytest
 
+from dataclasses import replace
+
+from nl2sql_review.corrections import COMPLETIONS, CORRECTIONS, AlreadyFixed, EmbedResult, Kind
 from nl2sql_review.render import Draft
 from nl2sql_review.settings import ReviewSettings
 from nl2sql_review.store import Submission
+from nl2sql_review.validation import Validation, clean
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 REAL_DOCUMENT = ROOT / "context_questions" / "translated_questions.md"
@@ -136,6 +140,24 @@ class FakeRepository:
             found[s.state] = found.get(s.state, 0) + 1
         return found
 
+    def counts_by_verdict(self):
+        from nl2sql_review.store import STATES, VERDICTS
+
+        found = {v: {state: 0 for state in STATES} for v in VERDICTS}
+        for s in self.submissions.values():
+            found[s.verdict][s.state] += 1
+        return found
+
+    def mark_corrected(self, submission_id, *, fix_id, reviewer, review_note):
+        found = self.submissions.get(submission_id)
+        if found is None:
+            return None
+        found.state = "corrected"
+        found.promoted_pair_id = fix_id
+        found.reviewer = reviewer
+        found.review_note = review_note
+        return found
+
     def review(self, submission_id, *, state=None, reviewer=None, review_note=None, draft=None):
         found = self.submissions.get(submission_id)
         if found is None:
@@ -180,3 +202,96 @@ class FakeRepository:
 @pytest.fixture
 def repository(submission: Submission) -> FakeRepository:
     return FakeRepository([submission])
+
+
+class FakeFixStore:
+    """One fix store, in memory. The real one is tested live, in
+    `test_corrections_live.py`, against a scratch database."""
+
+    def __init__(self, kind: Kind, url: str = "postgresql://fixes:secret@nowhere:5432/fixes") -> None:
+        self.kind = kind
+        self.url = url
+        self.saved: list = []
+        self.embedders: list = []
+        self.fail_ping: Exception | None = None
+        self.fail_save: Exception | None = None
+        self.fail_count: Exception | None = None
+        self.fail_listing: Exception | None = None
+        self.already: str | None = None
+        self.embed_result = EmbedResult(embedded=1, pending=0, ran=True)
+
+    def ping(self) -> None:
+        if self.fail_ping is not None:
+            raise self.fail_ping
+
+    def count(self) -> int:
+        if self.fail_count is not None:
+            raise self.fail_count
+        return len(self.saved)
+
+    def save(self, fix):
+        if self.already is not None:
+            raise AlreadyFixed(fix.submission_id, self.already)
+        if self.fail_save is not None:
+            raise self.fail_save
+        fix.fix_id = f"{self.kind.prefix}{len(self.saved) + 1:04d}"
+        self.saved.append(fix)
+        return fix
+
+    def listing(self, limit: int = 50):
+        if self.fail_listing is not None:
+            raise self.fail_listing
+        return list(reversed(self.saved))[:limit]
+
+    def embed_pending(self, embedder) -> EmbedResult:
+        self.embedders.append(embedder)
+        return self.embed_result
+
+
+class FakeValidator:
+    """Stands in for running SQL against the retail database."""
+
+    def __init__(self, result: Validation | None = None) -> None:
+        self.calls: list[tuple[str, str]] = []
+        self.result = result or Validation(
+            sql="",
+            valid=True,
+            columns=["sku_id", "product_name"],
+            rows=[["SKU1", "Whole Milk"]],
+            row_count=1,
+            plan_cost=4.5,
+            elapsed_ms=3.0,
+        )
+
+    def __call__(self, sql: str, reference: str) -> Validation:
+        self.calls.append((sql, reference))
+        return replace(self.result, sql=clean(sql))
+
+
+@pytest.fixture
+def fix_stores() -> dict[str, FakeFixStore]:
+    return {CORRECTIONS.slug: FakeFixStore(CORRECTIONS), COMPLETIONS.slug: FakeFixStore(COMPLETIONS)}
+
+
+@pytest.fixture
+def validator() -> FakeValidator:
+    return FakeValidator()
+
+
+@pytest.fixture
+def wrong_submission() -> Submission:
+    return Submission(
+        id="sub-w",
+        job_id="job-w",
+        verdict="no",
+        question="top 10 SKUs",
+        sql_code="SELECT sku_id FROM dim_product",
+        answer="| sku_id |\n| SKU1 |",
+        narrative="",
+        intent="aggregate",
+        tables="dim_product",
+        row_count=10,
+        columns=["sku_id"],
+        comment="no names",
+        agent_version="5.0.0",
+    )

@@ -292,6 +292,15 @@ Notes a client author will want:
 * **`claims` and `audit` are the verification story.** Each claim points at
   the cells it was read from, and the audit drops any the rows do not
   support. A GUI can underline a sentence and highlight its cells from this.
+* **`answer` is markdown; `narrative` and each claim's `text` are plain
+  text.** `answer` is the whole document -- the prose, the rows as a
+  markdown table, the caveats -- with `&`, `<` and `>` escaped, because
+  markdown renders raw HTML and the rows are untrusted. Render it as
+  markdown, or draw `narrative`, `claims` and `result` yourself, as text.
+  Before 5.1.1 the narrative and claims could carry `&amp;` as well: the
+  narrator was shown escaped rows and copied what it read. A client that has
+  to work against an older server can undo the three entities, as
+  [`gui/src/api/text.ts`](../gui/src/api/text.ts) does.
 * **`chart` is a suggestion, not a rendering.** Its fields name columns of
   `result`; the GUI owns the chart library.
 * **`trace` is per-node cost.** Useful for a debug panel, and it is what the
@@ -354,8 +363,17 @@ Content-Type: application/json
 }
 ```
 
-`verdict` is the whole of the required input: `"yes"` or `"no"`. `comment` is
-optional free text for whoever reviews it.
+`verdict` is the whole of the required input, one of three:
+
+| `verdict` | The GUIs say | Meaning | Reviewed into |
+|---|---|---|---|
+| `"yes"` | Correct | The answer was right | The golden question set |
+| `"no"` | Wrong | The answer was wrong | The corrections store, with the query that should have been generated |
+| `"incomplete"` | Correct but incomplete | The SQL was right, and the answer still lacked something a reader needed -- a name beside an id, the figure a ranking was ranked by | The completions store, with the query that would have carried it |
+
+The wire values `"yes"` and `"no"` predate the third and are kept, so
+every verdict already recorded still reads the same. `comment` is optional
+free text for whoever reviews it.
 
 **The question, the SQL and the result shape are not sent.** They are taken
 from the job, which the server still has -- a vote happens while the answer
@@ -392,13 +410,14 @@ Four rules are worth knowing:
 This process writes one row and can do nothing else with it. It connects as
 `nl2sql_feedback_writer`, a role that may insert a submission, replace one
 that is still pending, delete one that is still pending, and read back three
-of its columns. Rows a curator has accepted, rejected or promoted are
+of its columns. Rows a curator has accepted, rejected, promoted or fixed are
 invisible to it -- by a row-level security policy, so the guarantee does not
 rest on the SQL in this package being careful.
 
 Everything else -- reading the queue, editing a draft pair, writing the
-golden question document -- belongs to a separate service on a separate port
-with a separate token. See [`review/README.md`](../review/README.md).
+golden question document, validating a reviewer's corrected SQL and storing
+it as a correction or a completion -- belongs to a separate service on a
+separate port with a separate token. See [`review/README.md`](../review/README.md).
 
 
 ## Errors

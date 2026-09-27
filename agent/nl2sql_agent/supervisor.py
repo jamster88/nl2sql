@@ -1,6 +1,6 @@
 """The Supervisor: the only agent that sees the question before retrieval.
 
-Section 4.1 of the v4 architecture. One structured-output call returns three
+Section 4.1 of the architecture. One structured-output call returns six
 things, and the architecture's rule is that every one of them has a named
 consumer -- an earlier draft classified intent and then let nothing read it,
 which is how a classifier becomes decoration:
@@ -11,6 +11,11 @@ which is how a classifier becomes decoration:
 | `intent`        | SQL Generator   | a one-line task framing in the human turn   |
 | `intent`        | Visual Formatter| chart tie-break: trend prefers a line       |
 | `clarification` | the router      | what to ask back when the question is vague |
+| `entities`, `measure`, `period` | the answer contract | what a complete answer carries (arch5) |
+
+The last three are the arch5 addition: what the rows are about, the quantity
+that answers or ranks them, and the span the question names. They are read
+out of the question and nothing else; `contract.py` turns them into columns.
 
 Because it runs before any retrieval, this is also where input screening
 belongs: a question that is really an instruction to the system ("ignore your
@@ -97,6 +102,31 @@ class Screening(BaseModel):
         default="",
         description="the single question to ask back, only when verdict is ambiguous",
     )
+    # arch5: the three fields the answer contract is built from.
+    entities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "the things the answer lists one row per, as plain nouns: ['sku'] for "
+            "'top 10 SKUs', ['store'] for 'sales by store'; empty when the answer "
+            "is a single number"
+        ),
+    )
+    measure: str = Field(
+        default="",
+        description=(
+            "the quantity that answers the question or ranks its rows, such as "
+            "'net sales' or 'gross margin'; for a ranking that names none, 'net "
+            "sales'; empty when the answer is not a quantity"
+        ),
+    )
+    period: str = Field(
+        default="",
+        description=(
+            "the time span the question names, in its own words, such as 'fiscal "
+            "year 2025'; empty when it names none, never an invented one; 'none' "
+            "when the answer does not depend on time, such as how many stores exist"
+        ),
+    )
 
 
 #: A one-line framing added to the generator's human turn, so the class the
@@ -157,6 +187,9 @@ def screen(
             "verdict": "proceed",
             "intent": "aggregate",
             "clarification": None,
+            "entities": [],
+            "measure": "",
+            "period": "",
             "retrieval_errors": {"supervisor": str(exc)},
         }
 
@@ -174,7 +207,24 @@ def screen(
         "verdict": verdict,
         "intent": intent,
         "clarification": clarification or None,
+        # Read defensively: these are the model's words, and a list that came
+        # back as a string or a None is a smaller contract, not a crash.
+        "entities": _words(getattr(screening, "entities", None)),
+        "measure": _text(getattr(screening, "measure", None)),
+        "period": _text(getattr(screening, "period", None)),
     }
+
+
+def _words(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(v).strip() for v in value if str(v or "").strip()]
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 def refusal(

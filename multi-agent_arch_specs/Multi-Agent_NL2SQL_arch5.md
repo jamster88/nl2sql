@@ -1,11 +1,11 @@
 # Multi-Agent NL2SQL Architecture, v5
 
 **Status:** arch4 plus one thing arch4 lacked. `Multi-Agent_NL2SQL_arch4.md`
-combined and revised arch1-3 and is what `agent/nl2sql_agent/` implements
-today. This document (2026-09-25) keeps all of it and adds the answer
+combined and revised arch1-3 and is what `agent/nl2sql_agent/` implemented
+through 4.5.0. This document (2026-09-25) keeps all of it and adds the answer
 contract and the Completeness Reviewer (sections 4.1 and 6.6), which are
-specified here and not yet built -- section 10, Phase 6, is the build plan,
-and the README and `agent/README.md` describe the code as it is until then.
+built as of agent 5.0.0 (section 10, Phase 6); `agent/README.md` records
+where the build departs from this text, and why.
 Supersedes `Multi-Agent_NL2SQL_arch4.md`, and through it
 `Multi-Agent_NL2SQL_arch1.md`, `Multi-Agent_NL2SQL_arch2.md`,
 `Multi-Agent_NL2SQL_arch3.md` and the `Multi-agent NL2SQL.drawio` diagram.

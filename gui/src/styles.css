@@ -744,6 +744,12 @@ pre {
   color: var(--surface-raised);
 }
 
+.button-vote[aria-pressed="true"][data-verdict="incomplete"] {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--surface-raised);
+}
+
 .feedback-note {
   font-size: 0.82rem;
 }
@@ -845,6 +851,10 @@ pre {
 
 .history-verdict[data-verdict="no"] {
   color: var(--bad);
+}
+
+.history-verdict[data-verdict="incomplete"] {
+  color: var(--warn);
 }
 
 .history-status {

@@ -163,6 +163,10 @@ def test_answer_json_mode_emits_full_state_and_error_flag(capsys):
     # v3 carried a single retrieval_error; v4 has four retrievers that fail
     # independently, so the provenance is a dict keyed by which one.
     assert payload["retrieval_errors"] == {}
+    # arch5: what a complete answer was held to, and what it assumed.
+    assert payload["answer_contract"] is None
+    assert payload["completeness"] is None
+    assert payload["assumptions"] == []
 
 
 def test_answer_json_mode_returns_one_on_error(capsys):

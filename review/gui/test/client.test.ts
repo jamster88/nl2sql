@@ -9,7 +9,16 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError, createClient } from "../src/api/client";
-import { makeDraft, makeGolden, makeMeta, makePreview, makePromotion, makeSubmission } from "./helpers";
+import {
+  makeDraft,
+  makeFixResult,
+  makeGolden,
+  makeMeta,
+  makePreview,
+  makePromotion,
+  makeSubmission,
+  makeValidation,
+} from "./helpers";
 
 function spyFetch(response: Response): { fetch: typeof fetch; calls: [string, RequestInit][] } {
   const calls: [string, RequestInit][] = [];
@@ -113,6 +122,42 @@ describe("createClient", () => {
     const defaulted = spyFetch(json({ promotions: [], count: 0 }));
     await createClient({ fetch: defaulted.fetch }).promotions();
     expect(defaulted.calls[0]?.[0]).toBe("/v1/promotions?limit=50");
+  });
+
+  it("validates a corrected query without storing anything", async () => {
+    const validation = makeValidation();
+    const { fetch, calls } = spyFetch(json(validation));
+    await expect(createClient({ fetch }).validate("sub/1", "SELECT 1")).resolves.toEqual(validation);
+    const [url, request] = calls[0]!;
+    expect(url).toBe("/v1/submissions/sub%2F1/validate");
+    expect(request.method).toBe("POST");
+    expect(JSON.parse(String(request.body))).toEqual({ sql: "SELECT 1" });
+  });
+
+  it("stores a fix, naming the reviewer and carrying the note", async () => {
+    const result = makeFixResult();
+    const { fetch, calls } = spyFetch(json(result));
+    await expect(createClient({ fetch }).fix("sub-1", "SELECT 1", "ada", "why")).resolves.toEqual(result);
+    const [url, request] = calls[0]!;
+    expect(url).toBe("/v1/submissions/sub-1/fix");
+    expect(request.method).toBe("POST");
+    expect(init(calls)["X-Reviewer"]).toBe("ada");
+    expect(JSON.parse(String(request.body))).toEqual({ sql: "SELECT 1", review_note: "why" });
+  });
+
+  it("stores a fix with no reviewer and no note", async () => {
+    const { fetch, calls } = spyFetch(json(makeFixResult()));
+    await createClient({ fetch }).fix("sub-1", "SELECT 1");
+    expect(init(calls)["X-Reviewer"]).toBeUndefined();
+    expect(JSON.parse(String(calls[0]![1].body))).toEqual({ sql: "SELECT 1", review_note: "" });
+  });
+
+  it("lists one store's fixes", async () => {
+    const { fetch, calls } = spyFetch(json({ kind: "completions", fixes: [], count: 0 }));
+    await createClient({ fetch }).fixes("completions");
+    expect(calls[0]?.[0]).toBe("/v1/fixes/completions?limit=50");
+    await createClient({ fetch }).fixes("corrections", 5);
+    expect(calls[1]?.[0]).toBe("/v1/fixes/corrections?limit=5");
   });
 
   it("unwraps the error envelope", async () => {

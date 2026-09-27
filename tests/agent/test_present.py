@@ -14,8 +14,9 @@ What this file proves, in the order section 7 of the architecture asks for it:
   the graph can spend one shared retry rather than narrate nonsense;
 * `formula` is model output and is **refused, not executed**, when it is
   anything but arithmetic over `cells`;
-* everything rendered is HTML-escaped, which is where the XSS concern in the
-  security table belongs.
+* everything rendered is HTML-escaped, once, which is where the XSS concern
+  in the security table belongs -- and nothing a model is shown is, because
+  the narrator copies what it reads.
 
 No database and no model: the rows are hand-built `QueryResult`s and the
 narrator is a scripted fake.
@@ -33,20 +34,23 @@ from nl2sql_agent.present import (
     FormulaError,
     NarratedClaim,
     Narrative,
+    assumptions_block,
     audit,
     audit_issue,
     check_claim,
     choose_chart,
     describe_chart,
     evaluate_formula,
+    missing_assumptions,
     narrate,
     redact,
     render_answer,
     render_table,
+    states_assumption,
     surviving_claims,
     tagged_sensitive_columns,
 )
-from nl2sql_agent.state import AUDIT, Claim, QueryResult
+from nl2sql_agent.state import AUDIT, AuditReport, Claim, CompletenessReport, MissingColumn, QueryResult
 
 from .conftest import ScriptedLLM
 
@@ -265,9 +269,69 @@ def test_narrate_shows_the_question_the_rows_and_the_chart():
     narrate(llm, "how did margins do?", result, chart=choose_chart(result))
     text = prompt_text(llm)
     assert "how did margins do?" in text
-    assert "Dairy &amp; Eggs" in text  # escaped on the way in, as everywhere
+    assert "| 0 | Dairy & Eggs | 31.4 |" in text  # as the database has it
+    assert "&amp;" not in text
     assert "Chart chosen for this result: bar" in text
     assert "| row |" in text  # cells are addressed by a row number it can see
+
+
+class CopyingNarrator:
+    """A narrator that does what a real one does with a name: reads it out
+    of the table it is shown and writes it into its claim."""
+
+    def __init__(self) -> None:
+        self.shown = ""
+
+    def with_structured_output(self, schema):
+        return self
+
+    def invoke(self, messages):
+        self.shown = "\n".join(getattr(m, "content", str(m)) for m in messages)
+        row = next(line for line in self.shown.splitlines() if line.startswith("| 0 | "))
+        name = row.split(" | ")[1]
+        return Narrative(claims=[NarratedClaim(
+            text=f"{name} ran a 31.4% gross margin.",
+            value=31.4,
+            cells=[CellRef(row=0, column="gross_margin_pct")],
+            formula=None,
+        )])
+
+
+def test_a_name_the_narrator_copies_is_escaped_exactly_once_on_the_way_out():
+    """Regression. The narrator was shown `Dairy &amp; Eggs`, wrote it into
+    its claim, and the claim was escaped again into the answer: the CLI
+    printed `&amp;` and the web GUI, undoing one level, showed it too."""
+    result = margins()
+    claims = narrate(CopyingNarrator(), "how did margins do?", result)
+    assert claims[0].text == "Dairy & Eggs ran a 31.4% gross margin."
+
+    report = audit(claims, result)
+    answer = render_answer("how did margins do?", result, claims, choose_chart(result), report)
+    lead = answer.split("\n\n")[0]
+    assert lead == "Dairy &amp; Eggs ran a 31.4% gross margin."
+    assert "&amp;amp;" not in answer
+
+
+def test_the_narrators_table_still_escapes_what_would_split_a_row():
+    """Not escaped for HTML, but still a markdown table: a pipe in a name
+    would otherwise shift every cell after it into the wrong column."""
+    result = QueryResult(columns=["name", "gross_margin_pct"], rows=[["a|b\nc", Decimal("31.4")]])
+    llm = ScriptedLLM(narration=scripted_narrative())
+    narrate(llm, "q", result)
+    assert r"| 0 | a\|b c | 31.4 |" in prompt_text(llm)
+
+
+def test_markup_in_a_cell_reaches_the_narrator_as_text_and_the_answer_escaped():
+    """What changed is where the escaping happens, not whether: a cell of
+    `<b>` is shown to the model as it is, and cannot reach the answer as
+    markup however the model repeats it."""
+    result = QueryResult(columns=["department_name", "gross_margin_pct"], rows=[["<b>Dairy</b>", Decimal("31.4")]])
+    narrator = CopyingNarrator()
+    claims = narrate(narrator, "q", result)
+    assert "| 0 | <b>Dairy</b> | 31.4 |" in narrator.shown
+    answer = render_answer("q", result, claims, choose_chart(result), audit(claims, result))
+    assert "<b>" not in answer
+    assert "&lt;b&gt;Dairy&lt;/b&gt; ran a 31.4% gross margin." in answer
 
 
 def test_narrate_passes_the_top_exemplars_reasoning_target():
@@ -962,3 +1026,119 @@ def test_check_claim_rejects_the_out_of_range_row_before_it_gets_that_far():
     result = QueryResult(columns=["n"], rows=[[42]])
     claim = Claim(text="The count is 42.", cells=[(7, "n")])
     assert "not in the result" in (check_claim(claim, result) or "")
+
+
+# ---------------------------------------------------------------------------
+# arch5: every assumption is stated (sections 7.2 and 7.3 rule 5)
+# ---------------------------------------------------------------------------
+
+FY_DEFAULT = (
+    "FY2025 (2024-04-01 to 2025-03-31), the latest complete fiscal year, "
+    "since the question did not name a period"
+)
+
+
+def top_stores() -> QueryResult:
+    return QueryResult(
+        columns=["store_id", "store_name", "net_sales"],
+        rows=[["S-01", "Midtown", Decimal("812345.10")], ["S-02", "Uptown", Decimal("790001.00")]],
+    )
+
+
+def test_the_narrator_is_told_each_assumption_and_to_state_it():
+    llm = ScriptedLLM(narration=scripted_narrative())
+    narrate(llm, "top ten stores", top_stores(), assumptions=[FY_DEFAULT, "  "])
+    text = prompt_text(llm)
+    assert "State each one in plain words" in text
+    assert f"  - {FY_DEFAULT}" in text
+
+
+def test_no_assumptions_means_no_block():
+    assert assumptions_block([]) == ""
+    assert assumptions_block(["", "   "]) == ""
+    llm = ScriptedLLM(narration=scripted_narrative())
+    narrate(llm, "q", margins())
+    assert "State each one" not in prompt_text(llm)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "These figures cover FY2025, the latest complete fiscal year.",
+        "Totals are for FY 2025.",
+        "Sales are for fiscal year 2025, the last full year of data.",
+        "All of FY-2025.",
+    ],
+)
+def test_a_fiscal_year_assumption_is_stated_however_the_year_is_written(sentence):
+    assert states_assumption(FY_DEFAULT, sentence)
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    ["Sales for 2025 were strong.", "These figures cover FY2024.", ""],
+)
+def test_a_year_that_is_not_named_as_the_fiscal_year_does_not_count(sentence):
+    assert not states_assumption(FY_DEFAULT, sentence)
+
+
+def test_any_other_assumption_is_matched_on_its_wording():
+    assert states_assumption("net sales, not gross", "Ranked by Net  Sales, not gross.")
+    assert not states_assumption("net sales, not gross", "Ranked by net sales.")
+    assert states_assumption("", "anything")
+
+
+def test_missing_assumptions_reads_the_claims_together():
+    claims = [Claim(text="Midtown led."), Claim(text="These cover FY2025.")]
+    assert missing_assumptions([FY_DEFAULT, ""], claims) == []
+    assert missing_assumptions([FY_DEFAULT], claims[:1]) == [FY_DEFAULT]
+
+
+def test_the_audit_fails_a_narrative_that_leaves_an_assumption_out():
+    result = top_stores()
+    claims = [Claim(text="Midtown led with 812345.10.", value=812345.10, cells=[(0, "net_sales")])]
+    report = audit(claims, result, question="top ten stores", assumptions=[FY_DEFAULT])
+    assert report.missing_assumptions == [FY_DEFAULT]
+    assert not report.passed
+    assert report.unsupported_claims == []
+
+
+def test_an_assumption_said_only_by_a_dropped_claim_is_still_missing():
+    result = top_stores()
+    claims = [Claim(text="In FY2025 Midtown sold 999.", value=999.0, cells=[(0, "net_sales")])]
+    report = audit(claims, result, assumptions=[FY_DEFAULT])
+    assert report.unsupported_claims and report.missing_assumptions == [FY_DEFAULT]
+
+
+def test_the_numbers_inside_an_assumption_are_not_invented_numbers():
+    """Rule 2: an assumption's numbers are exempt, as the question's are --
+    including a date's day and month, however the narrator spells the date."""
+    claim = Claim(text="These cover FY2025, April 1, 2024 to March 31, 2025.")
+    result = top_stores()
+    assert check_claim(claim, result) is not None
+    assert check_claim(claim, result, assumptions=[FY_DEFAULT]) is None
+    report = audit([claim], result, assumptions=[FY_DEFAULT])
+    assert report.passed
+
+
+def test_the_answer_states_an_assumption_the_narrative_did_not():
+    result = top_stores()
+    answer = render_answer("top ten stores", result, [Claim(text="Midtown led.")],
+                           assumptions=[FY_DEFAULT])
+    assert "*Assumed: FY2025 (2024-04-01 to 2025-03-31), the latest complete fiscal year" in answer
+
+    stated = render_answer("top ten stores", result, [Claim(text="These cover FY2025.")],
+                           assumptions=[FY_DEFAULT])
+    assert "Assumed:" not in stated
+
+
+def test_the_answer_names_a_gap_the_reviewer_could_not_close():
+    report = CompletenessReport(
+        passed=False,
+        accepted_gaps=[MissingColumn(column="dim_product.brand_name", why="x", rule="reflection")],
+    )
+    answer = render_answer("top 10 SKUs", top_stores(), [], completeness=report)
+    assert "could not be completed with dim_product.brand_name in the attempts allowed" in answer
+    assert "could not be completed" not in render_answer(
+        "q", top_stores(), [], audit_report=AuditReport(), completeness=CompletenessReport()
+    )

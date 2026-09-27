@@ -1,4 +1,4 @@
-"""Prompt templates for the three LLM steps of the pipeline.
+"""Prompt templates for the pipeline's model calls.
 
 Each one takes a `{knowledge}` block holding the chunks retrieved from the
 vector store. It is rendered as an empty string when retrieval is off or
@@ -75,7 +75,14 @@ SUPERVISOR_PROMPT = ChatPromptTemplate.from_messages(
             "Classify the intent as well: lookup, aggregate, compare, trend, or "
             "narrative. A question is not ambiguous merely because you would "
             "need the schema to answer it; the rest of the pipeline has the "
-            "schema and you do not.",
+            "schema and you do not.\n"
+            "Finally, say what a complete answer is about, from the question's "
+            "own words: the entities it lists one row per (plain nouns such as "
+            "sku, store, department), the measure that answers or ranks them "
+            "(net sales when a ranking names none), and the period it names. "
+            "Leave the period empty when the question names none -- a default "
+            "is applied later and told to the user -- and write none when the "
+            "answer does not depend on time at all.",
         ),
         ("human", "Question: {question}"),
     ]
@@ -113,12 +120,15 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
             "{knowledge}"
             "{literals}"
             "{task}"
+            "{contract}"
             "Question: {question}\n\n"
             "{feedback}"
             "SQL:",
         ),
     ]
-)
+    # The contract line is optional in the template, not only in the graph:
+    # every caller that predates arch5 renders the arch4 prompt unchanged.
+).partial(contract="")
 
 RETRY_FEEDBACK = (
     "Your previous attempt was rejected.\n"
@@ -187,6 +197,23 @@ def task_block(framing: str) -> str:
     if not framing or not framing.strip():
         return ""
     return TASK_BLOCK.format(task=framing.strip())
+
+
+CONTRACT_BLOCK = "A complete answer includes: {contract}\n\n"
+
+
+def contract_block(rendered: str) -> str:
+    """The answer contract, as the line that says what a complete answer carries.
+
+    arch5 section 5.1. It sits beside the task framing and follows the same
+    rule: it names what the answer must show, never how many rows to cut it
+    to beyond what the question itself asked for. Nothing is rendered when
+    the contract has nothing to add, which keeps the prompt byte-for-byte
+    arch4's for a question that needs no labels, measure or period.
+    """
+    if not rendered or not rendered.strip():
+        return ""
+    return CONTRACT_BLOCK.format(contract=rendered.strip())
 
 
 EXAMPLE_RULE_BLOCK = "Rule that applies here: {rule}\n\n"

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -168,6 +169,46 @@ class Database:
                 tables[con.table_name].constraints.append(con.definition)
 
         return list(tables.values())
+
+    def catalog(self) -> list[Table]:
+        """Every table with its columns and key constraints.
+
+        The label map (arch5 section 4.1) is read from this: which columns
+        identify a row of a dimension, and which one names it.
+        """
+        return self._load_tables()
+
+    def latest_complete_fiscal_year(self) -> tuple[int, date, date] | None:
+        """The last fiscal year the sales data holds in full, with its bounds.
+
+        The greatest `fiscal_year` whose last calendar date is on or before
+        the last date anything was sold. That is the default period for a
+        question that names none (arch5 section 4.1): a calendar that runs
+        past the data would otherwise offer a year that has barely begun.
+        `MAX(sales_date_key)` is the leading column of the sales fact's
+        primary key, so this reads one index entry, not the fact.
+        """
+        with self._engine.connect() as conn:
+            with conn.begin():
+                conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+                row = conn.execute(
+                    text(
+                        f"""
+                        SELECT d.fiscal_year,
+                               MIN(d.calendar_date) AS first_date,
+                               MAX(d.calendar_date) AS last_date
+                        FROM {self._quote("dim_date")} d
+                        GROUP BY d.fiscal_year
+                        HAVING MAX(d.date_key) <= (
+                            SELECT MAX(s.sales_date_key)
+                            FROM {self._quote("fact_pos_retail_sales")} s
+                        )
+                        ORDER BY d.fiscal_year DESC
+                        LIMIT 1
+                        """
+                    )
+                ).first()
+        return (int(row.fiscal_year), row.first_date, row.last_date) if row is not None else None
 
     def describe_all_tables(self) -> str:
         """Compact catalog of every table: description, size, column names."""

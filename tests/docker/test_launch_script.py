@@ -657,11 +657,55 @@ def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_launch):
 
 
 def test_the_closing_lines_name_the_three_fields_a_reviewer_must_write(run_launch):
-    """The part of the job no thumbs-up can do for them."""
+    """The part of the job no verdict can do for them."""
     output = run_launch("--review").output
     assert "keywords" in output
     assert "reasoning target" in output
     assert "expected result" in output
+
+
+def test_the_review_flag_starts_both_fix_stores_before_the_service(run_launch):
+    """The service creates their schemas on its own start, so they have to be
+    up first -- the order the staging database gets for the same reason."""
+    result = run_launch("--review")
+    assert result.called("--profile feedback --profile review up -d correctionsdb completionsdb")
+    for container in ("nl2sql-correctionsdb", "nl2sql-completionsdb"):
+        assert result.called(f"inspect --format {{{{.State.Health.Status}}}} {container}")
+    assert result.output.index("Corrections store is healthy") < result.output.index(
+        "Review service is healthy"
+    )
+
+
+def test_feedback_alone_does_not_start_the_fix_stores(run_launch):
+    assert not run_launch("--feedback").called("up -d correctionsdb")
+
+
+def test_the_fix_store_ports_follow_what_compose_will_use(run_launch):
+    result = run_launch(
+        "--review", env_file="IMAGE_NAME=x\nCORRECTIONS_DB_PORT=6436\nCOMPLETIONS_DB_PORT=6437\n"
+    )
+    assert "Corrections store is healthy on port 6436" in result.output
+    assert "Completions store is healthy on port 6437" in result.output
+    assert "ports 6436 and 6437" in result.output
+
+
+@pytest.mark.parametrize("store", ["CORRECTIONS", "COMPLETIONS"])
+def test_a_fix_store_that_never_comes_up_is_reported_and_the_rest_goes_on(run_launch, store):
+    result = run_launch("--review", env={f"FAKE_{store}_HEALTH": "starting"}, timeout=240)
+    assert "the corrections and completions stores did not both become healthy" in result.output
+    assert "golden-set promotion still works" in result.output
+    assert "logs correctionsdb completionsdb" in result.output
+    assert "Review service is healthy" in result.output
+
+
+def test_the_closing_lines_name_the_three_panes_and_where_each_goes(run_launch):
+    output = run_launch("--review").output
+    assert "one pane per verdict" in output
+    for pane in ("Correct ", "Wrong ", "Correct but incomplete "):
+        assert pane in output
+    assert "validate it against the live retail database" in output
+    assert "corrections store" in output and "completions store" in output
+    assert "never into the golden set" in output
 
 
 def test_a_database_without_the_trigram_extension_is_warned_about(run_launch):
@@ -873,9 +917,9 @@ DESKTOP_PINNED_ENV = (
     "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
     "IMAGE_TAG=v1\n"
     "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
-    "AGENT_IMAGE_TAG=v4_5\n"
+    "AGENT_IMAGE_TAG=v5_1_1\n"
     "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build\n"
-    "DESKTOP_IMAGE_TAG=v4_5\n"
+    "DESKTOP_IMAGE_TAG=v5_1_1\n"
     "RAG_ENABLED=true\n"
 )
 
@@ -887,7 +931,7 @@ def test_a_pinned_image_that_is_here_is_copied_from_rather_than_rebuilt(run_laun
                         env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64",
                              "FAKE_DESKTOP_IMAGE_PRESENT": "1"})
 
-    assert "Taking it from mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64" in result.output
+    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_1_1-mac-aarch64" in result.output
     assert "Building it for" not in result.output
     # And it never asks a registry: launch.sh is the fast path.
     assert not result.calls_matching("pull ")

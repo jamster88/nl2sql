@@ -49,7 +49,8 @@ def test_defaults_when_env_is_empty(monkeypatch):
     assert settings.sample_rows == 3
     assert settings.max_rows == 50
     assert settings.statement_timeout_ms == 30000
-    assert settings.max_attempts == 4
+    # arch5 section 6.4: one draft and six repairs.
+    assert settings.max_attempts == 7
     assert settings.rag_enabled is True
     assert settings.vector_db_url == DEFAULT_VECTOR_DB_URL
     assert settings.embed_model == DEFAULT_EMBED_MODEL
@@ -152,7 +153,7 @@ def test_an_empty_numeric_setting_falls_back_to_its_default(monkeypatch):
     assert settings.max_tables == 10
     assert settings.schema_top_k == 6
     assert settings.max_rows == 50
-    assert settings.max_attempts == 4
+    assert settings.max_attempts == 7
     assert settings.literal_min_score == 0.6
     assert settings.max_plan_cost == 1_000_000.0
 
@@ -162,13 +163,46 @@ def test_an_empty_boolean_setting_falls_back_rather_than_reading_as_false(monkey
     forwarding `SUPERVISOR_ENABLED` would have silently disabled the only
     injection screen on every containerised run.
     """
-    for name in ("SUPERVISOR_ENABLED", "AUDIT_ENABLED", "NARRATE_ENABLED", "RAG_ENABLED"):
+    for name in (
+        "SUPERVISOR_ENABLED", "AUDIT_ENABLED", "NARRATE_ENABLED", "RAG_ENABLED",
+        "REVIEW_ENABLED", "REVIEW_REFLECTION_ENABLED",
+    ):
         monkeypatch.setenv(name, "")
     settings = Settings.from_env()
     assert settings.supervisor_enabled is True
     assert settings.audit_enabled is True
     assert settings.narrate_enabled is True
     assert settings.rag_enabled is True
+    assert settings.review_enabled is True
+    assert settings.review_reflection_enabled is True
+
+
+def test_the_completeness_reviewer_and_its_reflection_switch_separately(monkeypatch):
+    """arch5 section 11: the reflection is its own ablation, so turning it off
+    must keep the rules -- and turning the reviewer off must not need both.
+    """
+    monkeypatch.setenv("REVIEW_REFLECTION_ENABLED", "false")
+    settings = Settings.from_env()
+    assert settings.review_enabled is True
+    assert settings.review_reflection_enabled is False
+
+    monkeypatch.setenv("REVIEW_ENABLED", "off")
+    monkeypatch.delenv("REVIEW_REFLECTION_ENABLED")
+    settings = Settings.from_env()
+    assert settings.review_enabled is False
+    assert settings.review_reflection_enabled is True
+
+
+def test_the_v3_budget_name_still_sets_the_budget(monkeypatch):
+    """An .env written for v3 still says MAX_SQL_ATTEMPTS; it counted
+    generations too, so its value carries over, and MAX_ATTEMPTS wins when
+    both are set.
+    """
+    monkeypatch.delenv("MAX_ATTEMPTS", raising=False)
+    monkeypatch.setenv("MAX_SQL_ATTEMPTS", "3")
+    assert Settings.from_env().max_attempts == 3
+    monkeypatch.setenv("MAX_ATTEMPTS", "5")
+    assert Settings.from_env().max_attempts == 5
 
 
 def test_whitespace_around_a_value_is_trimmed(monkeypatch):

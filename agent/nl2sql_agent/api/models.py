@@ -24,6 +24,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
+#: A person's verdict on an answer. `yes` is "correct" and `no` is "wrong",
+#: as they always were; `incomplete` is "correct but incomplete" -- the SQL
+#: was right and the answer still lacked something a reader needed, such as
+#: a name beside an id. The three are kept apart at capture because they call
+#: for different follow-up: a wrong query is corrected, an incomplete one is
+#: fleshed out.
+Verdict = Literal["yes", "no", "incomplete"]
+
 #: The longest question this API will accept, in characters.
 #:
 #: Named rather than written into the validator because it is published in
@@ -264,8 +272,11 @@ class FeedbackRequest(BaseModel):
         json_schema_extra={"examples": [{"verdict": "no", "comment": "fiscal month is off by one"}]},
     )
 
-    verdict: Literal["yes", "no"] = Field(
-        description="Whether the answer was right. The whole of the required input."
+    verdict: Verdict = Field(
+        description=(
+            "Whether the answer was right: 'yes' (correct), 'no' (wrong), or "
+            "'incomplete' (correct but incomplete). The whole of the required input."
+        )
     )
     comment: str = Field(
         default="",
@@ -285,7 +296,7 @@ class FeedbackModel(BaseModel):
 
     id: str
     job_id: str
-    verdict: Literal["yes", "no"]
+    verdict: Verdict
     comment: str = ""
     state: Literal["pending"] = "pending"
 

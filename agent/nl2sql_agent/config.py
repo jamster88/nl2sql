@@ -152,12 +152,14 @@ class Settings:
     max_rows: int = 50
     statement_timeout_ms: int = 30000
 
-    # --- v4: the one retry budget ----------------------------------------
-    # Generations, not retries: one first draft and three repairs. Every
-    # failure source -- static validation, the planner, execution, the audit
-    # -- increments the same counter, so there is no way to loop that does
-    # not spend it. (arch4 W5, section 6.4)
-    max_attempts: int = 4
+    # --- the one retry budget -------------------------------------------
+    # Generations, not retries: one first draft and six repairs. Every
+    # failure source -- static validation, the planner, execution, the
+    # Completeness Reviewer, the audit -- increments the same counter, so
+    # there is no way to loop that does not spend it (arch4 W5). arch4 set it
+    # to 4 when four things could spend it; arch5 adds the reviewer, the one
+    # gate a correct query can trip, and raises it to 7 (arch5 section 6.4).
+    max_attempts: int = 7
 
     # --- v4: stage 1 ------------------------------------------------------
     # The Supervisor screens for prompt injection and out-of-domain questions
@@ -191,6 +193,18 @@ class Settings:
     # hardest known-good query and below the cheapest cross join that
     # involves the fact table. Re-derive it whenever the data is regenerated.
     max_plan_cost: float = 1_000_000.0
+
+    # --- arch5: the Completeness Reviewer ----------------------------------
+    # The gate after execution that asks whether a result that ran is the
+    # answer a person wanted: a label beside every id, the measure a ranking
+    # was ranked by, the period stated. Off, results go straight to
+    # presentation as in arch4 -- but a default period the generator applied
+    # is still written to `assumptions`, because turning the gate off is an
+    # ablation and not a licence to answer for a year nobody was told about.
+    review_enabled: bool = True
+    # Tier 2: the one reflective model call, made only when the rules pass.
+    # Off keeps the rules and drops the call (arch5 sections 6.6 and 9).
+    review_reflection_enabled: bool = True
 
     # --- v4: stage 4 ------------------------------------------------------
     narrate_enabled: bool = True
@@ -234,7 +248,7 @@ class Settings:
             # MAX_SQL_ATTEMPTS is v3's name for the same budget; it is still
             # honoured so an existing .env keeps working, but it counted
             # generations too, so the value carries over unchanged.
-            max_attempts=_env_int("MAX_ATTEMPTS", _env_int("MAX_SQL_ATTEMPTS", 4)),
+            max_attempts=_env_int("MAX_ATTEMPTS", _env_int("MAX_SQL_ATTEMPTS", 7)),
             supervisor_enabled=_env_bool("SUPERVISOR_ENABLED", True),
             clarify_enabled=_env_bool("CLARIFY_ENABLED", False),
             schema_retrieval=_env_str("SCHEMA_RETRIEVAL", "vector"),
@@ -244,6 +258,8 @@ class Settings:
             literal_max_distinct=_env_int("LITERAL_MAX_DISTINCT", 500),
             literal_min_score=_env_float("LITERAL_MIN_SCORE", 0.6),
             max_plan_cost=_env_float("MAX_PLAN_COST", 1_000_000.0),
+            review_enabled=_env_bool("REVIEW_ENABLED", True),
+            review_reflection_enabled=_env_bool("REVIEW_REFLECTION_ENABLED", True),
             narrate_enabled=_env_bool("NARRATE_ENABLED", True),
             audit_enabled=_env_bool("AUDIT_ENABLED", True),
         )

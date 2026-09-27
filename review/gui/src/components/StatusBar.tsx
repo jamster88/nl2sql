@@ -8,6 +8,7 @@
  * benchmark; the other means promotions silently do not reach the agent.
  */
 
+import { counted } from "../api/text";
 import type { ReviewMeta } from "../api/types";
 
 export interface StatusBarProps {
@@ -31,12 +32,17 @@ export function StatusBar({ meta, error, warnings }: StatusBarProps) {
             {meta.service} {meta.version}
           </span>
           <span className="status muted">
-            {meta.golden_count} golden pairs · next {meta.next_pair_id || "—"} · max Q
-            {meta.limits.max_pair_number}
+            {meta.golden_count} golden pairs · next {meta.next_pair_id || "—"} ·
+            max Q{meta.limits.max_pair_number}
           </span>
           <span className="status muted">
-            auth {meta.authentication} · reload context {meta.reload_context ? "on" : "off"} ·
-            vectors {meta.reload_vectors ? "on" : "off"}
+            {counted(meta.fixes.corrections ?? 0, "correction")} ·{" "}
+            {counted(meta.fixes.completions ?? 0, "completion")}
+          </span>
+          <span className="status muted">
+            auth {meta.authentication} · reload context{" "}
+            {meta.reload_context ? "on" : "off"} · vectors{" "}
+            {meta.reload_vectors ? "on" : "off"}
           </span>
         </>
       )}

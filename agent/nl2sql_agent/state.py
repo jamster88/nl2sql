@@ -1,7 +1,10 @@
-"""The shared state every v4 agent reads from and writes to.
+"""The shared state every agent reads from and writes to.
 
-This is section 3 of `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch4.md`, the
+This is section 3 of `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5.md`, the
 contract all three source architecture documents promised and none defined.
+arch5 adds three fields to arch4's: the answer contract the Supervisor's
+reading of the question is turned into, the assumptions the pipeline made on
+the user's behalf, and the Completeness Reviewer's report.
 Every agent in the pipeline is a function of a subset of `AgentState` and
 returns a partial update; LangGraph merges the updates. Because the contract
 is explicit, each agent is unit-testable without the graph, which is the
@@ -13,8 +16,9 @@ Three rules follow from the contract and are enforced by the agents, not here:
   to `retrieval_errors` and the run continues without it. At the limit, with
   every store down, the pipeline degrades to schema-only.
 * **`attempts` is the only retry counter.** Every failure source -- static
-  validation, the planner, execution, the audit -- increments the same one,
-  so there is no way to loop that does not spend budget.
+  validation, the planner, execution, the Completeness Reviewer, the audit --
+  increments the same one, so there is no way to loop that does not spend
+  budget.
 * **`trace` is appended by every node**, which is what lets the benchmark
   attribute time per agent rather than per stage.
 
@@ -36,11 +40,14 @@ Verdict = Literal["proceed", "out_of_domain", "injection", "ambiguous"]
 
 #: Where a failure came from. Every one of these routes to the Repair Agent
 #: under the shared `attempts` budget -- W1 in the architecture document.
-IssueSource = Literal["static", "planner", "runtime", "audit"]
+#: `completeness` is the one a correct query can raise: it ran, and it is not
+#: yet the answer (arch5 section 6.6).
+IssueSource = Literal["static", "planner", "runtime", "completeness", "audit"]
 
 STATIC = "static"
 PLANNER = "planner"
 RUNTIME = "runtime"
+COMPLETENESS = "completeness"
 AUDIT = "audit"
 
 CHART_KINDS = ("bar", "line", "grouped_bar", "scatter", "scalar", "table")
@@ -76,6 +83,92 @@ class Shot:
     question: str
     reasoning_target: str
     sql_code: str
+
+
+@dataclass
+class EntityRef:
+    """One thing the answer's rows are about, resolved against the label map.
+
+    `word` is the Supervisor's noun ("sku", "store"). `key` and `label` are
+    the columns that identify and name it (`sku_id` and `product_name`);
+    either can be None -- a department has a name and no key, and a
+    dimension with no name column has a key and no label.
+    """
+
+    word: str
+    key: str | None = None
+    label: str | None = None
+    table: str | None = None
+
+
+@dataclass
+class AnswerContract:
+    """What a complete answer carries, before any SQL exists (arch5 section 4.1).
+
+    Built deterministically from the Supervisor's three fields, the label map
+    and the fiscal calendar, and read twice: by the SQL Generator before the
+    query is written and by the Completeness Reviewer after it has run. It
+    names columns, never SQL.
+
+    `period` is the span the question named, in its own words, or the
+    default's label when it named none; `period_default` says which, and
+    `fiscal_year` is the default year. `limit` is the row count the question
+    asked for ("top 10"), when it asked for one.
+    """
+
+    entities: list[EntityRef] = field(default_factory=list)
+    measure: str | None = None
+    period: str | None = None
+    period_default: bool = False
+    fiscal_year: int | None = None
+    fiscal_year_start: str | None = None  # ISO date
+    fiscal_year_end: str | None = None  # ISO date
+    ranked: bool = False
+    limit: int | None = None
+
+
+@dataclass
+class MissingColumn:
+    """One thing a result lacks, and the sentence that says how to add it.
+
+    `column` names what is missing -- a column, an expression the rows are
+    ordered by, a period filter, a row count -- and `rule` which check found
+    it: R1-R4 for the rules, `reflection` for the model's judgement.
+    """
+
+    column: str
+    why: str
+    rule: str = ""
+    #: The table the missing column lives in, when it is known: the graph
+    #: widens the query's scope to it rather than send the generator a hint
+    #: the table allowlist would then reject.
+    table: str | None = None
+
+    @property
+    def key(self) -> str:
+        """What the same-result guard compares: the same rule, the same gap."""
+        return f"{self.rule}:{self.column.lower()}"
+
+
+@dataclass
+class CompletenessReport:
+    """The Completeness Reviewer's verdict on the latest result (section 6.6).
+
+    `missing` is what the current result lacks. `sent_back` remembers every
+    gap already returned to the generator once, which is the same-result
+    guard: a gap that comes back a second time is accepted into
+    `accepted_gaps` and told to the reader rather than sent back again.
+    `requested` holds the columns the one reflection asked for, so a later
+    result is checked for them without a second model call.
+    """
+
+    passed: bool = True
+    missing: list[MissingColumn] = field(default_factory=list)
+    reflected: bool = False
+    requested: list[MissingColumn] = field(default_factory=list)
+    sent_back: list[str] = field(default_factory=list)
+    accepted_gaps: list[MissingColumn] = field(default_factory=list)
+    note: str = ""
 
 
 @dataclass
@@ -166,6 +259,10 @@ class AuditReport:
     #: say what was wrong is a retry that reproduces it.
     drop_reasons: list[str] = field(default_factory=list)
     redactions: list[str] = field(default_factory=list)
+    #: Assumptions no surviving claim states (arch5, section 7.3 rule 5). Sent
+    #: back to the narrator under the same once-only rule as a dropped claim;
+    #: after that the renderer states them itself.
+    missing_assumptions: list[str] = field(default_factory=list)
     #: Set when the audit concludes the SQL is wrong rather than the prose.
     #: It routes to the Repair Agent and spends the shared budget (W3).
     semantic_issue: str | None = None
@@ -213,6 +310,10 @@ class AgentState(TypedDict, total=False):
     intent: Intent
     verdict: Verdict
     clarification: str | None  # what to ask back when verdict == "ambiguous"
+    answer_contract: AnswerContract  # what a complete answer carries (arch5)
+    #: Defaults the pipeline chose for the user, such as the fiscal year; the
+    #: narrator must state every one (arch5 sections 6.6 and 7.2).
+    assumptions: list[str]
 
     selected_tables: list[str]  # Schema Retriever: <= 10, FK-closed
     schema: str  # DDL + comments + sample rows for selected_tables
@@ -235,6 +336,7 @@ class AgentState(TypedDict, total=False):
     attempt_history: list[Attempt]
     plan_cost: float | None
     result: QueryResult | None
+    completeness: CompletenessReport  # the Completeness Reviewer's report (arch5)
 
     # --- stage 4: presentation ---------------------------------------------
     chart: ChartSpec | None
@@ -266,6 +368,8 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "verdict": "proceed",
         "intent": "aggregate",
         "clarification": None,
+        "answer_contract": AnswerContract(),
+        "assumptions": [],
         "selected_tables": [],
         "schema": "",
         "literal_map": [],
@@ -283,6 +387,7 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "attempt_history": [],
         "plan_cost": None,
         "result": None,
+        "completeness": CompletenessReport(),
         "chart": None,
         "claims": [],
         "narrative": "",

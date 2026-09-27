@@ -14,9 +14,13 @@
  *   markdown document -- the prose, then the rows as a markdown table, then
  *   the caveats -- which is what a terminal wants. Rendering it here would
  *   print the pipe characters of a table this page is already drawing.
- * * **It is unescaped on the way in.** The prose is escaped for markdown,
+ * * **It is unescaped on the way in.** `answer` is escaped for markdown,
  *   which renders raw HTML; React renders text, so `&amp;` would arrive on
- *   screen as five characters. See `api/text.ts`.
+ *   screen as five characters. `narrative` and each claim's text are plain
+ *   text from agent 5.1.1 on -- before that the narrator was shown escaped
+ *   rows and copied the entities into its claims -- so for them this matters
+ *   only against an older server, and changes nothing otherwise. See
+ *   `api/text.ts`.
  *
  * And the sentence is not one block: the audit ties each of its sentences to
  * the cells it was read from, so each is its own hoverable span and hovering

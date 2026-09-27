@@ -130,3 +130,49 @@ def test_the_reader_role_cannot_write_even_with_the_read_only_default_switched_o
             with pytest.raises(sqlalchemy.exc.ProgrammingError, match="permission denied"):
                 conn.exec_driver_sql(statement)
             tx.rollback()
+
+
+# ---------------------------------------------------------------------------
+# arch5: what the answer contract reads, against the real schema
+# ---------------------------------------------------------------------------
+
+
+def test_the_catalog_carries_the_key_constraints_the_label_map_is_read_from(db: Database):
+    tables = {t.name: t for t in db.catalog()}
+    assert len(tables) == 19
+    assert "PRIMARY KEY (product_key)" in tables["dim_product"].constraints
+    assert "UNIQUE (sku_id)" in tables["dim_product"].constraints
+
+
+def test_the_real_label_map_names_every_dimension_but_the_date_and_the_ad_channel(db: Database):
+    from nl2sql_agent.contract import build_label_map
+
+    labels = build_label_map(db.catalog())
+    assert labels.tables == [
+        "dim_ad_placement", "dim_allowance_type", "dim_competitor", "dim_geography",
+        "dim_product", "dim_promo_calendar", "dim_promotion", "dim_store", "dim_vendor",
+    ]
+    assert labels.for_key("sku_id").label == "product_name"
+    assert labels.for_key("store_id").label == "store_name"
+    assert labels.for_key("vendor_key").label == "vendor_name"
+    assert labels.for_key("date_key") is None
+    assert labels.for_key("channel_id") is None
+
+
+def test_the_latest_complete_fiscal_year_is_the_last_one_the_sales_cover(db: Database):
+    from datetime import date
+
+    year, first, last = db.latest_complete_fiscal_year()
+    assert year == 2025
+    assert (first, last) == (date(2024, 4, 1), date(2025, 3, 31))
+    # Complete means its last day has sales: nothing is sold after it.
+    latest_sale = db.run_select("SELECT MAX(sales_date_key) FROM fact_pos_retail_sales").rows[0][0]
+    assert latest_sale >= int(last.strftime("%Y%m%d"))
+
+
+def test_a_schema_without_the_sales_calendar_raises_for_the_contract_to_absorb(db: Database):
+    """No dim_date, no default period: `contract.load_resources` records the
+    error and the run goes on without one (see test_contract.py)."""
+    empty = Database(POSTGRES_URL, db_schema="pg_catalog")
+    with pytest.raises(sqlalchemy.exc.SQLAlchemyError):
+        empty.latest_complete_fiscal_year()

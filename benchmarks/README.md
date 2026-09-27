@@ -106,6 +106,22 @@ Retrieval is not where the time goes. Across 15 questions the knowledge base and
 the golden-pair ensemble together take **1.2 seconds**; `generate_sql`,
 `validate_sql` and `select_tables` take 634s, 499s and 364s.
 
+### The multi-agent pipeline
+
+The default configuration is the whole agent, so the same fifteen questions
+measure the v4 pipeline and arch5's additions to it:
+
+| | accuracy | total | median | model calls / question | narrative traced |
+|---|---|---|---|---|---|
+| v4 | **15/15** | 909.7s | 61.2s | 3.7 | 84.6% |
+| v5 (arch5) | **15/15** | 991.6s | 63.8s | 3.7 | 83.3% |
+
+v5's Completeness Reviewer reflected on the three questions whose rows name
+an entity -- B09, B10 and B13 -- for 16.1s in all. Treat the totals as one
+run each: wall time against the shared Ollama host varies by about 30%
+between identical runs. [`agent/README.md`](../agent/README.md#measured) has
+what the first three v5 runs found and what each changed.
+
 ### What the first run got wrong
 
 The first run of this benchmark reported 9/15, 10/15 and 15/15, and the
@@ -177,8 +193,9 @@ duration.
 So each v4 node times itself and reports the result in `state["trace"]`, and the
 harness prefers that when it is there. The same entries carry a model-call
 count, which is what makes the architecture's economic claim checkable rather
-than merely stated: the happy path should cost three model calls, and the repair
-agent's classifier should keep most retries from costing a fourth.
+than merely stated: the happy path should cost three model calls -- four when
+arch5's Completeness Reviewer reflects on rows that name an entity -- and the
+repair agent's classifier should keep most retries from costing another.
 
 A v4 run also scores the **narrative**: the fraction of the answer's claims that
 the audit could trace back to a cell of the result set. Execution accuracy says

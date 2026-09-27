@@ -24,11 +24,20 @@ from .conftest import FakeRepository
 
 
 @pytest.fixture
-def make_client(settings, repository):
+def pinged() -> list[str]:
+    return []
+
+
+@pytest.fixture
+def make_client(settings, repository, fix_stores, validator, pinged):
     def build(**overrides):
         app = create_app(
             settings=overrides.pop("settings", settings),
             repository=overrides.pop("repository", repository),
+            fix_stores=overrides.pop("fix_stores", fix_stores),
+            validator=overrides.pop("validator", validator),
+            embedder_factory=overrides.pop("embedder_factory", lambda: "an embedder"),
+            retail_pinger=overrides.pop("retail_pinger", lambda: pinged.append("retail")),
             **overrides,
         )
         client = TestClient(app, raise_server_exceptions=False)
@@ -57,6 +66,7 @@ def test_the_root_names_every_endpoint(client):
     assert body["service"] == "nl2sql-review"
     assert set(body["endpoints"]) == {
         "meta", "submissions", "submission", "preview", "promote",
+        "validate", "fix", "fixes",
         "golden", "promotions", "health", "readiness",
     }
 
@@ -70,7 +80,10 @@ def test_health_is_about_the_process(client):
 def test_readiness_checks_the_database_the_document_and_the_write(client):
     body = client.get("/readyz").json()
     assert body["ready"] is True
-    assert set(body["checks"]) == {"staging_database", "golden_document", "document_writable"}
+    assert set(body["checks"]) == {
+        "staging_database", "golden_document", "document_writable",
+        "retail_database", "corrections_store", "completions_store",
+    }
     assert "45 pairs, next is Q46" in body["checks"]["golden_document"]["detail"]
 
 
@@ -212,6 +225,12 @@ def test_meta_tells_a_client_everything_it_needs(client):
     assert body["authentication"] == "bearer"
     assert body["limits"]["max_pair_number"] == 99
     assert body["counts"]["pending"] == 1
+    assert body["verdicts"] == ["yes", "no", "incomplete"]
+    assert body["counts_by_verdict"]["yes"]["pending"] == 1
+    assert body["counts_by_verdict"]["no"]["pending"] == 0
+    assert body["fixes"] == {"corrections": 0, "completions": 0}
+    assert body["limits"]["validate_timeout_ms"] == 30000
+    assert body["limits"]["validate_max_rows"] == 200
 
 
 def test_meta_answers_even_when_the_database_is_down(make_client, repository):
@@ -241,6 +260,8 @@ def test_the_queue_is_returned_with_its_counts(client):
     assert body["count"] == 1
     assert body["submissions"][0]["job_id"] == "job-abc"
     assert body["counts"]["pending"] == 1
+    assert body["counts_by_verdict"]["yes"]["pending"] == 1
+    assert body["counts_by_verdict"]["incomplete"] == {state: 0 for state in STATES}
 
 
 def test_the_queue_filters_by_state_and_verdict(make_client, submission):
@@ -250,6 +271,15 @@ def test_the_queue_filters_by_state_and_verdict(make_client, submission):
     assert client.get("/v1/submissions?state=accepted").json()["count"] == 1
     assert client.get("/v1/submissions?verdict=no").json()["count"] == 1
     assert client.get("/v1/submissions?state=pending&verdict=no").json()["count"] == 0
+
+
+def test_a_correct_but_incomplete_verdict_is_listed_and_filterable(make_client, submission):
+    incomplete = Submission(id="sub-3", job_id="job-3", verdict="incomplete", question="q3")
+    client = make_client(repository=FakeRepository([submission, incomplete]))
+
+    body = client.get("/v1/submissions?verdict=incomplete").json()
+    assert body["count"] == 1
+    assert body["submissions"][0]["verdict"] == "incomplete"
 
 
 @pytest.mark.parametrize("query", ["state=nonsense", "verdict=maybe"])
@@ -572,6 +602,8 @@ def test_the_openapi_document_describes_every_route(client):
         "/", "/healthz", "/readyz", "/v1/meta", "/v1/submissions",
         "/v1/submissions/{submission_id}", "/v1/submissions/{submission_id}/preview",
         "/v1/submissions/{submission_id}/promote", "/v1/golden", "/v1/promotions",
+        "/v1/submissions/{submission_id}/validate", "/v1/submissions/{submission_id}/fix",
+        "/v1/fixes/{kind}",
     }
 
 
@@ -609,3 +641,307 @@ def test_a_draft_already_saved_is_returned_unchanged(submission):
     assert seeded.title == "mine"
     assert seeded.keywords == "kept"
     assert seeded.question == "edited"
+
+
+# ---------------------------------------------------------------------------
+# Fixing a wrong or incomplete answer (5.1)
+# ---------------------------------------------------------------------------
+
+from nl2sql_review.corrections import EmbedResult  # noqa: E402
+from nl2sql_review.validation import Validation  # noqa: E402
+
+from .conftest import FakeValidator  # noqa: E402
+
+GOOD_SQL = "SELECT sku_id, product_name FROM dim_product"
+
+
+@pytest.fixture
+def fixing(make_client, submission, wrong_submission):
+    incomplete = replace(wrong_submission, id="sub-i", job_id="job-i", verdict="incomplete")
+    repo = FakeRepository([submission, wrong_submission, incomplete])
+    return make_client(repository=repo), repo
+
+
+def test_a_query_is_validated_against_the_agents_own(fixing, validator):
+    client, _ = fixing
+    response = client.post("/v1/submissions/sub-w/validate", json={"sql": GOOD_SQL + ";"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True and body["sql"] == GOOD_SQL
+    assert body["columns"] == ["sku_id", "product_name"]
+    # The agent's SQL goes along, so an unchanged query can be refused.
+    assert validator.calls == [(GOOD_SQL + ";", "SELECT sku_id FROM dim_product")]
+
+
+def test_a_correct_answer_is_not_fixed_but_promoted(fixing):
+    client, _ = fixing
+    for route in ("validate", "fix"):
+        response = client.post(f"/v1/submissions/sub-1/{route}", json={"sql": GOOD_SQL})
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "wrong_workflow"
+        assert "promote" in response.json()["error"]["message"]
+
+
+def test_a_wrong_answer_is_not_promoted_into_the_golden_set(fixing, draft):
+    client, _ = fixing
+    for sid, store in (("sub-w", "corrections"), ("sub-i", "completions")):
+        response = client.post(f"/v1/submissions/{sid}/promote", json={"draft": draft.as_dict()})
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "wrong_workflow"
+        assert f"the {store} store" in response.json()["error"]["message"]
+
+
+def test_validating_an_unknown_submission_is_a_404(fixing):
+    client, _ = fixing
+    assert client.post("/v1/submissions/nope/validate", json={"sql": GOOD_SQL}).status_code == 404
+
+
+def test_a_wrong_answer_is_fixed_into_the_corrections_store(fixing, fix_stores, validator):
+    client, repo = fixing
+    response = client.post(
+        "/v1/submissions/sub-w/fix",
+        json={"sql": GOOD_SQL, "review_note": "no product names"},
+        headers={"X-Reviewer": "ada"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["kind"] == "corrections"
+    assert body["fix"]["fix_id"] == "W0001"
+    assert body["embedded"] is True and body["fix"]["embedded"] is True
+    assert body["embed_detail"] == "embedded 1; 0 still to embed"
+
+    # Validated again, here, rather than trusted.
+    assert validator.calls == [(GOOD_SQL, "SELECT sku_id FROM dim_product")]
+
+    stored = fix_stores["corrections"].saved[0]
+    assert (stored.question, stored.incorrect_sql, stored.corrected_sql) == (
+        "top 10 SKUs", "SELECT sku_id FROM dim_product", GOOD_SQL,
+    )
+    assert stored.incorrect_answer.startswith("| sku_id |")
+    assert (stored.incorrect_columns, stored.incorrect_row_count) == (["sku_id"], 10)
+    assert (stored.corrected_rows, stored.corrected_row_count) == ([["SKU1", "Whole Milk"]], 1)
+    assert (stored.user_comment, stored.reviewer, stored.review_note) == ("no names", "ada", "no product names")
+    assert fix_stores["completions"].saved == []
+    assert fix_stores["corrections"].embedders == ["an embedder"]
+
+    after = repo.get("sub-w")
+    assert (after.state, after.promoted_pair_id, after.reviewer) == ("corrected", "W0001", "ada")
+    assert body["submission"]["state"] == "corrected"
+
+
+def test_an_incomplete_answer_is_fixed_into_the_completions_store(fixing, fix_stores):
+    client, _ = fixing
+    body = client.post("/v1/submissions/sub-i/fix", json={"sql": GOOD_SQL}).json()
+    assert (body["kind"], body["fix"]["fix_id"]) == ("completions", "I0001")
+    assert fix_stores["corrections"].saved == []
+
+
+def test_a_query_that_does_not_validate_is_never_stored(make_client, fixing, fix_stores):
+    _, repo = fixing
+    refusing = FakeValidator(
+        Validation(sql="", valid=False, problems=['the database refused it: column "x" does not exist'])
+    )
+    client = make_client(repository=repo, validator=refusing)
+    response = client.post("/v1/submissions/sub-w/fix", json={"sql": "SELECT x FROM dim_product"})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "not_valid"
+    assert 'column "x" does not exist' in response.json()["error"]["message"]
+    assert fix_stores["corrections"].saved == []
+    assert repo.get("sub-w").state == "pending"
+
+
+def test_a_fixed_or_rejected_submission_is_refused(fixing):
+    client, repo = fixing
+    repo.submissions["sub-w"].state = "rejected"
+    response = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "rejected")
+
+    repo.submissions["sub-w"].state = "corrected"
+    repo.submissions["sub-w"].promoted_pair_id = "W0009"
+    response = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "already_fixed")
+    assert "W0009" in response.json()["error"]["message"]
+
+
+def test_a_store_that_already_has_it_heals_the_staging_row(fixing, fix_stores):
+    """A save that stored the record and lost its connection before the
+    staging row said so: the second attempt finds the record and marks it."""
+    client, repo = fixing
+    fix_stores["corrections"].already = "W0004"
+    response = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "already_fixed")
+    assert (repo.get("sub-w").state, repo.get("sub-w").promoted_pair_id) == ("corrected", "W0004")
+
+
+def test_a_store_that_is_down_marks_nothing(fixing, fix_stores):
+    client, repo = fixing
+    fix_stores["corrections"].fail_save = OSError("connection refused")
+    response = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    assert (response.status_code, response.json()["error"]["code"]) == (503, "unavailable")
+    assert "corrections store could not be written: OSError: connection refused" in (
+        response.json()["error"]["message"]
+    )
+    assert repo.get("sub-w").state == "pending"
+
+
+def test_a_fix_whose_vector_failed_is_stored_and_says_so(fixing, fix_stores):
+    client, _ = fixing
+    fix_stores["corrections"].embed_result = EmbedResult(ran=True, pending=1, error="ConnectionError: x")
+    body = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL}).json()
+    assert body["fix"]["fix_id"] == "W0001"
+    assert body["embedded"] is False
+    assert body["embed_detail"] == "FAILED: ConnectionError: x; 1 still to embed"
+
+
+def test_an_embedder_that_cannot_be_built_costs_the_vector_only(make_client, fixing, fix_stores):
+    _, repo = fixing
+
+    def no_embedder():
+        raise ModuleNotFoundError("no ragproc")
+
+    client = make_client(repository=repo, embedder_factory=no_embedder)
+    body = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL}).json()
+    assert body["fix"]["fix_id"] == "W0001"
+    assert body["embedded"] is False
+    assert body["embed_detail"] == "not embedded: ModuleNotFoundError: no ragproc"
+
+
+def test_embedding_can_be_switched_off(make_client, settings, fixing, fix_stores):
+    _, repo = fixing
+    client = make_client(repository=repo, settings=replace(settings, embed_fixes=False))
+    body = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL}).json()
+    assert (body["embedded"], body["embed_detail"]) == (False, "embedding is off")
+    assert fix_stores["corrections"].embedders == []
+
+
+def test_a_fix_the_staging_row_vanished_from_under_still_reports(fixing, fix_stores):
+    client, repo = fixing
+    repo.mark_corrected = lambda *args, **kwargs: None
+    body = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL}).json()
+    assert body["fix"]["fix_id"] == "W0001"
+    assert body["submission"]["id"] == "sub-w"
+
+
+def test_a_corrected_submission_cannot_be_edited(fixing):
+    client, repo = fixing
+    repo.submissions["sub-w"].state = "corrected"
+    response = client.patch("/v1/submissions/sub-w", json={"review_note": "x"})
+    assert (response.status_code, response.json()["error"]["code"]) == (409, "already_fixed")
+
+
+def test_corrected_is_something_that_happens_not_something_that_is_set(client):
+    response = client.patch("/v1/submissions/sub-1", json={"state": "corrected"})
+    assert response.status_code == 422
+
+
+def test_each_store_lists_what_it_holds(fixing, fix_stores):
+    client, _ = fixing
+    client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    body = client.get("/v1/fixes/corrections").json()
+    assert (body["kind"], body["count"]) == ("corrections", 1)
+    assert body["fixes"][0]["corrected_sql"] == GOOD_SQL
+    assert client.get("/v1/fixes/completions").json()["count"] == 0
+    assert client.get("/v1/fixes/golden").status_code == 422
+
+
+def test_a_store_that_cannot_be_read_is_a_503(fixing, fix_stores):
+    client, _ = fixing
+    fix_stores["completions"].fail_listing = OSError("down")
+    response = client.get("/v1/fixes/completions")
+    assert (response.status_code, response.json()["error"]["code"]) == (503, "unavailable")
+
+
+def test_meta_counts_each_store_and_survives_one_being_down(fixing, fix_stores):
+    client, _ = fixing
+    client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    fix_stores["completions"].fail_count = OSError("down")
+    body = client.get("/v1/meta").json()
+    assert body["fixes"] == {"corrections": 1, "completions": 0}
+    assert body["counts_by_verdict"]["no"]["corrected"] == 1
+
+
+def test_meta_zeroes_every_verdict_when_the_staging_database_is_down(make_client, repository):
+    def explode(*args, **kwargs):
+        raise OSError("down")
+
+    repository.counts_by_verdict = explode
+    body = make_client().get("/v1/meta").json()
+    assert body["counts_by_verdict"] == {v: {s: 0 for s in STATES} for v in ("yes", "no", "incomplete")}
+
+
+def test_readiness_pings_the_retail_database_and_both_stores(make_client, pinged, fix_stores):
+    body = make_client().get("/readyz").json()
+    assert pinged == ["retail"]
+    assert body["checks"]["corrections_store"] == {"ok": True, "detail": "postgresql://fixes:***@nowhere:5432/fixes"}
+
+    def down():
+        raise OSError("no route to retail")
+
+    fix_stores["completions"].fail_ping = OSError("refused")
+    response = make_client(retail_pinger=down).get("/readyz")
+    assert response.status_code == 503
+    checks = response.json()["checks"]
+    assert checks["retail_database"] == {"ok": False, "detail": "OSError: no route to retail"}
+    assert checks["completions_store"] == {"ok": False, "detail": "OSError: refused"}
+    assert checks["corrections_store"]["ok"] is True
+
+
+# --- the real collaborators, as create_app builds them --------------------
+
+
+def test_the_default_embedder_is_the_golden_sets_own_pointed_where_it_points(settings):
+    from nl2sql_review.app import default_embedder
+
+    embedder = default_embedder(replace(settings, embed_model="bge-m3", ollama_url="http://embed:11434"))
+    assert embedder.model_name == "bge-m3"
+    assert embedder.base_url == "http://embed:11434"
+
+
+def test_the_default_validator_runs_against_the_configured_retail_database(settings, monkeypatch):
+    from nl2sql_review import app as app_module
+
+    seen: dict = {}
+
+    def fake_validate(sql, **kwargs):
+        seen.update(kwargs, sql=sql)
+        return Validation(sql=sql, valid=True)
+
+    monkeypatch.setattr(app_module.validation_module, "validate", fake_validate)
+    run = app_module.default_validator(
+        replace(settings, retail_db_url="postgresql://r/db", validate_timeout_ms=900, validate_max_rows=7)
+    )
+    assert run("SELECT 1", "SELECT 2").valid is True
+    assert seen == {
+        "sql": "SELECT 1", "url": "postgresql://r/db", "reference": "SELECT 2",
+        "timeout_ms": 900, "max_rows": 7,
+    }
+
+
+def test_the_default_retail_ping_round_trips_the_database(settings, monkeypatch):
+    import psycopg
+
+    from nl2sql_review.app import default_retail_pinger
+
+    opened: list = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, statement):
+            opened.append(statement)
+            return self
+
+        def fetchone(self):
+            return (1,)
+
+    def connect(url, **kwargs):
+        opened.append((url, kwargs))
+        return Conn()
+
+    monkeypatch.setattr(psycopg, "connect", connect)
+    default_retail_pinger(replace(settings, retail_db_url="postgresql://r/db"))()
+    assert opened == [("postgresql://r/db", {"connect_timeout": 5}), "SELECT 1"]

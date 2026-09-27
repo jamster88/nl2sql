@@ -69,25 +69,40 @@ case "$1" in
         [[ -n "${FAKE_NO_IMAGE:-}" ]] && exit 1
         exit 0 ;;
     run)
-        # The volume snapshot: `docker run -v VOL:/src:ro -v DIR:/out alpine
-        # tar ...`. The real one writes the tar; so does this, because the
-        # script measures it with du on the next line.
-        [[ -n "${FAKE_FAIL_SNAPSHOT:-}" ]] && exit 1
-        out=""
-        for arg in "$@"; do
-            [[ "$arg" == *":/out" ]] && out="${arg%:/out}"
-        done
-        [[ -n "$out" ]] && printf 'not really a cluster' > "$out/pgdata.tar"
+        # `--from`'s throwaway container.
+        [[ -n "${FAKE_FAIL_RUN:-}" ]] && exit 1
         exit 0 ;;
-    stop|start)
+    start)
+        [[ -n "${FAKE_FAIL_START:-}" ]] && exit 1
         exit 0 ;;
-    build)
+    stop|rm)
+        exit 0 ;;
+    buildx)
+        [[ "$2" == version ]] && { [[ -n "${FAKE_NO_BUILDX:-}" ]] && exit 1; exit 0; }
         [[ -n "${FAKE_FAIL_BUILD:-}" ]] && exit 1
-        exit 0 ;;
-    push)
-        [[ -n "${FAKE_FAIL_PUSH:-}" ]] && exit 1
+        [[ "$*" == *" --push "* && -n "${FAKE_FAIL_PUSH:-}" ]] && exit 1
+        # The context is the last argument and is deleted when the script
+        # exits, so what was built is kept beside the log for the asserts.
+        ctx="${!#}"
+        mkdir -p "$FAKE_LOG.context"
+        cp "$ctx"/* "$FAKE_LOG.context/"
         exit 0 ;;
     exec)
+        # A cluster dump, with the bootstrap role's CREATE the script has to
+        # take out, and the store's pg_hba.conf.
+        if [[ "$*" == *pg_dumpall* ]]; then
+            [[ -n "${FAKE_FAIL_DUMP:-}" ]] && exit 1
+            [[ -z "${FAKE_DUMP_NO_ROLE:-}" ]] && echo "CREATE ROLE ragproc;"
+            echo "ALTER ROLE ragproc WITH SUPERUSER LOGIN PASSWORD 'SCRAM-SHA-256\$fake';"
+            echo "CREATE ROLE ragproc_reader;"
+            echo "CREATE TABLE golden_pairs (pair_id text);"
+            exit 0
+        fi
+        if [[ "$*" == *pg_hba.conf* ]]; then
+            [[ -n "${FAKE_FAIL_HBA:-}" ]] && exit 1
+            echo "host all all all scram-sha-256"
+            exit 0
+        fi
         # Only the listing query is made to fail. `CREATE EXTENSION` failing
         # is a different thing entirely -- the vector store is unusable
         # without pgvector, and that one is meant to be fatal.
@@ -159,7 +174,8 @@ def run_rag(tmp_path: Path):
         shutil.copy(script, rag / script.name)
         os.chmod(rag / script.name, 0o755)
     (rag / "docker").mkdir()
-    shutil.copy(RAG_DIR / "docker" / "seeded.Dockerfile", rag / "docker" / "seeded.Dockerfile")
+    for dockerfile in ("chunkdb.Dockerfile", "vectordb.Dockerfile", "restore.Dockerfile"):
+        shutil.copy(RAG_DIR / "docker" / dockerfile, rag / "docker" / dockerfile)
     shutil.copy(RAG_DIR / "docker-compose.yml", rag / "docker-compose.yml")
 
     bin_dir = tmp_path / "bin"
@@ -196,7 +212,7 @@ def run_rag(tmp_path: Path):
         for name in ("EMBED_MODEL", "OLLAMA_URL", "RAG_DB_USER", "RAG_DB_PASSWORD",
                      "CHUNK_DB_PORT", "VECTOR_DB_PORT", "CHUNK_DB_NAME",
                      "VECTOR_DB_NAME", "CHUNKDB_IMAGE", "CHUNKDB_TAG",
-                     "VECTORDB_IMAGE", "VECTORDB_TAG"):
+                     "VECTORDB_IMAGE", "VECTORDB_TAG", "PUBLISH_PLATFORMS"):
             run_env.pop(name, None)
         if env:
             run_env.update(env)
@@ -410,13 +426,13 @@ def test_the_pipeline_does_not_publish_unless_asked(run_rag):
 def test_publishing_snapshots_both_stores_under_the_given_account(run_rag):
     result = run_rag("run_all.sh", "--publish", "someone", "--tag", "v7")
     assert result.returncode == 0
-    assert result.called("push someone/nl2sql-rag-chunkdb:v7")
-    assert result.called("push someone/nl2sql-rag-vectordb:v7")
+    assert result.called("-t someone/nl2sql-rag-chunkdb:v7 --push")
+    assert result.called("-t someone/nl2sql-rag-vectordb:v7 --push")
 
 
 def test_publishing_defaults_to_v1(run_rag):
     result = run_rag("run_all.sh", "--publish", "someone")
-    assert result.called("push someone/nl2sql-rag-chunkdb:v1")
+    assert result.called("-t someone/nl2sql-rag-chunkdb:v1 --push")
 
 
 def test_the_pipeline_documents_every_flag_it_parses(run_rag):
@@ -513,8 +529,8 @@ def test_the_update_checks_its_documents_directory_too(run_rag):
 def test_the_update_can_publish(run_rag):
     result = run_rag("run_update.sh", "--publish", "someone", "--tag", "v2",
                      env={"FAKE_RUNNING": "true"})
-    assert result.called("push someone/nl2sql-rag-chunkdb:v2")
-    assert result.called("push someone/nl2sql-rag-vectordb:v2")
+    assert result.called("-t someone/nl2sql-rag-chunkdb:v2 --push")
+    assert result.called("-t someone/nl2sql-rag-vectordb:v2 --push")
 
 
 def test_the_update_prints_its_own_usage(run_rag):
@@ -576,8 +592,14 @@ def test_starting_the_rag_store_prints_the_query_shape_it_implements(run_rag):
 
 
 # ---------------------------------------------------------------------------
-# publish_db_image.sh -- a volume is not captured by a build
+# publish_db_image.sh -- a dump, restored per platform
 # ---------------------------------------------------------------------------
+
+
+def _built(result) -> dict[str, str]:
+    """The build context the fake buildx was handed, file by file."""
+    context = Path(result.workdir).parent / "calls.log.context"
+    return {path.name: path.read_text() for path in context.iterdir()} if context.is_dir() else {}
 
 
 def test_publishing_needs_both_a_service_and_a_tagged_image(run_rag):
@@ -608,88 +630,182 @@ def test_publishing_refuses_an_option_it_does_not_know(run_rag):
     assert "unknown option: --wat" in result.output
 
 
+def test_from_needs_an_image(run_rag):
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", "--from")
+    assert result.returncode != 0
+    assert "--from needs an image" in result.output
+
+
+def test_publishing_needs_buildx(run_rag):
+    """It is what builds more than one platform; a plain `docker build`
+    would quietly publish this machine's architecture alone again."""
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_NO_BUILDX": "1"})
+    assert result.returncode != 0
+    assert "docker buildx is required" in result.output
+    assert not result.called("pg_dumpall")
+
+
 def test_publishing_checks_the_volume_exists_before_touching_the_container(run_rag):
     result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_NO_VOLUME": "1"})
     assert result.returncode != 0
     assert "volume nl2sql-rag-chunkdb-data does not exist" in result.output
     assert "has the pipeline run?" in result.output
-    assert not result.called("stop")
+    assert not result.called("start")
 
 
-def test_publishing_checks_the_base_image_exists(run_rag):
-    result = run_rag("publish_db_image.sh", "vectordb", "someone/x:v1", env={"FAKE_NO_IMAGE": "1"})
-    assert result.returncode != 0
-    assert "not found -- start the service first" in result.output
-
-
-def test_a_running_container_is_stopped_before_its_volume_is_read_and_restarted_after(run_rag):
-    """The whole reason this script exists. A Postgres volume copied while
-    the server is writing to it is a cluster that may not start, so the
-    snapshot is taken across a clean shutdown -- and the container has to
-    come back, because it was running a moment ago.
-    """
-    result = run_rag(
-        "publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_RUNNING": "true"}
-    )
-    assert result.returncode == 0
-
-    stop = result.index_of("stop nl2sql-rag-chunkdb")
-    snapshot = result.index_of("tar -C /src")
-    start = result.index_of("start nl2sql-rag-chunkdb")
-    assert stop < snapshot < start
-    assert "Restarting nl2sql-rag-chunkdb" in result.output
-
-
-def test_a_container_that_was_not_running_is_left_that_way(run_rag):
-    """Starting it would be a side effect nobody asked for, and the volume
-    is already at rest."""
-    result = run_rag(
-        "publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_RUNNING": "false"}
-    )
-    assert result.returncode == 0
+def test_a_running_store_is_dumped_where_it_stands(run_rag):
+    """pg_dumpall reads each database in one snapshot while the server runs,
+    so -- unlike the tar this replaced -- nothing has to stop for it."""
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_RUNNING": "true"})
+    assert result.returncode == 0, result.output
+    assert result.called("exec nl2sql-rag-chunkdb pg_dumpall --username=ragproc")
     assert not result.called("stop nl2sql-rag-chunkdb")
     assert not result.called("start nl2sql-rag-chunkdb")
 
 
-def test_a_volume_that_cannot_be_read_is_fatal(run_rag):
-    result = run_rag(
-        "publish_db_image.sh", "vectordb", "someone/x:v1", env={"FAKE_FAIL_SNAPSHOT": "1"}
-    )
-    assert result.returncode != 0
-    assert "could not read volume nl2sql-rag-vectordb-data" in result.output
+def test_a_stopped_store_is_started_for_the_dump_and_stopped_again(run_rag):
+    """A dump needs a server; the store is put back as the user left it."""
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_RUNNING": "false"})
+    assert result.returncode == 0, result.output
+    start = result.index_of("start nl2sql-rag-chunkdb")
+    dump = result.index_of("pg_dumpall")
+    stop = result.index_of("stop nl2sql-rag-chunkdb")
+    assert start < dump < stop
+    assert "stopping nl2sql-rag-chunkdb again, as it was" in result.output
 
 
-def test_publishing_builds_from_the_seeded_dockerfile_over_the_running_base(run_rag):
-    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1")
-    build = result.calls_matching("build --build-arg")
-    assert build, "no image was built"
-    assert "BASE_IMAGE=nl2sql-rag-chunkdb:latest" in build[0]
-    assert "-t someone/x:v1" in build[0]
-
-
-def test_the_base_image_follows_a_pulled_one(run_rag):
-    """After `--image`, the running container is the published image, so the
-    snapshot has to be layered onto that rather than onto a local build.
-    """
+def test_a_store_that_will_not_start_is_named(run_rag):
     result = run_rag(
         "publish_db_image.sh", "vectordb", "someone/x:v1",
-        env={"VECTORDB_IMAGE": "mcfaddja/nl2sql-rag-vectordb", "VECTORDB_TAG": "v3"},
+        env={"FAKE_RUNNING": "false", "FAKE_FAIL_START": "1"},
     )
-    assert "BASE_IMAGE=mcfaddja/nl2sql-rag-vectordb:v3" in result.calls_matching("build --build-arg")[0]
+    assert result.returncode != 0
+    assert "could not start nl2sql-rag-vectordb -- start the service first" in result.output
+    assert not result.called("stop nl2sql-rag-vectordb")
 
 
-def test_no_push_builds_and_stops(run_rag):
-    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", "--no-push")
-    assert result.returncode == 0
-    assert result.called("build --build-arg")
-    assert not result.called("push someone/x:v1")
-    assert "built but not pushed" in result.output
+def test_a_dump_that_fails_is_fatal_and_still_puts_the_store_back(run_rag):
+    result = run_rag(
+        "publish_db_image.sh", "vectordb", "someone/x:v1",
+        env={"FAKE_RUNNING": "false", "FAKE_FAIL_DUMP": "1"},
+    )
+    assert result.returncode != 0
+    assert "could not dump nl2sql-rag-vectordb" in result.output
+    assert result.called("stop nl2sql-rag-vectordb")
+    assert not result.called("buildx build")
+
+
+def test_a_dump_without_the_superuser_is_refused_before_building(run_rag):
+    """The restore's initdb makes RAG_DB_USER. A dump whose superuser is
+    somebody else would restore a cluster its clients cannot log in to."""
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_DUMP_NO_ROLE": "1"})
+    assert result.returncode != 0
+    assert "the dump does not create ragproc" in result.output
+    assert not result.called("buildx build")
+
+
+def test_an_unreadable_pg_hba_is_fatal(run_rag):
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_FAIL_HBA": "1"})
+    assert result.returncode != 0
+    assert "could not read nl2sql-rag-chunkdb's pg_hba.conf" in result.output
+
+
+def test_publishing_builds_both_architectures_and_pushes_in_one_step(run_rag):
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1")
+    assert result.returncode == 0, result.output
+    build = result.calls_matching("buildx build")
+    assert len(build) == 1
+    assert "--platform linux/amd64,linux/arm64" in build[0]
+    assert "--build-arg DB_USER=ragproc" in build[0]
+    assert "-t someone/x:v1 --push" in build[0]
+    assert not result.called("push someone/x:v1")  # buildx pushed it
+    assert "published someone/x:v1 (linux/amd64,linux/arm64)" in result.output
+
+
+def test_the_platforms_can_be_overridden(run_rag):
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"PUBLISH_PLATFORMS": "linux/arm64"})
+    assert "--platform linux/arm64 " in result.calls_matching("buildx build")[0]
+
+
+@pytest.mark.parametrize("service", ["chunkdb", "vectordb"])
+def test_the_image_is_the_kinds_own_dockerfile_continued_by_the_restore(run_rag, service):
+    """One source for the base image, PGDATA and the labels, whether a store
+    is built empty to run the pipeline or populated to publish."""
+    built = _built(run_rag("publish_db_image.sh", service, "someone/x:v1"))
+    base = (RAG_DIR / "docker" / f"{service}.Dockerfile").read_text()
+    restore = (RAG_DIR / "docker" / "restore.Dockerfile").read_text()
+    assert built["Dockerfile"] == base + restore
+
+
+def test_the_dump_loses_the_bootstrap_create_and_nothing_else(run_rag):
+    """initdb has made `ragproc` by the time the restore runs, so its CREATE
+    would stop the restore -- but its ALTER ROLE carries the password hash,
+    and every other role and object has to arrive."""
+    built = _built(run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1"))
+    cluster = built["cluster.sql"].splitlines()
+    assert "CREATE ROLE ragproc;" not in cluster
+    assert "ALTER ROLE ragproc WITH SUPERUSER LOGIN PASSWORD 'SCRAM-SHA-256$fake';" in cluster
+    assert "CREATE ROLE ragproc_reader;" in cluster
+    assert "CREATE TABLE golden_pairs (pair_id text);" in cluster
+    assert built["pg_hba.conf"] == "host all all all scram-sha-256\n"
+    assert "dump.sql" not in built
+
+
+def test_from_dumps_a_published_image_in_a_throwaway_container(run_rag):
+    """How a tag built the old way is republished multi-arch: its own
+    contents, not whatever the pipeline's volume holds today."""
+    result = run_rag(
+        "publish_db_image.sh", "vectordb", "someone/x:v3_1", "--from", "someone/x:v3",
+        env={"FAKE_NO_VOLUME": "1"},
+    )
+    assert result.returncode == 0, result.output
+    run = result.calls_matching("run -d --name nl2sql-rag-publish-vectordb")
+    assert run and run[0].endswith("someone/x:v3")
+    assert "--health-cmd pg_isready -U ragproc -d postgres" in run[0]
+    assert result.called("exec nl2sql-rag-publish-vectordb pg_dumpall")
+    assert result.calls[-1] == "rm -f nl2sql-rag-publish-vectordb"
+    assert not result.called("start nl2sql-rag-vectordb")
+
+
+def test_a_published_image_that_will_not_run_is_named(run_rag):
+    result = run_rag(
+        "publish_db_image.sh", "vectordb", "someone/x:v3_1", "--from", "someone/nope:v3",
+        env={"FAKE_FAIL_RUN": "1"},
+    )
+    assert result.returncode != 0
+    assert "could not start someone/nope:v3 -- check the reference" in result.output
+
+
+def test_the_throwaway_container_is_removed_even_when_the_build_fails(run_rag):
+    result = run_rag(
+        "publish_db_image.sh", "vectordb", "someone/x:v3_1", "--from", "someone/x:v3",
+        env={"FAKE_FAIL_BUILD": "1"},
+    )
+    assert result.returncode != 0
+    assert result.calls[-1] == "rm -f nl2sql-rag-publish-vectordb"
+
+
+def test_no_push_builds_for_this_machine_and_loads_it(run_rag):
+    """A multi-platform image cannot be loaded into a local image store, so
+    the local build is this machine's platform alone -- and says so."""
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", "--no-push", "--from", "someone/x:v0")
+    assert result.returncode == 0, result.output
+    build = result.calls_matching("buildx build")[0]
+    assert "--load" in build and "--push" not in build and "--platform" not in build
+    assert "built for this machine only, not pushed" in result.output
+    assert "./publish_db_image.sh chunkdb someone/x:v1 --from someone/x:v0" in result.output
+
+
+def test_a_failed_local_build_is_fatal(run_rag):
+    result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", "--no-push", env={"FAKE_FAIL_BUILD": "1"})
+    assert result.returncode != 0
+    assert "build failed" in result.output
 
 
 def test_a_failed_push_names_the_likely_cause(run_rag):
     result = run_rag("publish_db_image.sh", "chunkdb", "someone/x:v1", env={"FAKE_FAIL_PUSH": "1"})
     assert result.returncode != 0
-    assert "is 'docker login' done for this account?" in result.output
+    assert "is 'docker login' done for this account" in result.output
 
 
 def test_a_successful_push_warns_that_new_repositories_are_public(run_rag):

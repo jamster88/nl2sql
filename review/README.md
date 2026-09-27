@@ -1,14 +1,19 @@
 # Feedback review
 
-Turning "that answer was wrong" into a golden question.
+Turning a verdict into a golden question -- or into a fix.
 
 The web interface and the desktop client both ask whether an answer was
 right. This is where the answers to that question go -- from either of them,
-into one queue -- and where they are turned into the thing they
-are worth turning into: a verified question/SQL pair in the set the agent is
-measured and prompted against.
+into one queue -- and where each is turned into the thing it is worth
+turning into:
 
-Two processes and a database:
+| Verdict | Pane | Becomes | Stored in |
+| --- | --- | --- | --- |
+| **Correct** (`yes`) | Correct → golden set | a verified question/SQL pair | the golden question set, as before |
+| **Wrong** (`no`) | Wrong → corrections | the question, the wrong answer, and a corrected query that ran | `nl2sql-correctionsdb`: records + RAG |
+| **Correct but incomplete** (`incomplete`) | Correct but incomplete → completions | the question, the incomplete answer, and a completed query that ran | `nl2sql-completionsdb`: records + RAG |
+
+Two processes and four databases:
 
 ```
 browser ──nginx──▶ agent API   POST /v1/questions/{id}/feedback
@@ -17,9 +22,14 @@ desktop ─────────────▶ │
                                                 │
 reviewer ──nginx──▶ review service ──owner──────┘
                        │
-                       └─ promote ─▶ context_questions/translated_questions.md
-                                       └─▶ 05_load_golden_pairs ─▶ chunkdb
-                                       └─▶ 06_embed_golden_pairs ─▶ vectordb
+                       ├─ promote (correct) ─▶ context_questions/translated_questions.md
+                       │                        └─▶ 05_load_golden_pairs ─▶ chunkdb
+                       │                        └─▶ 06_embed_golden_pairs ─▶ vectordb
+                       │
+                       ├─ validate ─ nl2sql_reader, READ ONLY ─▶ postgres (retail)
+                       │
+                       └─ fix (wrong) ────────▶ correctionsdb   sql_corrections + _vectors
+                          fix (incomplete) ───▶ completionsdb   sql_completions + _vectors
 ```
 
 ## Contents
@@ -28,6 +38,7 @@ reviewer ──nginx──▶ review service ──owner──────┘
 - [What a verdict carries](#what-a-verdict-carries)
 - [The fence around the public process](#the-fence-around-the-public-process)
 - [Promotion](#promotion)
+- [Fixing a wrong or incomplete answer](#fixing-a-wrong-or-incomplete-answer)
 - [Running it](#running-it)
 - [Endpoints](#endpoints)
 - [Configuration](#configuration)
@@ -48,7 +59,10 @@ because both happen to be FastAPI would put the benchmark inside the blast
 radius of the thing being benchmarked.
 
 So the public API holds an INSERT-only role on one table, and everything else
-lives here: its own container, its own port, its own token.
+lives here: its own container, its own port, its own token. The same goes for
+the two fix stores -- the public process has no connection to either, and
+the only SQL a reviewer can have run against the retail database goes
+through the same read-only role the agent answers with.
 
 ## What a verdict carries
 
@@ -56,11 +70,23 @@ A verdict arrives with a snapshot of the job it is about: the question, the
 generated SQL, the answer, the narrative, the intent, the tables, the result
 shape, and any comment the user added.
 
+The verdict itself is one of three: `yes` (correct), `no` (wrong), or
+`incomplete` (correct but incomplete -- the SQL was right and the answer
+left out something a reader needed). Each has its own pane in the review
+interface and its own destination: a correct answer is
+[promoted](#promotion) into the golden set, a wrong or incomplete one is
+[fixed](#fixing-a-wrong-or-incomplete-answer) into its own store. The
+table's two CHECK constraints -- on the verdict and on the state -- are
+re-applied on every start, which is how a staging database created when
+there were only two verdicts learns the third, and one created before 5.1
+learns the `corrected` state.
+
 The snapshot is taken at vote time rather than looked up later because there
 is no later -- a job is forgotten after `API_JOB_TTL_SECONDS`, and a record
 holding only a job id would be pointing at nothing within the hour. The SQL
-in particular is the whole reason a "yes" is interesting: it is the candidate
-a golden pair gets built from.
+in particular is the whole reason a verdict is interesting: for a "yes" it
+is the candidate a golden pair gets built from, and for the other two it is
+the mistake a fix is written against.
 
 It is taken from the job by the *server*, not sent by the client. A client
 that supplied its own snapshot could supply one that never matched the job,
@@ -103,10 +129,19 @@ transaction, and "already reviewed" is detected by the unique constraint on
 `tests/review/test_store_live.py` asks the cluster whether all of that is
 true, rather than asserting that the SQL file says so.
 
+The fix stores are not behind this fence because the public process never
+reaches them: they are separate Postgres instances whose only client is this
+service.
+
 ## Promotion
 
-A reviewer opens a submission, reads what was asked and what the agent
-answered, and writes the parts a thumbs-up cannot carry:
+Only a *correct* answer is promoted. `promote` on a wrong or incomplete one
+is refused with `wrong_workflow` -- a wrong answer's SQL in the golden set
+would be the benchmark scoring the agent against its own mistake.
+
+A reviewer opens a submission in the **Correct** pane, reads what was asked
+and what the agent answered, and writes the parts a *correct* verdict cannot
+carry:
 
 | From the submission | From the reviewer |
 | --- | --- |
@@ -175,6 +210,131 @@ Writing the document also means a promotion is an ordinary edit to a tracked
 file. It shows up in `git diff`, it is reviewed like any other change, and it
 is committed by a person.
 
+## Fixing a wrong or incomplete answer
+
+A *wrong* answer is not a golden pair with a mistake in it, and neither is
+an *incomplete* one. What they are worth is a record of the mistake and of
+what fixed it -- the question, the SQL the agent wrote and what the user was
+shown, and the query that should have been generated. So they get their own
+panes, their own treatment and their own stores, and none of it touches the
+golden set.
+
+### The treatment
+
+The two panes treat a submission the same way, for now; a later version
+gives the incomplete pane a process of its own.
+
+1. **See what was generated.** The left half is the submission, as
+   submitted: the question, what the user said, the answer, and the agent's
+   SQL.
+2. **Write the query that should have been.** The editor starts from the
+   agent's SQL, because most fixes are an edit rather than a rewrite.
+3. **Validate it against the live retail database.** `POST
+   /v1/submissions/{id}/validate` runs it and shows the result: its
+   columns, the first rows, the row count, the plan cost and how long it
+   took -- or, when it fails, Postgres's own message and hint.
+4. **Save it.** Only a query that passed validation can be saved, and only
+   the exact text that passed: edit it afterwards and the save button goes
+   back to disabled until it is validated again. `POST
+   /v1/submissions/{id}/fix` then **validates it again**, server-side,
+   whatever the browser was told a moment ago -- a rule the client enforces
+   is a suggestion.
+
+A later version puts an agent in front of step 3 to sanity-check the
+reviewer's query, and a later one still an agent to help write it. Whatever
+they suggest, the rule stays: only SQL that runs is stored.
+
+### What validation checks
+
+Three things before anything is sent anywhere, all reported at once:
+
+* **one statement** -- nothing after a semicolon;
+* **a SELECT** (or `WITH ... SELECT`), and nothing else;
+* **not the agent's query** -- compared with whitespace, case and a
+  trailing semicolon ignored. A correction identical to the SQL it corrects
+  is a verdict with no fix in it, and is the mistake a person is likeliest
+  to make.
+
+Then it runs, the way the agent's own queries run, because it is a
+stranger's query against the database the agent answers from:
+
+* as **`nl2sql_reader`**, which can SELECT from the retail tables and
+  nothing else;
+* inside **`SET TRANSACTION READ ONLY`** as well, so a writing CTE is
+  refused by the server even if that role were ever widened -- and the
+  transaction is rolled back regardless;
+* under a **`statement_timeout`** (`REVIEW_VALIDATE_TIMEOUT_MS`) and a
+  **row cap** (`REVIEW_VALIDATE_MAX_ROWS`), so a cross join costs a timeout
+  rather than the database.
+
+There is deliberately **no function denylist** here, unlike the agent's
+static validator: a reviewer is trusted to write SQL, not to hold the
+database's powers, and a denylist is the caller being careful where the
+server can simply say no. So every guarantee is the server's, and
+[`tests/review/test_validation.py`](../tests/review/test_validation.py) runs
+a reviewer's query through the validator to check each one: it runs as
+`nl2sql_reader`, read-only, under its timeout, and `set_config` cannot switch
+the transaction to read-write, make it the owner, or lift the timeout on the
+statement already running. `pg_read_file` is refused, and so are
+`pg_cancel_backend` and `pg_terminate_backend` -- every reader session is the
+same role, and without
+[`docker/reader_role.sql`](../docker/reader_role.sql) revoking them one
+reviewer's query could end the agent's queries for everyone else.
+
+`EXPLAIN` runs first, so a query that does not plan is reported without
+being executed. A query that runs and returns no rows is **valid with a
+warning** -- sometimes zero rows is the answer, and sometimes it is a filter
+that matches nothing, and only the reviewer knows which.
+
+### What is stored
+
+| Field | From |
+| --- | --- |
+| `fix_id` | `W0001`, `W0002`... for a correction, `I0001`... for a completion, so a record says which store it came from wherever it is quoted |
+| `question` | The submission |
+| `incorrect_sql`, `incorrect_answer`, `incorrect_columns`, `incorrect_row_count` | What the agent generated and the user was shown |
+| `corrected_sql` | The reviewer's query, as it was validated |
+| `corrected_columns`, `corrected_rows`, `corrected_row_count`, `corrected_truncated`, `plan_cost` | What it returned: the first 20 rows, enough to see that it is the right answer |
+| `user_comment`, `reviewer`, `review_note`, `agent_version`, `submission_id`, `job_id`, `created_at` | Where it came from, and who fixed it |
+
+The staging row moves to the state **`corrected`** and records the fix id
+where a promoted one records its pair id. A corrected submission is history:
+it cannot be edited, fixed a second time, or promoted. If a save stores its
+record and then loses the connection before the staging row is marked, the
+next attempt finds the record, marks the row, and answers `already_fixed`
+rather than storing it twice.
+
+### Two stores, not one, and neither the golden set
+
+Each kind has its own Postgres, in its own volume, holding its records and
+its RAG side by side:
+
+| Service | Port | Records | RAG |
+| --- | --- | --- | --- |
+| `nl2sql-correctionsdb` | `5436` | `sql_corrections` | `sql_corrections_vectors` |
+| `nl2sql-completionsdb` | `5437` | `sql_completions` | `sql_completions_vectors` |
+
+The RAG half is a bge-m3 embedding of each question (1024 dimensions, an
+HNSW cosine index) beside the question, the incorrect SQL and the corrected
+SQL, so a retrieval over the vectors is useful without joining back to the
+records. It is written at save time, through the same embedder the golden
+set's `06_embed_golden_pairs.py` uses, and it is best-effort in the same way
+a promotion's reload is: the record is the fact, a save whose embedding host
+is down still stores it, and the next save that can reach the host embeds
+everything still missing. The response says `embedded: false` and why.
+
+Nothing reads these stores yet. They are what a later version's agent will
+retrieve from -- "a question like this one was answered wrongly before, and
+this is what fixed it" -- which is why the RAG half is written now rather
+than left for a batch job to backfill. They are apart from the golden set
+because the golden set is what the agent is measured against, and apart from
+each other because a wrong query and an incomplete one are different lessons.
+
+Each store's schema is created on start by this service, so a fresh volume
+needs nothing run by hand. Either store being down does not stop the
+service: `/readyz` answers 503 and names which one, and only a fix into that
+store is refused -- promotion and the other store carry on.
+
 ## Running it
 
 ```bash
@@ -182,13 +342,14 @@ is committed by a person.
 ```
 
 That is the whole thing from cold: the databases, the API, the web interface
-people vote in, the staging database, this service, and the review interface
--- then <http://localhost:8080> and <http://localhost:8081> in your browser.
+people vote in, the staging database, the corrections and completions stores,
+this service, and the review interface -- then <http://localhost:8080> and
+<http://localhost:8081> in your browser.
 
 The same containers without the browser step, or a smaller subset:
 
 ```bash
-./launch.sh --review        # staging database, review service, review interface
+./launch.sh --review        # staging database, fix stores, review service, review interface
 ./launch.sh --feedback      # just the staging database, so verdicts are kept
 ```
 
@@ -221,27 +382,31 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | --- | --- | --- | --- |
 | `GET` | `/` | no | Service banner and where everything is |
 | `GET` | `/healthz` | no | The process is alive |
-| `GET` | `/readyz` | no | Staging database reachable, document readable *and writable* |
+| `GET` | `/readyz` | no | Staging database, retail database and both fix stores reachable; document readable *and writable* |
 | `GET` | `/openapi.json` | no | The schema |
 | `GET` | `/docs` | no | The same thing, browsable |
-| `GET` | `/v1/meta` | yes | States, golden count, next pair id, queue counts, warnings |
+| `GET` | `/v1/meta` | yes | States, verdicts, golden count, next pair id, queue counts (overall and per verdict), fix counts per store, warnings |
 | `GET` | `/v1/submissions` | yes | The queue. `?state=` `?verdict=` `?limit=` `?offset=` |
 | `GET` | `/v1/submissions/{id}` | yes | One submission, with a seeded draft if it has none |
 | `PATCH` | `/v1/submissions/{id}` | yes | Accept, reject, or save a draft |
 | `POST` | `/v1/submissions/{id}/preview` | yes | The markdown a draft would add, without writing |
-| `POST` | `/v1/submissions/{id}/promote` | yes | Write the pair into the golden set |
+| `POST` | `/v1/submissions/{id}/promote` | yes | Write the pair into the golden set. Correct answers only |
+| `POST` | `/v1/submissions/{id}/validate` | yes | Run a corrected query against the live retail database. Wrong and incomplete answers only |
+| `POST` | `/v1/submissions/{id}/fix` | yes | Validate again and store the fix in its store. `X-Reviewer` names who |
+| `GET` | `/v1/fixes/{kind}` | yes | `corrections` or `completions`: what the store holds, newest first. `?limit=` |
 | `GET` | `/v1/golden` | yes | The set as the document holds it |
 | `GET` | `/v1/promotions` | yes | What has been promoted, newest first |
 
-`promote` is the only call with a consequence outside this service's own
-database, and it is the only one that is a POST to a named action rather than
-a field on a `PATCH`. That is what stops a form which saves as you type from
-writing the golden question set.
+`promote` and `fix` are the only calls with a consequence outside this
+service's staging database, and they are POSTs to named actions rather than
+fields on a `PATCH`. That is what stops a form which saves as you type from
+writing the golden question set or a fix store. `validate` is a POST too,
+but it changes nothing: its transaction is read-only and rolled back.
 
-`state` cannot be set to `promoted` through `PATCH`. It is something that
-happens, not something that is set; setting it by hand would mark a
-submission as being in the golden set with nothing written to the document --
-the one inconsistency this service exists to prevent.
+`state` cannot be set to `promoted` or `corrected` through `PATCH`. They are
+things that happen, not things that are set; setting one by hand would mark
+a submission as being in the golden set, or in a fix store, with nothing
+written there -- the one inconsistency this service exists to prevent.
 
 The error envelope is the agent API's, so one client parses both:
 `{"error": {"code": "...", "message": "..."}}`.
@@ -252,8 +417,12 @@ The error envelope is the agent API's, so one client parses both:
 | `unauthorized` | 401 | Missing or wrong token |
 | `not_found` | 404 | No such submission |
 | `already_promoted` | 409 | It is in the golden set; the record is not editable |
-| `rejected` | 409 | Accept it before promoting it |
+| `already_fixed` | 409 | It is in a fix store; the record is not editable and is not fixed twice |
+| `rejected` | 409 | Accept it before promoting or fixing it |
+| `wrong_workflow` | 409 | Promoting a wrong or incomplete answer, or validating or fixing a correct one |
 | `not_promotable` | 422 | The draft cannot become a pair. Every reason, not the first |
+| `not_valid` | 422 | The corrected query did not pass validation. Every reason, not the first |
+| `unavailable` | 503 | The fix store could not be written or read |
 
 ## Configuration
 
@@ -316,6 +485,23 @@ upsert, the delete of pairs no longer in the document, the BM25 rebuild and
 incremental re-embedding; a second implementation here would be a second set
 of rules to keep in agreement with the first.
 
+### Fixes
+
+| Variable | Default | What |
+| --- | --- | --- |
+| `RETAIL_DB_URL` | `postgresql://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail` | Where a corrected query is validated. The agent's read-only role, never the owner |
+| `REVIEW_VALIDATE_TIMEOUT_MS` | `30000` | `statement_timeout` for one validation |
+| `REVIEW_VALIDATE_MAX_ROWS` | `200` | Rows read before a result is called truncated |
+| `CORRECTIONS_DB_URL` | `postgresql://corrections:corrections@localhost:5436/nl2sql_corrections` | Where wrong answers' fixes go, as the owner |
+| `COMPLETIONS_DB_URL` | `postgresql://completions:completions@localhost:5437/nl2sql_completions` | Where incomplete answers' fixes go, as the owner |
+| `REVIEW_EMBED_FIXES` | `true` | Embed each fix's question at save time, with `OLLAMA_URL` / `EMBED_MODEL` |
+
+Compose points all three URLs at the containers, and takes an override for
+each as `REVIEW_RETAIL_DB_URL`, `REVIEW_CORRECTIONS_DB_URL` and
+`REVIEW_COMPLETIONS_DB_URL`. `REVIEW_EMBED_FIXES=false` stores records
+without their vectors -- the start-up banner, `/readyz` and `/v1/meta` all
+warn that nothing will be retrievable from them until they are embedded.
+
 ## The interface
 
 A React/TypeScript single page in [`gui/`](gui), built to static files and
@@ -329,17 +515,30 @@ rewrites the golden question set to anyone who could reach it. A second
 `package.json` is a few more files and a boundary that cannot be crossed by
 forgetting something.
 
+Three tabs across the top, one per verdict, each with a count of what is
+still pending in it: **Correct → golden set**, **Wrong → corrections** and
+**Correct but incomplete → completions**. A pane's queue holds only its own
+verdict, so a reviewer working through wrong answers never has a correct one
+to skip over.
+
 The layout is the argument: the left half of the detail pane is what a user
-said and cannot be edited, the right half is the pair being built out of it.
+said and cannot be edited, the right half is what is being built out of it
+-- a golden pair in the Correct pane, a corrected query in the other two.
 That they are two panels rather than one form is what keeps a curator honest
 -- it is very easy to fix a question until it matches the SQL, and a golden
 pair built that way tests nothing.
+
+In a fix pane the right half is the query editor, a **Validate against the
+live database** button, and the result: the rows it returned, or Postgres's
+reason it did not. The save button is enabled only while the editor holds
+exactly the text that last passed. The status bar counts what each fix
+store holds.
 
 ```bash
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 93 tests, 100% coverage
+npm run test     # review GUI: 128 tests, 100% coverage
 ```
 
 ## Tests
@@ -356,6 +555,13 @@ container. A fake cannot tell the truth about a privilege, though, and the
 security story here is made entirely of privileges -- so
 `test_store_live.py` creates the schema against a real Postgres, connects as
 the writer role, and tries the things it must not be able to do.
+
+The fix routes run against a fake validator and fake stores for the same
+reason. `test_validation.py` then runs the validator against the live retail
+database -- a writing CTE refused, a timeout reported, Postgres's hint passed
+through -- and `test_corrections_live.py` creates both stores' schemas in a
+real pgvector Postgres and checks the ids, the one-record-per-submission
+constraint, the embedding catch-up and a nearest-neighbour search.
 
 The promotion tests use a real copy of the real question document, not a
 miniature stand-in. The whole contract is a bet that a rendered pair survives

@@ -154,7 +154,12 @@ public final class HistoryView {
         }
 
         private static String glyph(FeedbackRecord record) {
-            return record.verdict() == Models.Verdict.YES ? "\u2713  " : "\u2717  ";
+            return switch (record.verdict()) {
+                case YES -> "\u2713  ";
+                case NO -> "\u2717  ";
+                // Half a circle: right, and not all of it.
+                case INCOMPLETE -> "\u25D0  ";
+            };
         }
     }
 }

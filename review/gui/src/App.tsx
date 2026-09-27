@@ -1,22 +1,24 @@
 /**
  * The review application.
  *
- * One submission at a time, beside the queue it came from. The layout is
- * the argument: the left half is what a user said and cannot be edited, the
- * right half is the golden pair being built out of it, and the fact that
- * they are two panels rather than one form is what stops a curator quietly
- * rewriting the question until it matches the SQL.
+ * Three panes, one per verdict a user can give, because each verdict has
+ * one way forward and they must not be confused:
  *
- * Three actions, and they are deliberately not equivalent:
+ * * **Correct** answers are built into golden pairs and written into
+ *   `context_questions/translated_questions.md` -- the set the agent is
+ *   measured against.
+ * * **Wrong** answers are fixed: the reviewer writes the SQL that should
+ *   have been generated, runs it against the live retail database, and only
+ *   a query that runs goes into the *corrections* store.
+ * * **Correct but incomplete** answers are fixed the same way into the
+ *   *completions* store -- its own pane, because a missing label and a wrong
+ *   join are different lessons, and a later version will treat them
+ *   differently.
  *
- * * **Accept** and **Reject** are judgements. They change a column, they
- *   are reversible, and they save the draft alongside so work in progress
- *   survives clicking away.
- * * **Promote** writes `context_questions/translated_questions.md`. It is
- *   the only thing here with a consequence outside this service's own
- *   database, so it is a separate button, it is disabled until the server
- *   says the draft would parse, and what it did is reported in full rather
- *   than as a tick.
+ * Within a pane, one submission at a time beside its queue. The left half is
+ * what a user said and cannot be edited; the right half is what is built out
+ * of it. That they are two panels rather than one form is what stops a
+ * curator quietly rewriting the question until it matches the SQL.
  *
  * Every collaborator is a prop with a default, which is what lets the whole
  * interface be tested against a fake client with no service, no database
@@ -26,6 +28,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { DraftEditor } from "./components/DraftEditor";
+import { FixEditor } from "./components/FixEditor";
+import { Fixed } from "./components/Fixed";
 import { Original } from "./components/Original";
 import { Promoted } from "./components/Promoted";
 import { Queue } from "./components/Queue";
@@ -34,10 +38,14 @@ import { createClient, type Client } from "./api/client";
 import { missing, toDraft } from "./api/draft";
 import type {
   DraftModel,
+  FixKind,
+  FixResultModel,
   PreviewModel,
   PromotionModel,
   State,
   SubmissionModel,
+  ValidationModel,
+  Verdict,
 } from "./api/types";
 import type { ReviewMeta } from "./api/types";
 
@@ -49,6 +57,23 @@ export interface AppProps {
 
 export const DEFAULT_PREVIEW_DELAY_MS = 400;
 
+/** The panes, in the order a reviewer meets them. */
+export const PANES: readonly { verdict: Verdict; title: string; goesTo: string }[] = [
+  { verdict: "yes", title: "Correct", goesTo: "golden set" },
+  { verdict: "no", title: "Wrong", goesTo: "corrections" },
+  { verdict: "incomplete", title: "Correct but incomplete", goesTo: "completions" },
+];
+
+/** Where a fixable verdict's answers are fixed into. */
+const FIX_KIND: Record<Exclude<Verdict, "yes">, FixKind> = {
+  no: "corrections",
+  incomplete: "completions",
+};
+
+function message(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
 export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }: AppProps) {
   const client = useMemo(() => given ?? createClient(), [given]);
 
@@ -56,15 +81,21 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
   const [metaError, setMetaError] = useState<Error | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
 
+  const [pane, setPane] = useState<Verdict>("yes");
   const [state, setState] = useState<State | "all">("pending");
   const [submissions, setSubmissions] = useState<SubmissionModel[]>([]);
-  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [countsByVerdict, setCountsByVerdict] = useState<Record<string, Record<string, number>>>({});
   const [loading, setLoading] = useState(false);
 
   const [selected, setSelected] = useState<SubmissionModel | null>(null);
   const [draft, setDraft] = useState<DraftModel | null>(null);
   const [preview, setPreview] = useState<PreviewModel | null>(null);
   const [suiteInForce, setSuiteInForce] = useState("");
+
+  const [fixSql, setFixSql] = useState("");
+  const [validation, setValidation] = useState<ValidationModel | null>(null);
+  const [validatedSql, setValidatedSql] = useState<string | null>(null);
+  const [fixResult, setFixResult] = useState<FixResultModel | null>(null);
 
   const [reviewer, setReviewer] = useState("");
   const [note, setNote] = useState("");
@@ -80,7 +111,6 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
       .then((value) => {
         setMeta(value);
         setWarnings(value.warnings);
-        setSuiteInForce((current) => current);
       })
       .catch((cause: unknown) =>
         setMetaError(cause instanceof Error ? cause : new Error(String(cause))),
@@ -89,21 +119,36 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
 
   useEffect(refreshMeta, [refreshMeta]);
 
-  // --- the queue --------------------------------------------------------
+  // --- the queue for this pane ----------------------------------------
 
   const refresh = useCallback(() => {
     setLoading(true);
     client
-      .submissions(state === "all" ? {} : { state })
+      .submissions(state === "all" ? { verdict: pane } : { state, verdict: pane })
       .then((list) => {
         setSubmissions(list.submissions);
-        setCounts(list.counts);
+        setCountsByVerdict(list.counts_by_verdict);
       })
-      .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+      .catch((cause: unknown) => setError(message(cause)))
       .finally(() => setLoading(false));
-  }, [client, state]);
+  }, [client, state, pane]);
 
   useEffect(refresh, [refresh]);
+
+  // --- switching pane ----------------------------------------------------
+
+  const choosePane = useCallback((next: Verdict) => {
+    // A new pane is a new job: nothing opened in the last one stays open.
+    setPane(next);
+    setSelected(null);
+    setDraft(null);
+    setPreview(null);
+    setValidation(null);
+    setValidatedSql(null);
+    setFixResult(null);
+    setPromotion(null);
+    setError(null);
+  }, []);
 
   // --- opening one ------------------------------------------------------
 
@@ -111,9 +156,12 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
     (submission: SubmissionModel) => {
       setError(null);
       setPromotion(null);
+      setFixResult(null);
       setPreview(null);
+      setValidation(null);
+      setValidatedSql(null);
       setSelected(submission);
-      setReviewer(submission.reviewer);
+      setReviewer((current) => submission.reviewer || current);
       setNote(submission.review_note);
       // Re-fetched rather than used from the list: the list does not carry a
       // seeded draft, and a form bound to the list's empty one would throw
@@ -123,10 +171,10 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
         .then((full) => {
           setSelected(full);
           setDraft(toDraft(full.draft));
+          // A fix starts from what the agent wrote: most are an edit.
+          setFixSql(full.sql_code);
         })
-        .catch((cause: unknown) =>
-          setError(cause instanceof Error ? cause.message : String(cause)),
-        );
+        .catch((cause: unknown) => setError(message(cause)));
     },
     [client],
   );
@@ -134,7 +182,7 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
   // --- the preview, which is the only opinion that counts ---------------
 
   useEffect(() => {
-    if (selected === null || draft === null) return undefined;
+    if (selected === null || draft === null || selected.verdict !== "yes") return undefined;
     // Nothing is sent while a required field is blank: the answer is already
     // known, and asking the server to say so on every keystroke of a form
     // that has barely been started is noise.
@@ -154,10 +202,10 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
     return () => clearTimeout(timer);
   }, [client, selected, draft, previewDelayMs]);
 
-  // --- the three actions ------------------------------------------------
+  // --- the actions --------------------------------------------------------
 
-  // These two take the submission and the draft rather than reading them
-  // from state, so they need no "if either is null" guard. They are only
+  // These take the submission (and draft) rather than reading them from
+  // state, so they need no "if either is null" guard. They are only
   // reachable from the branch below where both are known to exist, and a
   // guard that cannot fire is a line nothing can ever test.
   const judge = useCallback(
@@ -169,14 +217,14 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
           state: next,
           reviewer,
           review_note: note,
-          draft: current,
+          ...(submission.verdict === "yes" ? { draft: current } : {}),
         })
         .then((updated) => {
           setSelected(updated);
           refresh();
           refreshMeta();
         })
-        .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)))
+        .catch((cause: unknown) => setError(message(cause)))
         .finally(() => setBusy(false));
     },
     [client, reviewer, note, refresh, refreshMeta],
@@ -194,22 +242,61 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
           refreshMeta();
           return client.submission(submission.id).then(setSelected);
         })
-        .catch((cause: unknown) =>
-          setError(cause instanceof Error ? cause.message : String(cause)),
-        )
+        .catch((cause: unknown) => setError(message(cause)))
         .finally(() => setBusy(false));
     },
     [client, reviewer, refresh, refreshMeta],
   );
 
-  const terminal = selected?.state === "promoted";
-  const promotable = preview?.valid === true && !terminal && selected?.state !== "rejected";
+  const validate = useCallback(
+    (submission: SubmissionModel) => {
+      setBusy(true);
+      setError(null);
+      const sent = fixSql;
+      client
+        .validate(submission.id, sent)
+        .then((value) => {
+          setValidation(value);
+          setValidatedSql(sent);
+        })
+        .catch((cause: unknown) => setError(message(cause)))
+        .finally(() => setBusy(false));
+    },
+    [client, fixSql],
+  );
+
+  const saveFix = useCallback(
+    (submission: SubmissionModel) => {
+      setBusy(true);
+      setError(null);
+      client
+        .fix(submission.id, fixSql, reviewer, note)
+        .then((result) => {
+          setFixResult(result);
+          setSelected(result.submission);
+          refresh();
+          refreshMeta();
+        })
+        .catch((cause: unknown) => setError(message(cause)))
+        .finally(() => setBusy(false));
+    },
+    [client, fixSql, reviewer, note, refresh, refreshMeta],
+  );
+
+  const promotedAlready = selected?.state === "promoted";
+  const fixedAlready = selected?.state === "corrected";
+  const terminal = promotedAlready || fixedAlready;
+  const rejected = selected?.state === "rejected";
+  const promotable = preview?.valid === true && !terminal && !rejected;
+  const stale = validation !== null && validatedSql !== fixSql;
+  const saveable = validation?.valid === true && !stale && !terminal && !rejected;
+  const pendingIn = (verdict: Verdict) => countsByVerdict[verdict]?.pending ?? 0;
 
   return (
     <div className="app">
       <header className="masthead">
         <h1>
-          NL2SQL review <span className="masthead-sub">feedback into golden questions</span>
+          NL2SQL review <span className="masthead-sub">feedback into golden questions and fixes</span>
         </h1>
         <label className="reviewer">
           Reviewer
@@ -223,10 +310,27 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
         </label>
       </header>
 
-      <main className="main">
+      <div className="panes" role="tablist" aria-label="What the user said">
+        {PANES.map((entry) => (
+          <button
+            key={entry.verdict}
+            type="button"
+            role="tab"
+            className={`pane-tab pane-${entry.verdict}`}
+            aria-selected={pane === entry.verdict}
+            onClick={() => choosePane(entry.verdict)}
+          >
+            {entry.title}
+            <span className="pane-goes muted"> → {entry.goesTo}</span>
+            <span className="chip-count">{pendingIn(entry.verdict)}</span>
+          </button>
+        ))}
+      </div>
+
+      <main className="main" role="tabpanel" aria-label={PANES.find((p) => p.verdict === pane)?.title}>
         <Queue
           submissions={submissions}
-          counts={counts}
+          counts={countsByVerdict[pane] ?? {}}
           states={meta?.states ?? []}
           state={state}
           currentId={selected?.id}
@@ -244,30 +348,53 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
           )}
 
           {promotion && <Promoted promotion={promotion} onDismiss={() => setPromotion(null)} />}
+          {fixResult && <Fixed result={fixResult} onDismiss={() => setFixResult(null)} />}
 
           {selected === null || draft === null ? (
             <p className="muted detail-empty">
-              Pick something from the queue. What a user said is shown on the left of it; the
-              golden pair you would build from it goes on the right.
+              Pick something from the queue. What a user said is shown on the left of it; what
+              you build from it -- a golden pair, or a fix -- goes on the right.
             </p>
           ) : (
             <>
               <Original submission={selected} />
 
-              {terminal ? (
+              {promotedAlready && (
                 <p className="notice notice-quiet">
                   Already promoted as <strong>{selected.promoted_pair_id}</strong>. This record is
                   history now and is not editable.
                 </p>
-              ) : (
+              )}
+              {fixedAlready && (
+                <p className="notice notice-quiet">
+                  Already fixed as <strong>{selected.promoted_pair_id}</strong>. This record is
+                  history now and is not editable.
+                </p>
+              )}
+
+              {!terminal && (
                 <>
-                  <DraftEditor
-                    draft={draft}
-                    onChange={setDraft}
-                    preview={preview}
-                    suiteInForce={suiteInForce}
-                    disabled={busy}
-                  />
+                  {selected.verdict === "yes" ? (
+                    <DraftEditor
+                      draft={draft}
+                      onChange={setDraft}
+                      preview={preview}
+                      suiteInForce={suiteInForce}
+                      disabled={busy}
+                    />
+                  ) : (
+                    <FixEditor
+                      kind={FIX_KIND[selected.verdict]}
+                      sql={fixSql}
+                      onChange={setFixSql}
+                      validation={validation}
+                      stale={stale}
+                      onValidate={() => validate(selected)}
+                      onSave={() => saveFix(selected)}
+                      canSave={saveable}
+                      busy={busy}
+                    />
+                  )}
 
                   <div className="field">
                     <label htmlFor="review-note">Review note</label>
@@ -298,21 +425,26 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
                     >
                       Reject
                     </button>
-                    <button
-                      type="button"
-                      className="button button-primary"
-                      disabled={busy || !promotable}
-                      title={
-                        promotable
-                          ? "Write this pair into the golden question set"
-                          : "Fill in every required field; the preview has to parse first"
-                      }
-                      onClick={() => promote(selected, draft)}
-                    >
-                      Promote to golden set
-                    </button>
-                    {selected.state === "rejected" && (
-                      <span className="muted">Rejected — accept it before promoting it.</span>
+                    {selected.verdict === "yes" && (
+                      <button
+                        type="button"
+                        className="button button-primary"
+                        disabled={busy || !promotable}
+                        title={
+                          promotable
+                            ? "Write this pair into the golden question set"
+                            : "Fill in every required field; the preview has to parse first"
+                        }
+                        onClick={() => promote(selected, draft)}
+                      >
+                        Promote to golden set
+                      </button>
+                    )}
+                    {rejected && (
+                      <span className="muted">
+                        Rejected — accept it before{" "}
+                        {selected.verdict === "yes" ? "promoting" : "fixing"} it.
+                      </span>
                     )}
                   </div>
                 </>

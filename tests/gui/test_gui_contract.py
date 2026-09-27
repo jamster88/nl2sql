@@ -189,3 +189,38 @@ def test_the_two_fields_that_are_genuinely_nullable_still_are(interfaces: dict[s
     answer = (REPO_ROOT / "gui" / "src" / "api" / "types.ts").read_text()
     assert re.search(r"^  result: ResultTable \| null;", answer, re.MULTILINE)
     assert re.search(r"^  chart: ChartSpec \| null;", answer, re.MULTILINE)
+
+
+# ---------------------------------------------------------------------------
+# The verdict, which lives in three places in the GUI
+# ---------------------------------------------------------------------------
+
+
+def test_the_verdicts_match(types_ts: str):
+    """What the feedback buttons send is what the API accepts -- all three.
+
+    When `incomplete` was added to the API this file still said
+    `"yes" | "no"` and nothing here noticed; the Java client's contract test
+    and the review GUI's both check their verdicts, and now this one does.
+    """
+    assert _union_members(types_ts, "Verdict") == set(get_args(models.Verdict))
+
+
+def test_the_feedback_store_keeps_the_same_verdicts():
+    """`store.ts` keeps its own copy, because the browser-only store is older
+    than the API one. A verdict it does not list is dropped when the page
+    reloads, which reads to the user as their vote being lost."""
+    store = (REPO_ROOT / "gui" / "src" / "feedback" / "store.ts").read_text()
+    expected = set(get_args(models.Verdict))
+
+    assert _union_members(store, "Verdict") == expected
+    listed = re.search(r"const VERDICTS: readonly Verdict\[\] = \[([^\]]+)\]", store)
+    assert listed, "store.ts no longer lists the verdicts it reads back"
+    assert set(re.findall(r'"([^"]+)"', listed.group(1))) == expected
+
+
+def test_every_verdict_has_a_button():
+    """A verdict the API takes and no button offers is one nobody can give."""
+    bar = (REPO_ROOT / "gui" / "src" / "components" / "FeedbackBar.tsx").read_text()
+    offered = set(re.findall(r'\{ verdict: "(\w+)", label: "[^"]+" \}', bar))
+    assert offered == set(get_args(models.Verdict))

@@ -1,5 +1,5 @@
 /**
- * Was that answer right? Yes or no.
+ * Was that answer right? Correct, wrong, or correct but incomplete.
  *
  * This version keeps the answer in the browser and does nothing else with
  * it. That is the whole requirement for now, but it is worth being careful
@@ -18,7 +18,14 @@
  * would become an orphan pointing at nothing an hour later.
  */
 
-export type Verdict = "yes" | "no";
+/**
+ * `yes` is correct and `no` is wrong, the two wire values the API started
+ * with; `incomplete` is correct but incomplete. Kept in step with
+ * `Verdict` in `api/types.ts`, which is what the server accepts.
+ */
+export type Verdict = "yes" | "no" | "incomplete";
+
+const VERDICTS: readonly Verdict[] = ["yes", "no", "incomplete"];
 
 /**
  * Where a verdict has got to.
@@ -74,7 +81,7 @@ function isRecord(value: unknown): value is FeedbackRecord {
     typeof candidate.jobId === "string" &&
     typeof candidate.question === "string" &&
     typeof candidate.at === "string" &&
-    (candidate.verdict === "yes" || candidate.verdict === "no")
+    VERDICTS.includes(candidate.verdict as Verdict)
   );
 }
 

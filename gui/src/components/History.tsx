@@ -9,7 +9,7 @@
  */
 
 import { useFeedbackRecords } from "../feedback/useFeedback";
-import type { FeedbackStore } from "../feedback/store";
+import type { FeedbackStore, Verdict } from "../feedback/store";
 import type { Job } from "../api/types";
 
 export interface HistoryProps {
@@ -18,6 +18,13 @@ export interface HistoryProps {
   onSelect: (job: Job) => void;
   store: FeedbackStore;
 }
+
+/** One glyph per verdict, with the words for anyone who hovers or cannot see it. */
+const MARK: Record<Verdict, { symbol: string; title: string }> = {
+  yes: { symbol: "✓", title: "Marked correct" },
+  no: { symbol: "✗", title: "Marked wrong" },
+  incomplete: { symbol: "◐", title: "Marked correct but incomplete" },
+};
 
 export function History({ jobs, currentId, onSelect, store }: HistoryProps) {
   const records = useFeedbackRecords(store);
@@ -40,8 +47,8 @@ export function History({ jobs, currentId, onSelect, store }: HistoryProps) {
                 <span className="history-question">{job.question}</span>
                 <span className="history-meta">
                   {verdict && (
-                    <span className="history-verdict" data-verdict={verdict}>
-                      {verdict === "yes" ? "✓" : "✗"}
+                    <span className="history-verdict" data-verdict={verdict} title={MARK[verdict].title}>
+                      {MARK[verdict].symbol}
                     </span>
                   )}
                   {job.status !== "succeeded" && (

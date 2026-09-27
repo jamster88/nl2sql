@@ -159,14 +159,65 @@ def test_reader_role_sql_covers_tables_added_later(reader_role_sql: str):
                      reader_role_sql)
 
 
+#: The only privileges the file may take away, both PUBLIC's by default and
+#: neither needed to read the dataset: connecting to the cluster's other
+#: databases (generated per database, so pinned as the generating query), and
+#: signalling other backends.
+CONNECT_REVOKE = (
+    "SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', datname) "
+    "FROM pg_database WHERE datname <> :'DBNAME' AND datallowconn"
+)
+SIGNAL_REVOKES = (
+    "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_cancel_backend(integer) FROM PUBLIC;",
+    "REVOKE EXECUTE ON FUNCTION pg_catalog.pg_terminate_backend(integer, bigint) FROM PUBLIC;",
+)
+
+
+def _statements(sql_text: str) -> list[str]:
+    """The file with its comments removed, one statement per entry --
+    ended by a semicolon, or by psql's `\\gexec`, which runs the query's
+    output and ends the query itself."""
+    code = "\n".join(line.split("--", 1)[0] for line in sql_text.splitlines())
+    parts = re.split(r";|\\gexec", code)
+    return [" ".join(part.split()) for part in parts if part.strip()]
+
+
 def test_reader_role_sql_is_safe_to_run_on_every_start(reader_role_sql: str):
-    """launch.sh runs it each time: creation is guarded, everything after
-    it is an ALTER or a GRANT, and nothing is dropped or revoked.
+    """launch.sh runs it each time: creation is guarded, nothing is dropped,
+    and nothing is revoked but PUBLIC's CONNECT on the other databases and the
+    two signalling functions -- so a re-run can never take away access that
+    reading the dataset relies on.
     """
     assert "WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'reader') \\gexec" in reader_role_sql
     assert "\\set ON_ERROR_STOP on" in reader_role_sql
-    for forbidden in ("DROP ", "REVOKE "):
-        assert forbidden not in reader_role_sql.upper()
+    statements = _statements(reader_role_sql)
+    assert not [st for st in statements if "DROP " in st.upper()]
+    revokes = [st + ";" for st in statements if st.upper().startswith("REVOKE")]
+    assert revokes == list(SIGNAL_REVOKES)
+    generated = [st for st in statements if "REVOKE" in st.upper() and not st.upper().startswith("REVOKE")]
+    assert generated == [CONNECT_REVOKE]
+
+
+def test_reader_role_sql_closes_every_database_but_the_retail_one(reader_role_sql: str):
+    """CONNECT is PUBLIC's on every database by default, so the reader's
+    password opened `postgres` and `template1` too -- where the function
+    revokes do not apply, and from where this database's backends are still
+    signalable. `datallowconn` skips template0, which nobody can connect to
+    and whose privileges cannot be changed from here.
+    """
+    assert CONNECT_REVOKE in _statements(reader_role_sql)
+    assert re.search(r"GRANT CONNECT ON DATABASE :\"DBNAME\" TO :\"reader\"", reader_role_sql)
+
+
+def test_reader_role_sql_takes_signalling_other_sessions_away_from_public(reader_role_sql: str):
+    """Postgres lets a role cancel or terminate backends of the same role, and
+    every reader session -- the API's, each compose run, the review
+    service's validation -- is the same role. Revoked by exact signature,
+    because a REVOKE naming a signature that does not exist is an error, and
+    one naming the wrong overload would leave the real one callable.
+    """
+    for revoke in SIGNAL_REVOKES:
+        assert revoke in reader_role_sql
 
 
 def test_reader_role_is_a_plain_login_role_that_starts_read_only(reader_role_sql: str):

@@ -78,6 +78,27 @@ def test_a_verdict_is_recorded_against_a_finished_job(client, sink):
     assert len(sink.captures) == 1
 
 
+@pytest.mark.parametrize("verdict", ["yes", "no", "incomplete"])
+def test_each_of_the_three_verdicts_is_recorded(client, sink, verdict):
+    """Correct, wrong, and correct but incomplete -- the three buttons."""
+    job = ask(client)
+    response = client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": verdict})
+    assert response.status_code == 201
+    assert response.json()["verdict"] == verdict
+    assert sink.captures[-1].verdict == verdict
+
+
+def test_the_verdicts_the_api_takes_are_the_ones_the_staging_table_allows():
+    """The API and the review service live in different images; a verdict
+    one accepts and the other's CHECK refuses is a 503 at the worst moment."""
+    from typing import get_args
+
+    from nl2sql_agent.api.models import Verdict
+    from nl2sql_review.store import VERDICTS
+
+    assert get_args(Verdict) == VERDICTS
+
+
 def test_the_snapshot_is_taken_from_the_job_not_from_the_request(client, sink):
     """A client cannot describe an answer this server did not give."""
     job = ask(client)

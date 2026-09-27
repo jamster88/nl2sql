@@ -53,7 +53,8 @@ grid there would report a failure that did not happen. An ambiguous question
 comes back with a clarification, which is a question for the user, so it goes
 where the answer would. A failed run still carries the SQL it tried.
 
-**Takes a verdict.** Yes or no, per answer. See [the feedback](#the-feedback).
+**Takes a verdict.** Correct, wrong, or correct but incomplete, per answer.
+See [the feedback](#the-feedback).
 
 ---
 
@@ -75,7 +76,7 @@ does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 
-    docker pull mcfaddja/nl2sql-gui:v4_5
+    docker pull mcfaddja/nl2sql-gui:v5_1_1
     ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -83,7 +84,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v4_5 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1_1 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -239,10 +240,18 @@ asserts nothing is ever drawn outside the plot area.
 
 ## The feedback
 
-Two buttons under every answer, and -- once one is pressed -- a box to say
-why. The verdict is shown back in the answer panel and beside the question in
-the session list, and it is sent to the API, where it is staged for review
-and possibly promoted into the golden question set. See
+Three buttons under every answer -- **Correct**, **Wrong** and **Correct but
+incomplete** -- and, once one is pressed, a box to say why. The third is for
+an answer whose SQL was right and which still left out what a reader needed,
+such as the product name beside a SKU: that calls for fleshing out rather
+than correcting, and a plain "no" could not say which. On the wire the three
+are `yes`, `no` and `incomplete`; the first two predate the third and are
+kept so every verdict already recorded reads the same. The verdict is shown back in the answer panel and beside the question in
+the session list, and it is sent to the API, where it is staged for review.
+Which button was pressed decides what review does with it: a correct answer
+may be promoted into the golden question set, a wrong one is fixed into the
+corrections store and an incomplete one into the completions store, each
+with a query a reviewer validated against the live database. See
 [`review/README.md`](../review/README.md) for what happens to it after that.
 
 The earlier version kept the verdict in the browser and did nothing else with
@@ -284,7 +293,7 @@ Four decisions that came out of using it:
 
 Two smaller ones that predate all of it:
 
-* **Clicking the recorded verdict withdraws it.** A misclick on "No" should
+* **Clicking the recorded verdict withdraws it.** A misclick on "Wrong" should
   not send someone hunting for an undo, and a verdict that cannot be taken
   back is a verdict people stop giving.
 * **The record carries the question, not just the job id.** The server
@@ -323,7 +332,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-306 tests, 100% of statements, branches, functions and lines -- matching the
+312 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

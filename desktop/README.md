@@ -1,7 +1,8 @@
 # The desktop client
 
 A JavaFX front end for the agent's REST API. Same questions, same answers,
-same charts and the same yes/no verdict as [`gui/`](../gui) — in a window
+same charts and the same verdict — correct, wrong, or correct but
+incomplete — as [`gui/`](../gui), in a window
 rather than a browser tab, on a machine rather than a server.
 
 ```bash
@@ -213,8 +214,10 @@ that was wrong.
 
 Identical to the web interface's, deliberately: `POST
 /v1/questions/{id}/feedback`, the same staging table, the same row-level
-security fence, the same review queue. **A reviewer sees one queue because
-there is only one**, not because two writers were made to agree — which is
+security fence, the same review queue -- and so the same three review panes,
+and the same destinations: the golden set for a correct answer, the
+corrections store for a wrong one, the completions store for an incomplete
+one. **A reviewer sees one queue because there is only one**, not because two writers were made to agree — which is
 the whole point of the client sending an opinion and nothing else and the
 server reading the snapshot off the job it still has.
 
@@ -285,7 +288,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v4_5-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v5_1_1-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
@@ -338,7 +341,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-376 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+379 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

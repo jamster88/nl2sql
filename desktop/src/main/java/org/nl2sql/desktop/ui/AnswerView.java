@@ -39,9 +39,12 @@ import java.util.Set;
  *       rows as a markdown table, then the caveats -- which is what a terminal
  *       wants. Drawing it here would print the pipe characters of a table this
  *       window is already drawing.
- *   <li><b>It is unescaped on the way in.</b> The prose is escaped for
+ *   <li><b>It is unescaped on the way in.</b> {@code answer} is escaped for
  *       markdown, which renders raw HTML; a label draws text, so {@code &amp;}
- *       would arrive on screen as five characters. See {@link Markup}.
+ *       would arrive on screen as five characters. {@code narrative} and the
+ *       claims' text are plain text from agent 5.1.1 on -- before that the
+ *       narrator copied escaped rows into its claims -- so for them this
+ *       matters only against an older server. See {@link Markup}.
  * </ul>
  *
  * <p>And the sentence is not one block: the audit ties each of its sentences to

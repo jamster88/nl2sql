@@ -43,7 +43,10 @@ from nl2sql_review.store import (
     PROMOTIONS,
     STATES,
     SUBMISSIONS,
+    STATE_CHECK,
     SUBMISSION_COLUMNS,
+    VERDICT_CHECK,
+    VERDICTS,
     WRITER_ROLE,
     Repository,
     Submission,
@@ -204,9 +207,53 @@ def test_the_agent_writes_exactly_the_columns_the_schema_has(repo, owner):
     assert set(SUBMISSION_COLUMNS) <= columns
 
 
+def test_a_table_from_before_the_third_verdict_is_widened_in_place(repo, owner):
+    """The staging table on a running stack was created when a verdict was
+    yes or no, with an inline CHECK that `CREATE TABLE IF NOT EXISTS` never
+    revisits. Setup must widen it, keeping the rows it already holds."""
+    with psycopg.connect(owner) as conn:
+        conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP CONSTRAINT {VERDICT_CHECK}")
+        conn.execute(
+            f"ALTER TABLE {SUBMISSIONS} ADD CONSTRAINT {VERDICT_CHECK} CHECK (verdict IN ('yes', 'no'))"
+        )
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) VALUES ('old', 'job-old', 'no', 'q')"
+        )
+        conn.commit()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) "
+                "VALUES ('new', 'job-new', 'incomplete', 'q')"
+            )
+        conn.rollback()
+
+    repo.setup(WRITER_PASSWORD)
+
+    with psycopg.connect(owner) as conn:
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) "
+            "VALUES ('new', 'job-new', 'incomplete', 'q')"
+        )
+        conn.commit()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(
+                f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) "
+                "VALUES ('bad', 'job-bad', 'maybe', 'q')"
+            )
+    assert repo.get_by_job("job-old").verdict == "no"
+
+
 # ---------------------------------------------------------------------------
 # Capture, as the writer role
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("verdict", VERDICTS)
+def test_each_verdict_can_be_recorded_by_the_writer(repo, sink, verdict):
+    item = capture(verdict=verdict)
+    sink.record(item)
+    assert repo.get_by_job(item.job_id).verdict == verdict
+    assert len(repo.listing(verdict=verdict)) == 1
 
 
 def test_a_verdict_can_be_recorded_and_read_back_by_the_owner(repo, sink):
@@ -354,7 +401,58 @@ def test_the_queue_filters_and_counts(repo, sink):
 
     assert len(repo.listing(state="pending")) == 1
     assert len(repo.listing(verdict="no")) == 1
-    assert repo.counts() == {"pending": 1, "accepted": 0, "rejected": 1, "promoted": 0}
+    assert repo.counts() == {"pending": 1, "accepted": 0, "rejected": 1, "promoted": 0, "corrected": 0}
+    by_verdict = repo.counts_by_verdict()
+    assert set(by_verdict) == set(VERDICTS)
+    assert by_verdict["yes"]["pending"] == 1 and by_verdict["no"]["rejected"] == 1
+    assert by_verdict["incomplete"] == {state: 0 for state in STATES}
+
+
+def test_a_fixed_submission_is_corrected_and_names_its_fix(repo, sink):
+    wrong = capture(verdict="no")
+    sink.record(wrong)
+    held = repo.get_by_job(wrong.job_id)
+
+    after = repo.mark_corrected(held.id, fix_id="W0001", reviewer="ada", review_note="no names")
+    assert (after.state, after.promoted_pair_id, after.reviewer, after.review_note) == (
+        "corrected", "W0001", "ada", "no names",
+    )
+    assert after.reviewed_at is not None
+    assert repo.counts_by_verdict()["no"]["corrected"] == 1
+    assert repo.mark_corrected("no-such-id", fix_id="W0002", reviewer="", review_note="") is None
+
+
+def test_a_corrected_verdict_is_out_of_the_writers_reach(repo, sink):
+    """Like a promoted one: once fixed, a revote cannot rewrite it."""
+    wrong = capture(verdict="no")
+    sink.record(wrong)
+    repo.mark_corrected(repo.get_by_job(wrong.job_id).id, fix_id="W0001", reviewer="", review_note="")
+    with pytest.raises(AlreadyReviewed):
+        sink.record(capture(job_id=wrong.job_id, verdict="yes"))
+    assert repo.get_by_job(wrong.job_id).verdict == "no"
+
+
+def test_a_table_from_before_the_corrected_state_is_widened_in_place(repo, owner):
+    with psycopg.connect(owner) as conn:
+        conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP CONSTRAINT {STATE_CHECK}")
+        conn.execute(
+            f"ALTER TABLE {SUBMISSIONS} ADD CONSTRAINT {STATE_CHECK} "
+            "CHECK (state IN ('pending', 'accepted', 'rejected', 'promoted'))"
+        )
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question, state) "
+            "VALUES ('old', 'job-old', 'no', 'q', 'accepted')"
+        )
+        conn.commit()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            conn.execute(f"UPDATE {SUBMISSIONS} SET state = 'corrected' WHERE id = 'old'")
+        conn.rollback()
+
+    repo.setup(WRITER_PASSWORD)
+
+    assert repo.mark_corrected("old", fix_id="W0001", reviewer="", review_note="").state == "corrected"
+    with psycopg.connect(owner) as conn, pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute(f"UPDATE {SUBMISSIONS} SET state = 'done' WHERE id = 'old'")
 
 
 def test_the_queue_is_newest_first(repo, sink):

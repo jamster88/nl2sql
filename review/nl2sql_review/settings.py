@@ -35,6 +35,19 @@ DEFAULT_RAG_DIR = "/app/rag"
 
 DEFAULT_PORT = 8444
 
+#: The retail database a corrected query is validated against, as the
+#: read-only role the agent itself uses. Validation *runs* the reviewer's SQL,
+#: and running a stranger's SQL is exactly what `nl2sql_reader` exists for:
+#: SELECT on the retail tables and nothing else, read-only by default.
+DEFAULT_RETAIL_DB_URL = "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
+
+#: The two stores a reviewer's fix goes into, one per verdict: a *wrong*
+#: answer's correction and a *correct but incomplete* answer's completion.
+#: Each is its own Postgres with pgvector -- its records and its RAG side by
+#: side -- apart from the golden set and apart from each other.
+DEFAULT_CORRECTIONS_DB_URL = "postgresql://corrections:corrections@localhost:5436/nl2sql_corrections"
+DEFAULT_COMPLETIONS_DB_URL = "postgresql://completions:completions@localhost:5437/nl2sql_completions"
+
 #: The certificate the agent API generates, as this service sees it. The
 #: same volume, mounted read-only: this process presents that certificate
 #: and never writes one.
@@ -125,6 +138,22 @@ class ReviewSettings:
     #: where a DBA owns the schema and the service should not touch it.
     manage_schema: bool = True
 
+    # --- Corrections and completions --------------------------------------
+    # A wrong answer, or one that was right and incomplete, is not promoted
+    # into the golden set. The reviewer writes the SQL that should have been
+    # generated, it is run against the live retail database, and only a query
+    # that runs goes into the store for its verdict.
+    retail_db_url: str = DEFAULT_RETAIL_DB_URL
+    #: A validation is a query somebody typed, so it gets the agent's own
+    #: limits: a statement timeout and a row cap.
+    validate_timeout_ms: int = 30000
+    validate_max_rows: int = 200
+    corrections_db_url: str = DEFAULT_CORRECTIONS_DB_URL
+    completions_db_url: str = DEFAULT_COMPLETIONS_DB_URL
+    #: Embed each stored fix's question into its store's RAG table. Off, the
+    #: record is kept and the vector is written by the next save that can.
+    embed_fixes: bool = True
+
     # --- Promotion -------------------------------------------------------
     document: str = DEFAULT_DOCUMENT
     rag_dir: str = DEFAULT_RAG_DIR
@@ -164,6 +193,12 @@ class ReviewSettings:
             ),
             writer_password=_env_str("FEEDBACK_WRITER_PASSWORD", "nl2sql_feedback_writer"),
             manage_schema=_env_bool("REVIEW_MANAGE_SCHEMA", True),
+            retail_db_url=_env_str("RETAIL_DB_URL", DEFAULT_RETAIL_DB_URL),
+            validate_timeout_ms=_env_int("REVIEW_VALIDATE_TIMEOUT_MS", 30000),
+            validate_max_rows=_env_int("REVIEW_VALIDATE_MAX_ROWS", 200),
+            corrections_db_url=_env_str("CORRECTIONS_DB_URL", DEFAULT_CORRECTIONS_DB_URL),
+            completions_db_url=_env_str("COMPLETIONS_DB_URL", DEFAULT_COMPLETIONS_DB_URL),
+            embed_fixes=_env_bool("REVIEW_EMBED_FIXES", True),
             document=_env_str("REVIEW_DOCUMENT", DEFAULT_DOCUMENT),
             rag_dir=_env_str("REVIEW_RAG_DIR", DEFAULT_RAG_DIR),
             reload_context=_env_bool("REVIEW_RELOAD_CONTEXT", True),
@@ -240,6 +275,12 @@ class ReviewSettings:
                 "REVIEW_RELOAD_VECTORS is on while REVIEW_RELOAD_CONTEXT is off. The "
                 "embedder reads the rows the context loader writes, so it will find "
                 "nothing new to embed."
+            )
+        if not self.embed_fixes:
+            notes.append(
+                "REVIEW_EMBED_FIXES is off: corrections and completions are stored "
+                "without their vectors, so nothing can retrieve them until a save "
+                "with embedding on catches them up."
             )
         if not self.reload_context:
             notes.append(

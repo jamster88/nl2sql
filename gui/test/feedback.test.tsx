@@ -97,6 +97,21 @@ describe("createFeedbackStore", () => {
       expect(createFeedbackStore(storage, AT).get("job-1")?.verdict).toBe("no");
     });
 
+    it("reads a stored correct-but-incomplete back as one", () => {
+      const storage = memoryStorage();
+      createFeedbackStore(storage, AT).set("job-1", "q", "incomplete");
+      expect(createFeedbackStore(storage, AT).get("job-1")?.verdict).toBe("incomplete");
+    });
+
+    it("drops a stored verdict it has no button for", () => {
+      const storage = memoryStorage();
+      storage.setItem(
+        STORAGE_KEY,
+        JSON.stringify([{ jobId: "job-1", question: "q", verdict: "maybe", at: AT().toISOString() }]),
+      );
+      expect(createFeedbackStore(storage, AT).get("job-1")).toBeUndefined();
+    });
+
     it("ignores a stored value that is not the shape it expects", () => {
       const storage = memoryStorage();
       storage.setItem(STORAGE_KEY, JSON.stringify([{ jobId: "x" }, "nonsense", null]));
@@ -152,30 +167,51 @@ describe("useFeedback", () => {
     const store = createFeedbackStore(memoryStorage(), AT);
     render(<Harness store={store} jobId="job-1" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
 
-    expect(screen.getByRole("button", { name: "Yes" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Correct" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText(/recorded as/)).toBeInTheDocument();
     expect(store.get("job-1")?.verdict).toBe("yes");
+  });
+
+  it("offers correct, wrong and correct but incomplete, in that order", () => {
+    render(<Harness store={createFeedbackStore(memoryStorage(), AT)} jobId="job-1" />);
+    const group = screen.getByRole("group", { name: /was this answer correct/i });
+    const labels = Array.from(group.querySelectorAll("button")).map((b) => b.textContent);
+    expect(labels).toEqual(["Correct", "Wrong", "Correct but incomplete"]);
+  });
+
+  it("records a correct-but-incomplete verdict as its own kind", async () => {
+    const store = createFeedbackStore(memoryStorage(), AT);
+    render(<Harness store={store} jobId="job-1" />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Correct but incomplete" }));
+
+    expect(store.get("job-1")?.verdict).toBe("incomplete");
+    expect(screen.getByRole("button", { name: "Correct but incomplete" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Correct" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("switches from yes to no", async () => {
     const store = createFeedbackStore(memoryStorage(), AT);
     render(<Harness store={store} jobId="job-1" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
-    await userEvent.click(screen.getByRole("button", { name: "No" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
+    await userEvent.click(screen.getByRole("button", { name: "Wrong" }));
 
     expect(store.get("job-1")?.verdict).toBe("no");
-    expect(screen.getByRole("button", { name: "No" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Wrong" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("withdraws when the recorded verdict is clicked again", async () => {
     const store = createFeedbackStore(memoryStorage(), AT);
     render(<Harness store={store} jobId="job-1" />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
 
     expect(store.get("job-1")).toBeUndefined();
     expect(screen.getByText("Was this answer right?")).toBeInTheDocument();
@@ -185,7 +221,7 @@ describe("useFeedback", () => {
     const store = createFeedbackStore(memoryStorage(), AT);
     render(<Harness store={store} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Correct" }));
     expect(store.all()).toEqual([]);
   });
 
@@ -196,7 +232,7 @@ describe("useFeedback", () => {
     act(() => {
       store.set("job-1", "q", "no");
     });
-    expect(screen.getByRole("button", { name: "No" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Wrong" })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("exposes withdraw for a caller that wants it explicitly", () => {
@@ -222,7 +258,7 @@ describe("useFeedback", () => {
 describe("FeedbackBar", () => {
   it("can be disabled", () => {
     render(<FeedbackBar verdict={undefined} onVote={vi.fn()} disabled />);
-    expect(screen.getByRole("button", { name: "Yes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Correct" })).toBeDisabled();
   });
 
   it("shows when the verdict was recorded", () => {

@@ -252,3 +252,12 @@ def test_every_routing_setting_is_read_from_the_environment(monkeypatch):
     assert [settings.model_route_supervisor, settings.model_route_generator, settings.model_route_reflection,
             settings.model_route_narrator, settings.model_route_repair] == ["a", "light=b", "c", "d", "e"]
     assert (settings.model_max_loaded, settings.model_num_ctx, settings.ollama_keep_alive) == (2, 16384, "10m")
+
+
+def test_every_call_is_capped_in_tokens_and_time(monkeypatch):
+    monkeypatch.delenv("OLLAMA_NUM_PREDICT", raising=False)
+    monkeypatch.delenv("OLLAMA_TIMEOUT", raising=False)
+    assert (Settings.from_env().num_predict, Settings.from_env().ollama_timeout) == (2048, 600.0)
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "4096")
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "120")
+    assert (Settings.from_env().num_predict, Settings.from_env().ollama_timeout) == (4096, 120.0)

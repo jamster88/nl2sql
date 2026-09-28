@@ -707,15 +707,18 @@ def _scores(**rungs: tuple[int, int]) -> dict:
 
 
 @pytest.mark.parametrize("model,reference,expected", [
-    (_scores(light=(6, 6), standard=(5, 6), heavy=(3, 3)), _scores(light=(6, 6), standard=(6, 6), heavy=(3, 3)),
+    (_scores(light=(6, 6), standard=(5, 6), heavy=(5, 5)), _scores(light=(6, 6), standard=(6, 6), heavy=(5, 5)),
      (True, "heavy")),
     # Within one question of the reference is suited; two behind is not.
-    (_scores(light=(5, 6), standard=(4, 6), heavy=(3, 3)), _scores(light=(6, 6), standard=(6, 6), heavy=(3, 3)),
+    (_scores(light=(5, 6), standard=(4, 6), heavy=(5, 5)), _scores(light=(6, 6), standard=(6, 6), heavy=(5, 5)),
      (True, "light")),
     # Failing the light probe rules the model out, whatever it did above.
     (_scores(light=(3, 6), standard=(6, 6)), _scores(light=(6, 6), standard=(6, 6)), (True, None)),
     # A rung nobody probed is passed over, not failed.
-    (_scores(light=(6, 6), heavy=(3, 3)), _scores(light=(6, 6), heavy=(3, 3)), (True, "heavy")),
+    (_scores(light=(6, 6), heavy=(5, 5)), _scores(light=(6, 6), heavy=(5, 5)), (True, "heavy")),
+    # Fewer than five probes are not a measurement: a third of three is one.
+    (_scores(light=(3, 3), standard=(6, 6)), _scores(light=(3, 3), standard=(6, 6)), (True, "standard")),
+    (_scores(standard=(2, 3)), _scores(standard=(3, 3)), (False, None)),
     # Different probe counts are not the same probes.
     (_scores(light=(4, 5)), _scores(light=(6, 6)), (False, None)),
     ({}, _scores(light=(6, 6)), (False, None)),
@@ -734,6 +737,16 @@ def test_the_supervisor_may_miss_nothing_the_reference_got_right(build_catalog):
     assert (suited["supervisor"], source["supervisor"]) == (None, "calibration")
     assert suited["narrator"] == "light"
     assert build_catalog.TOLERANCE["supervisor"] == 0 and set(build_catalog.TOLERANCE) == set(build_catalog.TASKS)
+
+
+def test_the_generator_may_miss_nothing_the_reference_got_right_either(build_catalog):
+    """A generator one question behind lost that question in the routed
+    benchmark: the repairs start from its wrong draft, even on the reference."""
+    reference = {"measured": {"generator": _scores(light=(6, 6), standard=(9, 9))}}
+    model = {"prior": {task: "heavy" for task in build_catalog.TASKS},
+             "measured": {"generator": _scores(light=(6, 6), standard=(8, 9))}}
+    assert build_catalog.suitability(model, reference)[0]["generator"] == "light"
+    assert (build_catalog.TOLERANCE["generator"], build_catalog.TOLERANCE["narrator"]) == (0, 1)
 
 
 def test_calibration_overrides_the_prior_task_by_task_but_never_an_exclusion(build_catalog):
@@ -831,3 +844,50 @@ def test_the_committed_catalog_is_what_the_rules_make_of_its_facts(build_catalog
         assert model["chat"] == (build_catalog.not_chat(model["facts"]) is None)
         suited, source = build_catalog.suitability(model, models.get(catalog["reference"]))
         assert (model["suited"], model["suited_from"]) == (suited, source), model["name"]
+
+
+# ---------------------------------------------------------------------------
+# One behaviour, several names
+# ---------------------------------------------------------------------------
+
+BLOB = "/root/.ollama/models/blobs/sha256-" + "4a" * 32
+
+
+def _show(*, sources=(BLOB,), template="{{ .Prompt }}", system="", parameters="stop <end>"):
+    return {"modelfile": "".join(f"FROM {source}\n" for source in sources) + "TEMPLATE x\n",
+            "template": template, "system": system, "parameters": parameters}
+
+
+def test_a_build_that_only_bakes_in_a_window_behaves_as_its_parent(build_catalog):
+    """deepseekR1_14b-128k is deepseek-r1:14b with num_ctx 131072 baked in;
+    routed, the router sets the window anyway."""
+    parent = build_catalog.fingerprint(_show())
+    variant = build_catalog.fingerprint(_show(parameters="num_ctx                        131072\nstop   <end>"))
+    assert parent == variant and len(parent) == 16
+
+
+@pytest.mark.parametrize("changed", [
+    {"sources": ("/blobs/sha256-" + "5b" * 32,)},
+    {"template": "{{ .System }} {{ .Prompt }}"},
+    {"system": "You are a pirate."},
+    {"parameters": "stop <end>\ntemperature 0.2"},
+])
+def test_anything_else_that_differs_is_a_different_behaviour(build_catalog, changed):
+    assert build_catalog.fingerprint(_show(**changed)) != build_catalog.fingerprint(_show())
+
+
+def test_weights_not_named_by_their_blob_are_never_taken_for_another_models(build_catalog):
+    """An MLX build's modelfile says `FROM gemma4:12b-mlx`: nothing proves two
+    such builds are one checkpoint, so neither gets a fingerprint."""
+    assert build_catalog.fingerprint(_show(sources=("gemma4:12b-mlx",))) is None
+    assert build_catalog.fingerprint(_show(sources=(BLOB, "gemma4:12b-mlx"))) is None
+    assert build_catalog.fingerprint(_show(sources=())) is None
+    assert build_catalog.fingerprint({"modelfile": "FROM\n"}) is None
+    assert build_catalog.fingerprint(None) is None
+
+
+def test_the_fingerprint_is_a_fact_of_the_catalog(build_catalog):
+    entry, show = a_model("m:7b")
+    show.update(_show())
+    assert build_catalog.facts_of(entry, show)["fingerprint"] == build_catalog.fingerprint(_show())
+    assert build_catalog.facts_of(entry, None)["fingerprint"] is None

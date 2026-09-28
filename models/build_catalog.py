@@ -28,6 +28,7 @@ or its virtualenv.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.client
 import ipaddress
 import json
@@ -304,6 +305,34 @@ def first_line(text: str | None) -> str | None:
     return None
 
 
+def fingerprint(show: dict | None) -> str | None:
+    """What a model will do, as a hash: its weights, template, system prompt
+    and baked-in parameters -- every one but `num_ctx`, which the router sets
+    for itself. A local build that only bakes in a bigger window (`-128k`,
+    `-256k`) has its parent's fingerprint: routed, the two behave alike, so
+    calibration measures one and the router loads one.
+
+    Only for weights `/api/show` names by blob digest, as it does GGUF
+    weights. A safetensors build names itself instead, and two different
+    checkpoints of one size must never be taken for one model."""
+    sources = [line.split(None, 1)[1] for line in (show or {}).get("modelfile", "").splitlines()
+               if line.startswith("FROM ") and len(line.split(None, 1)) == 2]
+    blobs = [re.search(r"sha256[-:]([0-9a-f]{64})", source) for source in sources]
+    if not blobs or None in blobs:
+        return None
+    parameters = sorted(
+        " ".join(line.split()) for line in (show.get("parameters") or "").splitlines()
+        if line.strip() and not line.split()[0] == "num_ctx"
+    )
+    identity = {
+        "weights": sorted(blob.group(1) for blob in blobs),
+        "template": show.get("template") or "",
+        "system": show.get("system") or "",
+        "parameters": parameters,
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def facts_of(entry: dict, show: dict | None) -> dict:
     """One model's facts: `/api/show` where it answered, `/api/tags` where it
     did not. The MLX builds are why both are read -- `/api/tags` leaves
@@ -337,6 +366,7 @@ def facts_of(entry: dict, show: dict | None) -> dict:
         "remote_host": show.get("remote_host") or entry.get("remote_host"),
         "size_bytes": entry.get("size"),
         "modified_at": (entry.get("modified_at") or "")[:10] or None,
+        "fingerprint": fingerprint(show),
     }
 
 
@@ -577,19 +607,30 @@ def prior_for(name: str, facts: dict, library: dict) -> dict:
 
 
 #: How many probes fewer than the reference a suited model may get right,
-#: per task. Section 15.5 allows one. The Supervisor is allowed none: a light
-#: model within one question of the reference refused a valid benchmark
-#: question as out of domain in the first routed run, and a refusal is not a
-#: slower answer but no answer -- nothing downstream retries it, where the
-#: generator's miss goes to repair.
-TOLERANCE = {"supervisor": 0, "generator": 1, "reflection": 1, "narrator": 1, "repair": 1}
+#: per task. Section 15.5 allows one, and the tasks whose miss is a wrong
+#: answer are allowed none. The Supervisor: a light model within one question
+#: of the reference refused a valid benchmark question as out of domain, and
+#: a refusal is no answer. The generator: a model one question behind lost
+#: that very question in the routed benchmark, because the repairs that climb
+#: to the reference start from its wrong draft and never recovered. A miss by
+#: the narrator, the reflection or the diagnosis costs a retry or a sentence,
+#: not the answer.
+TOLERANCE = {"supervisor": 0, "generator": 0, "reflection": 1, "narrator": 1, "repair": 1}
+#: The fewest probes a rung needs before its score is a measurement. "Within
+#: one question" of three probes allows a third of them wrong: the first
+#: calibrated benchmark run routed the reflection to a model that had agreed
+#: with the reference on its three probes, and it sent a right answer back
+#: and cost it. A rung probed fewer times keeps its prior, and so stays on
+#: OLLAMA_MODEL.
+MIN_PROBES = 5
 
 
 def measured_rung(model_task: dict, reference_task: dict, tolerance: int = 1) -> tuple[bool, str | None]:
     """The highest rung calibration showed the model suited to for one task.
 
     A rung is suited when the model scored within `tolerance` questions of
-    the reference model on the same probes (section 15.5). Rungs are read from
+    the reference model on the same probes (section 15.5), and a rung counts
+    only with at least MIN_PROBES of them. Rungs are read from
     the light end and the first failure stops the climb, since a model
     suited to heavy is suited to everything below it and one that fails the
     light probe is no candidate at all. Rungs with no probes on both sides
@@ -601,6 +642,7 @@ def measured_rung(model_task: dict, reference_task: dict, tolerance: int = 1) ->
         for rung in RUNGS
         if rung in model_task and rung in reference_task
         and model_task[rung].get("of") == reference_task[rung].get("of")
+        and (model_task[rung].get("of") or 0) >= MIN_PROBES
     ]
     if not comparable:
         return False, None

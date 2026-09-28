@@ -387,11 +387,12 @@ routed to another model the host serves, when the catalog in
 [`models/`](../models/README.md) measured that model as suited to the call's
 task at the question's complexity; the `[routing]` line says how many models
 are in play, and `--json` names the model that answered each call. Until the
-catalog has been calibrated every call goes to `--model`, as before. To
-route one agent's calls to a model of your choice, pin it:
+catalog describes your host and has been calibrated
+([`models/README.md`](../models/README.md)), every call goes to `--model`, as
+before. To route one agent's calls to a model of your choice, pin it:
 
 ```bash
-MODEL_ROUTE_NARRATOR=gemma4:12b-mlx docker compose run --rm agent "How many stores are there?"
+MODEL_ROUTE_NARRATOR=<model> docker compose run --rm agent "How many stores are there?"
 MODEL_ROUTING_ENABLED=false docker compose run --rm agent "..."    # every call to --model
 ```
 

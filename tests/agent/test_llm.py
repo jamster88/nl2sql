@@ -205,4 +205,15 @@ def test_a_routed_model_gets_its_own_window_and_is_not_validated_at_construction
     settings = Settings(ollama_base_url="http://host:11434", ollama_keep_alive="", reasoning=True)
     assert build_routed_client(settings, "mistral:7b", 32768) == "client"
     assert seen == {"model": "mistral:7b", "base_url": "http://host:11434", "temperature": 0.0,
-                    "reasoning": True, "num_ctx": 32768, "keep_alive": None}
+                    "reasoning": True, "num_ctx": 32768, "num_predict": 2048,
+                    "client_kwargs": {"timeout": 600.0}, "keep_alive": None}
+
+
+def test_no_call_can_generate_or_wait_without_end(monkeypatch, reachable):
+    """A reasoning model with thinking off degenerated during calibration and
+    generated for over an hour: Ollama shifts a full window rather than
+    stopping. Every client carries a token cap and a timeout."""
+    seen = {}
+    monkeypatch.setattr("nl2sql_agent.llm.ChatOllama", lambda **kwargs: seen.update(kwargs) or object())
+    build_llm(Settings(num_predict=512, ollama_timeout=30.0))
+    assert (seen["num_predict"], seen["client_kwargs"]) == (512, {"timeout": 30.0})

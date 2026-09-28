@@ -328,7 +328,10 @@ outright. The table is printed by the CLI, logged, and reported by
 
 A **call** goes to its rung's model. One that is not on the host, cannot be
 reached, fails or answers with nothing is retried once on the rung's
-fallback and then on `OLLAMA_MODEL`. A model that answers badly is not a
+fallback and then on `OLLAMA_MODEL` -- and so is one that runs past
+`OLLAMA_TIMEOUT` or `OLLAMA_NUM_PREDICT` tokens, since a model that
+degenerates would otherwise generate without end: Ollama shifts a full window
+rather than stopping. A model that answers badly is not a
 routing failure: the gates catch that, and the repair climbs.
 
 The **trace** says, for every call, which model answered (`model`), the rung
@@ -336,14 +339,20 @@ it was routed at (`rung`), why (`route`), and every model that failed first
 (`hops`), so `--json` and the benchmark attribute accuracy and time per
 model and not only per agent.
 
-**Off is v5.1.** `MODEL_ROUTING_ENABLED=false`, no catalog, or a catalog in
-which nothing was measured sends every call to `OLLAMA_MODEL` -- which is
-where the committed catalog leaves it until
-[`models/calibrate.py`](../models/calibrate.py) has run. A catalog built for
-another host is refused when it would route anything, and ignored with a
-note when it would not.
+**Off is v5.1.** `MODEL_ROUTING_ENABLED=false`, no catalog, a catalog in
+which nothing was measured, or a catalog built for another host sends every
+call to `OLLAMA_MODEL`. The committed catalog describes the host this
+checkout was developed against, so on any other host the routing table says
+it was ignored, and routing starts once
+[`models/build_catalog.py`](../models/build_catalog.py) and
+[`models/calibrate.py`](../models/calibrate.py) have described that host
+([`models/README.md`](../models/README.md)).
 
-Four things the spec says that the code does differently, each found by
+Two names for one model -- a local build that only bakes in a bigger window,
+say -- share a behaviour fingerprint in the catalog, and the table routes to
+at most one of them, so the same weights are never loaded twice.
+
+Six things the spec says that the code does differently, each found by
 running it:
 
 - **The window is per model, not per task.** Ollama reloads a model whenever
@@ -367,11 +376,25 @@ running it:
   not a choice), and the bridge signal is gone: closure over the scope says
   nothing about the query. The benchmark now scores six questions light and
   nine standard.
-- **The Supervisor must match the reference on every probe.** The spec calls
-  a model suited within one question of the reference. In the first routed
-  run, a light model that was one question behind refused a valid benchmark
-  question as out of domain: a refusal is no answer, and nothing retries it.
-  Every other task keeps the tolerance of one.
+- **A catalog of another host is ignored, not refused.** The spec chose to
+  refuse, and said it would annoy someone first: with a calibrated catalog
+  committed, it would stop the agent starting anywhere but the machine it
+  was measured on. Ignoring it routes nothing on another machine's numbers
+  either, and the routing table says why.
+- **The Supervisor and the generator must match the reference on every
+  probe.** The spec calls a model suited within one question of the
+  reference. A light Supervisor one question behind refused a valid
+  benchmark question as out of domain, and a refusal is no answer. A
+  generator one question behind lost that very question in the routed
+  benchmark: the spec expected a repair up the ladder to rescue it, but the
+  repairs start from the wrong draft, and even on the reference they did not
+  recover. The narrator, the reflection and the diagnosis keep the tolerance
+  of one, since their miss costs a retry or a sentence.
+- **A rung needs five probes.** "Within one question" of three probes allows
+  a third of them wrong. The first calibrated benchmark run routed the
+  reflection to a model that had agreed with the reference on its three
+  probes; it sent a right answer back, and the answer was lost. A rung probed
+  fewer than five times now keeps its prior, so it stays on `OLLAMA_MODEL`.
 - **A near worked example is judged by similarity, not the fused score.**
   The fused score is normalised within one search, so the best of even a
   poor shortlist scores near 1.0; the question-vector similarity says how
@@ -404,6 +427,8 @@ Every setting is an environment variable with a CLI override:
 | `OLLAMA_TEMPERATURE` | -- | 0.0 |
 | `OLLAMA_NUM_CTX` | -- | 262144 (256k) |
 | `OLLAMA_CONNECT_TIMEOUT` | -- | 5.0 seconds to decide the host is not there. Not a limit on answering |
+| `OLLAMA_NUM_PREDICT` | -- | 2048 tokens at most per call. Raise it with reasoning on, since thinking counts against it |
+| `OLLAMA_TIMEOUT` | -- | 600.0 seconds at most per call; a routed call that hits it, or the token cap, falls back |
 | `DATABASE_URL` | `--database-url` | the compose Postgres, as the read-only `nl2sql_reader` role |
 | `DB_SCHEMA` | -- | `public` |
 | `MAX_ROWS` | `--max-rows` | 50 |

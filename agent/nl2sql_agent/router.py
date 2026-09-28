@@ -28,8 +28,9 @@ on the rung's fallback, then on `OLLAMA_MODEL`, and the trace records each
 hop. A model that answers *badly* is not a routing failure: the gates catch
 that, and a repair climbs the ladder.
 
-**Off is v5.1.** `MODEL_ROUTING_ENABLED=false`, no catalog, or a catalog with
-nothing measured, sends every call to `OLLAMA_MODEL`.
+**Off is v5.1.** `MODEL_ROUTING_ENABLED=false`, no catalog, a catalog with
+nothing measured, or a catalog built for another host, sends every call to
+`OLLAMA_MODEL`.
 """
 
 from __future__ import annotations
@@ -229,20 +230,35 @@ def _p50(model: dict[str, Any], task: str, rung: str) -> float | None:
 
 
 def candidates(
-    catalog: dict[str, Any], *, on_prior: bool, host: set[str] | None, notes: list[str]
+    catalog: dict[str, Any], *, on_prior: bool, host: set[str] | None, notes: list[str], anchor: str = ""
 ) -> dict[tuple[str, str], list[str]]:
-    """For every task and rung, the models suited to it, best first."""
+    """For every task and rung, the models suited to it, best first.
+
+    One name per behaviour fingerprint: a local build that only bakes in a
+    bigger window behaves as its parent once routed, and loading both would
+    hold the same weights in memory twice. The anchor's twins are left out
+    altogether -- every rung can fall back to the anchor itself."""
     order: dict[tuple[str, str], list[tuple[tuple, str]]] = {
         (task, rung): [] for task in TASKS for rung in RUNGS
     }
     gone = []
-    for model in catalog.get("models", []):
+    seen = {
+        (model.get("facts") or {}).get("fingerprint")
+        for model in catalog.get("models", [])
+        if model.get("name") == anchor
+    } - {None}
+    for model in sorted(catalog.get("models", []), key=lambda m: m.get("name") or ""):
         name = model.get("name")
         if not model.get("chat"):
             continue
         if host is not None and name not in host:
             gone.append(name)
             continue
+        twin = (model.get("facts") or {}).get("fingerprint")
+        if name != anchor and twin in seen:
+            continue
+        if twin:
+            seen.add(twin)
         size = (model.get("facts") or {}).get("parameter_count") or float("inf")
         for task in TASKS:
             suited = (model.get("suited") or {}).get(task)
@@ -308,24 +324,23 @@ def build_table(
         )
         would_route = measured or settings.model_route_on_prior
         if _host_of(catalog) != _host_of({"host": settings.ollama_base_url}):
-            message = (
+            # Another machine's models, measured on another machine: never
+            # routed on. Ignored rather than refused, so a checkout whose
+            # committed catalog describes its maintainer's host still starts
+            # anywhere else -- as v5.1, until its own catalog is built.
+            notes.append(
                 f"the catalog describes {catalog.get('host')}, and the agent is pointed at "
-                f"{settings.ollama_base_url}"
+                f"{settings.ollama_base_url}: ignored, so every rung is OLLAMA_MODEL. Build one for "
+                "this host with `python3 models/build_catalog.py` and `models/calibrate.py`"
             )
-            if would_route:
-                raise RoutingError(
-                    f"{message}. Its measurements are of another machine's models: rebuild it with "
-                    "`python3 models/build_catalog.py`, point OLLAMA_BASE_URL at its host, or set "
-                    "MODEL_ROUTING_ENABLED=false."
-                )
-            notes.append(f"{message}; it measured nothing, so it is ignored")
         elif not would_route:
             notes.append(
                 "the catalog is uncalibrated: every rung is OLLAMA_MODEL until models/calibrate.py "
                 "has measured a candidate (or MODEL_ROUTE_ON_PRIOR=true routes on the prior)"
             )
         else:
-            ranked = candidates(catalog, on_prior=settings.model_route_on_prior, host=host, notes=notes)
+            ranked = candidates(catalog, on_prior=settings.model_route_on_prior, host=host, notes=notes,
+                                anchor=anchor)
     else:
         notes.append("no catalog (MODEL_CATALOG): every rung is OLLAMA_MODEL")
 

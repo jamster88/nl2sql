@@ -2,10 +2,10 @@
   "schema": 2,
   "host": "http://192.168.10.82:11434",
   "ollama_version": "0.34.4",
-  "built": "2026-09-28T03:20:12Z",
+  "built": "2026-09-28T13:13:20Z",
   "reference": "qwen3.8-256k:latest",
   "reference_on_host": true,
-  "calibrated": null,
+  "calibrated": "2026-09-28T12:48:50Z",
   "rungs": [
     "light",
     "standard",
@@ -49,7 +49,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 8988112209,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "cc7c6cb2d455514f"
       },
       "facts_from": "show",
       "library": {
@@ -83,20 +84,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 3.94,
+        "resident_bytes": 15712449986,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 8.054
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 10.389
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 30.62
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 37.383
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 13.576
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 7,
+            "of": 12,
+            "p50_s": 18.317
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 19.661
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 10.245
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 10.245
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -122,7 +181,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 19851337809,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "aa1cf5d2040d8147"
       },
       "facts_from": "show",
       "library": {
@@ -156,20 +216,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 7.43,
+        "resident_bytes": 28884105952,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 18.152
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 20.992
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 24.784
+          },
+          "standard": {
+            "correct": 5,
+            "of": 9,
+            "p50_s": 30.731,
+            "tried": 7
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 34.524
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 28.925
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 41.37
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 29.822
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 29.822
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -195,7 +314,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 42520397873,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "d680aa48a124044a"
       },
       "facts_from": "show",
       "library": {
@@ -229,20 +349,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 15.69,
+        "resident_bytes": 53736510586,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 41.882
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 38.934
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 141.863
+          },
+          "standard": {
+            "correct": 5,
+            "of": 9,
+            "p50_s": 113.625,
+            "tried": 7
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 49.184
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 8,
+            "of": 12,
+            "p50_s": 58.329
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 84.17
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 39.991
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 39.991
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "heavy",
+        "narrator": "light",
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -271,7 +450,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 5225376047,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "a1ed33f5316a91d7"
       },
       "facts_from": "show",
       "library": {
@@ -305,20 +485,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.61,
+        "resident_bytes": 10322266029,
+        "supervisor": {
+          "light": {
+            "correct": 19,
+            "of": 21,
+            "p50_s": 5.832
+          },
+          "standard": {
+            "correct": 2,
+            "of": 4,
+            "p50_s": 5.478
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 26.002
+          },
+          "standard": {
+            "correct": 2,
+            "of": 9,
+            "p50_s": 17.417,
+            "tried": 4
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 8.929
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 7.447
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 35.286
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 31.789
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 31.789
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "light",
+        "supervisor": null,
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "light",
-        "repair": "standard"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -346,7 +585,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 8988111854,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "cc7c6cb2d455514f"
       },
       "facts_from": "show",
       "library": {
@@ -380,20 +620,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 3.94,
+        "resident_bytes": 15712449986,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 8.054
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 10.389
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 30.62
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 37.383
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 13.576
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 7,
+            "of": 12,
+            "p50_s": 18.317
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 19.661
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 10.245
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 10.245
+          }
+        },
+        "measured_as": "deepseek-r1:14b"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -421,7 +720,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 19851337454,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "aa1cf5d2040d8147"
       },
       "facts_from": "show",
       "library": {
@@ -455,20 +755,80 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 7.43,
+        "resident_bytes": 28884105952,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 18.152
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 20.992
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 24.784
+          },
+          "standard": {
+            "correct": 5,
+            "of": 9,
+            "p50_s": 30.731,
+            "tried": 7
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 34.524
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 28.925
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 41.37
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 29.822
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 29.822
+          }
+        },
+        "measured_as": "deepseek-r1:32b"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -496,7 +856,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 42520397518,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "d680aa48a124044a"
       },
       "facts_from": "show",
       "library": {
@@ -530,20 +891,80 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 15.69,
+        "resident_bytes": 53736510586,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 41.882
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 38.934
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 141.863
+          },
+          "standard": {
+            "correct": 5,
+            "of": 9,
+            "p50_s": 113.625,
+            "tried": 7
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 49.184
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 8,
+            "of": 12,
+            "p50_s": 58.329
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 84.17
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 39.991
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 39.991
+          }
+        },
+        "measured_as": "deepseek-r1:70b"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "heavy",
+        "narrator": "light",
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -573,7 +994,8 @@
         "license": "MIT License",
         "remote_host": null,
         "size_bytes": 5225375692,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "a1ed33f5316a91d7"
       },
       "facts_from": "show",
       "library": {
@@ -607,20 +1029,80 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.61,
+        "resident_bytes": 10322266029,
+        "supervisor": {
+          "light": {
+            "correct": 19,
+            "of": 21,
+            "p50_s": 5.832
+          },
+          "standard": {
+            "correct": 2,
+            "of": 4,
+            "p50_s": 5.478
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 26.002
+          },
+          "standard": {
+            "correct": 2,
+            "of": 9,
+            "p50_s": 17.417,
+            "tried": 4
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 8.929
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 7.447
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 35.286
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 31.789
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 31.789
+          }
+        },
+        "measured_as": "deepseek-r1:8b"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "light",
+        "supervisor": null,
+        "generator": null,
         "reflection": "heavy",
-        "narrator": "light",
-        "repair": "standard"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -648,7 +1130,8 @@
         "license": null,
         "remote_host": null,
         "size_bytes": 15177374099,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "911ef791bdd9fcdc"
       },
       "facts_from": "show",
       "library": {
@@ -676,20 +1159,78 @@
           "a code model by its library description: generator and repair one rung up"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 6.7,
+        "resident_bytes": 20011936644,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.953
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.555
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 31.813
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 38.854
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 3.939
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 4.018
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 6.416
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 5.399
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 5.399
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": "standard",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -717,7 +1258,8 @@
         "license": null,
         "remote_host": null,
         "size_bytes": 15177374099,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "911ef791bdd9fcdc"
       },
       "facts_from": "show",
       "library": {
@@ -745,20 +1287,79 @@
           "a code model by its library description: generator and repair one rung up"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 6.7,
+        "resident_bytes": 20011936644,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.953
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.555
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 31.813
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 38.854
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 3.939
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 4.018
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 6.416
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 5.399
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 5.399
+          }
+        },
+        "measured_as": "devstral-small-2:24b"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": "standard",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -784,7 +1385,8 @@
         "license": "Falcon 3 TII Falcon License",
         "remote_host": null,
         "size_bytes": 6287533662,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "2d9736bc0a1b3db2"
       },
       "facts_from": "show",
       "library": {
@@ -812,20 +1414,78 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.95,
+        "resident_bytes": 11800391187,
+        "supervisor": {
+          "light": {
+            "correct": 19,
+            "of": 21,
+            "p50_s": 1.16
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.628
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 16.674
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 21.6
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 2.656
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 9,
+            "of": 12,
+            "p50_s": 2.248
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 5.945
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.549
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.549
+          }
+        }
+      },
       "suited": {
-        "supervisor": "standard",
+        "supervisor": null,
         "generator": "standard",
         "reflection": "standard",
         "narrator": "light",
-        "repair": "standard"
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -851,7 +1511,8 @@
         "license": "Falcon 3 TII Falcon License",
         "remote_host": null,
         "size_bytes": 4569738621,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "a3f1c0da9a671298"
       },
       "facts_from": "show",
       "library": {
@@ -879,20 +1540,79 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.14,
+        "resident_bytes": 8471990763,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 0.853
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.72
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 9.557
+          },
+          "standard": {
+            "correct": 4,
+            "of": 9,
+            "p50_s": 11.076,
+            "tried": 6
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.775
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 4,
+            "of": 12,
+            "p50_s": 2.901
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 3.168
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 3,
+            "of": 6,
+            "p50_s": 2.72
+          },
+          "heavy": {
+            "correct": 3,
+            "of": 6,
+            "p50_s": 2.72
+          }
+        }
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "light",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "standard",
-        "narrator": "light",
-        "repair": "light"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -916,7 +1636,8 @@
         "license": "Falcon 3 TII Falcon License",
         "remote_host": null,
         "size_bytes": 6287534018,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "2d9736bc0a1b3db2"
       },
       "facts_from": "show",
       "library": {
@@ -944,20 +1665,79 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.95,
+        "resident_bytes": 11800391187,
+        "supervisor": {
+          "light": {
+            "correct": 19,
+            "of": 21,
+            "p50_s": 1.16
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.628
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 16.674
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 21.6
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 2.656
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 9,
+            "of": 12,
+            "p50_s": 2.248
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 5.945
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.549
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.549
+          }
+        },
+        "measured_as": "falcon3-10b-32k:latest"
+      },
       "suited": {
-        "supervisor": "standard",
+        "supervisor": null,
         "generator": "standard",
         "reflection": "standard",
         "narrator": "light",
-        "repair": "standard"
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -981,7 +1761,8 @@
         "license": "Falcon 3 TII Falcon License",
         "remote_host": null,
         "size_bytes": 4569738977,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "a3f1c0da9a671298"
       },
       "facts_from": "show",
       "library": {
@@ -1009,20 +1790,80 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.14,
+        "resident_bytes": 8471990763,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 0.853
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.72
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 9.557
+          },
+          "standard": {
+            "correct": 4,
+            "of": 9,
+            "p50_s": 11.076,
+            "tried": 6
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.775
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 4,
+            "of": 12,
+            "p50_s": 2.901
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 3.168
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 3,
+            "of": 6,
+            "p50_s": 2.72
+          },
+          "heavy": {
+            "correct": 3,
+            "of": 6,
+            "p50_s": 2.72
+          }
+        },
+        "measured_as": "falcon3-7b-32k:latest"
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "light",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "standard",
-        "narrator": "light",
-        "repair": "light"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1054,7 +1895,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 7714091504,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": null
       },
       "facts_from": "show",
       "library": {
@@ -1091,20 +1933,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.06,
+        "resident_bytes": 7650591044,
+        "supervisor": {
+          "light": {
+            "correct": 17,
+            "of": 21,
+            "p50_s": 0.646
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.507
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 17.934
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 17.61
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 2.642
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 1.471
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 2.801
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.688
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.688
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1135,7 +2035,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 18334412658,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": null
       },
       "facts_from": "show",
       "library": {
@@ -1172,20 +2073,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 3.66,
+        "resident_bytes": 18272032468,
+        "supervisor": {
+          "light": {
+            "correct": 20,
+            "of": 21,
+            "p50_s": 0.599
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.357
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 7.238
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 7.633
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 1.33
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 1,
+            "of": 12,
+            "p50_s": 0.916
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 1.954
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.245
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.245
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1216,7 +2175,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 19424434885,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": null
       },
       "facts_from": "show",
       "library": {
@@ -1253,20 +2213,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 3.77,
+        "resident_bytes": 19360702348,
+        "supervisor": {
+          "light": {
+            "correct": 20,
+            "of": 21,
+            "p50_s": 1.569
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.021
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 47.462
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 48.869
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 6.424
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 2,
+            "of": 12,
+            "p50_s": 3.422
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 6.913
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.777
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.777
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1299,7 +2317,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 7714091459,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": null
       },
       "facts_from": "show",
       "library": {
@@ -1317,20 +2336,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.12,
+        "resident_bytes": 7650591220,
+        "supervisor": {
+          "light": {
+            "correct": 17,
+            "of": 21,
+            "p50_s": 0.659
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.525
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 18.093
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 17.685
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 2.608
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 1.406
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 2.746
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.711
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.711
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1362,7 +2439,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 18334412613,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": null
       },
       "facts_from": "show",
       "library": {
@@ -1380,20 +2458,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 1.44,
+        "resident_bytes": 18272032468,
+        "supervisor": {
+          "light": {
+            "correct": 20,
+            "of": 21,
+            "p50_s": 0.564
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.349
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 7.069
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 7.868
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 2,
+            "of": 3,
+            "p50_s": 1.311
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 1,
+            "of": 12,
+            "p50_s": 0.869
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 1.961
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.207
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 1.207
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1425,7 +2561,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 19424434840,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": null
       },
       "facts_from": "show",
       "library": {
@@ -1443,20 +2580,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 1.55,
+        "resident_bytes": 19360702860,
+        "supervisor": {
+          "light": {
+            "correct": 20,
+            "of": 21,
+            "p50_s": 1.6
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.005
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 47.258
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 48.987
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 6.4
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 2,
+            "of": 12,
+            "p50_s": 3.387
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 7.54
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.911
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.911
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1485,7 +2680,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 13793440889,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "609e7a8a058b6e5a"
       },
       "facts_from": "show",
       "library": {
@@ -1516,20 +2712,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 5.51,
+        "resident_bytes": 12899665837,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 3.051
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.898
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 6.687
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 11.419
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 6.055
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 6.178
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 26.744
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 4.582
+          },
+          "heavy": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 4.582
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1557,7 +2811,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 13793441244,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "609e7a8a058b6e5a"
       },
       "facts_from": "show",
       "library": {
@@ -1588,20 +2843,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 5.51,
+        "resident_bytes": 12899665837,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 3.051
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.898
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 6.687
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 11.419
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 6.055
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 6,
+            "of": 12,
+            "p50_s": 6.178
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 26.744
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 4.582
+          },
+          "heavy": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 4.582
+          }
+        },
+        "measured_as": "gpt-oss-128k:latest"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1626,7 +2940,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 4590918937,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "dd7ce170898e0b00"
       },
       "facts_from": "show",
       "library": {
@@ -1655,20 +2970,73 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.44,
+        "resident_bytes": 9714605751,
+        "supervisor": {
+          "light": {
+            "correct": 3,
+            "of": 21,
+            "p50_s": 0.901
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.634
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 12.998
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.836
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 5,
+            "of": 12,
+            "p50_s": 1.381
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 2.796
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.39
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.39
+          }
+        }
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": null,
         "reflection": "standard",
-        "narrator": "light",
-        "repair": "standard"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1693,7 +3061,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 2035187356,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "d4b2109503e96f80"
       },
       "facts_from": "show",
       "library": {
@@ -1719,20 +3088,74 @@
           "a mixture of 40 experts, 8 active per token: placed by total parameters, so it will measure faster than its size"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 1.38,
+        "resident_bytes": 4362443161,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 0.272
+          },
+          "standard": {
+            "correct": 0,
+            "of": 4,
+            "p50_s": 0.251
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 1,
+            "of": 6,
+            "p50_s": 1.217,
+            "tried": 3
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 0.667
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 3,
+            "of": 12,
+            "p50_s": 0.683
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 1.155
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.113
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.113
+          }
+        }
+      },
       "suited": {
         "supervisor": "light",
-        "generator": "light",
+        "generator": null,
         "reflection": "light",
-        "narrator": "light",
-        "repair": "light"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1759,7 +3182,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 4590918508,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "dd7ce170898e0b00"
       },
       "facts_from": "show",
       "library": {
@@ -1788,20 +3212,74 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.44,
+        "resident_bytes": 9714605751,
+        "supervisor": {
+          "light": {
+            "correct": 3,
+            "of": 21,
+            "p50_s": 0.901
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.634
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 12.998
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.836
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 5,
+            "of": 12,
+            "p50_s": 1.381
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 2.796
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.39
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.39
+          }
+        },
+        "measured_as": "granite-code:8b"
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": null,
         "reflection": "standard",
-        "narrator": "light",
-        "repair": "standard"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1828,7 +3306,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 2035187003,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "d4b2109503e96f80"
       },
       "facts_from": "show",
       "library": {
@@ -1854,20 +3333,75 @@
           "a mixture of 40 experts, 8 active per token: placed by total parameters, so it will measure faster than its size"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 1.38,
+        "resident_bytes": 4362443161,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 0.272
+          },
+          "standard": {
+            "correct": 0,
+            "of": 4,
+            "p50_s": 0.251
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 1,
+            "of": 6,
+            "p50_s": 1.217,
+            "tried": 3
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 0.667
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 3,
+            "of": 12,
+            "p50_s": 0.683
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 1.155
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.113
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.113
+          }
+        },
+        "measured_as": "granite3.1-moe:3b"
+      },
       "suited": {
         "supervisor": "light",
-        "generator": "light",
+        "generator": null,
         "reflection": "light",
-        "narrator": "light",
-        "repair": "light"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1894,7 +3428,8 @@
         "license": "LLAMA 3.3 COMMUNITY LICENSE AGREEMENT",
         "remote_host": null,
         "size_bytes": 42520413487,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "70ea160af0573f18"
       },
       "facts_from": "show",
       "library": {
@@ -1918,20 +3453,78 @@
           "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 18.57,
+        "resident_bytes": 53736510586,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 5.251
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 3.766
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 89.597
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 103.107
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 10.836
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 2.782
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 4.136
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 13.527
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 13.527
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": "standard",
         "reflection": "heavy",
-        "narrator": "heavy",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -1956,7 +3549,8 @@
         "license": "LLAMA 3.3 COMMUNITY LICENSE AGREEMENT",
         "remote_host": null,
         "size_bytes": 42520413916,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "70ea160af0573f18"
       },
       "facts_from": "show",
       "library": {
@@ -1980,20 +3574,79 @@
           "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 18.57,
+        "resident_bytes": 53736510586,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 5.251
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 3.766
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 89.597
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 103.107
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 10.836
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 2.782
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 4.136
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 13.527
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 13.527
+          }
+        },
+        "measured_as": "llama3.3-128k:latest"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": "standard",
         "reflection": "heavy",
-        "narrator": "heavy",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2018,7 +3671,8 @@
         "license": "# Mistral AI Research License",
         "remote_host": null,
         "size_bytes": 12569172141,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "ffa851e3617ebdc8"
       },
       "facts_from": "show",
       "library": {
@@ -2043,20 +3697,79 @@
           "22.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 5.28,
+        "resident_bytes": 20290123857,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.981
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.304
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 42.191
+          },
+          "standard": {
+            "correct": 1,
+            "of": 9,
+            "p50_s": 23.409,
+            "tried": 3
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 4.781
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 1,
+            "of": 12,
+            "p50_s": 3.381
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 5.023
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.938
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.938
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
-        "repair": "standard"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2081,7 +3794,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 4372824384,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "aadd11be4592b813"
       },
       "facts_from": "show",
       "library": {
@@ -2105,20 +3819,78 @@
           "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.2,
+        "resident_bytes": 8868373462,
+        "supervisor": {
+          "light": {
+            "correct": 17,
+            "of": 21,
+            "p50_s": 0.786
+          },
+          "standard": {
+            "correct": 1,
+            "of": 4,
+            "p50_s": 0.688
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 12.458
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 10.056
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.759
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 2,
+            "of": 12,
+            "p50_s": 1.836
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 2.236
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.014
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.014
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
+        "supervisor": null,
         "generator": "light",
         "reflection": "heavy",
-        "narrator": "light",
-        "repair": "light"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2145,7 +3917,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 4372824028,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "aadd11be4592b813"
       },
       "facts_from": "show",
       "library": {
@@ -2169,20 +3942,79 @@
           "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 2.2,
+        "resident_bytes": 8868373462,
+        "supervisor": {
+          "light": {
+            "correct": 17,
+            "of": 21,
+            "p50_s": 0.786
+          },
+          "standard": {
+            "correct": 1,
+            "of": 4,
+            "p50_s": 0.688
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 12.458
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 10.056
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.759
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 2,
+            "of": 12,
+            "p50_s": 1.836
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 2.236
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.014
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.014
+          }
+        },
+        "measured_as": "mistral:7b"
+      },
       "suited": {
-        "supervisor": "heavy",
+        "supervisor": null,
         "generator": "light",
         "reflection": "heavy",
-        "narrator": "light",
-        "repair": "light"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2209,7 +4041,8 @@
         "license": "# Mistral AI Research License",
         "remote_host": null,
         "size_bytes": 12569171786,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "ffa851e3617ebdc8"
       },
       "facts_from": "show",
       "library": {
@@ -2234,20 +4067,80 @@
           "22.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 5.28,
+        "resident_bytes": 20290123857,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.981
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.304
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 42.191
+          },
+          "standard": {
+            "correct": 1,
+            "of": 9,
+            "p50_s": 23.409,
+            "tried": 3
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 4.781
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 1,
+            "of": 12,
+            "p50_s": 3.381
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 5.023
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.938
+          },
+          "heavy": {
+            "correct": 5,
+            "of": 6,
+            "p50_s": 3.938
+          }
+        },
+        "measured_as": "mistral-small:22b"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
-        "repair": "standard"
+        "narrator": null,
+        "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2271,7 +4164,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 26443602516,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "9d7e1b9083fdfc0c"
       },
       "facts_from": "show",
       "library": {
@@ -2298,20 +4192,74 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 10.24,
+        "resident_bytes": 31117289716,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.246
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.047
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 2,
+            "of": 6,
+            "p50_s": 9.256,
+            "tried": 4
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 3.415
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 4.074
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 3.014
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 4.229
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 4.229
+          }
+        }
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "standard",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2337,7 +4285,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 26443602160,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "9d7e1b9083fdfc0c"
       },
       "facts_from": "show",
       "library": {
@@ -2364,20 +4313,75 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 10.24,
+        "resident_bytes": 31117289716,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.246
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 1.047
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 2,
+            "of": 6,
+            "p50_s": 9.256,
+            "tried": 4
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 3.415
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 4.074
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 3.014
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 4.229
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 4.229
+          }
+        },
+        "measured_as": "mixtral:8x7b"
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "heavy",
+        "supervisor": "light",
+        "generator": null,
         "reflection": "standard",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2402,7 +4406,8 @@
         "license": "Microsoft.",
         "remote_host": null,
         "size_bytes": 11117503233,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "7a1922106e8d384c"
       },
       "facts_from": "show",
       "library": {
@@ -2428,20 +4433,78 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 4.51,
+        "resident_bytes": 18154101145,
+        "supervisor": {
+          "light": {
+            "correct": 20,
+            "of": 21,
+            "p50_s": 1.065
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.94
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 17.883
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 19.286
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 2.079
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 4.138
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 7.563
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 58.526
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 58.526
+          }
+        }
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "standard",
-        "narrator": "light",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2468,7 +4531,8 @@
         "license": "Microsoft.",
         "remote_host": null,
         "size_bytes": 11117502803,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "7a1922106e8d384c"
       },
       "facts_from": "show",
       "library": {
@@ -2494,20 +4558,79 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 4.51,
+        "resident_bytes": 18154101145,
+        "supervisor": {
+          "light": {
+            "correct": 20,
+            "of": 21,
+            "p50_s": 1.065
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.94
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 17.883
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 19.286
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 2.079
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 4.138
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 7.563
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 58.526
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 58.526
+          }
+        },
+        "measured_as": "phi4-reasoning:14b"
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "standard",
-        "narrator": "light",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2537,7 +4660,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 51741611542,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "01641ba0d7e7f212"
       },
       "facts_from": "show",
       "library": {
@@ -2563,20 +4687,78 @@
           "a code model by name (qwen3-coder-next-256k): generator and repair one rung up"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 25.67,
+        "resident_bytes": 52691961116,
+        "supervisor": {
+          "light": {
+            "correct": 19,
+            "of": 21,
+            "p50_s": 1.235
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.965
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 7.819
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 8.893
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.005
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 0.657
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 0.841
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.264
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.264
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "heavy",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2605,7 +4787,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 51741611823,
-        "modified_at": "2026-08-18"
+        "modified_at": "2026-08-18",
+        "fingerprint": "01641ba0d7e7f212"
       },
       "facts_from": "show",
       "library": {
@@ -2631,20 +4814,79 @@
           "a code model by name (qwen3-coder-next): generator and repair one rung up"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 25.67,
+        "resident_bytes": 52691961116,
+        "supervisor": {
+          "light": {
+            "correct": 19,
+            "of": 21,
+            "p50_s": 1.235
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.965
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 7.819
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 8.893
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.005
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 0.657
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 0.841
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.264
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 2.264
+          }
+        },
+        "measured_as": "qwen3-coder-next-256k:latest"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "heavy",
+        "supervisor": null,
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "heavy",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2679,7 +4921,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 23938333296,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "9c397351cd0291ca"
       },
       "facts_from": "show",
       "library": {
@@ -2711,20 +4954,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 6.49,
+        "resident_bytes": 23505550702,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.049
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.872
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 5.878
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 6.835
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.081
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 2,
+            "of": 12,
+            "p50_s": 1.614
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 5.638
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.661
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.661
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2758,7 +5059,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 23938333577,
-        "modified_at": "2026-08-18"
+        "modified_at": "2026-08-18",
+        "fingerprint": "9c397351cd0291ca"
       },
       "facts_from": "show",
       "library": {
@@ -2790,20 +5092,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 6.49,
+        "resident_bytes": 23505550702,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 1.049
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 0.872
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 5.878
+          },
+          "standard": {
+            "correct": 8,
+            "of": 9,
+            "p50_s": 6.835
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.081
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 2,
+            "of": 12,
+            "p50_s": 1.614
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 5.638
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.661
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 1.661
+          }
+        },
+        "measured_as": "qwen3.6-256k:latest"
+      },
       "suited": {
-        "supervisor": "heavy",
-        "generator": "standard",
+        "supervisor": "light",
+        "generator": "light",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": null,
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2839,7 +5200,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 17741872171,
-        "modified_at": "2026-09-17"
+        "modified_at": "2026-09-17",
+        "fingerprint": "17ffdbf46e0eaa0a"
       },
       "facts_from": "show",
       "library": {
@@ -2868,20 +5230,78 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 3.39,
+        "resident_bytes": 20748068452,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 4.534
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 4.209
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 38.951
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 43.538
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.043
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 9,
+            "of": 12,
+            "p50_s": 8.403
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 19.864
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 9.949
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 9.949
+          }
+        }
+      },
       "suited": {
-        "supervisor": "heavy",
+        "supervisor": "light",
         "generator": "standard",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": "light",
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2916,7 +5336,8 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 17741872154,
-        "modified_at": "2026-08-18"
+        "modified_at": "2026-08-18",
+        "fingerprint": "17ffdbf46e0eaa0a"
       },
       "facts_from": "show",
       "library": {
@@ -2945,20 +5366,79 @@
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 3.39,
+        "resident_bytes": 20748068452,
+        "supervisor": {
+          "light": {
+            "correct": 21,
+            "of": 21,
+            "p50_s": 4.534
+          },
+          "standard": {
+            "correct": 4,
+            "of": 4,
+            "p50_s": 4.209
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 6,
+            "of": 6,
+            "p50_s": 38.951
+          },
+          "standard": {
+            "correct": 9,
+            "of": 9,
+            "p50_s": 43.538
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 3,
+            "of": 3,
+            "p50_s": 1.043
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 9,
+            "of": 12,
+            "p50_s": 8.403
+          },
+          "standard": {
+            "correct": 1,
+            "of": 3,
+            "p50_s": 19.864
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 9.949
+          },
+          "heavy": {
+            "correct": 4,
+            "of": 6,
+            "p50_s": 9.949
+          }
+        },
+        "measured_as": "qwen3.8-256k:latest"
+      },
       "suited": {
-        "supervisor": "heavy",
+        "supervisor": "light",
         "generator": "standard",
         "reflection": "heavy",
-        "narrator": "standard",
+        "narrator": "light",
         "repair": "heavy"
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -2984,7 +5464,8 @@
         "license": null,
         "remote_host": null,
         "size_bytes": 4108916516,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "d9d7797a4daf2b1f"
       },
       "facts_from": "show",
       "library": {
@@ -3011,20 +5492,74 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 1.88,
+        "resident_bytes": 8606260919,
+        "supervisor": {
+          "light": {
+            "correct": 0,
+            "of": 21,
+            "p50_s": 0.026
+          },
+          "standard": {
+            "correct": 0,
+            "of": 4,
+            "p50_s": 0.027
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 0,
+            "of": 6,
+            "p50_s": 37.692,
+            "tried": 2
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 0.034
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 0.029
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 0.028
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 2,
+            "of": 6,
+            "p50_s": 21.478
+          },
+          "heavy": {
+            "correct": 2,
+            "of": 6,
+            "p50_s": 21.478
+          }
+        }
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": null,
         "reflection": "standard",
-        "narrator": "light",
-        "repair": "standard"
+        "narrator": null,
+        "repair": null
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     },
     {
@@ -3048,7 +5583,8 @@
         "license": null,
         "remote_host": null,
         "size_bytes": 4108916695,
-        "modified_at": "2026-09-27"
+        "modified_at": "2026-09-27",
+        "fingerprint": "d9d7797a4daf2b1f"
       },
       "facts_from": "show",
       "library": {
@@ -3075,20 +5611,75 @@
           "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
-      "measured": {},
+      "measured": {
+        "load_s": 1.88,
+        "resident_bytes": 8606260919,
+        "supervisor": {
+          "light": {
+            "correct": 0,
+            "of": 21,
+            "p50_s": 0.026
+          },
+          "standard": {
+            "correct": 0,
+            "of": 4,
+            "p50_s": 0.027
+          }
+        },
+        "generator": {
+          "light": {
+            "correct": 0,
+            "of": 6,
+            "p50_s": 37.692,
+            "tried": 2
+          }
+        },
+        "reflection": {
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 0.034
+          }
+        },
+        "narrator": {
+          "light": {
+            "correct": 0,
+            "of": 12,
+            "p50_s": 0.029
+          },
+          "standard": {
+            "correct": 0,
+            "of": 3,
+            "p50_s": 0.028
+          }
+        },
+        "repair": {
+          "standard": {
+            "correct": 2,
+            "of": 6,
+            "p50_s": 21.478
+          },
+          "heavy": {
+            "correct": 2,
+            "of": 6,
+            "p50_s": 21.478
+          }
+        },
+        "measured_as": "sqlcoder-32k:latest"
+      },
       "suited": {
-        "supervisor": "standard",
-        "generator": "standard",
+        "supervisor": null,
+        "generator": null,
         "reflection": "standard",
-        "narrator": "light",
-        "repair": "standard"
+        "narrator": null,
+        "repair": null
       },
       "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
+        "supervisor": "calibration",
+        "generator": "calibration",
         "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior"
+        "narrator": "calibration",
+        "repair": "calibration"
       }
     }
   ]

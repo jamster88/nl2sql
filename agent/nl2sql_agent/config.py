@@ -97,6 +97,15 @@ class Settings:
     # but silent host otherwise holds the connection until the operating
     # system gives up, which makes `/readyz` block for minutes.
     ollama_connect_timeout: float = 5.0
+    # The most tokens one call may generate, and how long one call may take.
+    # Without them a model that degenerates -- found calibrating a reasoning
+    # model with thinking off -- generates without end, since Ollama shifts a
+    # full window rather than stopping, and holds the question with it. The
+    # largest answer any agent gave on the benchmark was 440 tokens; raise
+    # the cap if you turn reasoning on, since thinking counts against it. A
+    # routed call that hits either limit falls back like any other failure.
+    num_predict: int = 2048
+    ollama_timeout: float = 600.0
 
     database_url: str = DEFAULT_DATABASE_URL
     db_schema: str = "public"
@@ -254,6 +263,8 @@ class Settings:
             reasoning=_env_bool("OLLAMA_REASONING", False),
             num_ctx=_env_int("OLLAMA_NUM_CTX", DEFAULT_NUM_CTX),
             ollama_connect_timeout=_env_float("OLLAMA_CONNECT_TIMEOUT", 5.0),
+            num_predict=_env_int("OLLAMA_NUM_PREDICT", 2048),
+            ollama_timeout=_env_float("OLLAMA_TIMEOUT", 600.0),
             database_url=_env_str("DATABASE_URL", DEFAULT_DATABASE_URL),
             db_schema=_env_str("DB_SCHEMA", "public"),
             rag_enabled=_env_bool("RAG_ENABLED", True),

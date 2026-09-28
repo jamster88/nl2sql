@@ -15,10 +15,24 @@ python3 models/build_catalog.py --no-library     # the host's own answers only; 
 ```
 
 `build_catalog.py` lists the host and says what each model *is*: its facts,
-its library page, and a prior -- a guess at what it is suited to. Until
-`calibrate.py` has measured a model, the router does not route to it on that
-guess alone, so the committed, uncalibrated catalog sends every call to
-`OLLAMA_MODEL`, as v5.1 did.
+its library page, and a prior -- a guess at what it is suited to.
+`calibrate.py` measures what each model *does*, and only what it measured is
+routed on: until a model has been calibrated, every call it might have taken
+goes to `OLLAMA_MODEL`, as in v5.1.
+
+**A catalog describes one host.** The committed [`catalog.json`](catalog.json)
+is the one built and calibrated on the host this checkout was developed
+against. Pointed at any other host, the agent ignores it -- with a note in
+its routing table -- and sends every call to `OLLAMA_MODEL` until that host
+has a catalog of its own:
+
+```bash
+python3 models/build_catalog.py <your-host>      # what your host serves
+.venv/bin/python models/calibrate.py             # what each of its models is suited to
+```
+
+Commit the result if the checkout is yours; it is a description of your
+machine, like a lockfile.
 
 It needs only the standard library and Python 3.9 or later, so it runs with
 the `python3` a Mac already has, outside any image or virtualenv. It takes a
@@ -52,11 +66,19 @@ Steps 1 to 4 of the spec's section 15.1:
 | 3 Library | `ollama.com/library/<name>`, then its parent's | the description, capability badges, sizes, and keyword tags from the description | `library.unavailable` says why; after the site has failed once it is not asked again |
 | 4 Prior | the rules below | for each task, the highest rung presumed suited, and the reasons | -- |
 
-Step 2 is not optional in practice. The MLX builds (`gemma4:12b-mlx` and its
-siblings) leave their parameter size, family and context empty in
-`/api/tags`, and only `/api/show` says what they are. Step 3 is why
-`qwen3.8-256k` -- `qwen3.8` with a bigger window baked in, and no page of its
-own -- is described by `qwen3.8`'s page.
+Step 2 is not optional in practice. MLX builds leave their parameter size,
+family and context empty in `/api/tags`, and only `/api/show` says what they
+are. Step 3 is why a local build -- a library model with a bigger window
+baked in, under a name of its own -- is described by its parent's page.
+
+Step 2 also yields each model's **behaviour fingerprint**: a hash of its
+weights, template, system prompt and baked-in parameters, every one but
+`num_ctx`. A local build that only bakes in a bigger window has its parent's
+fingerprint, and once routed the two behave alike -- the router sets the
+window itself -- so calibration measures one of them and the router loads
+one. Only weights `/api/show` names by blob digest, as it names GGUF weights,
+get a fingerprint: a safetensors build names itself instead, and two
+different checkpoints of one size must never be taken for one model.
 
 Step 5 is `calibrate.py`, [below](#calibration). A rebuild keeps what it
 measured for every model whose digest is unchanged -- the digest is what says
@@ -91,7 +113,8 @@ not others.
       "chat": true,
       "facts": {"family": "qwen35", "parent_model": "qwen3.8:latest", "parameter_count": 27320697856,
                 "quantization": "Q4_K_M", "context_length": 262144,
-                "capabilities": ["completion", "thinking", "tools", "vision"], "...": "..."},
+                "capabilities": ["completion", "thinking", "tools", "vision"],
+                "fingerprint": "17ffdbf46e0eaa0a", "...": "..."},
       "facts_from": "show",
       "library": {"page": "https://ollama.com/library/qwen3.8", "badges": ["vision", "tools", "thinking"],
                   "tags": ["code"], "...": "..."},
@@ -113,6 +136,27 @@ A rung names the top of what the model is suited to: `"standard"` means the
 light and standard rungs of that task, not the heavy one. `null` means the
 model is no candidate for the task at all. The `digest` is there so a model
 pulled again with new weights reads as a different model.
+
+Calibration fills `measured`, per task and rung, and per model its cold load
+time and resident size; `suited_from` then says `"calibration"` for each task
+it measured:
+
+```json
+"measured": {
+  "generator": {"light": {"correct": 6, "of": 6, "p50_s": 14.2},
+                "standard": {"correct": 4, "of": 9, "p50_s": 19.8, "tried": 5}},
+  "narrator": {"light": {"correct": 11, "of": 12, "p50_s": 1.3}},
+  "load_s": 2.2,
+  "resident_bytes": 7700000000,
+  "measured_as": "the-twin-it-was-measured-on:latest"
+}
+```
+
+The shape, not a result. `tried` appears when calibration stopped probing a
+rung early because nothing left could make the model suited to it; the
+probes it did not ask still count toward `of`, as not right, so the model
+and the reference are compared on the same number of probes. `measured_as`
+appears on a model that shares a fingerprint with the one measured.
 
 ## The prior
 
@@ -138,12 +182,12 @@ Three of those rows are this script's reading of the spec rather than its
 words:
 
 - **A code model is one that says it is for code.** The spec says "*code*
-  in the library description". Every family on the host today names coding
-  among its strengths -- qwen3.8's page lists "coding, professional work,
-  research" -- so that reading would promote the reference model and a 12 B
-  gemma4 to heavy generators, and contradict the spec's own worked table.
-  So a model counts when its name has `code` in it (`qwen3-coder-next`,
-  `sqlcoder`, `granite-code`) or its description says what it is for:
+  in the library description". Nearly every current family's page names
+  coding among its strengths -- "coding, professional work, research" -- so
+  that reading would promote every general model, the reference included, a
+  rung as a generator, and contradict the spec's own worked table.
+  So a model counts when its name has `code` in it (a `*-coder` or `*code*`
+  build) or its description says what it is for:
   "coding-focused", "a code model", "for coding", "codebases", "software
   engineering". The `code` keyword tag is still recorded for every mention.
 - **A model of unknown size is promoted for nothing.** A promotion adjusts
@@ -157,16 +201,18 @@ words:
 The spec also demotes "a format the host runs slowly". Nothing the host says
 reveals that, so it is left to calibration.
 
-**The prior is a starting point, not a routing table.** By size alone, a
-2023 `mixtral:8x7b` outranks the reference model as a heavy generator. That
+**The prior is a starting point, not a routing table.** By size alone, an
+older mixture of experts with many parameters outranks a newer, smaller model
+that answers better and faster. That
 is what calibration exists to correct, and why the router routes on measured
 suitability only, unless `MODEL_ROUTE_ON_PRIOR=true` says otherwise.
 
 ## Calibration
 
 ```bash
-.venv/bin/python models/calibrate.py                                   # every chat model, every task
-.venv/bin/python models/calibrate.py --models gemma4:12b-mlx mistral:7b --tasks supervisor narrator
+.venv/bin/python models/calibrate.py                          # every chat model, every task
+.venv/bin/python models/calibrate.py --resume                 # carry on where a run stopped
+.venv/bin/python models/calibrate.py --models <model> <model> --tasks supervisor narrator
 .venv/bin/python models/calibrate.py --questions B01 B07 B15 --host-memory 128G
 ```
 
@@ -182,28 +228,58 @@ one probe per task:
 | supervisor | the benchmark questions, which should all proceed, and [`probes/triage.json`](probes/triage.json) | the verdict is the expected one |
 | reflection | each benchmark question's accepted result, replayed | the model agrees with the reference model's own reflection |
 | narrator | each accepted result, narrated again | the audit passes every claim and every assumption is stated |
-| repair | [`probes/repair.json`](probes/repair.json): six real Postgres errors the classifier cannot place | the diagnosis names the fault |
+| repair | [`probes/repair.json`](probes/repair.json): six real Postgres errors the classifier cannot place | the diagnosis names the fix -- never a word the error itself contains, or a model that only repeated the error would pass |
 
 Each probe counts toward the rung the router would route it at -- a
 benchmark question toward the rung its score gives it, a flagged triage case
 toward standard -- and for each rung the catalog records correct out of
 tried and the P50. A model is suited to a rung when it scores within one
-question of the reference model on the same probes -- the Supervisor within
-none: in the first routed run a light model one question behind the
-reference refused a valid benchmark question as out of domain, and a refusal
-is no answer, with nothing downstream to retry it. The first rung a model
-fails stops the climb, since a model suited to heavy is suited to everything
-below. The reflection is scored against the reference rather than a key:
+question of the reference model on the same probes -- the Supervisor and the
+generator within none, since their miss is a wrong answer. A Supervisor one
+question behind refused a valid benchmark question as out of domain; a
+generator one question behind lost that very question in the routed
+benchmark, because the repairs that climb to the reference start from its
+wrong draft and did not recover. A miss by the narrator, the reflection or
+the diagnosis costs a retry or a sentence, not the answer. A rung counts only with
+at least five probes: "within one question" of three allows a third of them
+wrong, and the first calibrated benchmark run lost an answer to a model
+suited on three -- a rung probed fewer times keeps its prior, and so stays on
+`OLLAMA_MODEL`. The first rung a model fails stops the climb, since a model
+suited to heavy is suited to everything below. The reflection is scored against the reference rather than a key:
 whether a result is fleshed out is a judgement, and agreeing with the model
-the pipeline was tuned on is what suited means there.
+the pipeline was tuned on is what suited means there. That also bounds what
+the probe can show: where the reference finds nothing missing -- as it
+mostly does once the rules have passed -- the probe measures whether a model
+asks for columns the reference would not, which costs a generation each
+time, and cannot tell a careful model from one that always answers
+"complete".
 
 It also times each model's cold load and reads how much memory it holds
 once loaded (`--no-load` skips both), and with `--host-memory` it warns when
-the models the table routes to cannot all be resident at once. The catalog is
-rewritten after every model, so an interrupted run keeps what it finished,
-and the routing table the agent would build from it is printed at the end.
-The generator probe is the one that takes real time: a full benchmark run
-per model, about a quarter of an hour on the reference model.
+the models the table routes to cannot all be resident at once. The routing
+table the agent would build from the result is printed at the end.
+
+The generator probe is the one that takes real time -- the pipeline, per
+benchmark question, with the generator pinned to the model -- so a run over
+a host with dozens of models takes hours, and is built to be left alone:
+
+- **Twins are measured once.** Models with one behaviour fingerprint share one
+  measurement, `measured_as` naming the model it was taken on.
+- **A generator stops early** once no remaining question could make it
+  suited, rung by rung from light: a rung it has failed is one it cannot be
+  routed at, and nothing above it would count.
+- **Nothing fails the run.** A question that fails outright is a wrong
+  answer, a task that cannot be measured is skipped for that model, and a
+  model that cannot be measured at all is reported and passed over.
+- **It can be resumed.** The catalog is rewritten after every model, and
+  `--resume` skips every model already measured on every task asked for.
+- **Narration is off** in the pipeline runs: it never changes the SQL a
+  generator is scored on, and the narrator has a probe of its own.
+
+Calibrate again when the host changes -- a model pulled, a new Ollama, other
+hardware -- since the numbers are a measurement of one machine on one day. A
+rebuild of the catalog keeps the measurements of every model whose weights
+have not changed, so `--resume` then measures only what is new.
 
 ## HTTPS on a Mac
 

@@ -59,6 +59,8 @@ def build_llm(settings: Settings, *, keep_alive: str | None = None) -> ChatOllam
             temperature=settings.temperature,
             reasoning=settings.reasoning,
             num_ctx=settings.num_ctx,
+            num_predict=settings.num_predict,
+            client_kwargs={"timeout": settings.ollama_timeout},
             keep_alive=keep_alive,
             # Fail here, with the model list in hand, rather than several steps
             # into the pipeline.
@@ -87,5 +89,7 @@ def build_routed_client(settings: Settings, model: str, num_ctx: int) -> ChatOll
         temperature=settings.temperature,
         reasoning=settings.reasoning,
         num_ctx=num_ctx,
+        num_predict=settings.num_predict,
+        client_kwargs={"timeout": settings.ollama_timeout},
         keep_alive=settings.ollama_keep_alive or None,
     )

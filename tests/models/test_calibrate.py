@@ -93,7 +93,8 @@ def state_for(question, model, *, correct=True, hop=False, error=None, rung="lig
     """What a run of the pipeline would have left, the generator answered by `model`."""
     count = question.id == "B01"
     result = QueryResult(columns=["store_count"], rows=[[10 if correct else 11]]) if count else QueryResult(
-        columns=["store_id", "store_name"], rows=[["S01", "Big Box"], ["S02", "Express"]])
+        columns=["store_id", "store_name"],
+        rows=[["S01", "Big Box"], ["S02", "Express"]] if correct else [["S09", "Nowhere"]])
     trace = [TraceEntry(node="generate_sql", ms=1500.0, model="other:7b" if hop else model),
              TraceEntry(node="generate_sql", ms=500.0, model=model)]
     return {
@@ -214,8 +215,8 @@ def test_a_candidate_generator_is_the_pipeline_with_the_generator_pinned_to_it(c
         ("small:7b", "B03"): {"error": "gave up"},
     })
     samples = engine.generator("small:7b", Model())
-    assert engine.built == ["small:7b"]
-    assert [(s.rungs, s.correct) for s in samples] == [(("standard",), False), (("light",), False)]
+    assert engine.built == ["", "small:7b"]
+    assert [(s.rungs, s.correct) for s in samples] == [(("light",), False), (("light",), False)]
 
 
 @pytest.mark.parametrize("behaviour", [{"correct": False}, {"error": "gave up"}])
@@ -316,8 +317,8 @@ def test_measuring_a_model_times_its_load_and_skips_what_it_cannot_do(calibrate)
 def test_recording_recomputes_what_every_model_is_suited_to(calibrate):
     catalog = a_catalog(entry("small:7b"))
     engine = calibrator(calibrate, catalog)
-    engine.record(REFERENCE, {"narrator": {"light": {"correct": 2, "of": 2, "p50_s": 1.0}}})
-    engine.record("small:7b", {"narrator": {"light": {"correct": 1, "of": 2, "p50_s": 0.4}}, "load_s": 1.0},
+    engine.record(REFERENCE, {"narrator": {"light": {"correct": 6, "of": 6, "p50_s": 1.0}}})
+    engine.record("small:7b", {"narrator": {"light": {"correct": 5, "of": 6, "p50_s": 0.4}}, "load_s": 1.0},
                   now=datetime(2026, 9, 28, 2, 0, tzinfo=timezone.utc))
 
     small = catalog["models"][1]
@@ -418,12 +419,14 @@ def test_a_calibration_run_writes_each_model_as_it_goes_and_prints_the_table(
     mistral = next(m for m in written["models"] if m["name"] == "mistral:7b")
     assert mistral["measured"]["supervisor"] == {"light": {"correct": 2, "of": 2, "p50_s": 0.5},
                                                  "standard": {"correct": 1, "of": 1, "p50_s": 0.5}}
-    assert mistral["suited_from"]["supervisor"] == "calibration"
+    # Three probes are not a measurement (build_catalog.MIN_PROBES): recorded,
+    # and the prior still decides.
+    assert mistral["suited_from"]["supervisor"] == "prior"
     assert written["calibrated"]
     out = capsys.readouterr()
     assert f"[1/2] {REFERENCE}" in out.out and "[2/2] mistral:7b" in out.out
-    assert "model routing on:" in out.out and "  supervisor light mistral:7b" in out.out
-    assert "need 18.0 GB resident together, more than --host-memory 1.0 GB" in out.err
+    assert "model routing on:" in out.out and "  supervisor light " in out.out
+    assert "need 9.0 GB resident together, more than --host-memory 1.0 GB" in out.err
 
 
 @pytest.mark.parametrize("args,message", [
@@ -496,3 +499,149 @@ def test_without_load_timing_or_a_memory_size_there_is_nothing_to_warn_about(
     reference = next(m for m in json.loads(path.read_text())["models"] if m["name"] == REFERENCE)
     assert set(reference["measured"]) == {"narrator"}
     assert "warning" not in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Built to be left alone
+# ---------------------------------------------------------------------------
+
+
+def test_a_generator_stops_being_probed_once_it_cannot_be_suited(calibrate):
+    """Three light questions the reference got right, and a generator is
+    allowed no miss: after the first wrong answer the other two cannot make
+    it suited, so they are not asked -- and still count toward `of`, so the
+    two stay comparable."""
+    engine = calibrator(calibrate, a_catalog(entry("small:7b")), questions=("B01", "B02", "B03"),
+                        behaviour={("small:7b", "B01"): {"correct": False}})
+    samples = engine.generator("small:7b", Model())
+
+    assert [s.correct for s in samples] == [False, False, False]
+    assert [s.seconds for s in samples[1:]] == [None, None]
+    assert calibrate.tally(samples) == {"light": {"correct": 0, "of": 3, "p50_s": 1.0, "tried": 1}}
+    assert "    stopped: small:7b cannot be suited to the light rung" in engine.said
+
+
+def test_a_generator_is_probed_from_the_light_rung_up(calibrate):
+    engine = calibrator(calibrate, a_catalog(entry("small:7b")),
+                        behaviour={("", "B01"): {"rung": "standard"}, ("", "B03"): {"rung": "light"}})
+    samples = engine.generator("small:7b", Model())
+    assert [s.rungs for s in samples] == [("light",), ("standard",)]
+    assert [line.split()[0] for line in engine.said if line.startswith("    B")][-2:] == ["B03", "B01"]
+
+
+def test_a_question_that_fails_outright_is_a_wrong_answer_not_the_end(calibrate):
+    engine = calibrator(calibrate, a_catalog(), questions=("B01",))
+    original = Agent.run
+
+    def crash(self, text):
+        raise RuntimeError("the host went away\nwith a traceback")
+
+    Agent.run = crash
+    try:
+        assert engine.generator(REFERENCE, Model()) == [calibrate.Sample(("light",), False, 0.0)]
+    finally:
+        Agent.run = original
+    assert "    B01 failed: the host went away" in engine.said
+
+    class Silent(Exception):
+        def __str__(self):
+            return ""
+
+    engine = calibrator(calibrate, a_catalog(), questions=("B01",))
+    Agent.run = lambda self, text: (_ for _ in ()).throw(Silent())
+    try:
+        engine.runs()
+    finally:
+        Agent.run = original
+    assert "    B01 failed: Silent" in engine.said
+
+
+def test_a_task_that_cannot_be_measured_costs_that_task(calibrate, monkeypatch):
+    engine = calibrator(calibrate, a_catalog())
+    monkeypatch.setattr(engine, "supervisor", lambda name, client: (_ for _ in ()).throw(RuntimeError("boom")))
+    measured = engine.measure(REFERENCE, ["supervisor", "repair"])
+    assert "supervisor" not in measured and "repair" in measured
+    assert "  supervisor: could not be measured (boom)" in engine.said
+
+
+def test_a_rung_with_nothing_timed_has_no_p50(calibrate):
+    assert calibrate.tally([calibrate.Sample(("light",), False, None)]) == {
+        "light": {"correct": 0, "of": 1, "p50_s": None, "tried": 0}}
+
+
+def test_the_pipeline_runs_without_narration(calibrate):
+    assert calibrate.settings_for({"host": "h", "reference": "m"}).narrate_enabled is False
+
+
+def _twinned(build_catalog, host, tmp_path):
+    path = _catalog_file(build_catalog, host, tmp_path)
+    catalog = json.loads(path.read_text())
+    for model in catalog["models"]:
+        model["facts"]["fingerprint"] = {"qwen3.8-256k:latest": "ref", "qwen3.8:latest": "ref",
+                                         "mistral:7b": "m", "mistral-small:22b": "m"}.get(model["name"])
+    path.write_text(json.dumps(catalog))
+    return path
+
+
+def test_twins_are_measured_once_and_the_measurement_shared(calibrate, build_catalog, host, tmp_path, capsys):
+    path = _twinned(build_catalog, host, tmp_path)
+
+    def factory(catalog, questions, *, measure_load):
+        engine = calibrator(calibrate, catalog, questions=("B01",), say=print)
+        engine.settings = replace(engine.settings, ollama_base_url=host.url)
+        return engine
+
+    args = ["--catalog", str(path), "--models", "mistral:7b", "mistral-small:22b", "--tasks", "repair",
+            "--questions", "B01", "--no-load"]
+    assert calibrate.main(args, calibrator_factory=factory) == 0
+    out = capsys.readouterr().out
+    assert f"[1/2] {REFERENCE} (and its twins qwen3.8:latest)" in out
+    assert "[2/2] mistral:7b (and its twins mistral-small:22b)" in out
+    models = {m["name"]: m for m in json.loads(path.read_text())["models"]}
+    assert models["mistral-small:22b"]["measured"]["measured_as"] == "mistral:7b"
+    assert models["mistral-small:22b"]["measured"]["repair"] == models["mistral:7b"]["measured"]["repair"]
+    assert models["qwen3.8:latest"]["measured"]["measured_as"] == REFERENCE
+
+    assert calibrate.main([*args, "--resume"], calibrator_factory=factory) == 0
+    out = capsys.readouterr().out
+    assert f"[1/2] {REFERENCE} (and its twins qwen3.8:latest): measured already" in out
+    assert "[2/2] mistral:7b (and its twins mistral-small:22b): measured already" in out
+
+
+def test_a_model_that_cannot_be_measured_is_reported_and_skipped(calibrate, build_catalog, host, tmp_path, capsys):
+    path = _catalog_file(build_catalog, host, tmp_path)
+
+    def factory(catalog, questions, *, measure_load):
+        engine = calibrator(calibrate, catalog, questions=("B01",), say=print)
+        engine.settings = replace(engine.settings, ollama_base_url=host.url)
+        original = engine.measure
+
+        def measure(name, tasks):
+            if name == "mistral:7b":
+                raise RuntimeError("out of memory")
+            return original(name, tasks)
+
+        engine.measure = measure
+        return engine
+
+    assert calibrate.main(["--catalog", str(path), "--models", "mistral:7b", "--tasks", "repair", "--no-load",
+                           "--questions", "B01"], calibrator_factory=factory) == 0
+    assert "  could not be measured: out of memory" in capsys.readouterr().out
+    models = {m["name"]: m for m in json.loads(path.read_text())["models"]}
+    assert models["mistral:7b"]["measured"] == {} and models[REFERENCE]["measured"]["repair"]
+
+
+def test_a_repair_probe_can_only_be_passed_by_naming_the_fix():
+    """The first key accepted "ambiguous" for an error that says "is
+    ambiguous": a model that only repeated the error passed, and one that
+    answered no other probe right scored five of six."""
+    cases = json.loads((REPO_ROOT / "models" / "probes" / "repair.json").read_text())["cases"]
+    assert len(cases) == 6
+    for case in cases:
+        leaked = [word for word in case["expect"] if word.lower() in case["error"].lower()]
+        assert not leaked, (case["error"], leaked)
+
+
+def test_the_triage_probes_ask_for_every_verdict_a_screen_can_give():
+    cases = json.loads((REPO_ROOT / "models" / "probes" / "triage.json").read_text())["cases"]
+    assert {case["verdict"] for case in cases} == {"proceed", "out_of_domain", "injection"}

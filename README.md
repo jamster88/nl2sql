@@ -256,9 +256,11 @@ presents: light, standard or heavy, computed from the pipeline's own state
 without a model call. A repair climbs the ladder, a routed model that cannot
 answer falls back to `OLLAMA_MODEL`, and the trace names the model that
 answered every call. The list it routes from is the
-[model catalog](#model-catalog). Until that is calibrated, every call goes to
-`OLLAMA_MODEL` exactly as in v5.1 -- which is where the committed catalog
-leaves it -- and `MODEL_ROUTING_ENABLED=false` makes it v5.1 outright.
+[model catalog](#model-catalog): what the Ollama host serves and what each
+model was measured to be suited to. The committed catalog describes the host
+this checkout was developed against; on any other host every call goes to
+`OLLAMA_MODEL`, exactly as in v5.1, until that host has a catalog of its own,
+and `MODEL_ROUTING_ENABLED=false` makes it v5.1 outright.
 
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
@@ -937,10 +939,15 @@ The scanner needs only the standard library, so it runs with the `python3` a
 Mac already has; it says what each model *is* and guesses from that what it
 is suited to. The calibrator runs each model through a probe per task
 against the live stack and records what it *measured*, and only a measured
-suitability is routed on. Re-run the scanner when the host's models change
--- it keeps the measurements of every model whose weights have not -- and
-commit the result like code. [`models/README.md`](models/README.md) has the
-rules, the probes and the catalog's shape.
+suitability is routed on. A full calibration of a host with dozens of models
+takes hours, so it measures each set of identical builds once, stops probing
+a generator that cannot be suited, survives any one model failing, and
+resumes where it stopped. A catalog describes one host: the committed one is
+ignored anywhere else, so build and calibrate your own. Re-run the scanner
+when the host's models change -- it keeps the measurements of every model
+whose weights have not -- and commit the result like code.
+[`models/README.md`](models/README.md) has the rules, the probes and the
+catalog's shape.
 
 ## Synthetic data generator
 
@@ -1167,8 +1174,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2787 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3262, including ones that build and run containers
+pytest                                          # 2809 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3284, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1240,7 +1247,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-9,141 statements and 2,246 branches, none missed. `coverage report` fails below
+9,203 statements and 2,266 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the two web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent and its REST

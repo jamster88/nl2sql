@@ -284,19 +284,33 @@ def test_pinning_the_anchor_leaves_no_fallback():
     assert table.cells[("supervisor", "light")].fallback is None
 
 
-def test_a_catalog_of_another_host_is_refused_when_it_would_route():
-    elsewhere = catalog(entry("fast:7b", p50=0.5), host="gpu-box")
-    with pytest.raises(RoutingError, match="another machine's models"):
-        build_table(settings(), elsewhere)
-    presumed = catalog(entry("fast:7b", source="prior"), host="gpu-box")
-    with pytest.raises(RoutingError):
-        build_table(settings(model_route_on_prior=True), presumed)
+def test_a_catalog_of_another_host_is_ignored_even_when_it_measured_everything():
+    """Another machine's models, measured on another machine, are never
+    routed on -- and a checkout whose committed catalog is its maintainer's
+    still starts anywhere else, as v5.1."""
+    for elsewhere in (catalog(entry("fast:7b", p50=0.5), host="gpu-box"),
+                      catalog(entry("fast:7b", source="prior"), host="ftp://not-ollama")):
+        table = build_table(settings(model_route_on_prior=True), elsewhere)
+        assert table.models() == [ANCHOR]
+        assert "ignored, so every rung is OLLAMA_MODEL" in table.notes[0]
 
 
-def test_a_catalog_of_another_host_that_measured_nothing_is_ignored_with_a_note():
-    table = build_table(settings(), catalog(entry("fast:7b", source="prior"), host="ftp://not-ollama"))
-    assert table.models() == [ANCHOR]
-    assert "it measured nothing, so it is ignored" in table.notes[0]
+def twin(name, fingerprint, **kwargs):
+    model = entry(name, **kwargs)
+    model["facts"]["fingerprint"] = fingerprint
+    return model
+
+
+def test_one_name_per_behaviour_and_none_for_the_anchors_twins():
+    """A build that only bakes in a bigger window is its parent once routed:
+    loading both would hold the same weights twice."""
+    ranked = candidates(catalog(
+        twin(ANCHOR, "ref", p50=9.0), twin("qwen3.8:latest", "ref", p50=0.1),
+        twin("fast-128k:latest", "fast", p50=1.0), twin("fast:7b", "fast", p50=1.0),
+        twin("unproven:12b", None, p50=2.0), twin("unproven-256k:latest", None, p50=2.0),
+    ), on_prior=False, host=None, notes=[], anchor=ANCHOR)
+    # Unproven builds -- no fingerprint -- are each their own model.
+    assert ranked[("generator", "light")] == ["fast-128k:latest", "unproven-256k:latest", "unproven:12b", ANCHOR]
 
 
 def test_the_same_host_written_differently_is_the_same_host():

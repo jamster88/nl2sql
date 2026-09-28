@@ -28,9 +28,23 @@ pipeline was tuned on is what suited means there.
 
 It needs the agent and the stack, so it runs where the benchmark runs -- the
 repository's virtualenv, against the stack's published ports -- and against
-the host the catalog was built for. The catalog is rewritten after every
-model, so an interrupted run keeps what it finished. The generator probe is
-the one that takes real time: a full benchmark run per model.
+the host the catalog was built for. The generator probe is the one that
+takes real time -- the pipeline, per question, with the generator pinned --
+so a run is built to be left alone:
+
+* Models with one behaviour fingerprint (`build_catalog.fingerprint`) are
+  measured once and the measurement copied to the rest, `measured_as` naming
+  the one measured: a local build that bakes in a bigger window is its parent,
+  once the router sets the window.
+* A generator stops being probed once no remaining question could make it
+  suited, rung by rung from light.
+* A question or a probe that fails costs that question or that task, never
+  the run; a model that cannot be measured at all is reported and skipped.
+* The catalog is rewritten after every model, and `--resume` skips every
+  model already measured on every task asked for.
+
+Narration is off in the pipeline runs: it never changes the SQL a generator
+is scored on, and the narrator has its own probe.
 """
 
 from __future__ import annotations
@@ -71,24 +85,30 @@ PROBES = HERE / "probes"
 
 @dataclass
 class Sample:
-    """One probe's outcome for one model, and the rungs it counts toward."""
+    """One probe's outcome for one model, and the rungs it counts toward.
+    `seconds` is None for a probe never asked -- one an early stop made
+    pointless -- which still counts toward `of`, as not right."""
 
     rungs: tuple[str, ...]
     correct: bool
-    seconds: float
+    seconds: float | None
 
 
 def tally(samples: Sequence[Sample]) -> dict[str, dict[str, Any]]:
-    """Per rung: correct out of tried, and the P50 of the timed calls."""
+    """Per rung: correct out of the probes there are, the P50 of the timed
+    calls, and how many were asked when an early stop left some unasked."""
     out: dict[str, dict[str, Any]] = {}
     for rung in build_catalog.RUNGS:
         mine = [s for s in samples if rung in s.rungs]
         if mine:
+            timed = [s.seconds for s in mine if s.seconds is not None]
             out[rung] = {
                 "correct": sum(s.correct for s in mine),
                 "of": len(mine),
-                "p50_s": round(statistics.median(s.seconds for s in mine), 3),
+                "p50_s": round(statistics.median(timed), 3) if timed else None,
             }
+            if len(timed) < len(mine):
+                out[rung]["tried"] = len(timed)
     return out
 
 
@@ -207,21 +227,28 @@ class Calibrator:
 
     def _pipeline(self, settings: Settings, model: str) -> list[Run]:
         agent = self.agent_factory(settings)
-        runs = []
-        for question in self.probes.questions:
+        return [self._ask(agent, question, model) for question in self.probes.questions]
+
+    def _ask(self, agent: Any, question: BenchmarkQuestion, model: str) -> Run:
+        """One question through the pipeline, scored as the benchmark scores
+        it -- right only when every draft was `model`'s own. A run that fails
+        outright is a wrong answer, not the end of the calibration."""
+        try:
             state = agent.run(question.question)
-            calls = [e for e in state.get("trace", []) if e.node == "generate_sql"]
-            own = [e for e in calls if e.model == model]
-            result = state.get("result")
-            correct = (
-                bool(own) and len(own) == len(calls) and result is not None and not state.get("error")
-                and result_matches(reference_rows(self.db, question), result.rows, ordered=question.ordered)
-            )
-            seconds = sum(e.ms for e in calls) / 1000 / max(1, len(calls))
-            rung = state.get("complexity").rung if state.get("complexity") else complexity.LIGHT
-            runs.append(Run(question, state, correct, rung, seconds))
-            self.say(f"    {question.id} {'ok' if correct else 'wrong'} at {rung}, {seconds:.1f}s")
-        return runs
+        except Exception as exc:  # noqa: BLE001 -- any failure is this question's
+            self.say(f"    {question.id} failed: {str(exc).splitlines()[0][:120] if str(exc) else type(exc).__name__}")
+            return Run(question, {}, False, complexity.LIGHT, 0.0)
+        calls = [e for e in state.get("trace", []) if e.node == "generate_sql"]
+        own = [e for e in calls if e.model == model]
+        result = state.get("result")
+        correct = (
+            bool(own) and len(own) == len(calls) and result is not None and not state.get("error")
+            and result_matches(reference_rows(self.db, question), result.rows, ordered=question.ordered)
+        )
+        seconds = sum(e.ms for e in calls) / 1000 / max(1, len(calls))
+        rung = state.get("complexity").rung if state.get("complexity") else complexity.LIGHT
+        self.say(f"    {question.id} {'ok' if correct else 'wrong'} at {rung}, {seconds:.1f}s")
+        return Run(question, state, correct, rung, seconds)
 
     def _accepted(self) -> list[Run]:
         return [run for run in self.runs() if run.state.get("result") is not None and run.state["result"].rows]
@@ -229,11 +256,31 @@ class Calibrator:
     # --- the probes --------------------------------------------------------------
 
     def generator(self, model: str, client: Any) -> list[Sample]:
+        """The benchmark with the generator pinned to `model`, rung by rung
+        from light, stopping once the model cannot be suited: a rung it has
+        failed is a rung it cannot be routed at, and nothing above it counts
+        (`build_catalog.measured_rung` stops the climb at the first failure).
+        Each question is counted at the rung the reference's run scored it,
+        so the two are compared on the same probes."""
+        reference = self.runs()
         if model == self.reference:
-            runs = self.runs()
-        else:
-            runs = self._pipeline(replace(self.settings, model_route_generator=model), model)
-        return [Sample((run.rung,), run.correct, run.seconds) for run in runs]
+            return [Sample((run.rung,), run.correct, run.seconds) for run in reference]
+        agent = self.agent_factory(replace(self.settings, model_route_generator=model))
+        allowed = build_catalog.TOLERANCE["generator"]
+        samples: list[Sample] = []
+        for rung in build_catalog.RUNGS:
+            probes = [run for run in reference if run.rung == rung]
+            bar = sum(run.correct for run in probes) - allowed
+            right = 0
+            for asked, probe in enumerate(probes, start=1):
+                run = self._ask(agent, probe.question, model)
+                samples.append(Sample((rung,), run.correct, run.seconds))
+                right += run.correct
+                if right + len(probes) - asked < bar:
+                    samples += [Sample((rung,), False, None)] * (len(probes) - asked)
+                    self.say(f"    stopped: {model} cannot be suited to the {rung} rung")
+                    return samples
+        return samples
 
     def supervisor(self, model: str, client: Any) -> list[Sample]:
         cases = [{"question": q.question, "verdict": "proceed"} for q in self.probes.questions]
@@ -350,17 +397,33 @@ class Calibrator:
             if model["prior"][task] is None:
                 self.say(f"  {task}: not a candidate ({model['prior']['reasons'][-1]})")
                 continue
-            samples = getattr(self, task)(name, client)
+            try:
+                samples = getattr(self, task)(name, client)
+            except Exception as exc:  # noqa: BLE001 -- one task's failure is that task's
+                self.say(f"  {task}: could not be measured ({exc})")
+                continue
             measured[task] = tally(samples)
             scores = ", ".join(f"{r} {v['correct']}/{v['of']} ({v['p50_s']}s)" for r, v in measured[task].items())
             self.say(f"  {task}: {scores or 'no probes'}")
         return measured
 
-    def record(self, name: str, measured: dict[str, Any], now: datetime | None = None) -> None:
+    def twins(self, name: str) -> list[str]:
+        """The other chat models with `name`'s behaviour fingerprint."""
+        mark = self.models[name]["facts"].get("fingerprint")
+        return sorted(
+            other for other, model in self.models.items()
+            if mark and other != name and model["chat"] and model["facts"].get("fingerprint") == mark
+        )
+
+    def record(self, name: str, measured: dict[str, Any], now: datetime | None = None,
+               measured_as: str | None = None) -> None:
         """Merge one model's measurements into the catalog and recompute what
-        every model is suited to -- the reference's own scores are the bar."""
+        every model is suited to -- the reference's own scores are the bar.
+        `measured_as` names the twin the numbers were taken on."""
         model = self.models[name]
         model["measured"] = {**model.get("measured", {}), **measured}
+        if measured_as:
+            model["measured"]["measured_as"] = measured_as
         reference = self.models.get(self.reference)
         for entry in self.catalog["models"]:
             entry["suited"], entry["suited_from"] = build_catalog.suitability(entry, reference)
@@ -405,6 +468,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host-memory", type=parse_memory, help="the host's memory, e.g. 128G: warns when "
                         "the routed models cannot all be resident")
     parser.add_argument("--no-load", action="store_true", help="skip timing each model's cold load")
+    parser.add_argument("--resume", action="store_true",
+                        help="skip every model already measured on every task asked for")
     return parser.parse_args(argv)
 
 
@@ -419,6 +484,7 @@ def settings_for(catalog: dict[str, Any]) -> Settings:
         ollama_model=catalog["reference"],
         model_routing_enabled=True,
         model_catalog="",
+        narrate_enabled=False,
     )
 
 
@@ -445,10 +511,26 @@ def main(argv: list[str] | None = None, *, calibrator_factory: Callable[..., Cal
         return 1
 
     calibrator = (calibrator_factory or default_calibrator)(catalog, questions, measure_load=not args.no_load)
-    order = [calibrator.reference] + [m for m in wanted if m != calibrator.reference]
+    order: list[str] = []
+    for name in [calibrator.reference] + wanted:
+        if name not in order and not set(calibrator.twins(name)) & set(order):
+            order.append(name)
     for number, name in enumerate(order, start=1):
-        calibrator.say(f"[{number}/{len(order)}] {name}")
-        calibrator.record(name, calibrator.measure(name, args.tasks))
+        twins = calibrator.twins(name)
+        also = f" (and its twins {', '.join(twins)})" if twins else ""
+        done = calibrator.models[name]["measured"]
+        if args.resume and all(task in done for task in args.tasks):
+            calibrator.say(f"[{number}/{len(order)}] {name}{also}: measured already")
+            continue
+        calibrator.say(f"[{number}/{len(order)}] {name}{also}")
+        try:
+            measured = calibrator.measure(name, args.tasks)
+        except Exception as exc:  # noqa: BLE001 -- one model's failure is that model's
+            calibrator.say(f"  could not be measured: {exc}")
+            continue
+        calibrator.record(name, measured)
+        for twin in twins:
+            calibrator.record(twin, measured, measured_as=name)
         build_catalog.write_catalog(catalog, args.catalog)
 
     print()

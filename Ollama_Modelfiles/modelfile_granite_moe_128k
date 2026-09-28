@@ -1,0 +1,2 @@
+FROM granite3.1-moe:3b
+PARAMETER num_ctx 131072

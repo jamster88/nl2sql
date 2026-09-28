@@ -1,0 +1,2 @@
+FROM qwen3-coder-next
+PARAMETER num_ctx 262144

@@ -7,15 +7,18 @@
 ./start.sh --desktop    # the Java desktop client instead, in a window
 ```
 
-That is the whole thing. [`start.sh`](start.sh) pulls what is missing, starts
-every container, and puts an interface in front of you. Which interface is
-the only choice it asks you to make, and it has a default: with no flag it
-waits until the page actually answers and opens it in your browser at
-<http://localhost:8080>; with `--desktop` it fetches the desktop client's jar
-(building it if there is no published one for this machine), copies the API's
-certificate out for the client to verify against, and opens the window
-instead. Either way `--review` brings the feedback system up as well and
-opens the review page beside whichever you chose.
+That is the whole thing. [`start.sh`](start.sh) starts Docker if it is not
+running, and the Ollama on this machine that embeds each question, giving it
+the embedding model if it lacks it; pulls what is missing, and whatever this
+checkout ships that is newer than `.env` pins; starts every container; and
+puts an interface in front of you. Which interface is the only choice it asks
+you to make, and it has a default: with no flag it waits until the page
+actually answers and opens it in your browser at <http://localhost:8080>; with
+`--desktop` it fetches the desktop client's jar (building it if there is no
+published one for this machine), copies the API's certificate out for the
+client to verify against, and opens the window instead. Either way
+`--review` brings the feedback system up as well and opens the review page
+in a browser window of its own.
 
 First run is a few minutes and about 3 GB of images; afterwards it is
 seconds.
@@ -52,18 +55,20 @@ the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
 
 | | When | What it does |
 |---|---|---|
-| [`./start.sh`](start.sh) | You just want to use it | Runs the two below and opens an interface: the web one in your browser by default, or the Java desktop client with `--desktop`. `--review` brings the feedback system up as well and opens the review page beside either |
+| [`./start.sh`](start.sh) | You just want to use it | Starts Docker and this machine's Ollama if they are down, runs the two below -- `setup.sh` too whenever `.env` is older than this checkout -- and opens an interface: the web one in your browser by default, or the Java desktop client with `--desktop`. `--review` brings the feedback system up as well and opens the review page in a window of its own |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
-| [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
+| [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated*, that both models are reachable, and which models calls will be routed to |
 
-`start.sh` adds nothing of its own -- it runs the other two and opens an
-interface. Use them directly when you want the parts separately: a terminal
-session with no API, a different agent tag, no knowledge base.
+`start.sh` adds nothing to the stack itself -- that is the other two
+scripts' -- but it starts what the stack runs on, keeps `.env` pinned to what
+this checkout ships, and opens an interface. Use the other two directly when
+you want the parts separately: a terminal session with no API, a different
+agent tag, no knowledge base.
 
 ```bash
-./start.sh --review        # and the review interface, in a second page
+./start.sh --review        # and the review interface, in a window of its own
 ./start.sh --desktop       # the Java desktop client instead of the web one
-./start.sh --desktop --review   # the window, and the review page beside it
+./start.sh --desktop --review   # the window, and the review page in a browser
 ./start.sh --feedback      # keep verdicts, without the review interface
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
@@ -74,9 +79,13 @@ BROWSER=firefox ./start.sh # open it with something in particular
 
 `--review` is the whole feedback system in one command: the staging database
 that keeps verdicts, the service that promotes them into the golden question
-set, and a second page at <http://localhost:8081> beside the first. Whether
-that lands in a new window or a new tab is the browser's decision -- neither
-`open` nor `xdg-open` has a say in it.
+set, and a second page at <http://localhost:8081> in a browser window of its
+own. `open` and `xdg-open` cannot ask for a window -- they hand the browser a
+link and its settings pick a tab or a window -- so `start.sh` asks the
+default browser itself: Safari through AppleScript, which macOS lets a
+terminal do once you have said it may, and Firefox, Chrome and the browsers
+built on Chromium with their own new-window flag. Any other browser, or one
+`BROWSER` names, is handed the page the way it would be handed any link.
 
 Afterwards, whichever route you took:
 
@@ -328,23 +337,40 @@ minutes running `npm ci` inside a container.
 
 ### Upgrading an existing checkout
 
-`.env` pins the image tags, and neither `launch.sh` nor `start.sh` rewrites
-it -- so a machine set up on an earlier tag keeps running that tag until
-`setup.sh` is run again:
+`.env` pins the image tags. `start.sh` notices when this checkout ships
+newer ones than `.env` pins -- or when the interface asked for was never
+pinned, and would be built from source -- and runs `setup.sh` again before
+anything starts, so after pulling a new checkout the one command is still
+one command:
+
+```bash
+git pull
+./start.sh --review
+```
+
+`launch.sh` does not rewrite `.env`. It says the agent is older than the
+checkout, and re-running `setup.sh` is the cure:
 
 ```bash
 ./setup.sh --review     # re-pins the tags, and pulls the two review images
-./start.sh --review
+./launch.sh --review
 ```
 
 Re-running it is safe. It rewrites `.env` from scratch, but carries over what
 the last run chose -- the Ollama host, the models, the port, and whether the
-web interface and the review images were pinned -- so only the tags change.
-The previous file is still kept as `.env.bak`.
+web interface, the review images and the desktop client were pinned -- and
+keeps every other setting it finds there, an `API_TOKEN` or a port set by
+hand, so only the tags change. The previous file is still kept as `.env.bak`.
 
-Without that step, `./start.sh --review` on an older checkout brings up an
-agent that has no feedback routes, and the review interface sits at an empty
-queue forever.
+`start.sh` leaves `.env` alone when it pins no agent image (the agent is
+built from this checkout), when it pins one from another repository, or when
+`AGENT_IMAGE_TAG` is exported for the run: those are choices rather than
+leftovers.
+
+Without the re-pin, an older `.env` brings up an agent that predates what the
+checkout expects of it -- no feedback routes before `v4_4`, so the review
+interface sits at an empty queue forever, and no model routing before
+`v5_2`.
 
 Going from `v5` to `v5_1` or later, the same two commands also bring up two new
 containers, `nl2sql-correctionsdb` and `nl2sql-completionsdb`, each on a new
@@ -635,7 +661,8 @@ right. This is where those answers go.
 
 That is the whole thing: databases, the API, the web interface, the staging
 database, the corrections and completions stores, the review service and the
-review interface -- and both pages opened in your browser. [`./launch.sh --review`](launch.sh) is the same
+review interface -- and both pages opened in your browser, the review page in
+a window of its own. [`./launch.sh --review`](launch.sh) is the same
 containers without the browser step.
 
 Without it, a verdict stays in the browser and nothing is lost -- the buttons
@@ -950,6 +977,11 @@ whose weights have not -- and commit the result like code.
 [`models/README.md`](models/README.md) has the rules, the probes and the
 catalog's shape.
 
+`launch.sh`, and so `start.sh`, asks the agent image on every start which
+models it will route to, and says: how many models the calls are shared
+between, or why every one goes to `OLLAMA_MODEL` -- the catalog describes
+another host, nothing in it has been measured, or routing is off.
+
 ## Synthetic data generator
 
 A synthetic dataset generator for a grocery retail data model, along with the schema it implements, lives in [`data_gen/`](data_gen/README.md) -- see that README for details, setup, and usage.
@@ -1175,8 +1207,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2809 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3284, including ones that build and run containers
+pytest                                          # 2865 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3342, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1185,7 +1217,7 @@ pytest --run-docker --run-node --run-java       # all 3284, including ones that 
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows, and the review interface's own 128-test review GUI suite run from here |
@@ -1193,7 +1225,7 @@ pytest --run-docker --run-node --run-java       # all 3284, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 449 tests behind `--run-docker` are the ones that need a working daemon:
+The 451 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, query the four live databases, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1211,7 +1243,7 @@ binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
 without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 449 also need the **embedding host**: a local Ollama
+Twenty-eight of those 451 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1388,13 +1420,14 @@ script, by a measurement of their own:
   ```
 
   `start.sh`, `setup.sh` and `launch.sh` are driven against fake `docker`,
-  `curl`, `sleep`, `uname`, `grep` and browser binaries; the seven scripts in
+  `curl`, `sleep`, `uname`, `grep`, `systemctl`, `ollama`, `defaults`,
+  `osascript`, `xdg-settings` and browser binaries; the seven scripts in
   [`rag/`](rag) the same way; `docker/apitest/smoke.sh` against a real HTTPS
   server; `docker/init_db.sh` -- which otherwise runs only inside `docker
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1043 of 1043**.
+  the traces mention -- **1181 of 1181**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -1462,7 +1495,11 @@ script, by a measurement of their own:
   an opener that is wrong for Linux is otherwise invisible until someone on
   Linux runs it. And WSL is told apart by reading `/proc/version`, which a
   Mac does not have, so a `grep` that answers for that one path and defers to
-  the real one for everything else makes that branch reachable too.
+  the real one for everything else makes that branch reachable too. The
+  default browser is read from LaunchServices on a Mac and from
+  `xdg-settings` on Linux, and both are faked, so the new-window command of
+  every browser family `start.sh` knows runs on whichever machine the suite
+  does.
 * **`docker/apitest/smoke.sh`**, the outside client, is run *for real* by
   [`tests/api/test_smoke_script.py`](tests/api/test_smoke_script.py): bash,
   curl and jq against a live HTTPS server built from `create_app` with a

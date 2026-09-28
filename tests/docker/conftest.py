@@ -36,6 +36,11 @@ read_env() {  # read_env KEY DEFAULT -- reflects whatever setup.sh wrote to .env
 case "$1" in
     info)
         [[ -n "${FAKE_NO_DAEMON:-}" ]] && exit 1
+        # Down until start.sh starts Docker: the fake `open -a Docker` and the
+        # fake `systemctl --user start docker-desktop` leave this marker.
+        if [[ -n "${FAKE_DAEMON_STOPPED:-}" && ! -e "${FAKE_LOG%/*}/docker-started" ]]; then
+            exit 1
+        fi
         exit 0 ;;
     version) echo "99.9.9"; exit 0 ;;
     pull)
@@ -112,6 +117,44 @@ case "$1" in
             printf 'not really a certificate\n' > "${@: -1}"
             exit 0
         fi
+        if [[ "$*" == "config" || "$*" == *" config" ]]; then
+            # Like the real one, a service behind a profile is left out unless
+            # that profile is named -- and the agent is behind "agent". A fake
+            # that answered for it regardless is how both scripts spent every
+            # release reading their own defaults instead of .env. One write,
+            # like the real thing: a reader that stops early must not be able
+            # to SIGPIPE us mid-stream.
+            if [[ "$*" == *"--profile agent"* ]]; then
+                printf '    OLLAMA_BASE_URL: %s\n    OLLAMA_MODEL: %s\n    EMBED_BASE_URL: %s\n    EMBED_MODEL: %s\n' \
+                    "$(read_env OLLAMA_BASE_URL http://192.168.10.82:11434)" \
+                    "$(read_env OLLAMA_MODEL qwen3.8-256k)" \
+                    "$(read_env EMBED_BASE_URL http://host.docker.internal:11434)" \
+                    "$(read_env EMBED_MODEL bge-m3)"
+            fi
+            exit 0
+        fi
+        if [[ "$*" == *"run "*"build_table"* ]]; then
+            # launch.sh asking the agent image which models it will route to.
+            # FAKE_ROUTING is the probe's whole answer, one line per field;
+            # the default is a host with no catalog of its own, as anyone's
+            # but the maintainer's is.
+            if [[ -n "${FAKE_ROUTING_OLD_IMAGE:-}" ]]; then
+                echo "ModuleNotFoundError: No module named 'nl2sql_agent.router'" >&2
+                exit 1
+            fi
+            if [[ -n "${FAKE_ROUTING_BROKEN:-}" ]]; then
+                printf '%s\n' "Error response from daemon: $FAKE_ROUTING_BROKEN" >&2
+                exit 125
+            fi
+            routing="${FAKE_ROUTING:-}"
+            if [[ -z "$routing" ]]; then
+                routing="ROUTE on
+ROUTE models qwen3.8-256k:latest
+ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is pointed at http://elsewhere:11434: ignored"
+            fi
+            printf '%s\n' "$routing"
+            exit 0
+        fi
         if [[ "$*" == *" logs "* || "$*" == *" logs" ]]; then
             # What the API container said, for the branch that tells an image
             # without the REST API apart from any other startup failure.
@@ -155,15 +198,6 @@ case "$1" in
                     echo "${FAKE_ROW_COUNT-194101}"
                 fi
                 exit 0 ;;
-            config)
-                # One write, like the real thing: a reader that stops early
-                # must not be able to SIGPIPE us mid-stream.
-                printf '    OLLAMA_BASE_URL: %s\n    OLLAMA_MODEL: %s\n    EMBED_BASE_URL: %s\n    EMBED_MODEL: %s\n' \
-                    "$(read_env OLLAMA_BASE_URL http://192.168.10.82:11434)" \
-                    "$(read_env OLLAMA_MODEL qwen3.8-256k)" \
-                    "$(read_env EMBED_BASE_URL http://host.docker.internal:11434)" \
-                    "$(read_env EMBED_MODEL bge-m3)"
-                exit 0 ;;
             *) exit 0 ;;
         esac ;;
     *) exit 0 ;;
@@ -180,6 +214,21 @@ done
 # Ollama probe down.
 if [[ -n "${FAKE_GUI_DOWN:-}" && "$*" == *":${FAKE_GUI_PORT:-8080}"* ]]; then exit 7; fi
 if [[ -n "${FAKE_OLLAMA_DOWN:-}" ]]; then exit 7; fi
+
+# The Ollama on this machine, which start.sh starts when nothing answers.
+# FAKE_LOCAL_OLLAMA_DOWN is how many of its probes fail before it answers --
+# a count rather than a marker left by whatever started it, because that is
+# started in the background and a marker would race the probes.
+if [[ -n "${FAKE_LOCAL_OLLAMA_DOWN:-}" && "$*" == *"localhost:11434/api/tags"* ]]; then
+    counter="${FAKE_LOG%/*}/local-ollama-probes"
+    probes=$(( $(cat "$counter" 2>/dev/null || echo 0) + 1 ))
+    echo "$probes" > "$counter"
+    if [[ "$probes" -le "$FAKE_LOCAL_OLLAMA_DOWN" ]]; then exit 7; fi
+fi
+if [[ "$*" == */api/pull* ]]; then
+    [[ -n "${FAKE_PULL_FAILS:-}" ]] && exit 22
+    exit 0
+fi
 
 # launch.sh probes /readyz *through* a proxy to find out whether nginx is
 # still trusting a certificate that has since been reissued -- the container
@@ -248,8 +297,64 @@ FAKE_SLEEP = "#!/usr/bin/env bash\nexit 0\n"
 #: into the sandbox, so the platform branch start.sh takes is the one that
 #: gets exercised rather than one chosen by the test.
 FAKE_BROWSER = r"""#!/usr/bin/env bash
+# `open -a <app>` starts an application rather than a page: Docker and Ollama
+# are the two start.sh starts. Logged apart from pages, so a test counting the
+# pages opened counts pages; FAKE_APPS_MISSING names the ones not installed.
+if [[ "$(basename "$0")" == "open" && "$1" == "-a" ]]; then
+    printf 'app %s\n' "$2" >> "$FAKE_LOG"
+    case " ${FAKE_APPS_MISSING:-} " in *" $2 "*) exit 1 ;; esac
+    touch "${FAKE_LOG%/*}/$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')-started"
+    exit 0
+fi
+# `open -n -b <bundle> --args ...` asks one browser for a window of its own.
+if [[ "$(basename "$0")" == "open" && "$1" == "-n" ]]; then
+    printf 'window open %s\n' "$*" >> "$FAKE_LOG"
+    exit ${FAKE_WINDOW_EXIT:-0}
+fi
 printf 'browser %s %s\n' "$(basename "$0")" "$*" >> "$FAKE_LOG"
 exit ${FAKE_BROWSER_EXIT:-0}
+"""
+
+#: macOS's record of which application opens which kind of link. With
+#: FAKE_MAC_BROWSER unset nothing is recorded for https, as on a Mac where
+#: nobody ever chose, and the browser is the one macOS came with.
+FAKE_DEFAULTS = r"""#!/usr/bin/env bash
+printf '(\n        {\n        LSHandlerRoleAll = "com.valvesoftware.steam";\n        LSHandlerURLScheme = steam;\n    },\n'
+if [[ -n "${FAKE_MAC_BROWSER:-}" ]]; then
+    printf '        {\n        LSHandlerPreferredVersions =         {\n            LSHandlerRoleAll = "-";\n        };\n'
+    printf '        LSHandlerRoleAll = "%s";\n        LSHandlerURLScheme = https;\n    },\n' "$FAKE_MAC_BROWSER"
+fi
+printf '        {\n        LSHandlerRoleAll = "com.apple.mail";\n        LSHandlerURLScheme = mailto;\n    }\n)\n'
+"""
+
+#: AppleScript, which is how Safari is asked for a window. FAKE_OSASCRIPT_EXIT
+#: is macOS saying no to a terminal that asked to control it.
+FAKE_OSASCRIPT = r"""#!/usr/bin/env bash
+printf 'window osascript %s\n' "$*" >> "$FAKE_LOG"
+exit ${FAKE_OSASCRIPT_EXIT:-0}
+"""
+
+#: The Linux desktop's answer to "which browser", as a .desktop file name.
+FAKE_XDG_SETTINGS = r"""#!/usr/bin/env bash
+printf '%s\n' "${FAKE_LINUX_BROWSER:-}"
+"""
+
+#: A browser's own command, run with --new-window.
+FAKE_WINDOW_BROWSER = r"""#!/usr/bin/env bash
+printf 'window %s %s\n' "$(basename "$0")" "$*" >> "$FAKE_LOG"
+"""
+
+#: Docker Desktop for Linux, which runs as a user service.
+FAKE_SYSTEMCTL = r"""#!/usr/bin/env bash
+printf 'systemctl %s\n' "$*" >> "$FAKE_LOG"
+[[ -n "${FAKE_SYSTEMCTL_FAILS:-}" ]] && exit 5
+touch "${FAKE_LOG%/*}/docker-started"
+exit 0
+"""
+
+#: The Ollama command line, for a machine without the desktop application.
+FAKE_OLLAMA = r"""#!/usr/bin/env bash
+printf 'ollama %s\n' "$*" >> "$FAKE_LOG"
 """
 
 #: `uname -s` decides which opener start.sh reaches for, so on a Mac the
@@ -546,28 +651,44 @@ def run_start(tmp_path: Path):
     for name, body in (
         ("docker", FAKE_DOCKER), ("curl", FAKE_CURL), ("sleep", FAKE_SLEEP),
         ("uname", FAKE_UNAME), ("grep", FAKE_GREP), ("java", FAKE_JAVA),
+        ("systemctl", FAKE_SYSTEMCTL), ("ollama", FAKE_OLLAMA),
     ):
         path = bin_dir / name
         path.write_text(body)
         os.chmod(path, 0o755)
 
+    # Everything that opens a page or a window, and everything start.sh asks
+    # which browser that should be -- all ahead of the real ones on PATH, for
+    # the reason given below.
     browser_dir = tmp_path / "browsers"
     browser_dir.mkdir()
-    for name in BROWSER_OPENERS:
+    for name, body in (
+        *((opener, FAKE_BROWSER) for opener in BROWSER_OPENERS),
+        ("defaults", FAKE_DEFAULTS), ("osascript", FAKE_OSASCRIPT),
+        ("xdg-settings", FAKE_XDG_SETTINGS),
+        ("firefox", FAKE_WINDOW_BROWSER), ("google-chrome", FAKE_WINDOW_BROWSER),
+    ):
         path = browser_dir / name
-        path.write_text(FAKE_BROWSER)
+        path.write_text(body)
         os.chmod(path, 0o755)
 
     log = tmp_path / "calls.log"
     log.touch()
 
+    # A machine set up by this checkout, so the default run re-pins nothing.
+    # The tests about a .env that is behind write their own.
+    shipped = next(
+        line.split('"')[1]
+        for line in (REPO_ROOT / "setup.sh").read_text().splitlines()
+        if line.startswith("AGENT_TAG=")
+    )
     DEFAULT_ENV_FILE = (
         "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
         "IMAGE_TAG=v1\n"
         "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
-        "AGENT_IMAGE_TAG=v4_2\n"
+        f"AGENT_IMAGE_TAG={shipped}\n"
         "GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
-        "GUI_IMAGE_TAG=v4_2\n"
+        f"GUI_IMAGE_TAG={shipped}\n"
         "VECTOR_IMAGE_NAME=mcfaddja/nl2sql-rag-vectordb\n"
         "VECTOR_IMAGE_TAG=v3\n"
         "CONTEXT_IMAGE_NAME=mcfaddja/nl2sql-rag-chunkdb\n"
@@ -576,7 +697,7 @@ def run_start(tmp_path: Path):
     )
 
     def _run(*args: str, env: dict | None = None, env_file: str | None = DEFAULT_ENV_FILE,
-             timeout: int = 120) -> SetupRun:
+             timeout: int = 120, without: tuple[str, ...] = ()) -> SetupRun:
         dotenv = workdir / ".env"
         if env_file is None:
             dotenv.unlink(missing_ok=True)
@@ -589,6 +710,15 @@ def run_start(tmp_path: Path):
         # on the developer's desktop -- which is exactly what happened the
         # first time this fixture was written.
         run_env["PATH"] = f"{browser_dir}:{bin_dir}:{run_env['PATH']}"
+        # A command this machine does not have. Deleting the fake is not
+        # enough when the real one is further along PATH -- `ollama` is, on
+        # the machine this was written on -- so PATH is cut back to the
+        # system's own directories too, which hold neither.
+        if without:
+            for name in without:
+                for directory in (browser_dir, bin_dir):
+                    (directory / name).unlink(missing_ok=True)
+            run_env["PATH"] = f"{browser_dir}:{bin_dir}:/usr/bin:/bin"
         run_env["FAKE_LOG"] = str(log)
         # Otherwise the developer's own setting picks the opener and the
         # platform branch under test never runs.

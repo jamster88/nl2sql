@@ -224,7 +224,8 @@ works in a shell pipeline. Pull out just the SQL with
 ## Asking in a browser instead
 
 Everything above is the terminal. There is also a web interface, and one
-command that brings up everything it needs and opens it:
+command that brings up everything it needs -- Docker and this machine's
+Ollama included, if they are not running -- and opens it:
 
 ```bash
 ./start.sh

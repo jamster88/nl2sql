@@ -24,10 +24,16 @@ their own and are listed under the release they shipped with. A version marked
 
 **Updated**
 - The routing settings, and a token cap and timeout on every model call, read from the environment and forwarded by compose, which mounts the catalog.
+- `start.sh` starts Docker and this machine's Ollama when they are down, gives that Ollama the embedding model, and re-pins a `.env` older than the checkout.
+- `start.sh --review` opens the review page in a browser window of its own.
+- `launch.sh` says which models the calls will be routed to, or why they all go to one.
+- Re-running `setup.sh` keeps every setting in `.env` it does not write itself.
 - All nine app image tags published as `v5_2`.
 
 **Fixed**
 - A model call had neither an output cap nor a timeout, so a model that degenerated could generate without end.
+- `launch.sh` and `setup.sh` checked the default chat host and model whatever `.env` said.
+- Re-running `setup.sh` dropped settings added to `.env` by hand, such as `API_TOKEN`.
 
 ## v5_1_2 (5.1.2) -- 2026-09-26
 

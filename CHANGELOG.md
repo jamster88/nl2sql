@@ -40,7 +40,10 @@ that task at that rung. A repair climbs the ladder; a routed model that
 cannot answer falls back to `OLLAMA_MODEL`. The catalog it routes from is
 built by a scanner that takes any Ollama host by its address, and measured by
 a calibrator that runs each model through a probe per task. With no catalog
-for its host the agent behaves as v5.1. Six departures from the spec, each
+for its host the agent behaves as v5.1. `start.sh` now starts what the stack
+runs on -- Docker, and the Ollama on this machine -- brings a `.env` that
+predates the checkout up to date, and opens the review page in a browser
+window of its own; `launch.sh` says which models the calls will go to. Six departures from the spec, each
 found by running it, are recorded in `agent/README.md`: the context window
 is per model, the generator's score is read from the answer contract, a
 catalog of another host is ignored rather than refused, the Supervisor and
@@ -75,10 +78,37 @@ question's similarity, not the fused score.
 - `arch_diagrams/generate.py` -- the v5.2 builder; step tags that wrap, for it alone.
 - `.coveragerc` -- `models/` measured.
 - `README.md`, `agent/README.md`, `agent/USAGE.md`, `agent/API.md`, `benchmarks/README.md` -- model routing, the catalog and calibration, the new settings, a `v5_2` row in the tag table, coverage and test counts.
+- `start.sh` -- starts Docker Desktop when its daemon is down (`open -a Docker`
+  on macOS, the `docker-desktop` user service on Linux) and waits for it;
+  starts the Ollama on this machine when the embedding model is served from
+  here and nothing answers, and pulls that model into it when it is missing;
+  re-runs `setup.sh` when `.env` pins an older agent than the checkout ships,
+  or never pinned the interface asked for; and opens the review page in a
+  window of its own, asking the default browser directly -- Safari through
+  AppleScript, Firefox, Chrome and the Chromium browsers with their own
+  new-window flag -- and falling back to the generic opener.
+- `launch.sh` -- asks the agent image for the routing table it will build, and
+  prints how many models the calls are shared between or why every one goes
+  to `OLLAMA_MODEL`; a catalog the agent cannot read is a warning.
+- `setup.sh` -- keeps every setting of the previous `.env` it does not write
+  itself.
+- `tests/docker/` -- fakes for `systemctl`, `ollama`, `defaults`, `osascript`,
+  `xdg-settings` and the browsers' own commands; a fake `docker compose
+  config` that leaves out a service whose profile is not named, as the real
+  one does; and each script's helper run against the real compose file.
 - Version 5.2.0 in every declaration; `setup.sh` pins `v5_2`.
 
 ### Fixed
 - A model call had neither an output cap nor a timeout, so a model that degenerated could generate without end -- Ollama shifts a full window rather than stopping -- and hold its question with it. Found when a calibration probe ran for over an hour; every client now carries `OLLAMA_NUM_PREDICT` and `OLLAMA_TIMEOUT`.
+
+- `launch.sh` and `setup.sh` read the agent's settings from `docker compose
+  config` without naming the agent's profile, so the agent was left out, the
+  read found nothing, and both checked the default chat host and model
+  whatever `.env` said. Present since the first `launch.sh`, and hidden by the
+  tests' fake `docker`, which answered for the agent whatever profile was
+  named.
+- Re-running `setup.sh` moved any setting it does not write itself -- an
+  `API_TOKEN`, a port -- into `.env.bak` and left it out of the new `.env`.
 
 ### Published
 - `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui` `:v5_2` (amd64, arm64); `nl2sql-desktop-build:v5_2-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-09-28 UTC).

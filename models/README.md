@@ -23,8 +23,9 @@ goes to `OLLAMA_MODEL`, as in v5.1.
 **A catalog describes one host.** The committed [`catalog.json`](catalog.json)
 is the one built and calibrated on the host this checkout was developed
 against. Pointed at any other host, the agent ignores it -- with a note in
-its routing table -- and sends every call to `OLLAMA_MODEL` until that host
-has a catalog of its own:
+its routing table, which `launch.sh` and `start.sh` print on every start --
+and sends every call to `OLLAMA_MODEL` until that host has a catalog of its
+own:
 
 ```bash
 python3 models/build_catalog.py <your-host>      # what your host serves

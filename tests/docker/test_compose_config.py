@@ -71,6 +71,36 @@ def test_agent_service_is_hidden_without_the_agent_profile(default_config: dict)
     assert "vectordb" in default_config["services"]
 
 
+@pytest.mark.parametrize("script", ["setup.sh", "launch.sh"])
+def test_the_scripts_read_the_agents_settings_from_real_compose(script: str):
+    """The fact above, as the scripts meet it.
+
+    Both check the chat and embedding models by reading back what compose
+    will hand the agent. Their fake `docker` answered for the agent whatever
+    profile was named, and the real one does not -- so until v5.2 both read
+    nothing, fell back to their own defaults, and checked the maintainer's
+    host and model whatever .env said. This runs each script's own helper
+    against the real compose file.
+    """
+    source = (REPO_ROOT / script).read_text()
+    helper = re.search(r"^compose_value\(\) \{\n.*?^\}\n", source, re.MULTILINE | re.DOTALL)
+    assert helper, f"{script} no longer defines compose_value"
+    env = {
+        **os.environ,
+        "OLLAMA_BASE_URL": "http://chat.invalid:11434",
+        "OLLAMA_MODEL": "some-chat-model",
+        "EMBED_MODEL": "some-embedding-model",
+    }
+    result = subprocess.run(
+        ["bash", "-c", "set -euo pipefail\n" + helper.group(0)
+         + "compose_value OLLAMA_BASE_URL; echo; compose_value OLLAMA_MODEL; echo; "
+           "compose_value EMBED_MODEL; echo"],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=30, env=env,
+    )
+    assert result.stdout.split() == [
+        "http://chat.invalid:11434", "some-chat-model", "some-embedding-model"], result.stderr
+
+
 def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
     assert set(agent_profile_config["services"]) == {
         "postgres", "vectordb", "chunkdb", "agent"

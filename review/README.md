@@ -344,7 +344,7 @@ store is refused -- promotion and the other store carry on.
 That is the whole thing from cold: the databases, the API, the web interface
 people vote in, the staging database, the corrections and completions stores,
 this service, and the review interface -- then <http://localhost:8080> and
-<http://localhost:8081> in your browser.
+<http://localhost:8081> in your browser, the second in a window of its own.
 
 The same containers without the browser step, or a smaller subset:
 

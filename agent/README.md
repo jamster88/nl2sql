@@ -348,6 +348,12 @@ it was ignored, and routing starts once
 [`models/calibrate.py`](../models/calibrate.py) have described that host
 ([`models/README.md`](../models/README.md)).
 
+`launch.sh` -- and so `start.sh` -- asks the agent image for this table on
+every start, built exactly as the agent builds it, and prints how many
+models the calls are shared between or why every one goes to
+`OLLAMA_MODEL`. A catalog the agent cannot read, which would stop it
+starting, is a warning there rather than a surprise at the first question.
+
 Two names for one model -- a local build that only bakes in a bigger window,
 say -- share a behaviour fingerprint in the catalog, and the table routes to
 at most one of them, so the same weights are never loaded twice.

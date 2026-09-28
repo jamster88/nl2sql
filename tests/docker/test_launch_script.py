@@ -149,6 +149,16 @@ def test_an_env_override_of_the_chat_host_is_followed(run_launch):
     assert result.called("curl http://elsewhere:11434/api/tags")
 
 
+def test_the_settings_are_read_with_the_agents_profile_named(run_launch):
+    """The agent is behind a compose profile of its own, and `compose config`
+    leaves out a service whose profile is not named. The fake answers the way
+    the real one does, which is how this came to light: every release until
+    v5.2 checked the default host and model, whatever .env said."""
+    result = run_launch()
+    assert result.called("compose --profile agent config")
+    assert not [call for call in result.calls if call == "compose config"]
+
+
 def test_an_unreachable_chat_host_warns_that_questions_will_fail(run_launch):
     result = run_launch(env={"FAKE_OLLAMA_DOWN": "1"})
     assert result.returncode == 0, "an unreachable model host is a warning, not a failure"
@@ -955,3 +965,70 @@ def test_an_unpinned_checkout_looks_for_a_local_tag(run_launch):
     assert result.calls_matching("image inspect nl2sql-desktop-build:local-linux")
     assert "Building it for linux" in result.output
 
+
+
+# ---------------------------------------------------------------------------
+# Model routing
+#
+# The agent works its routing table out once at start-up. launch.sh asks the
+# same image to work it out the same way, so a table that fell back to one
+# model is seen before the first question rather than in a benchmark.
+# ---------------------------------------------------------------------------
+
+
+def test_the_routing_table_is_asked_of_the_agent_image_itself(run_launch):
+    result = run_launch()
+    # The probe is several lines of Python, so it is several lines of the
+    # call log; the command in front of it is one.
+    # Nothing it needs is in the databases, so none of them is started for it,
+    # and there is no terminal to give it.
+    probes = result.calls_matching("compose run --rm --no-deps -T --entrypoint python agent -c")
+    assert len(probes) == 1
+    assert result.called("build_table(s, catalog")
+    assert "Checking model routing" in result.output
+
+
+def test_a_table_with_several_models_names_them_anchor_first(run_launch):
+    routing = "ROUTE on\nROUTE models chat:latest light:latest mid:latest"
+    result = run_launch(env={"FAKE_ROUTING": routing})
+    assert "model routing: 3 models -- chat:latest (OLLAMA_MODEL), light:latest, mid:latest" in result.output
+
+
+def test_a_catalog_for_another_host_is_reported_with_how_to_build_one(run_launch):
+    """Anyone's host but the maintainer's: the committed catalog is ignored,
+    and the note the agent writes says what to run instead."""
+    result = run_launch()
+    assert "model routing: every call goes to qwen3.8-256k:latest" in result.output
+    assert "the catalog describes http://192.168.10.82:11434" in result.output
+
+
+def test_routing_switched_off_says_so(run_launch):
+    result = run_launch(env={"FAKE_ROUTING": "ROUTE off\nROUTE models qwen3.8-256k:latest"})
+    assert "model routing is off (MODEL_ROUTING_ENABLED)" in result.output
+
+
+def test_a_table_that_names_no_models_falls_back_to_the_chat_model(run_launch):
+    result = run_launch(env={"FAKE_ROUTING": "ROUTE on"})
+    assert "model routing: every call goes to qwen3.8-256k" in result.output
+
+
+def test_a_catalog_the_agent_cannot_read_is_a_warning_about_the_agent(run_launch):
+    """MODEL_CATALOG naming a file that is not there stops the agent at
+    start-up. That is worth a warning here, before anyone asks it anything."""
+    routing = "ROUTE error MODEL_CATALOG names /app/models/catalog.json, which cannot be read"
+    result = run_launch(env={"FAKE_ROUTING": routing})
+    assert "the agent will not start with these settings: MODEL_CATALOG names" in result.output
+
+
+def test_an_agent_image_older_than_routing_says_how_to_get_a_newer_one(run_launch):
+    result = run_launch(env={"FAKE_ROUTING_OLD_IMAGE": "1"})
+    assert result.returncode == 0
+    assert "the pinned agent image predates model routing" in result.output
+    assert "./start.sh does it for you" in result.output
+
+
+def test_a_probe_that_would_not_run_says_what_docker_said(run_launch):
+    result = run_launch(env={"FAKE_ROUTING_BROKEN": "no such image"})
+    assert result.returncode == 0
+    assert "could not ask the agent image which models it will route to" in result.output
+    assert "no such image" in result.output

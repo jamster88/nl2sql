@@ -292,8 +292,10 @@ if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
 fi
 
 step "Writing .env"
+had_env=0
 if [[ -f .env ]]; then
     mv .env .env.bak
+    had_env=1
     info "existing .env moved to .env.bak"
 fi
 {
@@ -343,6 +345,32 @@ fi
     if [[ -n "$EMBED_MODEL_NAME" ]]; then echo "EMBED_MODEL=$EMBED_MODEL_NAME"; fi
     if [[ -n "$POSTGRES_PORT" ]]; then echo "POSTGRES_PORT=$POSTGRES_PORT"; fi
 } > .env
+
+# Everything else the previous file held -- a port, an API token, a setting
+# added by hand -- is kept as it was. This script writes the keys above and
+# has no opinion about the rest, and dropping them would make re-running it,
+# which start.sh now does when a checkout ships newer images, quietly lose
+# whatever someone had added since. Only from the file just moved aside: an
+# older .env.bak is a backup, not a source.
+keep_settings() {  # keep_settings -- append each KEY=value on stdin .env lacks; print how many
+    local line kept=0
+    while IFS= read -r line; do
+        if grep -q "^${line%%=*}=" .env; then continue; fi
+        if [[ $kept -eq 0 ]]; then echo "# Kept from the previous .env" >> .env; fi
+        printf '%s\n' "$line" >> .env
+        kept=$((kept + 1))
+    done
+    printf '%s' "$kept"
+}
+
+if [[ $had_env -eq 1 ]]; then
+    # Settings only: comments and blank lines are this script's to write.
+    # grep also ends the last line, which an editor may have left unended.
+    kept=$( (grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env.bak || true) | keep_settings)
+    if [[ $kept -gt 0 ]]; then
+        info "kept $kept other setting(s) from the previous .env"
+    fi
+fi
 info "compose will use $POSTGRES_IMAGE:$POSTGRES_TAG"
 
 # --- Agent image -----------------------------------------------------------
@@ -487,9 +515,11 @@ step "Checking Ollama"
 # Read back whatever compose will actually hand the agent. awk consumes the
 # whole stream rather than exiting on the first match: under `set -o pipefail`
 # an early exit can take the pipeline down with SIGPIPE (141) if the producer
-# is still writing.
+# is still writing. `--profile agent`, because the agent is behind a profile of
+# its own and `compose config` leaves out a service whose profile is not named:
+# without it, the checks below read the defaults, not what .env was given.
 compose_value() {
-    docker compose config 2>/dev/null |
+    docker compose --profile agent config 2>/dev/null |
         awk -v key="$1:" '$1 == key && !seen { print $2; seen = 1 }'
 }
 

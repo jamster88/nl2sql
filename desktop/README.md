@@ -54,7 +54,7 @@ against the pydantic field it mirrors, so the hand-written copy cannot drift.
 
 ```bash
 ./start.sh --desktop                 # everything, then the window
-./start.sh --desktop --review        # and the review interface in a browser
+./start.sh --desktop --review        # and the review interface in a browser window
 ./launch.sh --desktop                # build it and stop there
 java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
 ```
@@ -63,6 +63,10 @@ java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
 started and no browser is opened for it. `--review` still opens the review
 page, because there is no desktop equivalent of it and there is not going to
 be one — curation happens in one place.
+
+A `.env` that has never pinned the client's image — one written by a plain
+`./setup.sh` — makes `start.sh --desktop` run `setup.sh --desktop` first, so
+the jar is pulled for this platform rather than built here with Maven.
 
 The window is left running when the command returns, and is still there when
 the terminal is closed. Those are two different problems: a process

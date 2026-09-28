@@ -1,16 +1,24 @@
 # Model catalog
 
 What the Ollama host serves, and which tasks -- at which complexity -- each
-model is presumed suited to. It is the list the Model Router of
+model is suited to. It is the list the Model Router of
 [arch5.2](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md) (section 15)
-routes from. Nothing reads it yet: the router is the next step, and until it
-exists every model call still goes to `OLLAMA_MODEL`.
+routes from: compose mounts [`catalog.json`](catalog.json) into the agent and
+the API, and [`agent/README.md`](../agent/README.md#model-routing-arch52) says
+what the router does with it. Two scripts make it:
 
 ```bash
 python3 models/build_catalog.py                  # the host the agent uses -> models/catalog.json
+python3 models/build_catalog.py 192.168.1.20     # any Ollama host, by its address alone
 python3 models/build_catalog.py --no-library     # the host's own answers only; nothing goes to ollama.com
-python3 models/build_catalog.py --host http://gpu-box:11434 --out /tmp/catalog.json
+.venv/bin/python models/calibrate.py             # measure what each model is suited to
 ```
+
+`build_catalog.py` lists the host and says what each model *is*: its facts,
+its library page, and a prior -- a guess at what it is suited to. Until
+`calibrate.py` has measured a model, the router does not route to it on that
+guess alone, so the committed, uncalibrated catalog sends every call to
+`OLLAMA_MODEL`, as v5.1 did.
 
 It needs only the standard library and Python 3.9 or later, so it runs with
 the `python3` a Mac already has, outside any image or virtualenv. It takes a
@@ -18,9 +26,10 @@ few seconds. Re-run it whenever the host's models change, read the diff, and
 commit [`catalog.json`](catalog.json) like code: the router will route from
 what is committed, not from what the host happens to hold that day.
 
-| Flag | Default | |
+| Argument | Default | |
 |---|---|---|
-| `--host` | `OLLAMA_BASE_URL` from the environment, then from `.env`, then the agent's own default | the Ollama host to catalogue |
+| *address* | `OLLAMA_BASE_URL` from the environment, then from `.env`, then the agent's own default | the Ollama host: an IP address (`192.168.1.20`), a name (`gpu-box`), `host:port`, an IPv6 address, or a URL. Without a scheme it is http, and without a port Ollama's own, 11434; a URL with a scheme is taken as written, so a proxy on 443 works |
+| `--host` | | the same, as a flag |
 | `--reference` | `OLLAMA_MODEL`, the same way; then `qwen3.8-256k` | the model the agent runs every call on today, which calibration will measure the others against |
 | `--out` | `models/catalog.json` | where to write it |
 | `--no-library` | off | skip ollama.com |
@@ -49,20 +58,23 @@ siblings) leave their parameter size, family and context empty in
 `qwen3.8-256k` -- `qwen3.8` with a bigger window baked in, and no page of its
 own -- is described by `qwen3.8`'s page.
 
-Step 5, calibration, is not built. It measures each model through the router,
-so it comes with the router. Until then every model's `suited` is its prior,
-`suited_from` says `"prior"`, `measured` is empty and the catalog's
-`calibrated` is `null`.
+Step 5 is `calibrate.py`, [below](#calibration). A rebuild keeps what it
+measured for every model whose digest is unchanged -- the digest is what says
+the weights are the ones measured -- so pulling one new model does not throw
+away an hour of calibration on the others. Measurements of another host are
+never kept.
 
 ## The catalog
 
 One entry per model, sorted by name. The top of the file says which host it
 describes and when, and `schema` is the version of this layout, so a router
-can refuse a file it does not understand.
+can refuse a file it does not understand. Schema 2 records where each task's
+`suited` came from, since calibration can measure some of a model's tasks and
+not others.
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "host": "http://192.168.10.82:11434",
   "ollama_version": "0.34.4",
   "built": "2026-09-28T00:56:41Z",
@@ -90,7 +102,8 @@ can refuse a file it does not understand.
       "measured": {},
       "suited": {"supervisor": "heavy", "generator": "standard", "reflection": "heavy",
                  "narrator": "standard", "repair": "heavy"},
-      "suited_from": "prior"
+      "suited_from": {"supervisor": "prior", "generator": "prior", "reflection": "prior",
+                      "narrator": "prior", "repair": "prior"}
     }
   ]
 }
@@ -146,8 +159,48 @@ reveals that, so it is left to calibration.
 
 **The prior is a starting point, not a routing table.** By size alone, a
 2023 `mixtral:8x7b` outranks the reference model as a heavy generator. That
-is what calibration exists to correct, and why the spec's build plan
-measures before it routes across more than one rung.
+is what calibration exists to correct, and why the router routes on measured
+suitability only, unless `MODEL_ROUTE_ON_PRIOR=true` says otherwise.
+
+## Calibration
+
+```bash
+.venv/bin/python models/calibrate.py                                   # every chat model, every task
+.venv/bin/python models/calibrate.py --models gemma4:12b-mlx mistral:7b --tasks supervisor narrator
+.venv/bin/python models/calibrate.py --questions B01 B07 B15 --host-memory 128G
+```
+
+Section 15.5 of the spec. It needs the agent and the stack, so it runs where
+the benchmark runs -- the repository's virtualenv, against the stack's
+published ports -- and against the host the catalog was built for. The
+reference model answers the benchmark first; then each model is run through
+one probe per task:
+
+| Task | Probe | Right when |
+|---|---|---|
+| generator | the benchmark questions, the pipeline run with `MODEL_ROUTE_GENERATOR` pinned to the model | execution accuracy, as the benchmark scores it, with every draft the model's own |
+| supervisor | the benchmark questions, which should all proceed, and [`probes/triage.json`](probes/triage.json) | the verdict is the expected one |
+| reflection | each benchmark question's accepted result, replayed | the model agrees with the reference model's own reflection |
+| narrator | each accepted result, narrated again | the audit passes every claim and every assumption is stated |
+| repair | [`probes/repair.json`](probes/repair.json): six real Postgres errors the classifier cannot place | the diagnosis names the fault |
+
+Each probe counts toward the rung the router would route it at -- a
+benchmark question toward the rung its score gives it, a flagged triage case
+toward standard -- and for each rung the catalog records correct out of
+tried and the P50. A model is suited to a rung when it scores within one
+question of the reference model on the same probes; the first rung it fails
+stops the climb, since a model suited to heavy is suited to everything
+below. The reflection is scored against the reference rather than a key:
+whether a result is fleshed out is a judgement, and agreeing with the model
+the pipeline was tuned on is what suited means there.
+
+It also times each model's cold load and reads how much memory it holds
+once loaded (`--no-load` skips both), and with `--host-memory` it warns when
+the models the table routes to cannot all be resident at once. The catalog is
+rewritten after every model, so an interrupted run keeps what it finished,
+and the routing table the agent would build from it is printed at the end.
+The generator probe is the one that takes real time: a full benchmark run
+per model, about a quarter of an hour on the reference model.
 
 ## HTTPS on a Mac
 
@@ -160,9 +213,10 @@ no bundle anywhere, the library step fails and says so.
 
 ## Tests
 
-[`tests/models/`](../tests/models) runs the script against a fake host that
+[`tests/models/`](../tests/models) runs the scanner against a fake host that
 answers exactly what the real one answered on 2026-09-27, and a fake
-ollama.com serving that day's descriptions and badges. The rules are then
+ollama.com serving that day's descriptions and badges, and the calibrator
+against fake models that answer by what each prompt says. The rules are then
 tested one at a time, on models built to sit on their boundaries. The
 committed catalog is checked the way the diagrams are: every prior in it must
 be what the rules make of its own facts, so a hand edit, or a rule changed and

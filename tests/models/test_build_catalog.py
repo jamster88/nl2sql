@@ -191,7 +191,7 @@ def test_an_uncalibrated_catalog_says_so(build_catalog, host, library, tmp_path)
     assert catalog["task_budgets"] == build_catalog.TASK_BUDGETS
     for model in catalog["models"]:
         assert model["measured"] == {}
-        assert model["suited_from"] == "prior"
+        assert model["suited_from"] == {task: "prior" for task in catalog["tasks"]}
         assert model["suited"] == {task: model["prior"][task] for task in catalog["tasks"]}
 
 
@@ -601,6 +601,53 @@ def test_the_host_is_the_environments_then_dotenvs_then_the_agents(build_catalog
     assert from_dotenv["reference"] == "qwen3.8-256k:latest"
 
 
+@pytest.mark.parametrize("given,url", [
+    ("192.168.1.20", "http://192.168.1.20:11434"),
+    ("  192.168.1.20/ ", "http://192.168.1.20:11434"),
+    ("gpu-box", "http://gpu-box:11434"),
+    ("GPU-Box:11500", "http://gpu-box:11500"),
+    ("fe80::1", "http://[fe80::1]:11434"),
+    ("[fe80::1]:11500", "http://[fe80::1]:11500"),
+    ("http://192.168.1.20:11434/", "http://192.168.1.20:11434"),
+    ("https://ollama.example.com", "https://ollama.example.com"),
+    ("http://proxy.example.com/ollama/", "http://proxy.example.com/ollama"),
+])
+def test_any_way_of_naming_a_host_becomes_the_url_the_agent_would_use(build_catalog, given, url):
+    """An address alone is enough: without a port it is Ollama's own, since
+    port 80 is never where Ollama is. A URL with a scheme is taken as
+    written -- a proxy on 443 is a real deployment."""
+    assert build_catalog.normalise_host(given) == url
+
+
+@pytest.mark.parametrize("given", ["", "   ", "ftp://gpu-box", "gpu-box:port", "http://"])
+def test_what_is_not_a_host_is_refused(build_catalog, given):
+    with pytest.raises(ValueError, match="is not an Ollama host"):
+        build_catalog.normalise_host(given)
+
+
+def test_a_host_can_be_given_as_a_bare_address(build_catalog, host, library, tmp_path):
+    address = host.url.removeprefix("http://")
+    code, catalog = run(build_catalog, tmp_path, address)
+    assert (code, catalog["host"]) == (0, host.url)
+
+
+def test_a_host_given_twice_differently_is_refused(build_catalog, host, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        run(build_catalog, tmp_path, host.url, "--host", "10.0.0.1")
+    assert exit_info.value.code == 2
+    assert "give the host once" in capsys.readouterr().err
+
+    code, _ = run(build_catalog, tmp_path, host.url, "--host", host.url, "--no-library")
+    assert code == 0
+
+
+def test_an_address_that_is_not_a_host_is_a_usage_error(build_catalog, tmp_path, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        run(build_catalog, tmp_path, "gpu-box:port")
+    assert exit_info.value.code == 2
+    assert "is not an Ollama host" in capsys.readouterr().err
+
+
 def test_the_help_names_the_host_it_would_ask(build_catalog, capsys):
     with pytest.raises(SystemExit) as exit_info:
         build_catalog.main(["--help"], environ={})
@@ -651,6 +698,91 @@ def test_run_as_documented_it_writes_the_catalog(host, tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# What calibration measured
+# ---------------------------------------------------------------------------
+
+
+def _scores(**rungs: tuple[int, int]) -> dict:
+    return {rung: {"correct": correct, "of": of, "p50_s": 1.0} for rung, (correct, of) in rungs.items()}
+
+
+@pytest.mark.parametrize("model,reference,expected", [
+    (_scores(light=(6, 6), standard=(5, 6), heavy=(3, 3)), _scores(light=(6, 6), standard=(6, 6), heavy=(3, 3)),
+     (True, "heavy")),
+    # Within one question of the reference is suited; two behind is not.
+    (_scores(light=(5, 6), standard=(4, 6), heavy=(3, 3)), _scores(light=(6, 6), standard=(6, 6), heavy=(3, 3)),
+     (True, "light")),
+    # Failing the light probe rules the model out, whatever it did above.
+    (_scores(light=(3, 6), standard=(6, 6)), _scores(light=(6, 6), standard=(6, 6)), (True, None)),
+    # A rung nobody probed is passed over, not failed.
+    (_scores(light=(6, 6), heavy=(3, 3)), _scores(light=(6, 6), heavy=(3, 3)), (True, "heavy")),
+    # Different probe counts are not the same probes.
+    (_scores(light=(4, 5)), _scores(light=(6, 6)), (False, None)),
+    ({}, _scores(light=(6, 6)), (False, None)),
+])
+def test_a_rung_is_suited_within_one_question_of_the_reference(build_catalog, model, reference, expected):
+    assert build_catalog.measured_rung(model, reference) == expected
+
+
+def test_calibration_overrides_the_prior_task_by_task_but_never_an_exclusion(build_catalog):
+    reference = {"measured": {"generator": _scores(light=(6, 6), standard=(6, 6)),
+                              "narrator": _scores(light=(9, 10))}}
+    model = {
+        "prior": {"supervisor": "heavy", "generator": "heavy", "reflection": "heavy",
+                  "narrator": None, "repair": "heavy"},
+        "measured": {"generator": _scores(light=(6, 6), standard=(3, 6)), "narrator": _scores(light=(10, 10))},
+    }
+    suited, source = build_catalog.suitability(model, reference)
+
+    assert suited["generator"] == "light" and source["generator"] == "calibration"
+    assert suited["narrator"] is None and source["narrator"] == "prior"
+    assert suited["supervisor"] == "heavy" and source["supervisor"] == "prior"
+    assert build_catalog.suitability(model, None)[1]["generator"] == "prior"
+
+
+def test_a_rebuild_keeps_what_calibration_measured_for_unchanged_weights(build_catalog, host, library, tmp_path, snapshot, capsys):
+    """Pulling one new model must not throw away an hour of calibration on
+    the others. The digest is what says the weights are the ones measured."""
+    _, first = run(build_catalog, tmp_path, "--host", host.url)
+    models = by_name(first)
+    measured = {"generator": _scores(light=(6, 6), standard=(6, 6))}
+    for name in ("qwen3.8-256k:latest", "gemma4:12b-mlx", "mistral:7b"):
+        models[name]["measured"] = measured
+    models["mistral:7b"]["digest"] = "a different pull"
+    first["calibrated"] = "2026-09-28T01:00:00Z"
+    (tmp_path / "catalog.json").write_text(json.dumps(first))
+
+    _, second = run(build_catalog, tmp_path, "--host", host.url)
+    rebuilt = by_name(second)
+
+    assert second["calibrated"] == "2026-09-28T01:00:00Z"
+    assert rebuilt["gemma4:12b-mlx"]["measured"] == measured
+    assert rebuilt["gemma4:12b-mlx"]["suited"]["generator"] == "standard"
+    assert rebuilt["gemma4:12b-mlx"]["suited_from"]["generator"] == "calibration"
+    assert rebuilt["mistral:7b"]["measured"] == {}
+    assert "standard*" in capsys.readouterr().out
+
+
+def test_measurements_of_another_host_are_not_kept(build_catalog, host, library, tmp_path):
+    _, first = run(build_catalog, tmp_path, "--host", host.url)
+    for model in first["models"]:
+        model["measured"] = {"generator": _scores(light=(6, 6))}
+    first["host"] = "http://elsewhere:11434"
+    (tmp_path / "catalog.json").write_text(json.dumps(first))
+
+    _, second = run(build_catalog, tmp_path, "--host", host.url)
+    assert {json.dumps(m["measured"]) for m in second["models"]} == {"{}"}
+    assert second["calibrated"] is None
+
+
+@pytest.mark.parametrize("content", ["not json", "[1, 2]", '{"models": "none"}'])
+def test_an_unreadable_previous_catalog_is_simply_replaced(build_catalog, host, library, tmp_path, content):
+    (tmp_path / "catalog.json").write_text(content)
+    code, catalog = run(build_catalog, tmp_path, "--host", host.url)
+    assert code == 0 and len(catalog["models"]) == 18
+
+
+# ---------------------------------------------------------------------------
 # The script against the rest of the repository
 # ---------------------------------------------------------------------------
 
@@ -681,7 +813,9 @@ def test_the_committed_catalog_is_what_the_rules_make_of_its_facts(build_catalog
     assert catalog["tasks"] == list(build_catalog.TASKS) and catalog["rungs"] == list(build_catalog.RUNGS)
     assert catalog["task_budgets"] == build_catalog.TASK_BUDGETS
     assert [m["name"] for m in catalog["models"]] == sorted(m["name"] for m in catalog["models"])
+    models = by_name(catalog)
     for model in catalog["models"]:
         assert model["prior"] == build_catalog.prior_for(model["name"], model["facts"], model["library"]), model["name"]
         assert model["chat"] == (build_catalog.not_chat(model["facts"]) is None)
-        assert model["suited"] == {task: model["prior"][task] for task in catalog["tasks"]}
+        suited, source = build_catalog.suitability(model, models.get(catalog["reference"]))
+        assert (model["suited"], model["suited_from"]) == (suited, source), model["name"]

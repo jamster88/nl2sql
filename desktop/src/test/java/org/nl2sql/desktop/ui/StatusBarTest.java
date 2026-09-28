@@ -66,7 +66,7 @@ class StatusBarTest {
             Models.Meta meta = Fakes.meta(true);
             bar.show(new Models.Meta(meta.service(), meta.version(), meta.model(), meta.intents(),
                     List.of("dim_store"), "", meta.limits(), meta.pipeline(), Map.of(), "none",
-                    false));
+                    false, Map.of()));
 
             assertTrue(Nodes.says(bar.node(), "1 table"));
             assertTrue(Nodes.says(bar.node(), "no token"));

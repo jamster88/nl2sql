@@ -436,3 +436,51 @@ def test_a_pathologically_wide_result_falls_back_to_the_reference_column_order()
     # simply unmatchable.
     assert math.perm(7, 5) <= MAX_COLUMN_ASSIGNMENTS
     assert result_matches([[1, 2, 3, 4, 5]], [[0, 0, 1, 2, 3, 4, 5]]) is True
+
+
+# ---------------------------------------------------------------------------
+# Per-model attribution (arch5.2 section 11, item 5)
+# ---------------------------------------------------------------------------
+
+
+class _Routed(_Entry):
+    def __init__(self, node, model="", rung="", ms=0.0, hops=()):
+        super().__init__(node, ms)
+        self.model, self.rung, self.hops = model, rung, list(hops)
+
+
+def test_the_routes_are_the_entries_that_called_a_model():
+    trace = [_Routed("retrieve_schema", ms=3.0), _Routed("generate_sql", "m:7b", "light", 900.0, ["x: down"]),
+             {"node": "narrate", "model": "n:3b", "rung": "light", "ms": 300.0}]
+    from benchmarks.runner import routes_from_trace
+
+    assert routes_from_trace(trace) == [
+        {"node": "generate_sql", "model": "m:7b", "rung": "light", "ms": 900.0, "hops": ["x: down"]},
+        {"node": "narrate", "model": "n:3b", "rung": "light", "ms": 300.0, "hops": []},
+    ]
+    assert routes_from_trace(None) == []
+
+
+def _routed_result(qid, outcome, rung, *routes):
+    r = result(qid, "schema", outcome, 1.0)
+    r.rung = rung
+    r.routes = [{"node": n, "model": m, "rung": g, "ms": ms, "hops": list(h)} for n, m, g, ms, h in routes]
+    return r
+
+
+def test_accuracy_and_p50_are_attributed_per_agent_rung_and_model():
+    """A question counts toward every route its run used."""
+    report = BenchmarkReport(results=[
+        _routed_result("B01", CORRECT, "light", ("generate_sql", "small:7b", "light", 1000.0, ()),
+                       ("generate_sql", "big:70b", "standard", 4000.0, ["small:7b: empty"])),
+        _routed_result("B02", WRONG, "light", ("generate_sql", "small:7b", "light", 3000.0, ())),
+        _routed_result("B03", CORRECT, "standard", ("generate_sql", "small:7b", "light", 2000.0, ())),
+        result("B04", "schema", CORRECT, 1.0),
+    ])
+    assert report.by_model() == [
+        {"node": "generate_sql", "rung": "light", "model": "small:7b", "calls": 3, "questions": 3,
+         "correct": 2, "p50_seconds": 2.0, "hops": 0},
+        {"node": "generate_sql", "rung": "standard", "model": "big:70b", "calls": 1, "questions": 1,
+         "correct": 1, "p50_seconds": 4.0, "hops": 1},
+    ]
+    assert report.rungs() == {"light": 2, "standard": 1}

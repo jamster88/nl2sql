@@ -240,6 +240,13 @@ services:
       MAX_ATTEMPTS: ${MAX_ATTEMPTS:-7}
       # Estimated-plan cost ceiling, calibrated against this dataset.
       MAX_PLAN_COST: ${MAX_PLAN_COST:-1000000}
+      # --- arch5.2 model routing ---------------------------------------
+      # Each model call goes to the cheapest model the catalog shows is
+      # suited to its task at the question's complexity; off is v5.1, every
+      # call to OLLAMA_MODEL. The catalog is models/build_catalog.py's,
+      # mounted read-only below; the path is inside the container.
+      MODEL_ROUTING_ENABLED: ${MODEL_ROUTING_ENABLED:-true}
+      MODEL_CATALOG: ${MODEL_CATALOG:-/app/models/catalog.json}
       # --- forwarded, not overridden ----------------------------------
       # Every remaining setting the agent reads, passed through empty so the
       # image's own default stands unless the host sets one. config.py reads
@@ -269,10 +276,22 @@ services:
       EXAMPLE_WEIGHT_KEYWORDS: ${EXAMPLE_WEIGHT_KEYWORDS:-}
       EXAMPLE_WEIGHT_REASONING: ${EXAMPLE_WEIGHT_REASONING:-}
       MAX_SQL_ATTEMPTS: ${MAX_SQL_ATTEMPTS:-}
+      MODEL_ROUTE_ON_PRIOR: ${MODEL_ROUTE_ON_PRIOR:-}
+      MODEL_ROUTE_SUPERVISOR: ${MODEL_ROUTE_SUPERVISOR:-}
+      MODEL_ROUTE_GENERATOR: ${MODEL_ROUTE_GENERATOR:-}
+      MODEL_ROUTE_REFLECTION: ${MODEL_ROUTE_REFLECTION:-}
+      MODEL_ROUTE_NARRATOR: ${MODEL_ROUTE_NARRATOR:-}
+      MODEL_ROUTE_REPAIR: ${MODEL_ROUTE_REPAIR:-}
+      MODEL_MAX_LOADED: ${MODEL_MAX_LOADED:-}
+      MODEL_NUM_CTX: ${MODEL_NUM_CTX:-}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # The model catalog (arch5.2), rebuilt on the host and read here.
+      - ./models/catalog.json:/app/models/catalog.json:ro
     stdin_open: true
     tty: true
     # Not started by `up`; run on demand with `docker compose run --rm agent ...`
@@ -349,6 +368,7 @@ services:
       - "${API_PORT:-8443}:${API_PORT:-8443}"
     volumes:
       - apitls:/etc/nl2sql/tls
+      - ./models/catalog.json:/app/models/catalog.json:ro
     healthcheck:
       # /healthz is the one route that never needs a token, and --insecure is
       # right here and only here: the container is checking its own socket,

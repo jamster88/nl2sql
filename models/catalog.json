@@ -1,8 +1,8 @@
 {
-  "schema": 1,
+  "schema": 2,
   "host": "http://192.168.10.82:11434",
   "ollama_version": "0.34.4",
-  "built": "2026-09-28T00:56:41Z",
+  "built": "2026-09-28T01:47:24Z",
   "reference": "qwen3.8-256k:latest",
   "reference_on_host": true,
   "calibrated": null,
@@ -91,7 +91,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "deepseek-r1:32b",
@@ -158,7 +164,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "deepseek-r1:70b",
@@ -225,7 +237,13 @@
         "narrator": "heavy",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "deepseek-r1:8b",
@@ -295,7 +313,13 @@
         "narrator": "light",
         "repair": "standard"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "devstral-small-2:24b",
@@ -358,7 +382,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "falcon3:10b",
@@ -417,7 +447,13 @@
         "narrator": "light",
         "repair": "standard"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "falcon3:7b",
@@ -476,7 +512,13 @@
         "narrator": "light",
         "repair": "light"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "gemma4:12b-mlx",
@@ -552,7 +594,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "gemma4:26b-mlx",
@@ -627,7 +675,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "gemma4:31b-mlx",
@@ -702,7 +756,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "gpt-oss:20b",
@@ -768,7 +828,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "granite-code:8b",
@@ -829,7 +895,13 @@
         "narrator": "light",
         "repair": "standard"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "granite3.1-moe:3b",
@@ -887,7 +959,13 @@
         "narrator": "light",
         "repair": "light"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "llama3.3:70b",
@@ -943,7 +1021,13 @@
         "narrator": "heavy",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "mistral-small:22b",
@@ -1000,7 +1084,13 @@
         "narrator": "standard",
         "repair": "standard"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "mistral:7b",
@@ -1056,7 +1146,13 @@
         "narrator": "light",
         "repair": "light"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "mixtral:8x7b",
@@ -1114,7 +1210,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "phi4-reasoning:14b",
@@ -1172,7 +1274,13 @@
         "narrator": "light",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "qwen3-coder-next:latest",
@@ -1234,7 +1342,13 @@
         "narrator": "heavy",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "qwen3.6:latest",
@@ -1307,7 +1421,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "qwen3.8-256k:latest",
@@ -1379,7 +1499,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "qwen3.8:latest",
@@ -1450,7 +1576,13 @@
         "narrator": "standard",
         "repair": "heavy"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     },
     {
       "name": "sqlcoder:7b",
@@ -1508,7 +1640,13 @@
         "narrator": "light",
         "repair": "standard"
       },
-      "suited_from": "prior"
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
     }
   ]
 }

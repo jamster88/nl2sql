@@ -264,7 +264,8 @@ public final class Models {
     /** Everything a client needs to configure itself against this server. */
     public record Meta(String service, String version, String model, List<String> intents,
                        List<String> tables, String scope, Limits limits, Pipeline pipeline,
-                       Map<String, Object> tls, String authentication, boolean feedback) {
+                       Map<String, Object> tls, String authentication, boolean feedback,
+                       Map<String, Object> routing) {
         public Meta {
             service = text(service);
             version = text(version);
@@ -274,6 +275,7 @@ public final class Models {
             scope = text(scope);
             tls = map(tls);
             authentication = text(authentication);
+            routing = map(routing);
         }
     }
 

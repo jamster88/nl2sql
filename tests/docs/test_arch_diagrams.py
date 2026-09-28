@@ -33,11 +33,14 @@ STATE_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "state.py"
 COMPLETENESS_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "completeness.py"
 # v5.1's: the review service's corrections and completions stores (arch5.1).
 CORRECTIONS_PY = REPO_ROOT / "review" / "nl2sql_review" / "corrections.py"
+# v5.2's: the Model Router (arch5.2).
+ROUTER_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "router.py"
 
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
 V4, V5, V5_1 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg", DIAGRAMS / "arch_v5_1.svg"
-ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1]
-IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1"]
+V5_2 = DIAGRAMS / "arch_v5_2.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2]
+IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2"]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
@@ -96,8 +99,14 @@ def this_tree_is_v5_1() -> bool:
     return CORRECTIONS_PY.exists()
 
 
+def this_tree_is_v5_2() -> bool:
+    return ROUTER_PY.exists()
+
+
 def diagram_for_this_tree() -> Path:
     """The diagram that is supposed to describe the code actually checked out."""
+    if this_tree_is_v5_2():
+        return V5_2
     if this_tree_is_v5_1():
         return V5_1
     if this_tree_is_v5():
@@ -175,6 +184,21 @@ def test_v5_1_draws_the_review_side():
         assert f">{pane}</text>" in text
 
 
+def test_v5_2_changes_no_agent_node():
+    """arch5.2 routes the calls the nodes make; it adds and renames none."""
+    assert diagram_nodes(V5_2) == diagram_nodes(V5_1)
+
+
+def test_v5_2_draws_the_router():
+    text = V5_2.read_text()
+    for name in ("Ollama — chat models, routed", "models/catalog.json"):
+        assert f">{name}</text>" in text
+    assert "What v5.2 adds: model routing" in text
+    for tag in ("routed: light, standard if pre-screened", "routed: the scored rung, +1 per repair",
+                "routed: by the result's size", "scores the generator's rung"):
+        assert tag in text, tag
+
+
 def test_the_review_node_is_present_exactly_when_the_module_is():
     node_drawn = REVIEW_NODE in diagram_nodes(diagram_for_this_tree())
     assert node_drawn is this_tree_is_v5(), (
@@ -239,7 +263,8 @@ def generator():
 @pytest.mark.parametrize(
     "name,builder",
     [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
-     ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1")],
+     ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
+     ("arch_v5_2.svg", "build_v5_2")],
     ids=IDS,
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
@@ -260,6 +285,7 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v4() == generator.build_v4()
     assert generator.build_v5() == generator.build_v5()
     assert generator.build_v5_1() == generator.build_v5_1()
+    assert generator.build_v5_2() == generator.build_v5_2()
 
 
 @pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)

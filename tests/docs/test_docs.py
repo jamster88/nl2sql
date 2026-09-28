@@ -112,6 +112,8 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("STATEMENT_TIMEOUT_MS", settings.statement_timeout_ms),
         ("RAG_TOP_K", settings.rag_top_k),
         ("RAG_MAX_CONTEXT_CHARS", settings.rag_max_context_chars),
+        ("MODEL_MAX_LOADED", settings.model_max_loaded),
+        ("MODEL_NUM_CTX", settings.model_num_ctx),
     ):
         row = _table_row(agent_readme, name)
         assert str(value) in row, f"README says {name} defaults to something other than {value}: {row!r}"
@@ -121,6 +123,7 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("OLLAMA_MODEL", settings.ollama_model),
         ("OLLAMA_BASE_URL", settings.ollama_base_url),
         ("EMBED_BASE_URL", settings.embed_base_url),
+        ("OLLAMA_KEEP_ALIVE", settings.ollama_keep_alive),
     ):
         row = _table_row(agent_readme, name)
         assert value in row, f"README says {name} defaults to something other than {value!r}: {row!r}"

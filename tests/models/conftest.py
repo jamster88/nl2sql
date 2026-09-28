@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import ssl
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -73,6 +74,18 @@ def build_catalog():
     """The script as a module, loaded from its path the way it is run."""
     spec = importlib.util.spec_from_file_location("build_catalog", SCRIPT)
     module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="session")
+def calibrate():
+    """models/calibrate.py as a module. It imports build_catalog from beside
+    itself, and the agent, as it does when run."""
+    spec = importlib.util.spec_from_file_location("calibrate", REPO_ROOT / "models" / "calibrate.py")
+    module = importlib.util.module_from_spec(spec)
+    # Registered before it runs: its dataclasses look their module up by name.
+    sys.modules["calibrate"] = module
     spec.loader.exec_module(module)
     return module
 

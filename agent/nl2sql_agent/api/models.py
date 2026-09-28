@@ -359,6 +359,14 @@ class Meta(BaseModel):
             "to draw the verdict buttons at all."
         ),
     )
+    routing: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The model routing table this server answers with (arch5.2): which "
+            "model each task gets at each rung, and why. Empty when the agent "
+            "has not started."
+        ),
+    )
 
 
 class Health(BaseModel):

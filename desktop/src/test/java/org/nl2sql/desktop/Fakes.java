@@ -115,7 +115,7 @@ public final class Fakes {
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",
                         List.of("screen", "generate_sql", "run_sql")),
-                Map.of("enabled", true), "bearer", feedback);
+                Map.of("enabled", true), "bearer", feedback, Map.of());
     }
 
     public static Models.Readiness ready() {

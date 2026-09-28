@@ -3,15 +3,18 @@
 and which tasks -- at which complexity -- it is presumed suited to.
 
     python3 models/build_catalog.py                  # the host the agent uses
+    python3 models/build_catalog.py 192.168.1.20     # any Ollama host, by address
     python3 models/build_catalog.py --no-library     # the host's own facts only
-    python3 models/build_catalog.py --host http://gpu-box:11434 --out /tmp/catalog.json
+    python3 models/build_catalog.py gpu-box:11500 --out /tmp/catalog.json
 
 This is section 15.1 of multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md,
 steps 1 to 4: inventory (`/api/tags`), facts (`/api/show`, per model), the
 library page on ollama.com, and a prior -- a rule-based guess, with its
 reasons, at the highest rung of each task a model is suited to. Step 5,
-calibration, measures models through the Model Router and comes with it;
-until then every model's `suited` is its prior, and the catalog says so.
+calibration, is `models/calibrate.py`: it needs the agent and its
+databases, which this script deliberately does not. A rebuild keeps what
+calibration measured for every model whose weights have not changed, and
+`suited` is the measurement wherever there is one and the prior elsewhere.
 
 The agent reads the catalog and never builds it. Building it needs the
 public internet for the library pages, and a catalog is something to review
@@ -26,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import http.client
+import ipaddress
 import json
 import os
 import re
@@ -33,6 +37,7 @@ import ssl
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -51,11 +56,16 @@ DOTENV = REPO_ROOT / ".env"
 DEFAULT_HOST = "http://192.168.10.82:11434"
 DEFAULT_REFERENCE = "qwen3.8-256k"
 
+# The port Ollama listens on unless told otherwise, for an address given
+# without one.
+OLLAMA_PORT = 11434
+
 LIBRARY_URL = "https://ollama.com"
 USER_AGENT = "nl2sql-model-catalog/1"
 # Bumped when the catalog's shape changes, so the router can refuse a file it
-# does not understand rather than misread it.
-SCHEMA_VERSION = 1
+# does not understand rather than misread it. 2: `suited_from` is per task,
+# since calibration can measure some of a model's tasks and not others.
+SCHEMA_VERSION = 2
 
 RUNGS = ("light", "standard", "heavy")
 TASKS = ("supervisor", "generator", "reflection", "narrator", "repair")
@@ -144,9 +154,42 @@ def setting(name: str, environ: dict, dotenv: dict, default: str) -> str:
     return default
 
 
-def normalise_host(url: str) -> str:
-    url = url.strip().rstrip("/")
-    return url if "://" in url else "http://" + url
+def normalise_host(address: str) -> str:
+    """Any way of naming an Ollama host, as the URL the agent would use.
+
+    `192.168.1.20`, `gpu-box`, `gpu-box:11500`, `fe80::1`, `[fe80::1]:11434`
+    and `http://gpu-box:11434/` all work. An address without a scheme gets
+    http and, without a port, Ollama's own, 11434 -- port 80 is never where
+    Ollama is. A URL with a scheme is taken as written, port and all: a
+    reverse proxy on 443 is a real deployment. The agent's router applies the
+    same rules to `OLLAMA_BASE_URL`, and a catalog is only ever compared with
+    the host it was built for in this form.
+    """
+    text = address.strip()
+    bare = "://" not in text
+    text = text.rstrip("/")
+    if bare:
+        try:
+            # A bare IPv6 address has colons that are not a port.
+            text = f"[{ipaddress.IPv6Address(text).compressed}]"
+        except ValueError:
+            pass
+        text = "http://" + text
+    parts = urllib.parse.urlsplit(text)
+    try:
+        port = parts.port
+    except ValueError:
+        port = -1
+    if parts.scheme not in ("http", "https") or not parts.hostname or port == -1:
+        raise ValueError(
+            f"{address!r} is not an Ollama host: give an address such as 192.168.1.20, "
+            "gpu-box:11434 or http://gpu-box:11434"
+        )
+    host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+    if port is None and bare:
+        port = OLLAMA_PORT
+    netloc = host if port is None else f"{host}:{port}"
+    return urllib.parse.urlunsplit((parts.scheme, netloc, parts.path.rstrip("/"), "", ""))
 
 
 def full_name(name: str) -> str:
@@ -530,17 +573,94 @@ def prior_for(name: str, facts: dict, library: dict) -> dict:
     return prior
 
 
+# --- what calibration measured -----------------------------------------------------
+
+
+def measured_rung(model_task: dict, reference_task: dict) -> tuple[bool, str | None]:
+    """The highest rung calibration showed the model suited to for one task.
+
+    A rung is suited when the model scored within one question of the
+    reference model on the same probes (section 15.5). Rungs are read from
+    the light end and the first failure stops the climb, since a model
+    suited to heavy is suited to everything below it and one that fails the
+    light probe is no candidate at all. Rungs with no probes on both sides
+    are passed over. Returns `(False, None)` when nothing is comparable --
+    the task was not calibrated, and the prior stands.
+    """
+    comparable = [
+        rung
+        for rung in RUNGS
+        if rung in model_task and rung in reference_task
+        and model_task[rung].get("of") == reference_task[rung].get("of")
+    ]
+    if not comparable:
+        return False, None
+    best = None
+    for rung in comparable:
+        if model_task[rung]["correct"] < reference_task[rung]["correct"] - 1:
+            break
+        best = rung
+    return True, best
+
+
+def suitability(model: dict, reference: dict | None) -> tuple[dict, dict]:
+    """`suited` and `suited_from` for one model: calibration's answer for a
+    task it measured, the prior's for the rest. An exclusion in the prior --
+    an embedding model, a cloud model, a window too small for the task --
+    is a fact, and no measurement overrides it."""
+    reference_measured = (reference or {}).get("measured", {})
+    suited, source = {}, {}
+    for task in TASKS:
+        measured, rung = measured_rung(
+            model["measured"].get(task, {}), reference_measured.get(task, {})
+        )
+        if measured and model["prior"][task] is not None:
+            suited[task], source[task] = rung, "calibration"
+        else:
+            suited[task], source[task] = model["prior"][task], "prior"
+    return suited, source
+
+
+def read_catalog(path: Path) -> dict | None:
+    """A catalog already on disk, or None when there is none worth reading."""
+    try:
+        catalog = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return catalog if isinstance(catalog, dict) and isinstance(catalog.get("models"), list) else None
+
+
+def carried_measurements(previous: dict | None, host: str) -> dict[tuple[str, str], dict]:
+    """(name, digest) -> what calibration measured, from the catalog being
+    replaced. Only for the same host: a measurement is of weights on a
+    machine, and the digest is what says the weights are the same."""
+    if not previous or previous.get("host") != host:
+        return {}
+    return {
+        (model.get("name"), model.get("digest")): model["measured"]
+        for model in previous["models"]
+        if isinstance(model, dict) and model.get("measured")
+    }
+
+
 # --- the catalog ------------------------------------------------------------------
 
 
 def build_catalog(
-    host: str, reference: str, *, library: Library, timeout: float, now: datetime | None = None
+    host: str,
+    reference: str,
+    *,
+    library: Library,
+    timeout: float,
+    now: datetime | None = None,
+    previous: dict | None = None,
 ) -> dict:
     entries = sorted(fetch_inventory(host, timeout), key=lambda entry: entry["name"])
     version = fetch_version(host, timeout)
     shown = {entry["name"]: fetch_show(host, entry["name"], timeout) for entry in entries}
     facts = {entry["name"]: facts_of(entry, shown[entry["name"]][0]) for entry in entries}
     parents = {name: fact["parent_model"] for name, fact in facts.items()}
+    carried = carried_measurements(previous, host)
 
     models = []
     for entry in entries:
@@ -555,15 +675,18 @@ def build_catalog(
             "facts_from": "tags" if shown[name][1] else "show",
             "library": page,
             "prior": prior,
-            # Step 5 fills these. Until it runs, `suited` is the prior and
-            # `suited_from` says so.
-            "measured": {},
-            "suited": {task: prior[task] for task in TASKS},
-            "suited_from": "prior",
+            # Step 5, calibration, fills `measured`; `suited` is filled below,
+            # once the reference model's measurements are known too.
+            "measured": carried.get((name, entry.get("digest")), {}),
         }
         if shown[name][1]:
             model["show_error"] = shown[name][1]
         models.append(model)
+
+    by_name = {model["name"]: model for model in models}
+    for model in models:
+        model["suited"], model["suited_from"] = suitability(model, by_name.get(reference))
+    kept = any(model["measured"] for model in models)
 
     built = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     return {
@@ -573,7 +696,8 @@ def build_catalog(
         "built": built.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reference": reference,
         "reference_on_host": reference in facts,
-        "calibrated": None,
+        # When calibration last ran, kept while any of its measurements are.
+        "calibrated": previous.get("calibrated") if kept else None,
         "rungs": list(RUNGS),
         "tasks": list(TASKS),
         "task_budgets": dict(TASK_BUDGETS),
@@ -609,8 +733,8 @@ def render_summary(catalog: dict) -> str:
         f"reference {catalog['reference']}: "
         + ("on the host" if catalog["reference_on_host"] else "NOT on the host"),
         "",
-        "The prior -- the highest rung of each task a model is presumed suited to,",
-        "before any calibration ('-': not a candidate):",
+        "The highest rung of each task each model is suited to: measured where",
+        "calibration has run ('*'), presumed from the prior elsewhere ('-': no candidate):",
         "",
     ]
     header = ["model", "params", "quant", "context", *catalog["tasks"]]
@@ -623,7 +747,8 @@ def render_summary(catalog: dict) -> str:
             f"{parameters / 1e9:.1f}B" if parameters else "?",
             facts["quantization"] or "?",
             _context(facts["context_length"]),
-            *[model["prior"][task] or "-" for task in catalog["tasks"]],
+            *[(model["suited"][task] or "-") + ("*" if model["suited_from"][task] == "calibration" else "")
+              for task in catalog["tasks"]],
         ])
     widths = [max(len(row[i]) for row in rows) for i in range(len(header))]
     lines += ["  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip() for row in rows]
@@ -661,12 +786,15 @@ def main(argv: list[str] | None = None, environ: dict | None = None) -> int:
         description="Catalogue the models an Ollama host serves, with the tasks and "
         "complexity each is presumed suited to (arch5.2, section 15.1).",
     )
+    default_host = setting("OLLAMA_BASE_URL", environ, dotenv, DEFAULT_HOST)
     parser.add_argument(
-        "--host",
-        default=setting("OLLAMA_BASE_URL", environ, dotenv, DEFAULT_HOST),
-        help="the Ollama host (default: OLLAMA_BASE_URL from the environment or .env, "
-        "else the agent's default; now %(default)s)",
+        "address",
+        nargs="?",
+        help="the Ollama host: an IP address, a name, host:port or a URL; without a "
+        "port, Ollama's 11434 (default: OLLAMA_BASE_URL from the environment or .env, "
+        f"else the agent's default; now {default_host})",
     )
+    parser.add_argument("--host", help="the same, as a flag")
     parser.add_argument(
         "--reference",
         default=setting("OLLAMA_MODEL", environ, dotenv, DEFAULT_REFERENCE),
@@ -679,11 +807,22 @@ def main(argv: list[str] | None = None, environ: dict | None = None) -> int:
     )
     parser.add_argument("--timeout", type=float, default=10.0, help="seconds per request (default: %(default)s)")
     args = parser.parse_args(argv)
+    if args.address and args.host and args.address != args.host:
+        parser.error("give the host once: as an address or with --host, not both")
+    try:
+        host = normalise_host(args.address or args.host or default_host)
+    except ValueError as exc:
+        parser.error(str(exc))
 
-    host = normalise_host(args.host)
     library = Library(LIBRARY_URL, args.timeout, enabled=not args.no_library)
     try:
-        catalog = build_catalog(host, full_name(args.reference), library=library, timeout=args.timeout)
+        catalog = build_catalog(
+            host,
+            full_name(args.reference),
+            library=library,
+            timeout=args.timeout,
+            previous=read_catalog(args.out),
+        )
     except HostError as exc:
         print(f"build_catalog: {exc}", file=sys.stderr)
         return 1

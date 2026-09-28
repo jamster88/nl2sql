@@ -261,7 +261,7 @@ class MainWindowTest {
                     new Models.Limits(limits.max_rows(), limits.max_attempts(),
                             limits.max_plan_cost(), limits.statement_timeout_ms(),
                             limits.max_concurrency(), limits.max_wait_seconds(), 12, 20),
-                    meta.pipeline(), Map.of(), "none", false);
+                    meta.pipeline(), Map.of(), "none", false, Map.of());
             MainWindow window = window();
 
             window.start();
@@ -282,7 +282,7 @@ class MainWindowTest {
                     new Models.Limits(limits.max_rows(), limits.max_attempts(),
                             limits.max_plan_cost(), limits.statement_timeout_ms(),
                             limits.max_concurrency(), limits.max_wait_seconds(), 0, 0),
-                    meta.pipeline(), Map.of(), "none", false);
+                    meta.pipeline(), Map.of(), "none", false, Map.of());
             MainWindow window = window();
 
             window.start();

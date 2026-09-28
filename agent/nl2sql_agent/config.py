@@ -14,6 +14,10 @@ DEFAULT_OLLAMA_MODEL = "qwen3.8-256k"
 # 256 * 1024. Ollama allocates the KV cache from this, so it is a real memory
 # cost on the serving host, not just a cap.
 DEFAULT_NUM_CTX = 262144
+# The window of a routed model other than OLLAMA_MODEL (arch5.2). Measured on
+# the benchmark, the largest prompt any agent sends is well inside it; see
+# MODEL_NUM_CTX in agent/README.md.
+DEFAULT_MODEL_NUM_CTX = 32768
 # The read-only role created by docker/reader_role.sql, not the owner that
 # loads the data: the agent only ever reads.
 DEFAULT_DATABASE_URL = "postgresql+psycopg://nl2sql_reader:nl2sql_reader@postgres:5432/nl2sql_retail"
@@ -210,6 +214,37 @@ class Settings:
     narrate_enabled: bool = True
     audit_enabled: bool = True
 
+    # --- arch5.2: model routing -------------------------------------------
+    # Each model call is routed by its task and the complexity of the task in
+    # hand to the cheapest model on the host the catalog shows is suited to
+    # it (arch5.2 section 15). Off is v5.1: every call to OLLAMA_MODEL.
+    model_routing_enabled: bool = True
+    # The catalog models/build_catalog.py writes. None means every rung is
+    # OLLAMA_MODEL; compose mounts the committed one.
+    model_catalog: str = ""
+    # Route on the catalog's prior -- a guess from size and description -- as
+    # well as on what calibration measured. Off: by size alone a 2023 mixture
+    # of experts outranks the reference model.
+    model_route_on_prior: bool = False
+    # Pins, per task: one model for every rung, or light=a,standard=b,heavy=c.
+    model_route_supervisor: str = ""
+    model_route_generator: str = ""
+    model_route_reflection: str = ""
+    model_route_narrator: str = ""
+    model_route_repair: str = ""
+    # At most this many distinct models in the table: Ollama swaps from disk
+    # when more are asked for, and a ladder that thrashes is slower than one
+    # model (section 15.4).
+    model_max_loaded: int = 3
+    # The context window of every routed model but OLLAMA_MODEL, which keeps
+    # OLLAMA_NUM_CTX. Fixed per model because Ollama reloads a model whenever
+    # a request asks for a different window.
+    model_num_ctx: int = DEFAULT_MODEL_NUM_CTX
+    # How long a model stays loaded after a call, sent with every call when
+    # routing is on, so the models a session uses are resident by its second
+    # question rather than reloaded after Ollama's own five minutes.
+    ollama_keep_alive: str = "30m"
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -262,4 +297,15 @@ class Settings:
             review_reflection_enabled=_env_bool("REVIEW_REFLECTION_ENABLED", True),
             narrate_enabled=_env_bool("NARRATE_ENABLED", True),
             audit_enabled=_env_bool("AUDIT_ENABLED", True),
+            model_routing_enabled=_env_bool("MODEL_ROUTING_ENABLED", True),
+            model_catalog=_env_str("MODEL_CATALOG", ""),
+            model_route_on_prior=_env_bool("MODEL_ROUTE_ON_PRIOR", False),
+            model_route_supervisor=_env_str("MODEL_ROUTE_SUPERVISOR", ""),
+            model_route_generator=_env_str("MODEL_ROUTE_GENERATOR", ""),
+            model_route_reflection=_env_str("MODEL_ROUTE_REFLECTION", ""),
+            model_route_narrator=_env_str("MODEL_ROUTE_NARRATOR", ""),
+            model_route_repair=_env_str("MODEL_ROUTE_REPAIR", ""),
+            model_max_loaded=_env_int("MODEL_MAX_LOADED", 3),
+            model_num_ctx=_env_int("MODEL_NUM_CTX", DEFAULT_MODEL_NUM_CTX),
+            ollama_keep_alive=_env_str("OLLAMA_KEEP_ALIVE", "30m"),
         )

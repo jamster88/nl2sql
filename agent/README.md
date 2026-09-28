@@ -70,11 +70,12 @@ which is arch4 plus the answer contract and the Completeness Reviewer.
 supersedes it without changing anything in this package: it adds the human
 review of section 14, where a reviewed answer goes depending on its verdict.
 [`Multi-Agent_NL2SQL_arch5_2.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md)
-supersedes both as the design, adding section 15, model routing: each model
-call routed by its task's complexity to the cheapest suited model in a
-catalog of the Ollama host's models. The catalog is built, by
-[`models/build_catalog.py`](../models/build_catalog.py); the router is not,
-and this package still sends every call to `OLLAMA_MODEL`.
+supersedes both, adding section 15, model routing: each model call routed
+by its task's complexity to the cheapest suited model in a catalog of the
+Ollama host's models. It is built -- [Model routing](#model-routing-arch52)
+below -- with the catalog made by
+[`models/build_catalog.py`](../models/build_catalog.py) and measured by
+[`models/calibrate.py`](../models/calibrate.py).
 
 ```
 supervise --+-- retrieve_schema ----+
@@ -297,6 +298,80 @@ and its fallback to polling, and the whole answer rendered including the
 charts. They are the two worked examples of the contract in
 [`API.md`](API.md), in two languages, and a useful thing to read before
 writing a client of your own.
+
+## Model routing (arch5.2)
+
+Every agent that calls a model asks [`router.py`](nl2sql_agent/router.py) for
+one by task and **rung** -- light, standard or heavy -- and gets the fastest
+model on the Ollama host that calibration measured to be suited to that task
+at that rung. [`complexity.py`](nl2sql_agent/complexity.py) computes the rung
+from state the pipeline already holds; nothing in routing calls a model.
+
+| Agent | Rung | Climbs when |
+|---|---|---|
+| Supervisor | light; standard when a free pre-screen flags the question -- over 60 words, system vocabulary such as *ignore* or *reveal*, or SQL in it | never: one call |
+| SQL Generator | scored by the Context Aggregator: the tables the answer needs, estimated from its contract (3-4 +1, 5+ +2), the intent, a ranked measure, a trap rule among the three nearest chunks, a value named exactly and found in two columns, a question over 40 words, and a near worked example (-2); 1 or less light, 2-3 standard, 4+ heavy | every repair; a gap the completeness *rules* found holds the rung once, since its fix is mechanical |
+| Completeness reflection | the generation's, capped at standard | with the generation |
+| Insight Narrator | light for at most 5 rows of at most 3 numbers, else standard | an audit send-back |
+| Repair diagnosis | one above the generator's, standard at least | with the generator |
+
+The **routing table** is built once, at startup, from the catalog
+`MODEL_CATALOG` names. Each task and rung gets the fastest model whose
+*measured* suitability reaches it -- the prior in the catalog is a guess from
+size and description, and by size alone a 2023 mixture of experts outranks
+the reference, so it is used only with `MODEL_ROUTE_ON_PRIOR=true`. At most
+`MODEL_MAX_LOADED` distinct models fill the table, because Ollama swaps from
+disk when too many are asked for: `OLLAMA_MODEL` first, then whichever
+models take the most rungs. `MODEL_ROUTE_<TASK>` pins a task's rungs
+outright. The table is printed by the CLI, logged, and reported by
+`/v1/meta`.
+
+A **call** goes to its rung's model. One that is not on the host, cannot be
+reached, fails or answers with nothing is retried once on the rung's
+fallback and then on `OLLAMA_MODEL`. A model that answers badly is not a
+routing failure: the gates catch that, and the repair climbs.
+
+The **trace** says, for every call, which model answered (`model`), the rung
+it was routed at (`rung`), why (`route`), and every model that failed first
+(`hops`), so `--json` and the benchmark attribute accuracy and time per
+model and not only per agent.
+
+**Off is v5.1.** `MODEL_ROUTING_ENABLED=false`, no catalog, or a catalog in
+which nothing was measured sends every call to `OLLAMA_MODEL` -- which is
+where the committed catalog leaves it until
+[`models/calibrate.py`](../models/calibrate.py) has run. A catalog built for
+another host is refused when it would route anything, and ignored with a
+note when it would not.
+
+Three things the spec says that the code does differently, each found by
+running it:
+
+- **The window is per model, not per task.** Ollama reloads a model whenever
+  a request asks for a different `num_ctx`, so a light task's small window
+  and a heavy task's large one on the same model would reload it between
+  calls. `OLLAMA_MODEL` keeps `OLLAMA_NUM_CTX`, exactly as without routing;
+  every other model gets the smaller of its own context and `MODEL_NUM_CTX`.
+  Measured on the benchmark, the largest prompt any agent sends is 8,861
+  tokens (the generator's), so the 32,768 default leaves nearly four times
+  that in hand.
+- **The generator's score reads the answer, not the retrieval.** The spec
+  counted the tables after closure; measured on the benchmark that is seven
+  to ten tables for every question, "how many stores are there?" included,
+  because it is the scope four retrievers proposed -- and with it twelve of
+  the fifteen questions scored heavy. The count now comes from the answer
+  contract (one table per entity, one for a measure's fact unless it is a
+  count, one for a period), which is within one table of every reference
+  query. For the same reason a trap rule counts only among the three chunks
+  nearest the question, an ambiguous literal only when a value the question
+  names exactly is found in two columns ("year" inside a promotion's name is
+  not a choice), and the bridge signal is gone: closure over the scope says
+  nothing about the query. The benchmark now scores six questions light and
+  nine standard.
+- **A near worked example is judged by similarity, not the fused score.**
+  The fused score is normalised within one search, so the best of even a
+  poor shortlist scores near 1.0; the question-vector similarity says how
+  near the pair really is. The spec's "with the same intent" is not
+  applied: the golden pairs carry no intent.
 
 ## Configuration
 
@@ -674,6 +749,22 @@ and with itself 12.5 billion. The default is eight times the hardest known-good
 query and below the cheapest cross join involving the fact table, so it rejects
 runaway plans without rejecting real work. Re-derive it the same way whenever
 the data is regenerated, since plan costs scale with row counts.
+
+Model routing (arch5.2, [above](#model-routing-arch52)) adds these:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `MODEL_ROUTING_ENABLED` | -- | on. Off is v5.1: every call to `OLLAMA_MODEL` |
+| `MODEL_CATALOG` | -- | none, so every rung is `OLLAMA_MODEL`; compose mounts the committed [`models/catalog.json`](../models/catalog.json) at `/app/models/catalog.json` and names it |
+| `MODEL_ROUTE_ON_PRIOR` | -- | off: route only on what calibration measured |
+| `MODEL_ROUTE_SUPERVISOR` | -- | none. A model for every rung, or `light=a,standard=b,heavy=c` |
+| `MODEL_ROUTE_GENERATOR` | -- | none, as above |
+| `MODEL_ROUTE_REFLECTION` | -- | none, as above |
+| `MODEL_ROUTE_NARRATOR` | -- | none, as above |
+| `MODEL_ROUTE_REPAIR` | -- | none, as above |
+| `MODEL_MAX_LOADED` | -- | 3 distinct models in the table, `OLLAMA_MODEL` among them |
+| `MODEL_NUM_CTX` | -- | 32768, the window of every routed model but `OLLAMA_MODEL` |
+| `OLLAMA_KEEP_ALIVE` | -- | `30m` with routing on, so a session's models stay loaded; not sent with routing off |
 
 ## Running outside Docker
 

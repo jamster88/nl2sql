@@ -249,23 +249,25 @@ into the golden set as before; a wrong or correct-but-incomplete one is fixed
 against the live database, and it goes into a corrections or completions store
 of its own. [Feedback](#feedback) has the whole of it.
 
-**v5.2 (arch5.2) is designed, and its first part is built.** Every model
-call today goes to the one model `OLLAMA_MODEL` names. The design routes each
-call -- triage, draft, column check, sentence, diagnosis -- to the cheapest
-model on the Ollama host that its task, at the complexity the question
-presents, has been shown to be suited to. Repairs climb the ladder; switching
-routing off is v5.1. What exists is the list it routes from: the
-[model catalog](#model-catalog), built by listing the host and enriching each
-model with what `/api/show` and the Ollama library say about it. The router,
-and the calibration that measures models through it, come next.
+**v5.2 (arch5.2) routes every model call.** Triage, draft, column check,
+sentence and diagnosis each go to the fastest model on the Ollama host that
+calibration measured to be suited to the task, at the complexity the question
+presents: light, standard or heavy, computed from the pipeline's own state
+without a model call. A repair climbs the ladder, a routed model that cannot
+answer falls back to `OLLAMA_MODEL`, and the trace names the model that
+answered every call. The list it routes from is the
+[model catalog](#model-catalog). Until that is calibrated, every call goes to
+`OLLAMA_MODEL` exactly as in v5.1 -- which is where the committed catalog
+leaves it -- and `MODEL_ROUTING_ENABLED=false` makes it v5.1 outright.
 
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
 (arch4 plus the answer contract and the Completeness Reviewer, plus the human
 review of section 14);
 [`Multi-Agent_NL2SQL_arch5_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md)
-supersedes it on paper with section 15, model routing, and says in its
-status line that it is not built.
+supersedes it with section 15, model routing; its status line predates the
+build, and [`agent/README.md`](agent/README.md#model-routing-arch52) says
+where the code departs from it and why.
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -794,6 +796,11 @@ python benchmarks/run_benchmark.py            # 15 questions, accuracy then spee
 python benchmarks/run_benchmark.py --compare  # schema-only vs knowledge vs multi-shot
 ```
 
+Since v5.2 the report also says which model answered each agent at each
+rung, how many of the questions it touched came out right, its P50, and how
+the generator's task was scored across the set -- read from the trace, so a
+routed run is attributed per model and not only per agent.
+
 [`benchmarks/`](benchmarks) holds fifteen questions that are deliberately **not**
 the 45 golden pairs the agent retrieves from -- a benchmark drawn from those
 would measure how well it can look something up. Accuracy is **execution
@@ -893,6 +900,7 @@ each step does, why it is there, and how control flows.
 | [`arch_v4.svg`](arch_diagrams/arch_v4.svg) | The multi-agent pipeline: four stages, the parallel retrievers, the deterministic gates, the repair loop, and the presentation trio |
 | [`arch_v5.svg`](arch_diagrams/arch_v5.svg) | v4 plus the answer contract and the Completeness Reviewer inside the repair loop |
 | [`arch_v5_1.svg`](arch_diagrams/arch_v5_1.svg) | The v5 pipeline unchanged, with the review side added to the deployment: one pane per verdict, the golden set, and the corrections and completions stores |
+| [`arch_v5_2.svg`](arch_diagrams/arch_v5_2.svg) | v5.1 with every model call routed: the catalog and the routed chat models in the deployment, the router and the ladder, and on each step that calls a model, the rung it is routed at |
 
 All of them are laid out identically so the versions can be read side by side --
 everything new or changed is marked, in teal for v2's retrieval and indigo for
@@ -915,19 +923,24 @@ content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
 ## Model catalog
 
-[`models/`](models) holds the list arch5.2's model router will route from:
-every model the chat host serves, what the host and ollama.com say about it,
-and the highest rung of each task -- light, standard or heavy -- it is
-presumed suited to until calibration measures it.
+[`models/`](models) holds the list arch5.2's model router routes from: every
+model the chat host serves, what the host and ollama.com say about it, and
+the highest rung of each task -- light, standard or heavy -- it is suited to.
 
 ```bash
-python3 models/build_catalog.py    # writes models/catalog.json for the host .env points at
+python3 models/build_catalog.py                  # the host .env points at -> models/catalog.json
+python3 models/build_catalog.py 192.168.1.20     # any Ollama host, by its address alone
+.venv/bin/python models/calibrate.py             # measure what each model is suited to
 ```
 
-Standard library only, so it runs with the `python3` a Mac already has.
-Re-run it when the host's models change, and commit the result like code.
-[`models/README.md`](models/README.md) has the rules, the catalog's shape,
-and the three places the script reads the spec rather than quoting it.
+The scanner needs only the standard library, so it runs with the `python3` a
+Mac already has; it says what each model *is* and guesses from that what it
+is suited to. The calibrator runs each model through a probe per task
+against the live stack and records what it *measured*, and only a measured
+suitability is routed on. Re-run the scanner when the host's models change
+-- it keeps the measurements of every model whose weights have not -- and
+commit the result like code. [`models/README.md`](models/README.md) has the
+rules, the probes and the catalog's shape.
 
 ## Synthetic data generator
 
@@ -1161,7 +1174,7 @@ pytest --run-docker --run-node --run-java       # all 3069, including ones that 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
-| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
+| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
 | [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures |
@@ -1170,7 +1183,7 @@ pytest --run-docker --run-node --run-java       # all 3069, including ones that 
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows, and the review interface's own 128-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
-| [`tests/models/`](tests/models) | The model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
+| [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
 The 448 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
@@ -1234,7 +1247,7 @@ client's JaCoCo rule already did. Not four packages with the scripts left out: t
 server, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
 architecture-diagram generator, the build-time SQL emitter, and the model
-catalog builder.
+catalog's builder and calibrator.
 
 Exactly one statement is excluded, and the reason is written beside it: a
 defensive `continue` in `facts.py` that is unreachable by construction,

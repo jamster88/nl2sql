@@ -180,13 +180,31 @@ def path(d, color=SLATE, dash=None, marker="a", wdt=1.6):
 PADX, PADY = 18, 16
 
 
-def step_row(y, n, name, does, tags, why, accent=SLATE, badge=None, badge_color=TEAL):
+def tag_lines(tags, width, wrap=True):
+    """Pills in lines no wider than `width`: a step with more tags than fit
+    on one line wraps rather than running past its card. Opt-in (`wrap`), so
+    the diagrams drawn before it existed are drawn exactly as they were."""
+    lines, line, used = [], [], 0.0
+    for tag in tags:
+        tw = len(tag[0]) * 6.4 + 20
+        if wrap and line and used + tw > width:
+            lines.append(line)
+            line, used = [], 0.0
+        line.append(tag)
+        used += tw + 7
+    if line:
+        lines.append(line)
+    return lines
+
+
+def step_row(y, n, name, does, tags, why, accent=SLATE, badge=None, badge_color=TEAL, wrap=False):
     iw = STEP_W - 2 * PADX
     ww = WHY_W - 2 * PADX - 6
 
     title_h = 22
     does_h = block_h(does, iw, 13)
-    tag_h = 30 if tags else 0
+    lines = tag_lines(tags or [], iw, wrap)
+    tag_h = 30 * len(lines)
     step_h = PADY + title_h + 8 + does_h + tag_h + PADY
 
     why_h = PADY + 16 + block_h(why, ww, 13) + PADY - 2
@@ -211,10 +229,10 @@ def step_row(y, n, name, does, tags, why, accent=SLATE, badge=None, badge_color=
     blk, _ = text_block(STEP_X + PADX, ty, does, iw, 13, MUTED)
     s.append(blk)
 
-    if tags:
+    for number, line in enumerate(lines):
         tx = STEP_X + PADX
-        tagy = y + step_h - PADY - 21
-        for t, c in tags:
+        tagy = y + step_h - PADY - 21 - 30 * (len(lines) - 1 - number)
+        for t, c in line:
             p, tw = pill(tx, tagy, t, c)
             s.append(p)
             tx += tw + 7
@@ -546,7 +564,7 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=(),
         if k == "step":
             svg, h = step_row(yy, r["n"], r["name"], r["does"], r.get("tags", []),
                               r["why"], r.get("accent", SLATE), r.get("badge"),
-                              r.get("badge_color", TEAL))
+                              r.get("badge_color", TEAL), r.get("wrap_tags", False))
             drawn.append(r["name"])
         elif k == "note":
             svg, h = note_row(yy, r.get("title"), r["body"], r.get("color", TEAL),
@@ -1667,6 +1685,48 @@ def build_v5_1():
     return _build_v5(review=True)
 
 
+def build_v5_2():
+    return _build_v5(review=True, routing=True)
+
+
+# --- v5.2: model routing ----------------------------------------------------
+
+OLLAMA_CHAT_V52 = {"name": "Ollama — chat models, routed", "color": PURPLE,
+                   "desc": "Every model on the host the catalog measured as suited. Each call goes "
+                           "to the fastest one suited to its task at its rung, at most three "
+                           "distinct models kept warm; OLLAMA_MODEL fills every rung nothing else "
+                           "can, and is every call's last fallback.",
+                   "link": "→ 3–4 prompts, each routed"}
+
+CATALOG_V52 = {"name": "models/catalog.json", "color": PURPLE,
+               "desc": "The host's models: their facts, a prior from size and description, and "
+                       "what calibration measured per task and rung. Built by build_catalog.py, "
+                       "measured by calibrate.py, mounted read-only.",
+               "link": "← read once, at startup"}
+
+V52_ADDED = ("Every model call is asked for by task and rung — light, standard or heavy — and "
+             "the Model Router answers from the catalog: the fastest model measured to be "
+             "suited to that task at that rung. The rung is computed from state, never by a "
+             "model: the Supervisor is light unless a free pre-screen flags the question; the "
+             "aggregator scores the generator's task from the tables its answer contract needs, "
+             "its intent, a ranked measure, a trap rule and the nearest worked example; the "
+             "reflection takes the "
+             "generation's rung, capped at standard; the narrator goes by the result's size; the "
+             "diagnosis runs one above the generator. Every repair climbs a rung and nothing "
+             "descends. A model that cannot answer hops to its fallback, then OLLAMA_MODEL, and "
+             "the trace names the model that answered every call. With nothing measured, every "
+             "rung is OLLAMA_MODEL — v5.1 exactly.")
+
+V52_TAGS = {
+    "supervise": "routed: light, standard if pre-screened",
+    "aggregate": "scores the generator's rung",
+    "generate_sql": "routed: the scored rung, +1 per repair",
+    "review": "reflection: the generation's rung, ≤ standard",
+    "narrate": "routed: by the result's size",
+    "repair": "diagnosis one rung up; the ladder climbs",
+}
+
+
 # --- v5.1: the review side ------------------------------------------------
 
 REVIEW_HUB = {"name": "nl2sql-review",
@@ -1725,9 +1785,14 @@ V51_RULE = ("Only a query that runs is stored. The reviewer validates it -- one 
             "SQL, and then one to help write it, come next.")
 
 
-def _build_v5(review: bool = False):
+def _build_v5(review: bool = False, routing: bool = False):
     parts, y = [], 56
-    if review:
+    if routing:
+        parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                     f'font-weight="700" fill="{INK}">NL2SQL Agent v5.2 '
+                     f'<tspan fill="{MUTED}" font-weight="400">— every model call routed by how '
+                     f'hard its task is</tspan></text>')
+    elif review:
         parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
                      f'font-weight="700" fill="{INK}">NL2SQL Agent v5.1 '
                      f'<tspan fill="{MUTED}" font-weight="400">— and what a person says about '
@@ -1747,6 +1812,10 @@ def _build_v5(review: bool = False):
         intro += (" v5.1 changes no agent: it adds the review side at the foot of the page, "
                   "where a user's verdict on an answer -- correct, wrong, or correct but "
                   "incomplete -- becomes a golden pair, a correction or a completion.")
+    if routing:
+        intro += (" v5.2 adds no node either: it routes each of those model calls to the "
+                  "model its task, at its complexity, was measured to be suited to -- marked "
+                  "in purple on each step that calls one.")
     blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
     parts.append(blk); y += h + 26
 
@@ -1754,12 +1823,19 @@ def _build_v5(review: bool = False):
                             "desc": "python -m nl2sql_agent, or the same image serving the REST "
                                     "API. The label map and the fiscal calendar are read from "
                                     "the catalog once per process, like the literal catalog."},
-                        [PG_V5, VECTORDB_V4, CHUNKDB], [OLLAMA_CHAT_V5, OLLAMA_EMBED_V4])
+                        [PG_V5, VECTORDB_V4, CHUNKDB],
+                        [OLLAMA_CHAT_V52, OLLAMA_EMBED_V4, CATALOG_V52] if routing
+                        else [OLLAMA_CHAT_V5, OLLAMA_EMBED_V4])
     parts.append(svg); y += h + 18
     svg, h = note_row(y, "What v5 adds", V5_ADDED, color=ORANGE, x=MARGIN,
                       w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
     svg, h = note_row(y, "Three model calls on the happy path, or four", V5_CALLS, color=PURPLE,
-                      x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 36
+                      x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
+    if routing:
+        svg, h = note_row(y, "What v5.2 adds: model routing", V52_ADDED, color=PURPLE, x=MARGIN,
+                          w=CONTENT_R - MARGIN, dashed=False)
+        parts.append(svg); y += h + 18
+    y += 18
     svg, h = startup(y, STARTUP, FAIL2); parts.append(svg); y += h + 40
 
     rows = [
@@ -1870,6 +1946,11 @@ def _build_v5(review: bool = False):
         {"id": "terminals", "kind": "branch", "left": TERM_L_V4, "right": TERM_R_V4,
          "flow": {"x": STEP_X + (STEP_W - 14) / 4, "color": AMBER}, "why": TERM_WHY_V4},
     ]
+    if routing:
+        for row in rows:
+            if row["id"] in V52_TAGS:
+                row["tags"] = row["tags"] + [(V52_TAGS[row["id"]], PURPLE)]
+                row["wrap_tags"] = True
     svg, h, nodes = pipeline(
         y, rows,
         retry_label="retry &#183; one shared attempts budget",
@@ -1899,6 +1980,10 @@ def _build_v5(review: bool = False):
                         ("pill", "new or changed in v5", ORANGE),
                         ("pill", "v4's pipeline", MAGENTA)])
     parts.append(svg); y += h
+    if routing:
+        return document("NL2SQL Agent v5.2 architecture",
+                        "Multi-agent pipeline with a completeness check, human review and model routing",
+                        "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE))
     if review:
         return document("NL2SQL Agent v5.1 architecture",
                         "Multi-agent pipeline with a completeness check, and human review",
@@ -1910,7 +1995,8 @@ def _build_v5(review: bool = False):
 #: What `main` writes, in the order the versions came.
 DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
             ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"),
-            ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"))
+            ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
+            ("arch_v5_2.svg", "build_v5_2"))
 
 
 def main(output_dir: Path | None = None) -> None:

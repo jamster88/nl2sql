@@ -202,7 +202,7 @@ only in a browser; the server warns about it at startup.
 | `GET` | `/openapi.json` | no | The schema. Generate your client from this |
 | `GET` | `/docs` | no | The same thing, browsable (`API_DOCS_ENABLED=false` to remove) |
 | `GET` | `/redoc` | no | The same schema again, as reference documentation (same switch) |
-| `GET` | `/v1/meta` | yes | Version, model, tables in scope, limits, which pipeline stages are on, the certificate |
+| `GET` | `/v1/meta` | yes | Version, model, tables in scope, limits, which pipeline stages are on, the certificate, the model routing table |
 | `POST` | `/v1/questions` | yes | Ask. `?wait=<seconds>` to block |
 | `GET` | `/v1/questions` | yes | Recent questions, newest first |
 | `GET` | `/v1/questions/{job_id}` | yes | One question. `?wait=<seconds>` to block |
@@ -239,6 +239,14 @@ the user whatever it was handed, and "422 Unprocessable Entity" is not an
 explanation of a text box forty characters too long. `desktop/` reads both on
 start-up and refuses the question in the box, which is the only place the
 user can still do something about it.
+
+`routing` is the model routing table the server answers with (arch5.2): for
+each task -- `supervisor`, `generator`, `reflection`, `narrator`, `repair` --
+and each rung -- `light`, `standard`, `heavy` -- the model, its fallback and
+why, with the catalog it came from and any notes. It is empty until the agent
+has started. No client draws it; it is there so that what a run was routed
+with is never a matter of memory. Each answer's trace names the model that
+actually answered every call.
 
 ---
 

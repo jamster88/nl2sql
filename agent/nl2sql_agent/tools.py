@@ -96,6 +96,7 @@ def build_tools(
                     "title": p.title,
                     "score": round(p.score, 5),
                     "rerank_score": round(p.rerank_score, 5),
+                    "similarity": None if p.similarity is None else round(p.similarity, 5),
                     "found_by": p.found_by,
                 }
                 for p in pairs

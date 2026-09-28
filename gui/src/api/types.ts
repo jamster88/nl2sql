@@ -196,6 +196,12 @@ export interface Meta {
    * a button whose every click fails is worse than no button.
    */
   feedback: boolean;
+  /**
+   * The model routing table the server answers with: which model each task
+   * gets at each rung, and why. Not drawn; reported so a run's routing is
+   * never a matter of memory.
+   */
+  routing: Record<string, unknown>;
 }
 
 /** What `/healthz` answers: the process is up. It checks nothing else. */

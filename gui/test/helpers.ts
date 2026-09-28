@@ -112,6 +112,7 @@ export function makeMeta(overrides: Partial<Meta> = {}): Meta {
     tls: { enabled: true, self_signed: true },
     authentication: "none",
     feedback: true,
+    routing: {},
     ...overrides,
   };
 }

@@ -41,6 +41,12 @@ What changed from v3 and why, in one line each:
   the generator is shown before it writes and the Completeness Reviewer
   checks after the query has run. An incomplete result is one more failure
   source into the same Repair Agent and the same budget.
+* **Every model call is routed (arch5.2).** Each agent that calls a model
+  asks the Model Router (`router.py`) for one by task and rung -- light,
+  standard or heavy, computed from state by `complexity.py` -- and the
+  Context Aggregator scores how hard the generator's task is. A repair
+  climbs the ladder; nothing descends. The trace names the model that
+  answered each call and why it was asked.
 
 Every stage the architecture makes optional is a setting, so an ablation is
 an environment change rather than a code change.
@@ -48,6 +54,7 @@ an environment change rather than a code change.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from contextvars import ContextVar
@@ -56,13 +63,14 @@ from typing import Any, Callable
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 
+from . import complexity
 from . import completeness as reviewer, contract as answer_contract, present, repair as repair_agent, supervisor
 from .config import Settings
 from .contract import ContractResources
 from .database import Database, strip_sql
 from .examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING, GoldenPairLibrary
 from .literals import LiteralMatcher, build_catalog, render_literal_map
-from .llm import build_llm
+from .llm import build_llm, build_routed_client
 from .prompts import (
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
@@ -74,6 +82,7 @@ from .prompts import (
     task_block,
 )
 from .retrieval import KnowledgeBase, build_embedder
+from .router import ClientFactory, RoutedModel, Router, build_table, listed_models, load_catalog
 from .schema_retrieval import DDL_COLLECTION, SchemaRetriever
 from .state import (
     AUDIT,
@@ -84,6 +93,7 @@ from .state import (
     AnswerContract,
     Attempt,
     AuditReport,
+    Complexity,
     Issue,
     QueryResult,
     Shot,
@@ -94,6 +104,8 @@ from .tools import TableSelection, build_tools
 from .validate import validate as validate_sql_statically
 
 ProgressFn = Callable[[str, str], None]
+
+log = logging.getLogger(__name__)
 
 #: The progress callback belonging to the run happening in this context.
 #:
@@ -119,6 +131,7 @@ MAX_NARRATION_RETRIES = 1
 #: Keys a node returns for the tracer rather than for the state.
 _DETAIL = "_detail"
 _MODEL_CALLS = "_model_calls"
+_ROUTE = "_route"
 
 #: A short human label per node, for anything that shows progress to a
 #: person: the CLI's stderr lines and the REST server's event stream both
@@ -159,6 +172,7 @@ class Nl2SqlAgent:
         settings: Settings,
         *,
         llm: BaseChatModel | None = None,
+        llm_factory: ClientFactory | None = None,
         knowledge_base: KnowledgeBase | None = None,
         example_library: GoldenPairLibrary | None = None,
         schema_retriever: SchemaRetriever | None = None,
@@ -173,7 +187,11 @@ class Nl2SqlAgent:
             statement_timeout_ms=settings.statement_timeout_ms,
             max_rows=settings.max_rows,
         )
-        self.llm = llm or build_llm(settings)
+        keep_alive = settings.ollama_keep_alive or None if settings.model_routing_enabled else None
+        # The anchor: OLLAMA_MODEL, validated against the host at startup, and
+        # the model every rung falls back to.
+        self.llm = llm or build_llm(settings, keep_alive=keep_alive)
+        self.router = self._build_router(settings, injected=llm is not None, factory=llm_factory)
         self.knowledge_base = knowledge_base or self._build_knowledge_base(settings)
         self.example_library = example_library or self._build_example_library(settings)
         self.schema_retriever = schema_retriever or self._build_schema_retriever(settings)
@@ -189,6 +207,32 @@ class Nl2SqlAgent:
         self._graph = self._build_graph()
 
     # --- construction -------------------------------------------------------
+
+    def _build_router(
+        self, settings: Settings, *, injected: bool, factory: ClientFactory | None
+    ) -> Router:
+        """The routing table, built once, and the clients it hands out.
+
+        A model given to the constructor answers every rung, which is what
+        the tests and a single-model caller want; `llm_factory` builds one
+        client per routed model instead.
+        """
+        catalog = None
+        if settings.model_routing_enabled and settings.model_catalog:
+            catalog = load_catalog(settings.model_catalog)
+        host = None if injected else listed_models(settings.ollama_base_url, settings.ollama_connect_timeout)
+        table = build_table(settings, catalog, catalog_path=settings.model_catalog, host=host)
+        if factory is None:
+            anchor, name = self.llm, table.anchor
+
+            def factory(model: str, num_ctx: int) -> Any:
+                if injected or model == name:
+                    return anchor
+                return build_routed_client(settings, model, num_ctx)
+
+        for line in table.lines():
+            log.info(line)
+        return Router(settings, table, factory)
 
     @staticmethod
     def _build_knowledge_base(settings: Settings) -> KnowledgeBase | None:
@@ -335,12 +379,17 @@ class Nl2SqlAgent:
             started = time.perf_counter()
             update = dict(fn(state) or {})
             detail = str(update.pop(_DETAIL, ""))
+            route = update.pop(_ROUTE, None) or {}
             update["trace"] = [
                 TraceEntry(
                     node=name,
                     ms=round((time.perf_counter() - started) * 1000, 2),
                     model_calls=int(update.pop(_MODEL_CALLS, 0)),
                     detail=detail,
+                    model=route.get("model", ""),
+                    rung=route.get("rung", ""),
+                    route=route.get("route", ""),
+                    hops=list(route.get("hops", [])),
                 )
             ]
             (_progress.get() or self._on_progress)(name, detail)
@@ -444,12 +493,14 @@ class Nl2SqlAgent:
                 "answer_contract": contract,
                 _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
             }
+        routed = self.router.model("supervisor", *complexity.supervisor_rung(state["question"]))
         update = supervisor.screen(
-            self.llm,
+            routed,
             state["question"],
             clarify_enabled=self.settings.clarify_enabled,
             tables=self.db.table_names(),
         )
+        _note_route(update, routed)
         contract = self._build_contract(
             state["question"],
             intent=update["intent"],
@@ -618,10 +669,26 @@ class Nl2SqlAgent:
             tables = sorted(known)[: self.settings.max_tables]
 
         schema = self.tools["get_schema_and_data"].invoke({"tables": tables})
+        # arch5.2: the one node that has seen everything the generator will
+        # be shown scores how hard its task is. No model call.
+        scored = complexity.score_generation(
+            question=state["question"],
+            intent=state.get("intent", ""),
+            contract=state.get("answer_contract"),
+            knowledge_chunks=state.get("knowledge_chunks", []),
+            literal_map=state.get("literal_map", []),
+            example_pairs=state.get("example_pairs", []),
+        )
         detail = ", ".join(tables)
         if bridges:
             detail += f" (+{len(bridges)} bridge: {', '.join(bridges)})"
-        return {"selected_tables": tables, "schema": schema, _DETAIL: detail}
+        return {
+            "selected_tables": tables,
+            "schema": schema,
+            "complexity": scored,
+            "generation_rung": scored.rung,
+            _DETAIL: f"{detail}; {scored.rung} (score {scored.score})",
+        }
 
     # --- stage 2: synthesis -------------------------------------------------
 
@@ -646,15 +713,22 @@ class Nl2SqlAgent:
             question=state["question"],
             feedback=feedback,
         )
-        response = self.llm.invoke(messages)
+        attempt = state.get("attempts", 0) + 1
+        why = f"attempt {attempt}"
+        if attempt == 1:
+            why += f", {complexity.describe(state.get('complexity', Complexity()))}"
+        routed = self.router.model("generator", state.get("generation_rung", complexity.LIGHT), why)
+        response = routed.invoke(messages)
         sql = strip_sql(str(response.content))
-        return {
+        update = {
             "sql": sql,
-            "attempts": state.get("attempts", 0) + 1,
+            "attempts": attempt,
             "issues": [],
             _MODEL_CALLS: 1,
             _DETAIL: sql,
         }
+        _note_route(update, routed)
+        return update
 
     # --- stage 3: validation and repair -------------------------------------
 
@@ -737,6 +811,9 @@ class Nl2SqlAgent:
         if not self.settings.review_enabled:
             assumptions = reviewer.assumptions_for(contract, state.get("sql", ""), result)
             return {"assumptions": assumptions, _DETAIL: "disabled"}
+        routed = self.router.model(
+            "reflection", *complexity.reflection_rung(state.get("generation_rung", complexity.LIGHT))
+        )
         outcome = reviewer.review(
             question=state["question"],
             sql=state.get("sql", ""),
@@ -745,7 +822,7 @@ class Nl2SqlAgent:
             label_map=self._contract_resources().label_map,
             intent=state.get("intent", ""),
             prior=state.get("completeness"),
-            llm=self.llm,
+            llm=routed,
             reflect_enabled=self.settings.review_reflection_enabled,
             schema=state.get("schema", ""),
             last_attempt=state.get("attempts", 0) >= self.settings.max_attempts,
@@ -759,6 +836,7 @@ class Nl2SqlAgent:
         }
         if outcome.issue:
             update.update(self._widen_scope(state, outcome.report))
+        _note_route(update, routed)
         return update
 
     def _widen_scope(self, state: AgentState, report: Any) -> dict:
@@ -799,24 +877,35 @@ class Nl2SqlAgent:
         history = list(state.get("attempt_history", [])) + [
             Attempt(sql=state.get("sql", ""), issues=list(issues))
         ]
+        rung = state.get("generation_rung", complexity.LIGHT)
+        routed = self.router.model("repair", *complexity.repair_rung(rung))
         hinted, model_calls = repair_agent.repair_hint(
             issues,
-            llm=self.llm,
+            llm=routed,
             schema=state.get("schema", ""),
             allowed_tables=state.get("selected_tables", []),
             history=history,
+        )
+        # arch5.2: the ladder. The next generation runs a rung up, unless a
+        # rules gap in completeness holds it once where it stands.
+        next_rung, holds, climbed = complexity.next_generation_rung(
+            rung, state.get("rung_holds", 0), issues, state.get("completeness")
         )
         # Record the hinted issues, not the bare ones: the history is what a
         # give-up shows the user and what the next hint reads, so it should
         # say both why an attempt failed and what the generator was told to
         # do about it.
         history[-1] = Attempt(sql=history[-1].sql, issues=hinted)
-        return {
+        update = {
             "issues": hinted,
             "attempt_history": history,
+            "generation_rung": next_rung,
+            "rung_holds": holds,
             _MODEL_CALLS: model_calls,
-            _DETAIL: "; ".join(i.hint or i.message for i in hinted),
+            _DETAIL: "; ".join(i.hint or i.message for i in hinted) + f" (next generation: {climbed})",
         }
+        _note_route(update, routed)
+        return update
 
     def _route_after_repair(self, state: AgentState) -> str:
         return "retry" if state.get("attempts", 0) < self.settings.max_attempts else "give_up"
@@ -865,9 +954,10 @@ class Nl2SqlAgent:
             if report
             else []
         )
+        routed = self.router.model("narrator", *complexity.narrator_rung(result, rewrite=bool(rejected)))
         try:
             claims = present.narrate(
-                self.llm,
+                routed,
                 state["question"],
                 result,
                 chart=state.get("chart"),
@@ -877,11 +967,14 @@ class Nl2SqlAgent:
                 assumptions=state.get("assumptions", []),
             )
         except Exception as exc:
-            return {"claims": [], "retrieval_errors": {"narrator": str(exc)}, _DETAIL: str(exc)}
+            failed = {"claims": [], "retrieval_errors": {"narrator": str(exc)}, _DETAIL: str(exc)}
+            _note_route(failed, routed)
+            return failed
         update: dict[str, Any] = {"claims": claims, _MODEL_CALLS: 1}
         if rejected:
             update["narration_retries"] = state.get("narration_retries", 0) + 1
         update[_DETAIL] = f"{len(claims)} claim(s)" + (" (rewritten)" if rejected else "")
+        _note_route(update, routed)
         return update
 
     def _audit(self, state: AgentState) -> dict:
@@ -945,6 +1038,12 @@ class Nl2SqlAgent:
             completeness=state.get("completeness"),
         )
         return {"narrative": narrative, "answer": answer, _DETAIL: f"{len(answer):,} characters"}
+
+
+def _note_route(update: dict, routed: RoutedModel) -> None:
+    """Hand the tracer the model that answered, when a call was made."""
+    if routed.calls:
+        update[_ROUTE] = routed.record()
 
 
 def _shot_dict(shot: Shot | dict) -> dict:

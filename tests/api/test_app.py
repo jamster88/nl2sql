@@ -145,6 +145,27 @@ def test_meta_publishes_everything_a_client_needs_to_configure_itself(make_clien
     assert body["intents"]
 
 
+def test_meta_reports_the_routing_table_the_agent_answers_with(make_client, fake_agent):
+    """arch5.2: so what a run was routed with is never a matter of memory."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.router import build_table
+
+    fake_agent.router = SimpleNamespace(table=build_table(Settings(model_route_narrator="mistral:7b")))
+    routing = make_client(agent_factory=lambda: fake_agent).get("/v1/meta").json()["routing"]
+
+    assert routing["enabled"] is True and routing["anchor"] == "qwen3.8-256k:latest"
+    assert routing["table"]["narrator"]["light"]["model"] == "mistral:7b"
+    assert routing["table"]["narrator"]["light"]["why"] == "pinned by MODEL_ROUTE_NARRATOR"
+
+
+def test_meta_reports_no_routing_before_the_agent_has_started(make_client):
+    def broken():
+        raise RuntimeError("database is not up yet")
+
+    assert make_client(agent_factory=broken).get("/v1/meta").json()["routing"] == {}
+
+
 def test_meta_publishes_the_two_limits_that_describe_the_request(make_client, fake_agent):
     """A browser learns these from a 422 in its network tab. A desktop client
     shows the user whatever it was handed, and "422 Unprocessable Entity" is

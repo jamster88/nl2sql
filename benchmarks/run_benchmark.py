@@ -46,6 +46,7 @@ from benchmarks.runner import (  # noqa: E402
     StageTimer,
     model_calls_from_trace,
     result_matches,
+    routes_from_trace,
     timing_from_trace,
 )
 
@@ -175,6 +176,8 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
         knowledge_chunks=len(state.get("knowledge_chunks", [])),
         model_calls=model_calls_from_trace(trace),
         narrative_score=narrative_score(state),
+        routes=routes_from_trace(trace),
+        rung=getattr(state.get("complexity"), "rung", None),
     )
 
     if state.get("error"):
@@ -281,6 +284,20 @@ def print_report(report: BenchmarkReport) -> None:
         print(f"\n  model calls          {total_calls} ({per_question:.1f} per question)")
         print(f"    {breakdown}")
 
+    by_model = report.by_model()
+    if by_model:
+        # arch5.2: which model answered each agent at each rung, how often the
+        # questions it touched came out right, and how fast it answered.
+        rungs = ", ".join(f"{rung} {n}" for rung, n in sorted(report.rungs().items()))
+        print(f"\nROUTING\n  generator's task scored   {rungs or 'not scored'}")
+        print(f"\n  {'agent':<13} {'rung':<9} {'model':<26} {'calls':>5} {'right':>7} {'P50':>8}")
+        for row in by_model:
+            hops = f"  ({row['hops']} hop(s))" if row["hops"] else ""
+            print(
+                f"  {row['node']:<13} {row['rung']:<9} {row['model']:<26} {row['calls']:>5} "
+                f"{row['correct']:>3}/{row['questions']:<3} {row['p50_seconds']:>7.2f}s{hops}"
+            )
+
     totals = report.stage_totals()
     if totals:
         overall = sum(totals.values()) or 1.0
@@ -324,6 +341,8 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                 "median_seconds": report.median_seconds,
                 "stage_totals": report.stage_totals(),
                 "by_category": {k: list(v) for k, v in report.by_category().items()},
+                "by_model": report.by_model(),
+                "rungs": report.rungs(),
                 "results": [
                     {
                         "id": r.question_id,
@@ -339,6 +358,8 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "knowledge_chunks": r.knowledge_chunks,
                         "model_calls": r.model_calls,
                         "narrative_score": r.narrative_score,
+                        "rung": r.rung,
+                        "routes": r.routes,
                         "sql": r.sql,
                         "error": r.error,
                     }

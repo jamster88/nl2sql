@@ -111,6 +111,11 @@ class GoldenPair:
     # visible in --json output and the two stages can be told apart.
     rerank_score: float = 0.0
     ranks: dict[str, int] = field(default_factory=dict)
+    #: The question-vector cosine similarity to the asked question, when that
+    #: retriever found the pair. Unlike the fused score, which is normalised
+    #: within one search and so is near 1.0 for the best of even a poor
+    #: shortlist, this says how near the pair really is (arch5.2 section 15.2).
+    similarity: float | None = None
 
     @property
     def table_list(self) -> list[str]:
@@ -310,6 +315,7 @@ class GoldenPairLibrary:
             return []
 
         rows = self._hydrate([chunk_id for chunk_id, _, _ in shortlist])
+        similarity = dict(rankings.get(BY_QUESTION, []))
         pairs: list[GoldenPair] = []
         for chunk_id, score, ranks in shortlist:
             row = rows.get(chunk_id)
@@ -317,6 +323,7 @@ class GoldenPairLibrary:
                 continue
             row.score = score
             row.ranks = ranks
+            row.similarity = similarity.get(chunk_id)
             pairs.append(row)
 
         return rerank_pairs(

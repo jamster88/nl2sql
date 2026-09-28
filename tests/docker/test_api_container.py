@@ -88,13 +88,6 @@ class Container:
         )
         return result.stdout + result.stderr
 
-    def health(self) -> str:
-        result = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.Health.Status}}", self.name],
-            capture_output=True, text=True, timeout=30,
-        )
-        return result.stdout.strip()
-
     def certificate(self, into: Path) -> Path:
         subprocess.run(
             ["docker", "cp", f"{self.name}:/etc/nl2sql/tls/server.crt", str(into)],

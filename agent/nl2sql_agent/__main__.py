@@ -10,6 +10,7 @@ from typing import Any
 from .config import Settings
 from .graph import STEP_LABELS, Nl2SqlAgent
 from .llm import LlmUnavailableError
+from .router import RoutingError
 from .state import to_jsonable
 
 
@@ -175,14 +176,19 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         agent = Nl2SqlAgent(settings, on_progress=on_progress)
-    except LlmUnavailableError as exc:
+    except (LlmUnavailableError, RoutingError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
+    routing = agent.router.table.lines()
     if args.question:
+        if not (args.quiet or args.json):
+            # One line: which models a single question may be routed to.
+            print(f"[routing] {routing[0].removeprefix('model routing ')}", file=sys.stderr)
         return answer(agent, " ".join(args.question), as_json=args.json, quiet=args.quiet)
 
     print(f"Connected to {settings.ollama_model} at {settings.ollama_base_url}.")
+    print("\n".join(routing))
     if settings.rag_enabled:
         print(f"Knowledge base: {settings.embed_model} embeddings against {settings.vector_db_url}")
     if settings.examples_enabled:

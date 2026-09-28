@@ -19,12 +19,13 @@
 # images and writes the .env that pins them. launch.sh assumes that has already
 # happened and just starts what is down, then checks that each piece actually
 # holds what the agent expects -- the dataset, the knowledge base, the golden
-# pairs, and both models.
+# pairs, both models -- and which models its calls will be routed to.
 #
 # The distinction matters because the failures are different. Setup fails when
 # an image will not pull; launch fails when a container is up but empty, when
-# the chat host moved, or when the embedding model is not the one the vectors
-# were built with. Those are invisible until a question is asked, and then they
+# the chat host moved, when the embedding model is not the one the vectors
+# were built with, or when the model catalog describes a host that is not
+# this one and every call quietly goes to one model. Those are invisible until a question is asked, and then they
 # look like the agent being bad at its job.
 #
 # If .env is missing, launch.sh hands off to setup.sh rather than guessing.
@@ -271,8 +272,12 @@ fi
 # Read back what compose will really hand the agent, rather than what the
 # defaults in this script say. awk consumes the whole stream: under pipefail an
 # early exit can take the pipeline down with SIGPIPE while compose is writing.
+# The agent is behind a profile of its own, and `compose config` leaves out a
+# service whose profile is not named -- without `--profile agent` this found
+# nothing, and every check below quietly fell back to the defaults on the next
+# lines, whatever host and model .env had been given.
 compose_value() {
-    docker compose config 2>/dev/null |
+    docker compose --profile agent config 2>/dev/null |
         awk -v key="$1:" '$1 == key && !seen { print $2; seen = 1 }'
 }
 
@@ -327,6 +332,63 @@ if [[ $WITH_RAG -eq 1 ]]; then
         warn "no Ollama on this machine at :11434, so nothing serves $embed_model."
         warn "Retrieval and worked examples will be skipped."
     fi
+fi
+
+# --- Model routing ---------------------------------------------------------
+# Since v5.2 a call goes to the fastest model calibration measured to be
+# suited to its task and the question's complexity, and falls back to
+# OLLAMA_MODEL where nothing was measured -- which, on any host but the one
+# models/catalog.json describes, is everywhere. The agent works that table
+# out once at start-up, from the catalog compose mounts, the settings compose
+# hands it and the models the host serves right now. This asks the same
+# image to work it out the same way and say what it got, so that a table
+# that fell back to one model is seen before the first question rather than
+# in a benchmark. --no-deps: the probe reads a file and asks one URL, and the
+# stores the agent depends on are not needed for either.
+routing_probe='
+from nl2sql_agent.config import Settings
+from nl2sql_agent.router import RoutingError, build_table, listed_models, load_catalog
+s = Settings.from_env()
+try:
+    catalog = load_catalog(s.model_catalog) if s.model_routing_enabled and s.model_catalog else None
+except RoutingError as exc:
+    print("ROUTE error " + " ".join(str(exc).split()))
+    raise SystemExit(0)
+table = build_table(s, catalog, catalog_path=s.model_catalog,
+                    host=listed_models(s.ollama_base_url, s.ollama_connect_timeout))
+print("ROUTE " + ("on" if table.enabled else "off"))
+print("ROUTE models " + " ".join(table.models()))
+for note in table.notes:
+    print("ROUTE note " + " ".join(note.split()))
+'
+
+route_field() {  # route_field NAME -- one field of the probe's answer
+    printf '%s\n' "$routing" | sed -n "s/^ROUTE $1 //p"
+}
+
+step "Checking model routing"
+routing_raw=$(docker compose run --rm --no-deps -T --entrypoint python agent -c "$routing_probe" 2>&1 || true)
+routing=$(printf '%s\n' "$routing_raw" | tr -d '\r' | grep '^ROUTE ' || true)
+route_error=$(route_field error)
+if [[ -n "$route_error" ]]; then
+    warn "the agent will not start with these settings: $route_error"
+elif printf '%s\n' "$routing" | grep -qx 'ROUTE off'; then
+    info "model routing is off (MODEL_ROUTING_ENABLED): every call goes to $chat_model"
+elif printf '%s\n' "$routing" | grep -qx 'ROUTE on'; then
+    read -r -a routed <<< "$(route_field models)"
+    if [[ ${#routed[@]} -gt 1 ]]; then
+        others=$(printf '%s, ' "${routed[@]:1}")
+        info "model routing: ${#routed[@]} models -- ${routed[0]} (OLLAMA_MODEL), ${others%, }"
+    else
+        info "model routing: every call goes to ${routed[0]:-$chat_model}"
+    fi
+    route_field note | while IFS= read -r note; do info "  $note"; done
+elif printf '%s' "$routing_raw" | grep -q "No module named 'nl2sql_agent.router'"; then
+    warn "the pinned agent image predates model routing, so every call goes to $chat_model."
+    warn "./setup.sh pulls the image this checkout ships; ./start.sh does it for you."
+else
+    warn "could not ask the agent image which models it will route to. It said:"
+    while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$routing_raw" | tail -3)
 fi
 
 # --- The REST API ----------------------------------------------------------

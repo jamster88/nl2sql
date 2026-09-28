@@ -221,3 +221,43 @@ def test_a_whitespace_only_value_is_treated_as_unset(monkeypatch):
     settings = Settings.from_env()
     assert settings.max_tables == 10
     assert settings.ollama_model == DEFAULT_OLLAMA_MODEL
+
+
+ROUTING_VARIABLES = (
+    "MODEL_ROUTING_ENABLED", "MODEL_CATALOG", "MODEL_ROUTE_ON_PRIOR", "MODEL_ROUTE_SUPERVISOR",
+    "MODEL_ROUTE_GENERATOR", "MODEL_ROUTE_REFLECTION", "MODEL_ROUTE_NARRATOR", "MODEL_ROUTE_REPAIR",
+    "MODEL_MAX_LOADED", "MODEL_NUM_CTX", "OLLAMA_KEEP_ALIVE",
+)
+
+
+def test_routing_is_on_with_no_catalog_and_measured_suitability_only_by_default(monkeypatch):
+    """arch5.2: on, but with no catalog every rung is OLLAMA_MODEL -- v5.1."""
+    for var in ROUTING_VARIABLES:
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings.from_env()
+    assert (settings.model_routing_enabled, settings.model_catalog, settings.model_route_on_prior) == (True, "", False)
+    assert [settings.model_route_supervisor, settings.model_route_generator, settings.model_route_reflection,
+            settings.model_route_narrator, settings.model_route_repair] == [""] * 5
+    assert (settings.model_max_loaded, settings.model_num_ctx, settings.ollama_keep_alive) == (3, 32768, "30m")
+
+
+def test_every_routing_setting_is_read_from_the_environment(monkeypatch):
+    values = dict(zip(ROUTING_VARIABLES, ("false", "/app/models/catalog.json", "yes", "a", "light=b", "c", "d",
+                                          "e", "2", "16384", "10m")))
+    for var, value in values.items():
+        monkeypatch.setenv(var, value)
+    settings = Settings.from_env()
+    assert (settings.model_routing_enabled, settings.model_catalog, settings.model_route_on_prior) == (
+        False, "/app/models/catalog.json", True)
+    assert [settings.model_route_supervisor, settings.model_route_generator, settings.model_route_reflection,
+            settings.model_route_narrator, settings.model_route_repair] == ["a", "light=b", "c", "d", "e"]
+    assert (settings.model_max_loaded, settings.model_num_ctx, settings.ollama_keep_alive) == (2, 16384, "10m")
+
+
+def test_every_call_is_capped_in_tokens_and_time(monkeypatch):
+    monkeypatch.delenv("OLLAMA_NUM_PREDICT", raising=False)
+    monkeypatch.delenv("OLLAMA_TIMEOUT", raising=False)
+    assert (Settings.from_env().num_predict, Settings.from_env().ollama_timeout) == (2048, 600.0)
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "4096")
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "120")
+    assert (Settings.from_env().num_predict, Settings.from_env().ollama_timeout) == (4096, 120.0)

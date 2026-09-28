@@ -4,14 +4,21 @@
 #
 #     ./start.sh
 #
-# This is the front door. It does nothing the other two scripts do not --
-# it runs them, waits until the page actually answers, and opens it:
+# This is the front door. The stack itself is the other two scripts' --
+# this runs them, after starting what they run on, waits until the page
+# actually answers, and opens it:
 #
-#   * ./setup.sh --gui    first time on a machine: pulls every image,
-#                         including the web interface, and pins them in .env
+#   * Docker              started if its daemon is not running, and waited on
+#   * Ollama, here        started if the embedding model is served from this
+#                         machine and nothing answers, and given that model
+#                         if it does not have it
+#   * ./setup.sh --gui    first time on a machine -- or when .env pins images
+#                         other than the ones this checkout ships: pulls every
+#                         image, including the web interface, and pins them
 #   * ./launch.sh --gui   every time: starts whatever is down, checks each
-#                         database is populated and both models are reachable,
-#                         then brings up the API and the GUI in front of it
+#                         database is populated, both models are reachable and
+#                         which models calls will be routed to, then brings up
+#                         the API and the GUI in front of it
 #   * your browser        at http://localhost:8080
 #
 # With --desktop the last step is a window instead of a page: the same stack
@@ -25,13 +32,14 @@
 # With --review it does the same for the feedback system: the staging
 # database that keeps verdicts, the service that promotes the correct ones
 # into the golden questions and fixes the wrong and incomplete ones into
-# their own stores, and a second page at http://localhost:8081. That page
-# opens whichever interface was chosen, because reviewing happens in one
-# place and there is no desktop half of it.
+# their own stores, and a second page at http://localhost:8081, in a browser
+# window of its own. That page opens whichever interface was chosen, because
+# reviewing happens in one place and there is no desktop half of it.
 #
 # Use those two directly when you want the parts separately -- a terminal
 # session with no API, a different agent tag, no knowledge base. This script
-# is for when you want the whole thing and do not want to think about it.
+# is for when you want the whole thing and do not want to think about it,
+# which includes running the images this checkout was written for.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -40,6 +48,7 @@ OPEN_BROWSER=1
 QUIET=0
 WITH_REVIEW=0
 WITH_DESKTOP=0
+WITH_RAG=1
 # Flags handed on. The interface itself is decided after parsing, because
 # --desktop replaces the web one rather than adding to it.
 LAUNCH_ARGS=()
@@ -71,7 +80,7 @@ Brings up the whole stack and opens the web interface in your browser.
                      that keeps verdicts, the service that turns them into
                      golden questions, corrections and completions, the two
                      stores for those fixes, and the review interface -- and
-                     open that in a second browser window as well
+                     open that in a browser window of its own
       --feedback     Keep verdicts without the review interface: starts the
                      staging database only, so votes are staged for later
       --no-browser   Start everything, but print the URLs instead of opening them
@@ -82,10 +91,16 @@ Brings up the whole stack and opens the web interface in your browser.
   -h, --help         Show this message
 
 First run on a machine takes a few minutes: it pulls about 3 GB of images.
-Afterwards it is seconds.
+Afterwards it is seconds. A checkout that ships newer images than .env pins
+runs ./setup.sh again first, which keeps the Ollama host, models and port.
 
-Set BROWSER to choose what opens the pages. Whether the second one lands in a
-new window or a new tab is the browser's decision, not this script's.
+Docker is started if its daemon is not running (Docker Desktop, on macOS or
+Linux), and so is the Ollama on this machine when the embedding model is
+served from here; that Ollama is given the embedding model if it lacks it.
+
+Set BROWSER to choose what opens the pages. Without it the review page is
+opened in a window of its own by Safari, Firefox, Chrome and the browsers
+built on Chromium; macOS asks once before a terminal may ask Safari.
 
 ./setup.sh and ./launch.sh are the same steps with the parts separated.
 EOF
@@ -105,7 +120,7 @@ while [[ $# -gt 0 ]]; do
         # equivalent and is not going to get one.
         --desktop) WITH_DESKTOP=1; shift ;;
         --no-browser) OPEN_BROWSER=0; shift ;;
-        --no-rag) LAUNCH_ARGS+=(--no-rag); SETUP_ARGS+=(--no-rag); shift ;;
+        --no-rag) WITH_RAG=0; LAUNCH_ARGS+=(--no-rag); SETUP_ARGS+=(--no-rag); shift ;;
         --restart) LAUNCH_ARGS+=(--restart); shift ;;
         -q|--quiet) QUIET=1; LAUNCH_ARGS+=(--quiet); shift ;;
         -h|--help) usage; exit 0 ;;
@@ -125,19 +140,163 @@ else
     SETUP_ARGS=(--gui ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"})
 fi
 
-# --- Prerequisites ---------------------------------------------------------
+# --- Docker ----------------------------------------------------------------
+# Docker Desktop is an application like any other, so starting it is what
+# anyone would do by hand. Waiting for it is the part that goes wrong: the
+# whale is in the menu bar a good while before `docker` can talk to the
+# daemon behind it. Docker Engine on Linux is a system service that only root
+# may start, and this script does not ask for root.
+start_docker() {
+    case "$(uname -s)" in
+        Darwin) open -a Docker >/dev/null 2>&1 || return 1 ;;
+        Linux) systemctl --user start docker-desktop >/dev/null 2>&1 || return 1 ;;
+        *) return 1 ;;
+    esac
+    info "waiting for its daemon -- up to a couple of minutes from cold"
+    local _
+    for _ in $(seq 1 60); do
+        docker info >/dev/null 2>&1 && return 0
+        sleep 2
+    done
+    return 1
+}
+
 command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
-docker info >/dev/null 2>&1 || die "the Docker daemon is not running. Start Docker and retry."
+if ! docker info >/dev/null 2>&1; then
+    step "Starting Docker"
+    start_docker || die "the Docker daemon is not running, and could not be started from here. Start Docker and retry."
+    info "Docker is running"
+fi
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required ('docker compose')."
 
-# --- First run -------------------------------------------------------------
+# --- Ollama on this machine --------------------------------------------------
+# The knowledge base was embedded with one model, and every question is
+# embedded with the same one, on the Ollama that EMBED_BASE_URL names. By
+# default that is this machine -- host.docker.internal is this machine as a
+# container sees it -- and then it is as much a part of the stack as the
+# databases are. An Ollama on another machine is not this script's to start,
+# and with --no-rag nothing is embedded at all.
+#
+# Done before the images, because setup.sh checks the embedding model too and
+# would otherwise warn about an Ollama that is a moment from being started.
+ollama_tags() {  # ollama_tags URL -- the models it serves, or a failure
+    curl -sf --max-time 3 "$1/api/tags" 2>/dev/null
+}
+
+# The desktop application where there is one, since that is what keeps
+# Ollama running and updated afterwards; the bare server otherwise, started
+# the way the desktop client is, so that it outlives this script.
+start_ollama() {
+    if [[ "$(uname -s)" == "Darwin" ]] && open -a Ollama >/dev/null 2>&1; then
+        return 0
+    fi
+    command -v ollama >/dev/null 2>&1 || return 1
+    ( nohup ollama serve >"${TMPDIR:-/tmp}/nl2sql-ollama.log" 2>&1 & )
+}
+
+ensure_local_ollama() {  # ensure_local_ollama URL MODEL
+    local url="$1" model="$2" tags="" _
+    if ! tags=$(ollama_tags "$url"); then
+        step "Starting Ollama on this machine"
+        if ! start_ollama; then
+            warn "nothing answers at $url and Ollama is not installed here, so questions"
+            warn "are answered without the knowledge base. https://ollama.com has it."
+            return 0
+        fi
+        for _ in $(seq 1 30); do
+            tags=$(ollama_tags "$url") && break
+            sleep 1
+        done
+        if [[ -z "$tags" ]]; then
+            warn "Ollama was started but had not answered at $url after 30 seconds."
+            return 0
+        fi
+        info "Ollama is running at $url"
+    fi
+    # The prefix, as launch.sh matches it: Ollama lists `bge-m3` as
+    # `bge-m3:latest`.
+    if ! printf '%s' "$tags" | grep -q "\"$model"; then
+        step "Pulling $model into the Ollama on this machine"
+        info "Once. Questions are embedded with the model the knowledge base was."
+        if curl -sf --max-time 1800 -H 'Content-Type: application/json' \
+               -d "{\"model\": \"$model\", \"stream\": false}" \
+               "$url/api/pull" >/dev/null 2>&1; then
+            info "$model is ready"
+        else
+            warn "could not pull $model into the Ollama here, so questions are answered"
+            warn "without the knowledge base until it is there: ollama pull $model"
+        fi
+    fi
+}
+
+if [[ $WITH_RAG -eq 1 ]]; then
+    embed_url=$(compose_env EMBED_BASE_URL http://host.docker.internal:11434)
+    embed_host=${embed_url#*://}
+    embed_host=${embed_host%%[:/]*}
+    case "$embed_host" in
+        host.docker.internal|localhost|127.0.0.1)
+            ensure_local_ollama "${embed_url/host.docker.internal/localhost}" \
+                "$(compose_env EMBED_MODEL bge-m3)" ;;
+    esac
+fi
+
+# --- The images --------------------------------------------------------------
 # launch.sh hands off to setup.sh on its own when .env is missing, but it
 # does so without --gui, which leaves the interface to be built from source
 # on first start. Doing it here instead pulls the published image.
+#
+# The same goes for a .env that is there but out of date. It pins tags, and a
+# checkout that has moved on from them would otherwise keep running the old
+# agent behind the new interface -- launch.sh says so, but saying so is not
+# the same as fixing it, and fixing it is one re-run of setup.sh, which keeps
+# the Ollama host, the models and the port it finds in .env. An interface that
+# was never pinned is the first-run case again: it would be built here from
+# source when a published image is a pull away.
+env_file_value() {  # env_file_value KEY -- what .env says, not the shell
+    [[ -f .env ]] || return 0
+    grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true
+}
+
+stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it is not
+    local image shipped pinned
+    image=$(awk -F'"' '/^AGENT_IMAGE=/ {print $2; exit}' setup.sh)
+    shipped=$(awk -F'"' '/^AGENT_TAG=/ {print $2; exit}' setup.sh)
+    pinned=$(env_file_value AGENT_IMAGE_TAG)
+    # Only a .env that pins the image this project publishes is one setup.sh
+    # wrote and can bring up to date. One that pins no agent builds it from
+    # this checkout, and one that pins another repository is somebody's own
+    # build; both are choices, and neither has a newer tag to move to.
+    if [[ -z "$pinned" || "$(env_file_value AGENT_IMAGE_NAME)" != "$image" ]]; then
+        return 0
+    fi
+    # A tag exported in the shell is a choice made for this run, and compose
+    # takes it over .env; re-pinning under it would change nothing it runs.
+    if [[ -n "${AGENT_IMAGE_TAG:-}" ]]; then
+        return 0
+    fi
+    if [[ "$pinned" != "$shipped" ]]; then
+        printf 'this checkout ships %s, and .env pins %s' "$shipped" "$pinned"
+    elif [[ $WITH_DESKTOP -eq 0 && -z "$(env_file_value GUI_IMAGE_NAME)" ]]; then
+        printf 'the web interface is not pinned, so it would be built here from source'
+    elif [[ $WITH_DESKTOP -eq 1 && -z "$(env_file_value DESKTOP_IMAGE_NAME)" ]]; then
+        printf "the desktop client is not pinned, so its jar would be built here from source"
+    elif [[ $WITH_REVIEW -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
+        printf 'the review images are not pinned, so they would be built here from source'
+    fi
+}
+
 if [[ ! -f .env ]]; then
     step "First run on this machine -- fetching the images"
     info "About 3 GB, once. ./setup.sh is what does it."
     ./setup.sh "${SETUP_ARGS[@]}"
+else
+    stale=$(stale_pins)
+    if [[ -n "$stale" ]]; then
+        step "Fetching the images this checkout runs"
+        info "$stale."
+        info "./setup.sh re-pins them, and keeps the Ollama host, models and port in .env."
+        ./setup.sh "${SETUP_ARGS[@]}"
+    fi
 fi
 
 # --- Everything else -------------------------------------------------------
@@ -329,6 +488,87 @@ open_browser() {
     return 1
 }
 
+# The review page in a window of its own, which no generic opener can ask
+# for: `open` and `xdg-open` hand the browser a URL, and the browser's own
+# settings pick a tab or a window. So the default browser is asked directly,
+# in the words its family understands, and one this script does not know --
+# or one BROWSER names, whose flags it cannot know -- gets the generic opener
+# and its choice.
+mac_default_browser() {  # the default browser's bundle id, lower-cased
+    # LaunchServices keeps one handler per URL scheme. awk reads to the end
+    # rather than exiting on the match: under pipefail an early exit can take
+    # the pipeline down while `defaults` is still writing. With nothing
+    # recorded for https, the browser is the one macOS came with.
+    local id
+    id=$(defaults read com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers 2>/dev/null |
+        awk '/^[[:space:]]*[{][[:space:]]*$/ { role = "" }
+             /LSHandlerRoleAll/ { role = $3; gsub(/[";]/, "", role) }
+             /LSHandlerURLScheme = "?https"?;/ && !found { found = 1; if (role != "-") print role }' || true)
+    printf '%s' "${id:-com.apple.safari}" | tr '[:upper:]' '[:lower:]'
+}
+
+linux_window_opener() {  # the default browser's own command, if it takes --new-window
+    local desktop candidate
+    local candidates=()
+    desktop=$(xdg-settings get default-web-browser 2>/dev/null || true)
+    case "$desktop" in
+        *firefox*) candidates=(firefox firefox-esr) ;;
+        *google-chrome*) candidates=(google-chrome google-chrome-stable) ;;
+        *chromium*) candidates=(chromium chromium-browser) ;;
+        *microsoft-edge*) candidates=(microsoft-edge microsoft-edge-stable) ;;
+        *brave*) candidates=(brave-browser brave) ;;
+        *vivaldi*) candidates=(vivaldi vivaldi-stable) ;;
+    esac
+    for candidate in ${candidates[@]+"${candidates[@]}"}; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            printf '%s' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+open_window() {  # open_window URL -- in a new window where the browser can be asked for one
+    local id opener
+    if [[ -z "${BROWSER:-}" ]]; then
+        case "$(uname -s)" in
+            Darwin)
+                id=$(mac_default_browser)
+                case "$id" in
+                    com.apple.safari)
+                        # Safari takes no flags; AppleScript is how it is asked
+                        # for a window, and macOS asks once whether this
+                        # terminal may. A "no" falls through to the tab, and
+                        # so does a question left unanswered for half a
+                        # minute -- Apple's own limit is two.
+                        if osascript -e 'with timeout of 30 seconds' \
+                               -e "tell application \"Safari\" to make new document with properties {URL:\"$1\"}" \
+                               -e 'end timeout' >/dev/null 2>&1; then
+                            return 0
+                        fi ;;
+                    com.google.chrome*|org.chromium.chromium|com.microsoft.edgemac*|com.brave.browser*|com.vivaldi.vivaldi|com.operasoftware.opera*)
+                        if open -n -b "$id" --args --new-window "$1" >/dev/null 2>&1; then
+                            return 0
+                        fi ;;
+                    org.mozilla.firefox*)
+                        if open -n -b "$id" --args -new-window "$1" >/dev/null 2>&1; then
+                            return 0
+                        fi ;;
+                esac ;;
+            Linux)
+                # WSL's browsers are Windows programs; its xdg-settings, when
+                # it has one, describes a Linux desktop that is not there.
+                if ! grep -qi microsoft /proc/version 2>/dev/null && opener=$(linux_window_opener); then
+                    # Detached, because a browser that was not running
+                    # already would otherwise hold this script until closed.
+                    ( nohup "$opener" --new-window "$1" >/dev/null 2>&1 & )
+                    return 0
+                fi ;;
+        esac
+    fi
+    open_browser "$1"
+}
+
 if [[ $OPEN_BROWSER -eq 1 ]]; then
     # Not under --desktop: the questions are asked in a window this script
     # has already opened, and there is no web interface running to open.
@@ -340,13 +580,11 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
         fi
     fi
     if [[ $review_ready -eq 1 ]]; then
-        # Opened second so the interface people actually ask questions in is
-        # the one left in front. Whether this lands in a new window or a new
-        # tab is the browser's decision; neither `open` nor `xdg-open` has a
-        # say in it, and pretending otherwise would mean special-casing every
-        # browser there is.
+        # Opened second, and in a window of its own: reviewing is a different
+        # job from asking, often done by someone else, and a tab beside the
+        # page people ask questions in is one closed by mistake.
         step "Opening $review_url"
-        if ! open_browser "$review_url"; then
+        if ! open_window "$review_url"; then
             warn "could not open the review interface. Open it yourself:"
             warn "$review_url"
         fi

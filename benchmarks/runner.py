@@ -34,6 +34,7 @@ model is doing three passes".
 from __future__ import annotations
 
 import math
+import statistics
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -211,6 +212,24 @@ def model_calls_from_trace(trace: Sequence[Any]) -> dict[str, int]:
     return calls
 
 
+def routes_from_trace(trace: Sequence[Any]) -> list[dict[str, Any]]:
+    """Every model call in a run: the node, the model that answered, the rung
+    it was routed at and how long it took (arch5.2). Entries without a model
+    made no call and are left out."""
+    routes = []
+    for entry in trace or ():
+        fields = entry if isinstance(entry, dict) else vars(entry)
+        if fields.get("model"):
+            routes.append({
+                "node": fields["node"],
+                "model": fields["model"],
+                "rung": fields.get("rung", ""),
+                "ms": float(fields.get("ms") or 0.0),
+                "hops": list(fields.get("hops") or []),
+            })
+    return routes
+
+
 class StageTimer:
     """Wraps the agent's progress callback and records the gaps between calls.
 
@@ -261,6 +280,10 @@ class QuestionResult:
     #: Fraction of the narrative's numbers the Audit Checker traced to a cell.
     #: None when nothing narrated, so it is never confused with zero.
     narrative_score: float | None = None
+    #: Every model call, with the model that answered and its rung (arch5.2).
+    routes: list[dict[str, Any]] = field(default_factory=list)
+    #: The rung the Context Aggregator scored the generator's task at.
+    rung: str | None = None
 
     @property
     def correct(self) -> bool:
@@ -325,6 +348,42 @@ class BenchmarkReport:
 
     def slowest(self, n: int = 3) -> list[QuestionResult]:
         return sorted(self.results, key=lambda r: -r.wall_seconds)[:n]
+
+    def by_model(self) -> list[dict[str, Any]]:
+        """Accuracy and P50 per (agent, rung, model) -- section 11 item 5.
+
+        A question counts toward every route its run used: this says how
+        often a question that went through a model came out right, which is
+        the calibration's own measure, taken on questions in sequence with
+        the models warm and cold as they are in use.
+        """
+        rows: dict[tuple[str, str, str], dict[str, Any]] = {}
+        for result in self.results:
+            for route in result.routes:
+                key = (route["node"], route["rung"], route["model"])
+                row = rows.setdefault(key, {"ms": [], "questions": set(), "correct": set(), "hops": 0})
+                row["ms"].append(route["ms"])
+                row["questions"].add(result.question_id)
+                row["hops"] += len(route["hops"])
+                if result.correct:
+                    row["correct"].add(result.question_id)
+        return [
+            {
+                "node": node, "rung": rung, "model": model, "calls": len(row["ms"]),
+                "questions": len(row["questions"]), "correct": len(row["correct"]),
+                "p50_seconds": round(statistics.median(row["ms"]) / 1000, 3), "hops": row["hops"],
+            }
+            for (node, rung, model), row in sorted(rows.items())
+        ]
+
+    def rungs(self) -> dict[str, int]:
+        """How many questions the Aggregator scored at each rung: a rung
+        nothing is ever routed at is visible here."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            if result.rung:
+                counts[result.rung] = counts.get(result.rung, 0) + 1
+        return counts
 
     def stage_totals(self) -> dict[str, float]:
         """Seconds spent in each pipeline stage across the whole run."""

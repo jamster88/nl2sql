@@ -26,7 +26,7 @@ class StatusBarTest {
             StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
             bar.show(Fakes.meta(true));
 
-            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 5.1.2"));
+            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 5.2.0"));
             assertTrue(Nodes.says(bar.node(), "qwen3.8-256k"));
             assertTrue(Nodes.says(bar.node(), "19 tables"));
             assertTrue(Nodes.says(bar.node(), "token required"));
@@ -66,7 +66,7 @@ class StatusBarTest {
             Models.Meta meta = Fakes.meta(true);
             bar.show(new Models.Meta(meta.service(), meta.version(), meta.model(), meta.intents(),
                     List.of("dim_store"), "", meta.limits(), meta.pipeline(), Map.of(), "none",
-                    false));
+                    false, Map.of()));
 
             assertTrue(Nodes.says(bar.node(), "1 table"));
             assertTrue(Nodes.says(bar.node(), "no token"));

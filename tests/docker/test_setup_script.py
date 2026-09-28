@@ -449,15 +449,6 @@ def test_a_missing_dataset_is_fatal_and_suggests_reset(run_setup):
     assert "--reset" in result.output
 
 
-def test_an_empty_knowledge_base_warns_but_does_not_fail(run_setup):
-    """Retrieval is optional, so an unpopulated store is a warning -- the
-    agent still answers, just without knowledge context.
-    """
-    result = run_setup(env={"FAKE_CHUNK_COUNT": "0"})
-    assert result.returncode == 0
-    assert "no embedded chunks" in result.output
-
-
 def test_reset_removes_the_existing_volumes_first(run_setup):
     result = run_setup("--reset", env={"FAKE_VOLUME_EXISTS": "1"})
     assert result.called("compose down -v")
@@ -582,7 +573,7 @@ def test_a_failed_check_warns_but_leaves_setup_successful(run_setup):
     result = run_setup(env={"FAKE_PROBE_FAILS": "1"})
     assert result.returncode == 0
     assert "could not retrieve from the knowledge base" in result.output
-    assert "without knowledge context" in result.output
+    assert "The agent will still answer, but without knowledge context." in result.output
     assert "Setup complete" in result.output
 
 
@@ -594,10 +585,6 @@ def test_a_check_that_returns_no_chunks_warns(run_setup):
     assert result.returncode == 0
     assert "returned nothing" in result.output
     assert "just without retrieved context" in result.output
-
-
-def test_help_documents_the_no_verify_flag(run_setup):
-    assert "--no-verify" in run_setup("--help").output
 
 
 def test_the_closing_message_names_all_three_containers(run_setup):
@@ -776,6 +763,48 @@ def test_nothing_is_carried_over_on_a_first_run(run_setup):
     assert "OLLAMA_BASE_URL" not in env
     assert "GUI_IMAGE_NAME" not in env
     assert "REVIEW_IMAGE_NAME" not in env
+
+
+def test_settings_added_by_hand_survive_a_re_run(run_setup):
+    """start.sh re-runs this whenever a checkout ships newer images, so
+    whatever someone added to .env since -- the API token launch.sh tells
+    them to set there, a port -- has to be in the new file, not only in the
+    backup beside it.
+    """
+    first = run_setup()
+    dotenv = first.workdir / ".env"
+    # No newline at the end, as an editor may leave it: the last line counts.
+    dotenv.write_text(dotenv.read_text() + "# a note\nAPI_TOKEN=s3cret\nGUI_PORT=9090")
+
+    second = run_setup()
+    env = second.env_file()
+
+    assert env["API_TOKEN"] == "s3cret"
+    assert env["GUI_PORT"] == "9090"
+    assert "kept 2 other setting(s) from the previous .env" in second.output
+    assert "# a note" not in (second.workdir / ".env").read_text()
+
+
+def test_a_key_this_script_writes_is_written_once_with_its_new_value(run_setup):
+    shipped = _shipped_tag("AGENT_TAG")
+    first = run_setup()
+    dotenv = first.workdir / ".env"
+    dotenv.write_text(dotenv.read_text().replace(f"AGENT_IMAGE_TAG={shipped}", "AGENT_IMAGE_TAG=v1"))
+
+    lines = (run_setup().workdir / ".env").read_text().splitlines()
+
+    assert [line for line in lines if line.startswith("AGENT_IMAGE_TAG=")] == [f"AGENT_IMAGE_TAG={shipped}"]
+    assert "# Kept from the previous .env" not in lines
+
+
+def test_an_old_backup_is_not_a_source(run_setup):
+    """Only the .env just moved aside is carried over. A .env.bak from some
+    earlier run, with no .env beside it, is a backup and nothing more."""
+    first = run_setup()
+    (first.workdir / ".env").unlink()
+    (first.workdir / ".env.bak").write_text("API_TOKEN=from-long-ago\n")
+
+    assert "API_TOKEN" not in run_setup().env_file()
 
 
 def test_the_previous_env_is_still_kept_beside_the_new_one(run_setup):

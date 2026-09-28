@@ -9,7 +9,6 @@ mostly ways of making that step fail on purpose.
 
 from __future__ import annotations
 
-import os
 import subprocess
 from dataclasses import replace
 from pathlib import Path

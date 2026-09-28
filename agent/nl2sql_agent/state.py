@@ -269,13 +269,34 @@ class AuditReport:
 
 
 @dataclass
+class Complexity:
+    """How hard the generator's task looks, scored by the Context Aggregator
+    from what retrieval returned (arch5.2 section 15.2). `signals` are the
+    reasons, each with the points it added."""
+
+    score: int = 0
+    signals: list[str] = field(default_factory=list)
+    rung: str = "light"
+
+
+@dataclass
 class TraceEntry:
-    """One node's cost, for per-agent benchmark attribution (section 11)."""
+    """One node's cost, for per-agent benchmark attribution (section 11).
+
+    Since arch5.2 an entry that called a model also says which one answered
+    and why it was asked: `rung` is what the call was routed at, `route` the
+    router's reasoning, and `hops` every routed model that failed first --
+    not on the host, unreachable, or empty -- before `model` answered.
+    """
 
     node: str
     ms: float = 0.0
     model_calls: int = 0
     detail: str = ""
+    model: str = ""
+    rung: str = ""
+    route: str = ""
+    hops: list[str] = field(default_factory=list)
 
 
 # --- reducers ---------------------------------------------------------------
@@ -326,10 +347,17 @@ class AgentState(TypedDict, total=False):
     example_pairs: list[dict[str, Any]]
     schema_tables: list[str]  # what the Schema Retriever alone proposed
     retrieval_errors: Annotated[dict[str, str], merge_errors]
+    #: The generator's task, scored by the Context Aggregator (arch5.2).
+    complexity: Complexity
 
     # --- stage 2: synthesis -----------------------------------------------
     sql: str
     attempts: int  # generations so far; the one retry budget
+    #: The rung the next generation is routed at: the score's, raised one
+    #: per repair (arch5.2 section 15.2). Nothing lowers it within a run.
+    generation_rung: str
+    #: Same-rung retries spent: a completeness rules gap holds the rung once.
+    rung_holds: int
 
     # --- stage 3: validation and repair ------------------------------------
     issues: list[Issue]
@@ -381,8 +409,11 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "example_pairs": [],
         "schema_tables": [],
         "retrieval_errors": {},
+        "complexity": Complexity(),
         "sql": "",
         "attempts": 0,
+        "generation_rung": "light",
+        "rung_holds": 0,
         "issues": [],
         "attempt_history": [],
         "plan_cost": None,

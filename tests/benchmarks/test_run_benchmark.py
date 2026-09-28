@@ -228,6 +228,20 @@ def test_the_result_records_what_retrieval_provided(database):
 
 
 @pytest.mark.docker
+def test_a_run_records_which_model_answered_each_call(database):
+    from types import SimpleNamespace
+
+    trace = [SimpleNamespace(node="generate_sql", ms=800.0, model_calls=1, model="qwen3.8-256k:latest",
+                             rung="light", hops=[]),
+             SimpleNamespace(node="execute_query", ms=5.0, model_calls=0, model="", rung="", hops=[])]
+    result = score(database, "B01", "SELECT count(*) FROM dim_store", [[10]], trace=trace,
+                   complexity=SimpleNamespace(rung="light"))
+    assert result.rung == "light"
+    assert result.routes == [{"node": "generate_sql", "model": "qwen3.8-256k:latest", "rung": "light",
+                              "ms": 800.0, "hops": []}]
+
+
+@pytest.mark.docker
 def test_the_agent_is_asked_the_question_text_and_nothing_else(database):
     """No reference SQL, no table hints -- otherwise the benchmark is grading
     itself.
@@ -268,6 +282,35 @@ def test_printing_a_report_mentions_accuracy_then_speed(capsys):
     assert "1/2" in out
     assert "generate_sql" in out
     assert "B02" in out, "a question that was not correct should be named"
+
+
+def _routed(qid, outcome):
+    r = result(qid, "schema", outcome, 1.0, [("generate_sql", 0.9)])
+    r.rung = "standard"
+    r.routes = [{"node": "generate_sql", "model": "qwen3.8-256k:latest", "rung": "standard", "ms": 900.0,
+                 "hops": ["gemma4:12b-mlx: an empty answer"]}]
+    return r
+
+
+def test_the_report_says_which_model_answered_each_agent_at_each_rung(capsys):
+    report = BenchmarkReport(label="multi-shot", results=[_routed("B01", CORRECT), _routed("B02", WRONG)])
+    run_benchmark.print_report(report)
+    out = capsys.readouterr().out
+
+    assert "ROUTING" in out and "generator's task scored   standard 2" in out
+    row = next(line for line in out.splitlines() if line.strip().startswith("generate_sql") and "256k" in line)
+    assert row.split() == ["generate_sql", "standard", "qwen3.8-256k:latest", "2", "1/2", "0.90s", "(2", "hop(s))"]
+
+    payload = run_benchmark.as_json([report])["configurations"][0]
+    assert payload["rungs"] == {"standard": 2}
+    assert payload["by_model"][0]["model"] == "qwen3.8-256k:latest"
+    assert payload["results"][0]["routes"][0]["hops"] == ["gemma4:12b-mlx: an empty answer"]
+    assert payload["results"][0]["rung"] == "standard"
+
+
+def test_an_unrouted_report_has_no_routing_section(capsys):
+    run_benchmark.print_report(BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)]))
+    assert "ROUTING" not in capsys.readouterr().out
 
 
 def test_the_comparison_table_lists_every_configuration(capsys):

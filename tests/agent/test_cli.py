@@ -209,8 +209,13 @@ class _StubAgentFactory:
         self.on_progress = None
 
     def __call__(self, settings, on_progress=None):
+        from types import SimpleNamespace
+
+        from nl2sql_agent.router import build_table
+
         self.settings = settings
         self.on_progress = on_progress
+        self.router = SimpleNamespace(table=build_table(settings))
         return self
 
     def run(self, question: str, *, principal: str | None = None) -> dict:
@@ -389,3 +394,38 @@ def test_a_result_dataclass_renders_the_same_table_as_a_dict():
 
 def test_no_result_at_all_renders_as_no_rows():
     assert cli.format_rows(None) == "(no rows)"
+
+
+def test_one_question_says_in_one_line_which_models_it_may_be_routed_to(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    assert cli.main(["how", "many", "stores"]) == 0
+    err = capsys.readouterr().err
+    assert "[routing] on: 1 model(s), anchor qwen3.8-256k:latest" in err
+
+
+@pytest.mark.parametrize("flag", ["--quiet", "--json"])
+def test_the_routing_line_is_left_out_where_progress_is(monkeypatch, capsys, flag):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    cli.main(["q", flag])
+    assert "[routing]" not in capsys.readouterr().err
+
+
+def test_interactive_mode_prints_the_whole_routing_table(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
+    assert cli.main([]) == 0
+    out = capsys.readouterr().out
+    assert "model routing on: 1 model(s), anchor qwen3.8-256k:latest" in out
+    assert "  generator  light qwen3.8-256k:latest" in out
+    assert "note: no catalog (MODEL_CATALOG)" in out
+
+
+def test_a_routing_configuration_that_cannot_be_used_is_an_error_not_a_traceback(monkeypatch, capsys):
+    from nl2sql_agent.router import RoutingError
+
+    def refuse(settings, on_progress=None):
+        raise RoutingError("the catalog describes http://elsewhere:11434")
+
+    monkeypatch.setattr(cli, "Nl2SqlAgent", refuse)
+    assert cli.main(["q"]) == 2
+    assert "error: the catalog describes http://elsewhere:11434" in capsys.readouterr().err

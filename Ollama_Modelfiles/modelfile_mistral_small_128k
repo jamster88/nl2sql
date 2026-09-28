@@ -1,0 +1,2 @@
+FROM mistral-small:22b 
+PARAMETER num_ctx 131072

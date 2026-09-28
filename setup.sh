@@ -22,19 +22,19 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1_1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v5_1_2"
+AGENT_TAG="v5_2"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v5_1_2"
+GUI_TAG="v5_2"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v5_1_2"
+REVIEW_TAG="v5_2"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v5_1_2"
+REVIEW_GUI_TAG="v5_2"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v5_1_2"
+DESKTOP_TAG="v5_2"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3_1"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -69,25 +69,25 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v5_1_2)
+      --agent-tag TAG    Agent image tag to pull (default: v5_2)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v5_1_2)
+      --gui-tag TAG      GUI image tag to pull (default: v5_2)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v5_1_2)
+      --review-tag TAG   Review service image tag (default: v5_2)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v5_1_2)
+      --review-gui-tag TAG   Review interface image tag (default: v5_2)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v5_1_2). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v5_2). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_1)
@@ -292,8 +292,10 @@ if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
 fi
 
 step "Writing .env"
+had_env=0
 if [[ -f .env ]]; then
     mv .env .env.bak
+    had_env=1
     info "existing .env moved to .env.bak"
 fi
 {
@@ -343,6 +345,32 @@ fi
     if [[ -n "$EMBED_MODEL_NAME" ]]; then echo "EMBED_MODEL=$EMBED_MODEL_NAME"; fi
     if [[ -n "$POSTGRES_PORT" ]]; then echo "POSTGRES_PORT=$POSTGRES_PORT"; fi
 } > .env
+
+# Everything else the previous file held -- a port, an API token, a setting
+# added by hand -- is kept as it was. This script writes the keys above and
+# has no opinion about the rest, and dropping them would make re-running it,
+# which start.sh now does when a checkout ships newer images, quietly lose
+# whatever someone had added since. Only from the file just moved aside: an
+# older .env.bak is a backup, not a source.
+keep_settings() {  # keep_settings -- append each KEY=value on stdin .env lacks; print how many
+    local line kept=0
+    while IFS= read -r line; do
+        if grep -q "^${line%%=*}=" .env; then continue; fi
+        if [[ $kept -eq 0 ]]; then echo "# Kept from the previous .env" >> .env; fi
+        printf '%s\n' "$line" >> .env
+        kept=$((kept + 1))
+    done
+    printf '%s' "$kept"
+}
+
+if [[ $had_env -eq 1 ]]; then
+    # Settings only: comments and blank lines are this script's to write.
+    # grep also ends the last line, which an editor may have left unended.
+    kept=$( (grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env.bak || true) | keep_settings)
+    if [[ $kept -gt 0 ]]; then
+        info "kept $kept other setting(s) from the previous .env"
+    fi
+fi
 info "compose will use $POSTGRES_IMAGE:$POSTGRES_TAG"
 
 # --- Agent image -----------------------------------------------------------
@@ -487,9 +515,11 @@ step "Checking Ollama"
 # Read back whatever compose will actually hand the agent. awk consumes the
 # whole stream rather than exiting on the first match: under `set -o pipefail`
 # an early exit can take the pipeline down with SIGPIPE (141) if the producer
-# is still writing.
+# is still writing. `--profile agent`, because the agent is behind a profile of
+# its own and `compose config` leaves out a service whose profile is not named:
+# without it, the checks below read the defaults, not what .env was given.
 compose_value() {
-    docker compose config 2>/dev/null |
+    docker compose --profile agent config 2>/dev/null |
         awk -v key="$1:" '$1 == key && !seen { print $2; seen = 1 }'
 }
 

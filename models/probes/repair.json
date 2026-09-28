@@ -1,0 +1,87 @@
+{
+  "_about": "Repair Agent probes for models/calibrate.py (arch5.2 section 15.5): errors the classifier in agent/nl2sql_agent/repair.py cannot place, so each reaches the diagnosis model. `error` is what Postgres answered for `sql` on the retail database, verbatim. A diagnosis is right when it contains any of `expect`, compared without case -- and every phrase in `expect` names the fix, never words the error itself contains, so a model that only repeats the error is not right.",
+  "cases": [
+    {
+      "question": "Which stores had more than a million dollars of net sales?",
+      "sql": "SELECT st.store_name, SUM(s.net_sales_amt) AS sales FROM fact_pos_retail_sales s JOIN dim_store st ON st.store_key = s.store_key WHERE SUM(s.net_sales_amt) > 1000000 GROUP BY st.store_name",
+      "error": "aggregate functions are not allowed in WHERE",
+      "tables": [
+        "fact_pos_retail_sales",
+        "dim_store"
+      ],
+      "expect": [
+        "having"
+      ]
+    },
+    {
+      "question": "What were net sales by store?",
+      "sql": "SELECT store_key, SUM(net_sales_amt) FROM fact_pos_retail_sales s JOIN dim_store st ON st.store_key = s.store_key GROUP BY store_key",
+      "error": "column reference \"store_key\" is ambiguous",
+      "tables": [
+        "fact_pos_retail_sales",
+        "dim_store"
+      ],
+      "expect": [
+        "qualif",
+        "alias",
+        "prefix",
+        "s.store_key",
+        "st.store_key"
+      ]
+    },
+    {
+      "question": "What is the average net sales amount per transaction line, to two decimals?",
+      "sql": "SELECT ROUND(AVG(net_sales_amt)::double precision, 2) FROM fact_pos_retail_sales",
+      "error": "function round(double precision, integer) does not exist\nHINT:  No function matches the given name and argument types. You might need to add explicit type casts.",
+      "tables": [
+        "fact_pos_retail_sales"
+      ],
+      "expect": [
+        "numeric",
+        "decimal"
+      ]
+    },
+    {
+      "question": "What were each store's net sales?",
+      "sql": "SELECT store_name, (SELECT net_sales_amt FROM fact_pos_retail_sales s WHERE s.store_key = st.store_key) AS sales FROM dim_store st",
+      "error": "more than one row returned by a subquery used as an expression",
+      "tables": [
+        "fact_pos_retail_sales",
+        "dim_store"
+      ],
+      "expect": [
+        "aggregat",
+        "sum(",
+        "group by"
+      ]
+    },
+    {
+      "question": "What were total net sales in fiscal year 2025?",
+      "sql": "SELECT SUM(s.net_sales_amt) FROM fact_pos_retail_sales s JOIN dim_date d ON d.date_key = s.sales_date_key WHERE d.fiscal_year = 'FY2025'",
+      "error": "invalid input syntax for type integer: \"FY2025\"",
+      "tables": [
+        "fact_pos_retail_sales",
+        "dim_date"
+      ],
+      "expect": [
+        "= 2025",
+        "=2025"
+      ]
+    },
+    {
+      "question": "Which stores have any sales at all?",
+      "sql": "SELECT store_name FROM dim_store WHERE store_key IN (SELECT store_key, SUM(net_sales_amt) FROM fact_pos_retail_sales GROUP BY store_key)",
+      "error": "subquery has too many columns",
+      "tables": [
+        "dim_store",
+        "fact_pos_retail_sales"
+      ],
+      "expect": [
+        "one column",
+        "single column",
+        "only store_key",
+        "only the store_key"
+      ]
+    }
+  ]
+}

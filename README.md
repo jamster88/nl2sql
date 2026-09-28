@@ -7,15 +7,18 @@
 ./start.sh --desktop    # the Java desktop client instead, in a window
 ```
 
-That is the whole thing. [`start.sh`](start.sh) pulls what is missing, starts
-every container, and puts an interface in front of you. Which interface is
-the only choice it asks you to make, and it has a default: with no flag it
-waits until the page actually answers and opens it in your browser at
-<http://localhost:8080>; with `--desktop` it fetches the desktop client's jar
-(building it if there is no published one for this machine), copies the API's
-certificate out for the client to verify against, and opens the window
-instead. Either way `--review` brings the feedback system up as well and
-opens the review page beside whichever you chose.
+That is the whole thing. [`start.sh`](start.sh) starts Docker if it is not
+running, and the Ollama on this machine that embeds each question, giving it
+the embedding model if it lacks it; pulls what is missing, and whatever this
+checkout ships that is newer than `.env` pins; starts every container; and
+puts an interface in front of you. Which interface is the only choice it asks
+you to make, and it has a default: with no flag it waits until the page
+actually answers and opens it in your browser at <http://localhost:8080>; with
+`--desktop` it fetches the desktop client's jar (building it if there is no
+published one for this machine), copies the API's certificate out for the
+client to verify against, and opens the window instead. Either way
+`--review` brings the feedback system up as well and opens the review page
+in a browser window of its own.
 
 First run is a few minutes and about 3 GB of images; afterwards it is
 seconds.
@@ -44,7 +47,7 @@ Either way the same containers come up:
 | `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 
 The agent, the GUI, both halves of the review system and the desktop client's
-jar are published images (`v5_1_2`); the rest are built or pulled by `setup.sh`
+jar are published images (`v5_2`); the rest are built or pulled by `setup.sh`
 as well. [Pulling the images](#pulling-the-images) has
 the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
 
@@ -52,18 +55,20 @@ the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
 
 | | When | What it does |
 |---|---|---|
-| [`./start.sh`](start.sh) | You just want to use it | Runs the two below and opens an interface: the web one in your browser by default, or the Java desktop client with `--desktop`. `--review` brings the feedback system up as well and opens the review page beside either |
+| [`./start.sh`](start.sh) | You just want to use it | Starts Docker and this machine's Ollama if they are down, runs the two below -- `setup.sh` too whenever `.env` is older than this checkout -- and opens an interface: the web one in your browser by default, or the Java desktop client with `--desktop`. `--review` brings the feedback system up as well and opens the review page in a window of its own |
 | [`./setup.sh`](setup.sh) | First run on a machine | Pulls every image, pins them in `.env`, starts the databases, verifies retrieval end to end |
-| [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated* and both models are reachable |
+| [`./launch.sh`](launch.sh) | Every time after | Starts whatever is down and checks it is *populated*, that both models are reachable, and which models calls will be routed to |
 
-`start.sh` adds nothing of its own -- it runs the other two and opens an
-interface. Use them directly when you want the parts separately: a terminal
-session with no API, a different agent tag, no knowledge base.
+`start.sh` adds nothing to the stack itself -- that is the other two
+scripts' -- but it starts what the stack runs on, keeps `.env` pinned to what
+this checkout ships, and opens an interface. Use the other two directly when
+you want the parts separately: a terminal session with no API, a different
+agent tag, no knowledge base.
 
 ```bash
-./start.sh --review        # and the review interface, in a second page
+./start.sh --review        # and the review interface, in a window of its own
 ./start.sh --desktop       # the Java desktop client instead of the web one
-./start.sh --desktop --review   # the window, and the review page beside it
+./start.sh --desktop --review   # the window, and the review page in a browser
 ./start.sh --feedback      # keep verdicts, without the review interface
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
@@ -74,9 +79,13 @@ BROWSER=firefox ./start.sh # open it with something in particular
 
 `--review` is the whole feedback system in one command: the staging database
 that keeps verdicts, the service that promotes them into the golden question
-set, and a second page at <http://localhost:8081> beside the first. Whether
-that lands in a new window or a new tab is the browser's decision -- neither
-`open` nor `xdg-open` has a say in it.
+set, and a second page at <http://localhost:8081> in a browser window of its
+own. `open` and `xdg-open` cannot ask for a window -- they hand the browser a
+link and its settings pick a tab or a window -- so `start.sh` asks the
+default browser itself: Safari through AppleScript, which macOS lets a
+terminal do once you have said it may, and Firefox, Chrome and the browsers
+built on Chromium with their own new-window flag. Any other browser, or one
+`BROWSER` names, is handed the page the way it would be handed any link.
 
 Afterwards, whichever route you took:
 
@@ -249,10 +258,27 @@ into the golden set as before; a wrong or correct-but-incomplete one is fixed
 against the live database, and it goes into a corrections or completions store
 of its own. [Feedback](#feedback) has the whole of it.
 
+**v5.2 (arch5.2) routes every model call.** Triage, draft, column check,
+sentence and diagnosis each go to the fastest model on the Ollama host that
+calibration measured to be suited to the task, at the complexity the question
+presents: light, standard or heavy, computed from the pipeline's own state
+without a model call. A repair climbs the ladder, a routed model that cannot
+answer falls back to `OLLAMA_MODEL`, and the trace names the model that
+answered every call. The list it routes from is the
+[model catalog](#model-catalog): what the Ollama host serves and what each
+model was measured to be suited to. The committed catalog describes the host
+this checkout was developed against; on any other host every call goes to
+`OLLAMA_MODEL`, exactly as in v5.1, until that host has a catalog of its own,
+and `MODEL_ROUTING_ENABLED=false` makes it v5.1 outright.
+
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
 (arch4 plus the answer contract and the Completeness Reviewer, plus the human
-review of section 14).
+review of section 14);
+[`Multi-Agent_NL2SQL_arch5_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md)
+supersedes it with section 15, model routing; its status line predates the
+build, and [`agent/README.md`](agent/README.md#model-routing-arch52) says
+where the code departs from it and why.
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -282,15 +308,15 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v5_1_2     # the agent, and the REST API
-docker pull mcfaddja/nl2sql-gui:v5_1_2       # the web interface
-docker pull mcfaddja/nl2sql-review:v5_1_2    # the review service
-docker pull mcfaddja/nl2sql-review-gui:v5_1_2  # the review interface
+docker pull mcfaddja/nl2sql-agent:v5_2     # the agent, and the REST API
+docker pull mcfaddja/nl2sql-gui:v5_2       # the web interface
+docker pull mcfaddja/nl2sql-review:v5_2    # the review service
+docker pull mcfaddja/nl2sql-review-gui:v5_2  # the review interface
 ```
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v5_1_2-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v5_2-mac-aarch64` and the four siblings
 named in [The desktop client](#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
@@ -311,23 +337,40 @@ minutes running `npm ci` inside a container.
 
 ### Upgrading an existing checkout
 
-`.env` pins the image tags, and neither `launch.sh` nor `start.sh` rewrites
-it -- so a machine set up on an earlier tag keeps running that tag until
-`setup.sh` is run again:
+`.env` pins the image tags. `start.sh` notices when this checkout ships
+newer ones than `.env` pins -- or when the interface asked for was never
+pinned, and would be built from source -- and runs `setup.sh` again before
+anything starts, so after pulling a new checkout the one command is still
+one command:
+
+```bash
+git pull
+./start.sh --review
+```
+
+`launch.sh` does not rewrite `.env`. It says the agent is older than the
+checkout, and re-running `setup.sh` is the cure:
 
 ```bash
 ./setup.sh --review     # re-pins the tags, and pulls the two review images
-./start.sh --review
+./launch.sh --review
 ```
 
 Re-running it is safe. It rewrites `.env` from scratch, but carries over what
 the last run chose -- the Ollama host, the models, the port, and whether the
-web interface and the review images were pinned -- so only the tags change.
-The previous file is still kept as `.env.bak`.
+web interface, the review images and the desktop client were pinned -- and
+keeps every other setting it finds there, an `API_TOKEN` or a port set by
+hand, so only the tags change. The previous file is still kept as `.env.bak`.
 
-Without that step, `./start.sh --review` on an older checkout brings up an
-agent that has no feedback routes, and the review interface sits at an empty
-queue forever.
+`start.sh` leaves `.env` alone when it pins no agent image (the agent is
+built from this checkout), when it pins one from another repository, or when
+`AGENT_IMAGE_TAG` is exported for the run: those are choices rather than
+leftovers.
+
+Without the re-pin, an older `.env` brings up an agent that predates what the
+checkout expects of it -- no feedback routes before `v4_4`, so the review
+interface sits at an empty queue forever, and no model routing before
+`v5_2`.
 
 Going from `v5` to `v5_1` or later, the same two commands also bring up two new
 containers, `nl2sql-correctionsdb` and `nl2sql-completionsdb`, each on a new
@@ -341,13 +384,13 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_1_2 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_2 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1_2 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_2 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_1_2 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_2 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_1_2 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_2 .
 ```
 
 The desktop client is published along a second axis as well. Every tag is
@@ -359,7 +402,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v5_1_2-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v5_2-$platform .
 done
 ```
 
@@ -404,7 +447,8 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v5_1_2` | `v5_1_1` with code nothing reached taken out -- `Database.explain`, which only its own tests called, and five guards that could never be false -- found when branch coverage was switched on and gated at 100%. No behaviour changes. Pinned -- what `setup.sh` pulls. |
+| `v5_2` | arch5.2: every model call is routed -- by its task and the complexity of the question -- to the fastest model on the Ollama host that calibration measured to be suited to it, from a catalog built by `models/build_catalog.py` and measured by `models/calibrate.py`. Repairs climb the ladder, a routed model that cannot answer falls back to `OLLAMA_MODEL`, every call is capped in tokens and time, and `/v1/meta` and the trace say which model answered. With no catalog for its host it behaves as `v5_1_2`. Pinned -- what `setup.sh` pulls. |
+| `v5_1_2` | `v5_1_1` with code nothing reached taken out -- `Database.explain`, which only its own tests called, and five guards that could never be false -- found when branch coverage was switched on and gated at 100%. No behaviour changes. Pinned. |
 | `v5_1_1` | A fix to `v5_1`: the narrator was shown HTML-escaped rows and copied the entities into its claims, so the CLI printed `Meat &amp; Seafood` and the markdown answer carried `&amp;amp;`. The narrator now reads the rows as the database has them, and the answer is escaped once, on the way out. Pinned. |
 | `v5_1` | arch5.1: the review service handles each verdict its own way -- correct answers promoted into the golden set, wrong and correct-but-incomplete ones fixed, validated against the live retail database, and stored in the corrections and completions stores. Pinned. |
 | `v5` | arch5: the answer contract and the Completeness Reviewer, a seven-generation retry budget, and a third verdict -- correct but incomplete -- in the web and desktop clients and the review queue. Pinned. |
@@ -597,11 +641,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v5_1_2-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v5_1_2-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v5_1_2-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_1_2-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_1_2-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v5_2-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v5_2-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v5_2-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_2-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_2-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.
@@ -617,7 +661,8 @@ right. This is where those answers go.
 
 That is the whole thing: databases, the API, the web interface, the staging
 database, the corrections and completions stores, the review service and the
-review interface -- and both pages opened in your browser. [`./launch.sh --review`](launch.sh) is the same
+review interface -- and both pages opened in your browser, the review page in
+a window of its own. [`./launch.sh --review`](launch.sh) is the same
 containers without the browser step.
 
 Without it, a verdict stays in the browser and nothing is lost -- the buttons
@@ -781,6 +826,11 @@ python benchmarks/run_benchmark.py            # 15 questions, accuracy then spee
 python benchmarks/run_benchmark.py --compare  # schema-only vs knowledge vs multi-shot
 ```
 
+Since v5.2 the report also says which model answered each agent at each
+rung, how many of the questions it touched came out right, its P50, and how
+the generator's task was scored across the set -- read from the trace, so a
+routed run is attributed per model and not only per agent.
+
 [`benchmarks/`](benchmarks) holds fifteen questions that are deliberately **not**
 the 45 golden pairs the agent retrieves from -- a benchmark drawn from those
 would measure how well it can look something up. Accuracy is **execution
@@ -880,6 +930,7 @@ each step does, why it is there, and how control flows.
 | [`arch_v4.svg`](arch_diagrams/arch_v4.svg) | The multi-agent pipeline: four stages, the parallel retrievers, the deterministic gates, the repair loop, and the presentation trio |
 | [`arch_v5.svg`](arch_diagrams/arch_v5.svg) | v4 plus the answer contract and the Completeness Reviewer inside the repair loop |
 | [`arch_v5_1.svg`](arch_diagrams/arch_v5_1.svg) | The v5 pipeline unchanged, with the review side added to the deployment: one pane per verdict, the golden set, and the corrections and completions stores |
+| [`arch_v5_2.svg`](arch_diagrams/arch_v5_2.svg) | v5.1 with every model call routed: the catalog and the routed chat models in the deployment, the router and the ladder, and on each step that calls a model, the rung it is routed at |
 
 All of them are laid out identically so the versions can be read side by side --
 everything new or changed is marked, in teal for v2's retrieval and indigo for
@@ -899,6 +950,37 @@ the nodes it drew in the SVG, which is what lets
 [`tests/docs/test_arch_diagrams.py`](tests/docs/test_arch_diagrams.py) check
 the pictures against `graph.py` and fail when a node is renamed. Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
+
+## Model catalog
+
+[`models/`](models) holds the list arch5.2's model router routes from: every
+model the chat host serves, what the host and ollama.com say about it, and
+the highest rung of each task -- light, standard or heavy -- it is suited to.
+
+```bash
+python3 models/build_catalog.py                  # the host .env points at -> models/catalog.json
+python3 models/build_catalog.py 192.168.1.20     # any Ollama host, by its address alone
+.venv/bin/python models/calibrate.py             # measure what each model is suited to
+```
+
+The scanner needs only the standard library, so it runs with the `python3` a
+Mac already has; it says what each model *is* and guesses from that what it
+is suited to. The calibrator runs each model through a probe per task
+against the live stack and records what it *measured*, and only a measured
+suitability is routed on. A full calibration of a host with dozens of models
+takes hours, so it measures each set of identical builds once, stops probing
+a generator that cannot be suited, survives any one model failing, and
+resumes where it stopped. A catalog describes one host: the committed one is
+ignored anywhere else, so build and calibrate your own. Re-run the scanner
+when the host's models change -- it keeps the measurements of every model
+whose weights have not -- and commit the result like code.
+[`models/README.md`](models/README.md) has the rules, the probes and the
+catalog's shape.
+
+`launch.sh`, and so `start.sh`, asks the agent image on every start which
+models it will route to, and says: how many models the calls are shared
+between, or why every one goes to `OLLAMA_MODEL` -- the catalog describes
+another host, nothing in it has been measured, or routing is off.
 
 ## Synthetic data generator
 
@@ -1125,28 +1207,30 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2498 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2970, including ones that build and run containers
+pytest                                          # 2859 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3340, including ones that build and run containers
 ```
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
-| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
+| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, and least privilege -- what the reader role can and cannot do, asked of a live catalog |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, and the curl-only smoke script run against it for real |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
-| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows, and the review interface's own 128-test review GUI suite run from here |
+| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 128-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
+| [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 446 tests behind `--run-docker` are the ones that need a working daemon:
+The 455 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, query the four live databases, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
-and skips rather than fails without it. The 20 behind `--run-node`
+and skips rather than fails without it. Two more ask the chat host and
+ollama.com what the model catalog is built from. The 20 behind `--run-node`
 need npm, and run the two GUIs' own suites. The 6 behind `--run-java` need
 Maven and a JDK of 21 or later, and run the desktop client's. Three flags
 rather than one because the three needs are different -- a clone with Docker
@@ -1159,7 +1243,7 @@ binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
 without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 446 also need the **embedding host**: a local Ollama
+Twenty-eight of those 455 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1176,7 +1260,9 @@ an agent running beside them. The retrieval probes in
 [`tests/docker/test_compose_rag_integration.py`](tests/docker/test_compose_rag_integration.py)
 need Ollama too, but reach it the way the agent container does -- through
 compose's settings -- so they are not in that count; they skip, with the same
-reason, when it is down.
+reason, when it is down. The model catalog's live test reads
+`TEST_OLLAMA_BASE_URL` for the chat host, for the same reason, and skips when
+that host cannot be reached.
 
 The 67 database-backed tests in [`tests/rag/`](tests/rag) need the two stores
 but **not** the embedding model: they exercise the storage layer with
@@ -1194,13 +1280,14 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-7,875 statements and 1,878 branches, none missed. `coverage report` fails below
+9,202 statements and 2,266 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the two web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent and its REST
 server, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
-architecture-diagram generator, and the build-time SQL emitter.
+architecture-diagram generator, the build-time SQL emitter, and the model
+catalog's builder and calibrator.
 
 Exactly one statement is excluded, and the reason is written beside it: a
 defensive `continue` in `facts.py` that is unreachable by construction,
@@ -1253,9 +1340,30 @@ sets. That removed `Database.explain` -- the v3 validator's wrapper, which the
 Planner Gate's `explain_plan` replaced and which only its own two tests still
 called -- along with its fake, a scripted-model mode and a fake-repository
 lookup nothing used, and a fake `docker` case for a command no script makes any
-more. What is left unexecuted in the tests is the part that should be: the
-skips for a missing daemon or registry, the failure messages of assertions
-that pass, and the hooks the shell measurement turns on.
+more. A later pass -- the same run, with `*/tests/*` taken out of `omit` and
+`coverage report --include='tests/*'` -- removed a container helper nothing
+called and a fake sink's failure mode no test chose, and gave three others a
+test each, because each was a path worth one: a structured call that raises,
+a calibration model that is down, an embedding host that answers 500. It also
+found two tests asserting less than they read. One checked promotions against
+the shared four-row dataset, which holds three of the six mechanics, so its
+rule for the other three never ran; a test of three hundred promotions already
+checked all six, and it came out. The other checked the smoke script for
+arrays initialised empty and expanded unguarded -- and there are none, so its
+loop never ran either; it now checks that every array the script expands is
+given an element.
+
+The same pass folded seven tests into others that ran the same scenario and
+asserted the same thing. Removing one of them failed the warning sweep: it had
+been the only quotation of a `setup.sh` warning, by way of its docstring,
+while the test that triggers that warning quoted it too loosely to count. That
+test quotes it in full now.
+
+What is left unexecuted in the tests is the part that should be: the skips
+for a missing daemon, registry or database, the failure messages of
+assertions that pass, the clean-up of what an interrupted run left behind,
+the diagram checks for versions that live on other branches, and the hooks
+the shell measurement turns on.
 
 The other two languages -- TypeScript and Java -- are measured separately,
 because they have different runners, and to the same standard. First the two
@@ -1333,13 +1441,14 @@ script, by a measurement of their own:
   ```
 
   `start.sh`, `setup.sh` and `launch.sh` are driven against fake `docker`,
-  `curl`, `sleep`, `uname`, `grep` and browser binaries; the seven scripts in
+  `curl`, `sleep`, `uname`, `grep`, `systemctl`, `ollama`, `defaults`,
+  `osascript`, `xdg-settings` and browser binaries; the seven scripts in
   [`rag/`](rag) the same way; `docker/apitest/smoke.sh` against a real HTTPS
   server; `docker/init_db.sh` -- which otherwise runs only inside `docker
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   both `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1043 of 1043**.
+  the traces mention -- **1181 of 1181**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -1407,7 +1516,11 @@ script, by a measurement of their own:
   an opener that is wrong for Linux is otherwise invisible until someone on
   Linux runs it. And WSL is told apart by reading `/proc/version`, which a
   Mac does not have, so a `grep` that answers for that one path and defers to
-  the real one for everything else makes that branch reachable too.
+  the real one for everything else makes that branch reachable too. The
+  default browser is read from LaunchServices on a Mac and from
+  `xdg-settings` on Linux, and both are faked, so the new-window command of
+  every browser family `start.sh` knows runs on whichever machine the suite
+  does.
 * **`docker/apitest/smoke.sh`**, the outside client, is run *for real* by
   [`tests/api/test_smoke_script.py`](tests/api/test_smoke_script.py): bash,
   curl and jq against a live HTTPS server built from `create_app` with a
@@ -1420,8 +1533,9 @@ script, by a measurement of their own:
   that takes settings: nothing is set that the code never reads, and nothing
   the code reads is missing from it. That holds for the agent's own settings
   against `config.py`, the API's against `api/settings.py`, the GUI proxy's
-  against its nginx template, the smoke script's against the script itself,
-  and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
+  against its nginx template, the review service's against its own
+  `settings.py`, the review interface's proxy against its template and
+  start-up script, the smoke script's against the script itself, and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
   image overrides the start-up scripts `export`, where a name compose does not
   read would make `--image` a silent no-op that pulls a published store and
   then starts a local one.

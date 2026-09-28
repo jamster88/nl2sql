@@ -29,6 +29,104 @@ file where a file is new; the tests a version merely extended are summarised.
 
 ---
 
+## v5_2 (5.2.0) -- 2026-09-28
+
+arch5.2: model routing. Every agent that calls a model -- the Supervisor, the
+SQL Generator, the Completeness Reviewer's reflection, the Insight Narrator
+and the Repair Agent's diagnosis -- asks for one by task and rung (light,
+standard or heavy, computed from the pipeline's own state), and gets the
+fastest model on the Ollama host that calibration measured to be suited to
+that task at that rung. A repair climbs the ladder; a routed model that
+cannot answer falls back to `OLLAMA_MODEL`. The catalog it routes from is
+built by a scanner that takes any Ollama host by its address, and measured by
+a calibrator that runs each model through a probe per task. With no catalog
+for its host the agent behaves as v5.1. `start.sh` now starts what the stack
+runs on -- Docker, and the Ollama on this machine -- brings a `.env` that
+predates the checkout up to date, and opens the review page in a browser
+window of its own; `launch.sh` says which models the calls will go to. Six departures from the spec, each
+found by running it, are recorded in `agent/README.md`: the context window
+is per model, the generator's score is read from the answer contract, a
+catalog of another host is ignored rather than refused, the Supervisor and
+the generator must match the reference on every probe, a rung needs five
+probes before its score counts, and a near worked example is judged by its
+question's similarity, not the fused score.
+
+### Created
+- `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.{md,drawio,png}`, `make_arch5_2_drawio.py` -- the spec: arch5.1 plus section 15, model routing.
+- `agent/nl2sql_agent/router.py` -- the Model Router: the catalog read and checked against the host, the routing table (suited candidates, speed order, at most `MODEL_MAX_LOADED` models, one per behaviour fingerprint, pins), and the fallback chain each call runs down.
+- `agent/nl2sql_agent/complexity.py` -- the rung of every model call: the generator's score, the ladder, the Supervisor's pre-screen, the reflection's, narrator's and diagnosis's rules.
+- `models/build_catalog.py` -- the catalog scanner: any Ollama host by address, `/api/tags` and `/api/show` per model, the library page, a prior per task and rung, a behaviour fingerprint, and measurements kept across a rebuild for unchanged weights. Standard library only.
+- `models/calibrate.py` -- calibration: a probe per task, per rung, against the reference model; twins measured once, early stop, failures contained, `--resume`.
+- `models/probes/triage.json`, `models/probes/repair.json` -- the Supervisor's and the Repair Agent's probes.
+- `models/catalog.json` -- the development host's catalog, calibrated.
+- `models/README.md` -- the catalog, the prior's rules, calibration.
+- `Ollama_Modelfiles/` -- the Modelfiles for the development host's local builds with larger context windows.
+- `arch_diagrams/arch_v5_2.{svg,png,tif}` -- the v5.2 diagram.
+- `tests/models/` -- the scanner against a snapshot of a real host and library (`fixtures/`), the calibrator against fake models, and the live host and library (`test_build_catalog_live.py`).
+- `tests/agent/test_router.py`, `tests/agent/test_complexity.py`, `tests/agent/test_graph_routing.py` -- the router, the rung rules, and routing inside the pipeline.
+
+### Updated
+- `agent/nl2sql_agent/graph.py` -- every model call routed; the Context Aggregator scores the generator's task; each repair sets the next generation's rung.
+- `agent/nl2sql_agent/state.py` -- `complexity`, `generation_rung`, `rung_holds`; each trace entry names its `model`, `rung`, `route` and `hops`.
+- `agent/nl2sql_agent/config.py` -- `MODEL_ROUTING_ENABLED`, `MODEL_CATALOG`, `MODEL_ROUTE_ON_PRIOR`, `MODEL_ROUTE_<TASK>`, `MODEL_MAX_LOADED`, `MODEL_NUM_CTX`, `OLLAMA_KEEP_ALIVE`, `OLLAMA_NUM_PREDICT`, `OLLAMA_TIMEOUT`.
+- `agent/nl2sql_agent/llm.py` -- a client per routed model; the keep-alive, token cap and timeout on every client.
+- `agent/nl2sql_agent/examples.py`, `agent/nl2sql_agent/tools.py` -- each retrieved pair carries its question similarity.
+- `agent/nl2sql_agent/__main__.py` -- the routing table at startup; a routing configuration that cannot be used is an error, not a traceback.
+- `agent/nl2sql_agent/api/models.py`, `api/app.py` -- `/v1/meta` reports the routing table; `gui/src/api/types.ts` and the desktop client's `Models.java` mirror the field.
+- `benchmarks/runner.py`, `benchmarks/run_benchmark.py` -- accuracy and P50 per agent, rung and model, and the rung distribution.
+- `docker-compose.yml` -- the routing settings forwarded; the catalog mounted read-only into the agent and the API.
+- `arch_diagrams/generate.py` -- the v5.2 builder; step tags that wrap, for it alone.
+- `.coveragerc` -- `models/` measured.
+- `README.md`, `agent/README.md`, `agent/USAGE.md`, `agent/API.md`, `benchmarks/README.md` -- model routing, the catalog and calibration, the new settings, a `v5_2` row in the tag table, coverage and test counts.
+- `start.sh` -- starts Docker Desktop when its daemon is down (`open -a Docker`
+  on macOS, the `docker-desktop` user service on Linux) and waits for it;
+  starts the Ollama on this machine when the embedding model is served from
+  here and nothing answers, and pulls that model into it when it is missing;
+  re-runs `setup.sh` when `.env` pins an older agent than the checkout ships,
+  or never pinned the interface asked for; and opens the review page in a
+  window of its own, asking the default browser directly -- Safari through
+  AppleScript, Firefox, Chrome and the Chromium browsers with their own
+  new-window flag -- and falling back to the generic opener.
+- `launch.sh` -- asks the agent image for the routing table it will build, and
+  prints how many models the calls are shared between or why every one goes
+  to `OLLAMA_MODEL`; a catalog the agent cannot read is a warning.
+- `setup.sh` -- keeps every setting of the previous `.env` it does not write
+  itself.
+- `tests/docker/` -- fakes for `systemctl`, `ollama`, `defaults`, `osascript`,
+  `xdg-settings` and the browsers' own commands; a fake `docker compose
+  config` that leaves out a service whose profile is not named, as the real
+  one does; and each script's helper run against the real compose file.
+- `tests/review/test_review_compose.py` -- the review service's settings and
+  its proxy's checked against compose in both directions, as the agent's, the
+  API's and the GUI's already were.
+- `tests/` -- measured with themselves in the report: a structured call that
+  raises, a calibration model that is down and an embedding host answering 500
+  each given a test; seven tests that repeated another's scenario and
+  assertions folded into it; a promotion test that only ever saw three of the
+  six mechanics removed in favour of the one that sees all six; the smoke
+  script's array check, which matched nothing, made to check every array the
+  script expands; an unused container helper, a fake's unused failure mode, a
+  guard that could never fire and unused imports removed.
+- `data_gen/datagen/facts.py`, `config.py` -- an unused assignment and an
+  unused import removed; the dataset is unchanged.
+- Version 5.2.0 in every declaration; `setup.sh` pins `v5_2`.
+
+### Fixed
+- A model call had neither an output cap nor a timeout, so a model that degenerated could generate without end -- Ollama shifts a full window rather than stopping -- and hold its question with it. Found when a calibration probe ran for over an hour; every client now carries `OLLAMA_NUM_PREDICT` and `OLLAMA_TIMEOUT`.
+- `launch.sh` and `setup.sh` read the agent's settings from `docker compose
+  config` without naming the agent's profile, so the agent was left out, the
+  read found nothing, and both checked the default chat host and model
+  whatever `.env` said. Present since the first `launch.sh`, and hidden by the
+  tests' fake `docker`, which answered for the agent whatever profile was
+  named.
+- Re-running `setup.sh` moved any setting it does not write itself -- an
+  `API_TOKEN`, a port -- into `.env.bak` and left it out of the new `.env`.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui` `:v5_2` (amd64, arm64); `nl2sql-desktop-build:v5_2-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-09-28 UTC).
+
+---
+
 ## v5_1_2 (5.1.2) -- 2026-09-26
 
 A coverage and relevance pass. Branch coverage was switched on for the Python

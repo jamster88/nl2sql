@@ -14,9 +14,8 @@ re-test of the other two.
 from __future__ import annotations
 
 import os
-
 import re
-import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +27,44 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 START_SH = REPO_ROOT / "start.sh"
+
+SHIPPED = next(
+    line.split('"')[1]
+    for line in (REPO_ROOT / "setup.sh").read_text().splitlines()
+    if line.startswith("AGENT_TAG=")
+)
+
+_URL = re.compile(r"https?://localhost:\d+")
+
+
+def pages(result) -> list[str]:
+    """Every URL put in front of someone, in the order it was, however it was
+    opened: the generic openers log `browser`, and a browser asked for a
+    window of its own logs `window`."""
+    found = []
+    for call in result.calls:
+        if call.startswith(("browser ", "window ")):
+            match = _URL.search(call)
+            if match:
+                found.append(match.group(0))
+    return found
+
+
+def eventually(result, fragment: str, seconds: float = 5.0) -> list[str]:
+    """Calls matching `fragment`, waiting for them if need be.
+
+    For what start.sh starts in the background so that it outlives the
+    script -- a browser, an Ollama server. The script has exited by the time
+    the result is read, but the thing it started may not have got as far as
+    saying so.
+    """
+    log = result.workdir.parent / "calls.log"
+    deadline = time.monotonic() + seconds
+    while True:
+        found = [line for line in log.read_text().splitlines() if fragment in line]
+        if found or time.monotonic() > deadline:
+            return found
+        time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -46,16 +83,18 @@ def test_one_command_brings_up_the_databases_the_api_and_the_gui(run_start):
 def test_it_opens_a_browser_at_the_interface(run_start):
     result = run_start()
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened, f"no browser was opened:\n" + "\n".join(result.calls)
+    assert opened, "no browser was opened:\n" + "\n".join(result.calls)
     assert opened[0].endswith("http://localhost:8080")
     assert "Opening http://localhost:8080" in result.output
 
 
 def test_it_opens_the_page_only_once(run_start):
     """Each opener is tried until one succeeds; all of them succeeding must
-    not mean eight tabs."""
+    not mean eight tabs -- and without --review the review page is not one
+    of them."""
     result = run_start()
     assert len([call for call in result.calls if call.startswith("browser ")]) == 1
+    assert "8081" not in result.output
 
 
 def test_it_waits_for_the_page_before_opening_it(run_start):
@@ -174,13 +213,6 @@ def test_a_page_that_never_answers_is_reported_rather_than_opened(run_start):
     assert "never answered at http://localhost:8080" in result.output
     assert "logs gui" in result.output
     assert not any(call.startswith("browser ") for call in result.calls)
-
-
-def test_a_missing_daemon_is_named_before_anything_is_started(run_start):
-    result = run_start(env={"FAKE_NO_DAEMON": "1"})
-    assert result.returncode != 0
-    assert "the Docker daemon is not running" in result.output
-    assert not result.called("compose up")
 
 
 def test_compose_v2_is_required(run_start):
@@ -371,27 +403,14 @@ def test_review_brings_up_the_whole_feedback_stack(run_start):
     assert result.called("--profile api --profile gui up -d gui")
 
 
-def test_review_opens_both_pages(run_start):
-    result = run_start("--review")
-    opened = [call for call in result.calls if call.startswith("browser ")]
-
-    assert len(opened) == 2, f"expected two pages:\n" + "\n".join(opened)
-    assert opened[0].endswith("http://localhost:8080")
-    assert opened[1].endswith("http://localhost:8081")
-
-
-def test_the_review_page_is_opened_second(run_start):
+def test_review_opens_both_pages_the_review_one_second(run_start):
     """So the interface people actually ask questions in is left in front."""
     result = run_start("--review")
+
+    assert pages(result) == ["http://localhost:8080", "http://localhost:8081"], (
+        "expected two pages:\n" + "\n".join(result.calls))
     order = [line for line in result.output.splitlines() if "Opening http" in line]
     assert order == ["==> Opening http://localhost:8080", "==> Opening http://localhost:8081"]
-
-
-def test_without_review_only_one_page_opens(run_start):
-    result = run_start()
-    opened = [call for call in result.calls if call.startswith("browser ")]
-    assert len(opened) == 1
-    assert "8081" not in result.output
 
 
 def test_review_waits_for_the_second_page_too(run_start):
@@ -437,9 +456,7 @@ def test_no_browser_prints_both_urls_rather_than_opening_them(run_start):
 
 def test_the_review_ports_follow_what_compose_will_publish(run_start):
     result = run_start("--review", env_file="IMAGE_NAME=x\nGUI_PORT=9080\nREVIEW_GUI_PORT=9081\n")
-    opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened[0].endswith("http://localhost:9080")
-    assert opened[1].endswith("http://localhost:9081")
+    assert pages(result) == ["http://localhost:9080", "http://localhost:9081"]
 
 
 def test_the_closing_lines_say_what_each_page_is_for(run_start):
@@ -486,7 +503,9 @@ def test_a_machine_that_cannot_open_the_review_page_still_says_where_it_is(run_s
     first one's message would leave the URL nobody has seen before unsaid --
     and that is the one someone needs written down.
     """
-    result = run_start("--review", env={"FAKE_BROWSER_EXIT": "3"})
+    # Safari says no to the window as well, so this is the last resort failing.
+    result = run_start("--review", env={
+        "FAKE_BROWSER_EXIT": "3", "FAKE_UNAME_S": "Darwin", "FAKE_OSASCRIPT_EXIT": "1"})
 
     assert result.returncode == 0
     assert "could not open the review interface" in result.output
@@ -526,8 +545,7 @@ def test_desktop_and_review_still_opens_the_review_page(run_start):
                        env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
 
     assert result.calls_matching("java -jar")
-    assert [call for call in result.calls
-            if call.startswith("browser") and "http://localhost:8081" in call]
+    assert pages(result) == ["http://localhost:8081"]
 
 
 def test_a_java_too_old_to_run_it_says_which_it_found(run_start):
@@ -653,3 +671,388 @@ def test_a_client_that_will_not_open_says_what_it_said(run_start):
     assert "Exception in Application start method" in result.output
     assert "opens the web interface instead" in result.output
 
+
+
+# ---------------------------------------------------------------------------
+# The review page, in a window of its own
+#
+# No generic opener can ask for one: `open` and `xdg-open` hand the browser a
+# URL, and its settings decide between a tab and a window. So the default
+# browser is asked directly, in the words its family understands, and one
+# this script does not know gets the generic opener and its choice.
+# ---------------------------------------------------------------------------
+
+
+def test_on_a_mac_that_never_chose_a_browser_safari_is_asked_for_a_window(run_start):
+    """Nothing recorded for https means the browser macOS came with, and
+    Safari takes no flags: AppleScript is the way it is asked."""
+    result = run_start("--review", env={"FAKE_UNAME_S": "Darwin"})
+
+    windows = result.calls_matching("window osascript")
+    assert len(windows) == 1
+    assert 'tell application "Safari" to make new document' in windows[0]
+    assert '{URL:"http://localhost:8081"}' in windows[0]
+    # The page people ask questions in is still the ordinary kind.
+    assert result.calls_matching("browser open http://localhost:8080")
+    assert not result.calls_matching("browser open http://localhost:8081")
+
+
+def test_a_terminal_safari_will_not_take_orders_from_still_opens_the_page(run_start):
+    """macOS asks once whether a terminal may control Safari. Saying no is a
+    tab rather than a window, not a page that never opens."""
+    result = run_start("--review", env={"FAKE_UNAME_S": "Darwin", "FAKE_OSASCRIPT_EXIT": "1"})
+
+    assert result.calls_matching("window osascript")
+    assert result.calls_matching("browser open http://localhost:8081")
+
+
+@pytest.mark.parametrize("bundle, flag", [
+    ("com.google.Chrome", "--new-window"),
+    ("org.chromium.Chromium", "--new-window"),
+    ("com.microsoft.edgemac", "--new-window"),
+    ("com.brave.Browser", "--new-window"),
+    ("org.mozilla.firefox", "-new-window"),
+])
+def test_a_mac_whose_browser_takes_flags_is_asked_by_bundle(run_start, bundle, flag):
+    """Chrome and everything built on Chromium say --new-window; Firefox says
+    -new-window. `open -n -b` hands the flag to that browser and no other,
+    and a browser already running passes it to the window it has open."""
+    result = run_start("--review", env={"FAKE_UNAME_S": "Darwin", "FAKE_MAC_BROWSER": bundle})
+
+    assert result.calls_matching(
+        f"window open -n -b {bundle.lower()} --args {flag} http://localhost:8081")
+    assert not result.calls_matching("window osascript")
+
+
+def test_a_browser_that_will_not_open_a_window_falls_back_to_a_page(run_start):
+    result = run_start("--review", env={
+        "FAKE_UNAME_S": "Darwin", "FAKE_MAC_BROWSER": "com.google.Chrome", "FAKE_WINDOW_EXIT": "1"})
+
+    assert result.calls_matching("window open -n -b com.google.chrome")
+    assert result.calls_matching("browser open http://localhost:8081")
+
+
+def test_a_mac_browser_this_script_does_not_know_gets_the_generic_opener(run_start):
+    """Its flags are unknown, so it gets a URL and decides for itself."""
+    result = run_start("--review", env={
+        "FAKE_UNAME_S": "Darwin", "FAKE_MAC_BROWSER": "com.kagi.kagimacOS"})
+
+    assert result.calls_matching("browser open http://localhost:8081")
+    assert not result.calls_matching("window ")
+
+
+@pytest.mark.parametrize("desktop, command", [
+    ("firefox.desktop", "firefox"),
+    ("firefox-esr.desktop", "firefox"),
+    ("google-chrome.desktop", "google-chrome"),
+])
+def test_a_linux_desktop_asks_the_default_browser_itself(run_start, desktop, command):
+    """xdg-settings names the browser as a .desktop file; its own command
+    takes --new-window, which xdg-open has no way to say."""
+    result = run_start("--review", env={"FAKE_UNAME_S": "Linux", "FAKE_LINUX_BROWSER": desktop})
+
+    assert eventually(result, f"window {command} --new-window http://localhost:8081")
+    assert result.calls_matching("browser xdg-open http://localhost:8080")
+    assert not result.calls_matching("browser xdg-open http://localhost:8081")
+
+
+@pytest.mark.parametrize("desktop", [
+    "chromium.desktop", "microsoft-edge.desktop", "brave-browser.desktop", "vivaldi-stable.desktop",
+])
+def test_a_linux_browser_whose_command_is_not_here_gets_the_generic_opener(run_start, desktop):
+    """The desktop file can name a browser whose command is not on PATH -- a
+    Flatpak, say -- and then all that is left is to hand xdg-open the URL.
+    PATH is cut back so no real browser on the machine running this can be
+    found and opened."""
+    result = run_start("--review", without=("chromium", "chromium-browser"),
+                       env={"FAKE_UNAME_S": "Linux", "FAKE_LINUX_BROWSER": desktop})
+
+    assert result.calls_matching("browser xdg-open http://localhost:8081")
+    assert not result.calls_matching("window ")
+
+
+def test_wsl_does_not_ask_a_linux_browser_for_a_window(run_start):
+    """WSL's browsers are Windows programs. Whatever xdg-settings says there
+    describes a Linux desktop that is not in front of anyone."""
+    result = run_start("--review", env={
+        "FAKE_UNAME_S": "Linux", "FAKE_WSL": "1", "FAKE_LINUX_BROWSER": "firefox.desktop"})
+
+    assert result.calls_matching("browser wslview http://localhost:8081")
+    assert not eventually(result, "window firefox", seconds=0.5)
+
+
+def test_a_browser_named_in_browser_opens_both_pages_itself(run_start):
+    """BROWSER names a command, and this script cannot know its flags."""
+    result = run_start("--review", env={"FAKE_UNAME_S": "Darwin", "BROWSER": "x-www-browser"})
+
+    assert result.calls_matching("browser x-www-browser http://localhost:8081")
+    assert not result.calls_matching("window ")
+
+
+# ---------------------------------------------------------------------------
+# Docker, started rather than asked for
+# ---------------------------------------------------------------------------
+
+
+def test_a_stopped_docker_desktop_is_started_on_a_mac(run_start):
+    result = run_start(env={"FAKE_UNAME_S": "Darwin", "FAKE_DAEMON_STOPPED": "1"})
+
+    assert result.returncode == 0
+    assert result.calls_matching("app Docker")
+    assert "Starting Docker" in result.output
+    assert "Docker is running" in result.output
+    assert result.index_of("app Docker") < result.index_of("compose up -d postgres")
+
+
+def test_a_stopped_docker_desktop_is_started_on_linux(run_start):
+    """Docker Desktop for Linux runs as a user service, which a user may
+    start without root."""
+    result = run_start(env={"FAKE_UNAME_S": "Linux", "FAKE_DAEMON_STOPPED": "1"})
+
+    assert result.returncode == 0
+    assert result.calls_matching("systemctl --user start docker-desktop")
+
+
+def test_a_linux_daemon_only_root_can_start_is_left_to_root(run_start):
+    """Docker Engine is a system service. This script does not ask for root,
+    so when the user service is not there it says what to do instead."""
+    result = run_start(env={
+        "FAKE_UNAME_S": "Linux", "FAKE_DAEMON_STOPPED": "1", "FAKE_SYSTEMCTL_FAILS": "1"})
+
+    assert result.returncode != 0
+    assert "could not be started from here" in result.output
+    assert not result.called("compose up")
+
+
+def test_a_mac_without_docker_desktop_is_told_to_start_docker(run_start):
+    result = run_start(env={
+        "FAKE_UNAME_S": "Darwin", "FAKE_DAEMON_STOPPED": "1", "FAKE_APPS_MISSING": "Docker"})
+
+    assert result.returncode != 0
+    assert "Start Docker and retry" in result.output
+
+
+def test_a_machine_this_script_cannot_start_docker_on_says_so(run_start):
+    result = run_start(env={"FAKE_UNAME_S": "FreeBSD", "FAKE_DAEMON_STOPPED": "1"})
+
+    assert result.returncode != 0
+    assert "could not be started from here" in result.output
+    assert not result.calls_matching("app Docker")
+
+
+def test_a_docker_that_never_answers_is_not_waited_on_forever(run_start):
+    """Started, and still not answering after two minutes -- which is named
+    as such before anything is started."""
+    result = run_start(env={"FAKE_UNAME_S": "Darwin", "FAKE_NO_DAEMON": "1"})
+
+    assert result.returncode != 0
+    assert result.calls_matching("app Docker")
+    assert "waiting for its daemon" in result.output
+    assert len(result.calls_matching("info")) > 30
+    assert "the Docker daemon is not running" in result.output
+    assert not result.called("compose up")
+
+
+# ---------------------------------------------------------------------------
+# The Ollama on this machine
+#
+# Every question is embedded with the model the knowledge base was, on the
+# Ollama EMBED_BASE_URL names -- by default this machine's.
+# ---------------------------------------------------------------------------
+
+
+def test_a_stopped_ollama_here_is_started_on_a_mac(run_start):
+    result = run_start(env={"FAKE_UNAME_S": "Darwin", "FAKE_LOCAL_OLLAMA_DOWN": "2"})
+
+    assert result.returncode == 0
+    assert result.calls_matching("app Ollama")
+    assert "Starting Ollama on this machine" in result.output
+    assert "Ollama is running at http://localhost:11434" in result.output
+
+
+def test_ollama_is_started_before_the_images_are_fetched(run_start):
+    """setup.sh checks the embedding model as well, and would warn about an
+    Ollama that is a moment from being started."""
+    result = run_start(env_file=None, env={"FAKE_UNAME_S": "Darwin", "FAKE_LOCAL_OLLAMA_DOWN": "1"})
+
+    assert result.index_of("app Ollama") < result.index_of("pull mcfaddja/nl2sql-agent")
+
+
+def test_without_the_desktop_app_the_server_is_started_on_its_own(run_start):
+    result = run_start(env={
+        "FAKE_UNAME_S": "Darwin", "FAKE_LOCAL_OLLAMA_DOWN": "2", "FAKE_APPS_MISSING": "Ollama"})
+
+    assert result.returncode == 0
+    assert eventually(result, "ollama serve")
+    assert "Ollama is running" in result.output
+
+
+def test_on_linux_the_server_is_started_on_its_own(run_start):
+    result = run_start(env={"FAKE_UNAME_S": "Linux", "FAKE_LOCAL_OLLAMA_DOWN": "2"})
+
+    assert eventually(result, "ollama serve")
+    assert not result.calls_matching("app Ollama")
+
+
+def test_a_machine_without_ollama_is_told_where_to_get_it(run_start):
+    """Not a failure: the agent still answers, without the knowledge base."""
+    result = run_start(without=("ollama",), env={"FAKE_UNAME_S": "Linux", "FAKE_LOCAL_OLLAMA_DOWN": "99"})
+
+    assert result.returncode == 0
+    assert "Ollama is not installed here" in result.output
+    assert "https://ollama.com" in result.output
+
+
+def test_an_ollama_that_never_answers_is_reported_and_left(run_start):
+    result = run_start(env={"FAKE_UNAME_S": "Darwin", "FAKE_LOCAL_OLLAMA_DOWN": "99"})
+
+    assert result.returncode == 0
+    assert "had not answered at http://localhost:11434 after 30 seconds" in result.output
+
+
+def test_an_ollama_here_without_the_embedding_model_is_given_it(run_start):
+    result = run_start(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k"}'})
+
+    assert result.called("curl http://localhost:11434/api/pull")
+    assert "Pulling bge-m3 into the Ollama on this machine" in result.output
+    assert "bge-m3 is ready" in result.output
+
+
+def test_a_pull_that_fails_says_how_to_do_it_by_hand(run_start):
+    result = run_start(env={"FAKE_OLLAMA_MODELS": '{"name":"qwen3.8-256k"}', "FAKE_PULL_FAILS": "1"})
+
+    assert result.returncode == 0
+    assert "could not pull bge-m3 into the Ollama here" in result.output
+    assert "ollama pull bge-m3" in result.output
+
+
+def test_an_ollama_that_has_the_model_is_left_alone(run_start):
+    result = run_start()
+
+    assert not result.called("/api/pull")
+    assert "Starting Ollama" not in result.output
+
+
+def test_no_rag_needs_no_ollama_here(run_start):
+    result = run_start("--no-rag", env={"FAKE_UNAME_S": "Darwin", "FAKE_LOCAL_OLLAMA_DOWN": "99"})
+
+    assert not result.calls_matching("app Ollama")
+    assert "Starting Ollama" not in result.output
+
+
+def test_an_embedding_host_on_another_machine_is_not_this_scripts_to_start(run_start):
+    env_file = (
+        "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
+        f"AGENT_IMAGE_TAG={SHIPPED}\n"
+        "GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
+        "EMBED_BASE_URL=http://gpu-box:11434\n"
+    )
+    result = run_start(env_file=env_file, env={"FAKE_UNAME_S": "Darwin", "FAKE_LOCAL_OLLAMA_DOWN": "99"})
+
+    assert not result.calls_matching("app Ollama")
+    assert not result.called("/api/pull")
+
+
+# ---------------------------------------------------------------------------
+# A .env this checkout has moved on from
+# ---------------------------------------------------------------------------
+
+
+def _older_env(**extra: str) -> str:
+    lines = {
+        "AGENT_IMAGE_NAME": "mcfaddja/nl2sql-agent",
+        "AGENT_IMAGE_TAG": "v5_1_2",
+        "GUI_IMAGE_NAME": "mcfaddja/nl2sql-gui",
+        "GUI_IMAGE_TAG": "v5_1_2",
+        "RAG_ENABLED": "true",
+        **extra,
+    }
+    return "".join(f"{key}={value}\n" for key, value in lines.items())
+
+
+def test_an_older_pin_is_brought_up_to_what_this_checkout_ships(run_start):
+    """Otherwise the new interface runs in front of the old agent, which
+    launch.sh would say -- and saying so is not fixing it."""
+    result = run_start(env_file=_older_env())
+
+    assert result.returncode == 0
+    assert "Fetching the images this checkout runs" in result.output
+    assert f"this checkout ships {SHIPPED}, and .env pins v5_1_2" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-agent:{SHIPPED}")
+    assert result.env_file()["AGENT_IMAGE_TAG"] == SHIPPED
+    assert result.env_file()["GUI_IMAGE_TAG"] == SHIPPED
+    assert "You are running the older agent" not in result.output
+
+
+def test_re_pinning_keeps_what_was_set_by_hand(run_start):
+    """The Ollama host setup.sh has always carried over. The API token and a
+    port are what it used to drop, into .env.bak, where nobody looks."""
+    result = run_start(env_file=_older_env(
+        OLLAMA_BASE_URL="http://elsewhere:11434", API_TOKEN="s3cret", GUI_PORT="9080"),
+        env={"FAKE_GUI_PORT": "9080"})
+
+    written = result.env_file()
+    assert written["OLLAMA_BASE_URL"] == "http://elsewhere:11434"
+    assert written["API_TOKEN"] == "s3cret"
+    assert written["GUI_PORT"] == "9080"
+    assert pages(result) == ["http://localhost:9080"]
+
+
+def test_a_tag_exported_for_this_run_is_not_re_pinned_under_it(run_start):
+    result = run_start(env_file=_older_env(), env={"AGENT_IMAGE_TAG": "v5_1_2"})
+
+    assert "Fetching the images" not in result.output
+    assert not result.called("pull mcfaddja/nl2sql-agent")
+
+
+def test_an_agent_from_another_repository_is_somebody_elses_choice(run_start):
+    result = run_start(env_file=_older_env(AGENT_IMAGE_NAME="someone/their-agent"))
+
+    assert "Fetching the images" not in result.output
+
+
+def test_a_env_that_pins_no_agent_builds_it_here_and_is_left_alone(run_start):
+    """Written by hand, or by a developer: there is nothing published to
+    bring it up to date with."""
+    result = run_start(env_file="RAG_ENABLED=true\nGUI_PORT=8080\n")
+
+    assert "Fetching the images" not in result.output
+    assert not result.called("pull mcfaddja/nl2sql-agent")
+
+
+def test_an_interface_that_was_never_pinned_is_pulled_rather_than_built(run_start):
+    """The first-run reasoning again: a published image is a pull away."""
+    env_file = f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\nRAG_ENABLED=true\n"
+    result = run_start(env_file=env_file)
+
+    assert "the web interface is not pinned" in result.output
+    assert result.called("pull mcfaddja/nl2sql-gui")
+    assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
+
+
+def test_a_desktop_client_that_was_never_pinned_is_pulled_rather_than_built(run_start):
+    result = run_start("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert "the desktop client is not pinned" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-desktop-build:{SHIPPED}-mac-aarch64")
+    assert result.env_file()["DESKTOP_IMAGE_NAME"] == "mcfaddja/nl2sql-desktop-build"
+
+
+def test_review_images_that_were_never_pinned_are_pulled_rather_than_built(run_start):
+    result = run_start("--review")
+
+    assert "the review images are not pinned" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-review:{SHIPPED}")
+    assert result.env_file()["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
+
+
+def test_a_env_that_is_up_to_date_is_not_rewritten(run_start):
+    env_file = (
+        f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
+        f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+        f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
+    )
+    result = run_start("--review", env_file=env_file)
+
+    assert "Fetching the images" not in result.output
+    assert not (result.workdir / ".env.bak").exists()

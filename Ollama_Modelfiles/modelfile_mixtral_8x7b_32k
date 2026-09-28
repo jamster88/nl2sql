@@ -1,0 +1,2 @@
+FROM mixtral:8x7b
+PARAMETER num_ctx 32768

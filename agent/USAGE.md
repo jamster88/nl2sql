@@ -132,12 +132,13 @@ read.
 Progress goes to **stderr**, the answer goes to **stdout**:
 
 ```
+[routing] on: 1 model(s), anchor qwen3.8-256k:latest     <- which models calls may go to
 [screen] proceed / aggregate                              <- scope, injection, intent
 [knowledge] 12 chunk(s) -- business_index:Market share fan-out ...  <- what it retrieved
 [examples] Q42 (0.675), Q36 (0.500), Q16 (0.394)          <- worked examples it found
 [tables] fact_pos_retail_sales, dim_product, dim_date     <- tables the vectors ranked
 [literals] "dairy and eggs" -> dim_product.department_name = 'Dairy & Eggs'
-[schema] fact_pos_retail_sales, dim_product, dim_date (+1 bridge: dim_date)
+[schema] fact_pos_retail_sales, dim_product, dim_date (+1 bridge: dim_date); standard (score 3)
 [sql] SELECT p.department_name, SUM(...)                  <- the query it wrote
 [validation] valid                                        <- AST parse, no model call
 [planner] cost 20,555.96                                  <- EXPLAIN, under the ceiling
@@ -223,7 +224,8 @@ works in a shell pipeline. Pull out just the SQL with
 ## Asking in a browser instead
 
 Everything above is the terminal. There is also a web interface, and one
-command that brings up everything it needs and opens it:
+command that brings up everything it needs -- Docker and this machine's
+Ollama included, if they are not running -- and opens it:
 
 ```bash
 ./start.sh
@@ -380,6 +382,20 @@ structured output, which needs it.
 
 For a permanent change, set `OLLAMA_MODEL` or `OLLAMA_BASE_URL` in the
 environment or in `docker-compose.yml` instead of passing flags each time.
+
+`--model` names the model every call falls back to. Since v5.2 a call may be
+routed to another model the host serves, when the catalog in
+[`models/`](../models/README.md) measured that model as suited to the call's
+task at the question's complexity; the `[routing]` line says how many models
+are in play, and `--json` names the model that answered each call. Until the
+catalog describes your host and has been calibrated
+([`models/README.md`](../models/README.md)), every call goes to `--model`, as
+before. To route one agent's calls to a model of your choice, pin it:
+
+```bash
+MODEL_ROUTE_NARRATOR=<model> docker compose run --rm agent "How many stores are there?"
+MODEL_ROUTING_ENABLED=false docker compose run --rm agent "..."    # every call to --model
+```
 
 Add `--reasoning` for hard questions. It lets the model think before answering,
 which costs noticeably more time but helps on questions involving several

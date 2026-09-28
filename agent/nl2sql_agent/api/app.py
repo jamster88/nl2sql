@@ -137,6 +137,13 @@ class AgentHolder:
         except Exception:
             return []
 
+    def routing(self) -> dict[str, Any]:
+        """The routing table, best effort, as the table names are."""
+        try:
+            return self.get().router.table.describe()
+        except Exception:
+            return {}
+
     def checks(self) -> dict[str, Check]:
         """What `/readyz` reports, in the order things fail in practice."""
         try:
@@ -408,6 +415,7 @@ def create_app(
                 else {"enabled": api.tls_enabled, "self_signed": False}
             ),
             authentication="bearer" if api.token else "none",
+            routing=holder.routing(),
             feedback=sink.check()[0],
         )
 

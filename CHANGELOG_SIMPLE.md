@@ -11,6 +11,31 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v5_2 (5.2.0) -- 2026-09-28
+
+**Added**
+- Model routing (arch5.2): every model call goes to the fastest model on the Ollama host measured to be suited to its task at the question's complexity, and a repair climbs from light to standard to heavy.
+- A routed model that cannot answer falls back to `OLLAMA_MODEL`; with no catalog for its host the agent behaves as v5.1.
+- `models/build_catalog.py`, which catalogues any Ollama host given its address.
+- `models/calibrate.py`, which measures each model per task and rung against the reference model.
+- The routing table in `/v1/meta` and the CLI, the answering model in every trace entry, and accuracy per model in the benchmark report.
+- The architecture spec arch5.2 and its diagrams, and `arch_v5_2`.
+- The development host's calibrated catalog, and the Modelfiles for its local builds.
+
+**Updated**
+- The routing settings, and a token cap and timeout on every model call, read from the environment and forwarded by compose, which mounts the catalog.
+- `start.sh` starts Docker and this machine's Ollama when they are down, gives that Ollama the embedding model, and re-pins a `.env` older than the checkout.
+- `start.sh --review` opens the review page in a browser window of its own.
+- `launch.sh` says which models the calls will be routed to, or why they all go to one.
+- Re-running `setup.sh` keeps every setting in `.env` it does not write itself.
+- The tests: the review service's settings checked against compose, duplicate tests merged, and test code nothing ran removed.
+- All nine app image tags published as `v5_2`.
+
+**Fixed**
+- A model call had neither an output cap nor a timeout, so a model that degenerated could generate without end.
+- `launch.sh` and `setup.sh` checked the default chat host and model whatever `.env` said.
+- Re-running `setup.sh` dropped settings added to `.env` by hand, such as `API_TOKEN`.
+
 ## v5_1_2 (5.1.2) -- 2026-09-26
 
 **Added**

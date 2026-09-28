@@ -1,0 +1,882 @@
+{
+ "_about": "What the chat host at 192.168.10.82:11434 (Ollama 0.34.4) answered on 2026-09-27: /api/tags whole, and /api/show per model trimmed to the fields build_catalog.py reads.",
+ "version": {
+  "version": "0.34.4"
+ },
+ "tags": {
+  "models": [
+   {
+    "name": "falcon3:10b",
+    "model": "falcon3:10b",
+    "modified_at": "2026-09-27T17:38:16.688753654-07:00",
+    "size": 6287534018,
+    "digest": "1653ff122acd9292fe21a097c0f08ce419439be595b312d6d6d06ee33df91b88",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "llama",
+     "families": [
+      "llama"
+     ],
+     "parameter_size": "10.3B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 32768,
+     "embedding_length": 3072
+    },
+    "capabilities": [
+     "completion"
+    ]
+   },
+   {
+    "name": "mixtral:8x7b",
+    "model": "mixtral:8x7b",
+    "modified_at": "2026-09-27T17:37:14.562158499-07:00",
+    "size": 26443602516,
+    "digest": "a3b6bef0f836ff29ddb576a80eeb1b7def43ec9b809466f62e96adb871fe8498",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "llama",
+     "families": [
+      "llama"
+     ],
+     "parameter_size": "46.7B",
+     "quantization_level": "Q4_0",
+     "context_length": 32768,
+     "embedding_length": 4096
+    },
+    "capabilities": [
+     "completion"
+    ]
+   },
+   {
+    "name": "granite3.1-moe:3b",
+    "model": "granite3.1-moe:3b",
+    "modified_at": "2026-09-27T17:33:13.876279722-07:00",
+    "size": 2035187356,
+    "digest": "b43d80d7fca796d3b4f7fe87a2ac92b13bcabe3758b413019b7e55126950a0f3",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "granitemoe",
+     "families": [
+      "granitemoe"
+     ],
+     "parameter_size": "3.3B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 131072,
+     "embedding_length": 1536
+    },
+    "capabilities": [
+     "completion",
+     "tools"
+    ]
+   },
+   {
+    "name": "mistral-small:22b",
+    "model": "mistral-small:22b",
+    "modified_at": "2026-09-27T17:32:51.62824691-07:00",
+    "size": 12569172141,
+    "digest": "d095cd553b04e6bde571072bf3d8bc0a88c340e011acf12a5d4fa06ee36f88bc",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "llama",
+     "families": [
+      "llama"
+     ],
+     "parameter_size": "22.2B",
+     "quantization_level": "Q4_0",
+     "context_length": 131072,
+     "embedding_length": 6144
+    },
+    "capabilities": [
+     "completion",
+     "tools"
+    ]
+   },
+   {
+    "name": "llama3.3:70b",
+    "model": "llama3.3:70b",
+    "modified_at": "2026-09-27T17:30:28.276588408-07:00",
+    "size": 42520413916,
+    "digest": "a6eb4748fd2990ad2952b2335a95a7f952d1a06119a0aa6a2df6cd052a93a3fa",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "llama",
+     "families": [
+      "llama"
+     ],
+     "parameter_size": "70.6B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 131072,
+     "embedding_length": 8192
+    },
+    "capabilities": [
+     "completion",
+     "tools"
+    ]
+   },
+   {
+    "name": "gpt-oss:20b",
+    "model": "gpt-oss:20b",
+    "modified_at": "2026-09-27T17:20:56.749627387-07:00",
+    "size": 13793441244,
+    "digest": "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "gptoss",
+     "families": [
+      "gptoss"
+     ],
+     "parameter_size": "20.9B",
+     "quantization_level": "MXFP4",
+     "context_length": 131072,
+     "embedding_length": 2880
+    },
+    "capabilities": [
+     "completion",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "gemma4:12b-mlx",
+    "model": "gemma4:12b-mlx",
+    "modified_at": "2026-09-27T17:18:45.576132051-07:00",
+    "size": 7714091504,
+    "digest": "ded7a27350032202d9e9b2a6071e8aa89959ab156771b5228f30863c741c4970",
+    "details": {
+     "parent_model": "",
+     "format": "safetensors",
+     "family": "",
+     "families": null,
+     "parameter_size": "",
+     "quantization_level": ""
+    },
+    "capabilities": [
+     "completion",
+     "vision",
+     "audio",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "gemma4:26b-mlx",
+    "model": "gemma4:26b-mlx",
+    "modified_at": "2026-09-27T17:18:44.688462312-07:00",
+    "size": 18334412658,
+    "digest": "f0fc7e0ae4947d382989b1f57db3d098a86b87c5b6e9523b9561ba81a2a64879",
+    "details": {
+     "parent_model": "",
+     "format": "safetensors",
+     "family": "",
+     "families": null,
+     "parameter_size": "",
+     "quantization_level": "nvfp4"
+    },
+    "capabilities": [
+     "completion",
+     "vision",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "gemma4:31b-mlx",
+    "model": "gemma4:31b-mlx",
+    "modified_at": "2026-09-27T17:15:56.700778751-07:00",
+    "size": 19424434885,
+    "digest": "a22a363052da770302019d5afab29bd967f9318e4377bddd297421189ea09d7d",
+    "details": {
+     "parent_model": "",
+     "format": "safetensors",
+     "family": "",
+     "families": null,
+     "parameter_size": "",
+     "quantization_level": ""
+    },
+    "capabilities": [
+     "completion",
+     "vision",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "mistral:7b",
+    "model": "mistral:7b",
+    "modified_at": "2026-09-27T17:12:23.349164562-07:00",
+    "size": 4372824384,
+    "digest": "6577803aa9a036369e481d648a2baebb381ebc6e897f2bb9a766a2aa7bfbc1cf",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "llama",
+     "families": [
+      "llama"
+     ],
+     "parameter_size": "7.2B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 32768,
+     "embedding_length": 4096
+    },
+    "capabilities": [
+     "completion",
+     "tools"
+    ]
+   },
+   {
+    "name": "deepseek-r1:8b",
+    "model": "deepseek-r1:8b",
+    "modified_at": "2026-09-27T15:41:40.276253432-07:00",
+    "size": 5225376047,
+    "digest": "6995872bfe4c521a67b32da386cd21d5c6e819b6e0d62f79f64ec83be99f5763",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "qwen3",
+     "families": [
+      "qwen3"
+     ],
+     "parameter_size": "8.2B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 131072,
+     "embedding_length": 4096
+    },
+    "capabilities": [
+     "tools",
+     "thinking",
+     "completion"
+    ]
+   },
+   {
+    "name": "deepseek-r1:14b",
+    "model": "deepseek-r1:14b",
+    "modified_at": "2026-09-27T15:40:51.023269905-07:00",
+    "size": 8988112209,
+    "digest": "c333b7232bdb521236694ffbb5f5a6b11cc45d98e9142c73123b670fca400b09",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "qwen2",
+     "families": [
+      "qwen2"
+     ],
+     "parameter_size": "14.8B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 131072,
+     "embedding_length": 5120
+    },
+    "capabilities": [
+     "tools",
+     "thinking",
+     "completion"
+    ]
+   },
+   {
+    "name": "deepseek-r1:32b",
+    "model": "deepseek-r1:32b",
+    "modified_at": "2026-09-27T15:39:27.473976504-07:00",
+    "size": 19851337809,
+    "digest": "edba8017331d15236e57480eb45406c0d721db77a4cdcf234df500fc2ad3960c",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "qwen2",
+     "families": [
+      "qwen2"
+     ],
+     "parameter_size": "32.8B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 131072,
+     "embedding_length": 5120
+    },
+    "capabilities": [
+     "tools",
+     "thinking",
+     "completion"
+    ]
+   },
+   {
+    "name": "deepseek-r1:70b",
+    "model": "deepseek-r1:70b",
+    "modified_at": "2026-09-27T15:34:46.572517432-07:00",
+    "size": 42520397873,
+    "digest": "d37b54d01a76512a5adbaa9da4ee1c00833bf2dfefb0d4cc54351ba529e0f4da",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "llama",
+     "families": [
+      "llama"
+     ],
+     "parameter_size": "70.6B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 131072,
+     "embedding_length": 8192
+    },
+    "capabilities": [
+     "tools",
+     "thinking",
+     "completion"
+    ]
+   },
+   {
+    "name": "qwen3.8-256k:latest",
+    "model": "qwen3.8-256k:latest",
+    "modified_at": "2026-09-17T17:01:23.943989867-07:00",
+    "size": 17741872171,
+    "digest": "ce7194a2d41180970923d0ff5a917c71476c174a4fe96226eb5486869277cee6",
+    "details": {
+     "parent_model": "qwen3.8:latest",
+     "format": "gguf",
+     "family": "qwen35",
+     "families": [
+      "qwen35"
+     ],
+     "parameter_size": "27.3B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 262144,
+     "embedding_length": 5120
+    },
+    "capabilities": [
+     "completion",
+     "vision",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "qwen3.6:latest",
+    "model": "qwen3.6:latest",
+    "modified_at": "2026-08-18T19:29:01.724880696-07:00",
+    "size": 23938333577,
+    "digest": "07d35212591fc27746f0a317c975a6d68754fb38e9053d82e25f06057af28522",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "qwen35moe",
+     "families": [
+      "qwen35moe"
+     ],
+     "parameter_size": "36.0B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 262144,
+     "embedding_length": 2048
+    },
+    "capabilities": [
+     "completion",
+     "vision",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "qwen3.8:latest",
+    "model": "qwen3.8:latest",
+    "modified_at": "2026-08-18T19:23:37.222043074-07:00",
+    "size": 17741872154,
+    "digest": "22130167c4c20e20c7b71454612966ca8e8171e9b3cc8ab6ce8aa6cbfec79643",
+    "details": {
+     "parent_model": "qwen3.8:27b-q4_K_M",
+     "format": "gguf",
+     "family": "qwen35",
+     "families": [
+      "qwen35"
+     ],
+     "parameter_size": "27.3B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 262144,
+     "embedding_length": 5120
+    },
+    "capabilities": [
+     "completion",
+     "vision",
+     "tools",
+     "thinking"
+    ]
+   },
+   {
+    "name": "qwen3-coder-next:latest",
+    "model": "qwen3-coder-next:latest",
+    "modified_at": "2026-08-18T19:14:47.443709464-07:00",
+    "size": 51741611823,
+    "digest": "ca06e9e4087c714d44355bf954099187890e63084b4a632b8e9956c4b9492074",
+    "details": {
+     "parent_model": "",
+     "format": "gguf",
+     "family": "qwen3next",
+     "families": [
+      "qwen3next"
+     ],
+     "parameter_size": "79.7B",
+     "quantization_level": "Q4_K_M",
+     "context_length": 262144,
+     "embedding_length": 2048
+    },
+    "capabilities": [
+     "completion",
+     "tools"
+    ]
+   }
+  ]
+ },
+ "show": {
+  "falcon3:10b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "10.3B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion"
+   ],
+   "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 10305653760,
+    "llama.context_length": 32768
+   },
+   "parameters": "stop                           \"<|system|>\"\nstop                           \"<|user|>\"\nstop                           \"<|end|>\"\nstop                           \"<|assistant|>\"",
+   "license": "Falcon 3 TII Falcon License\nDecember 2024",
+   "modified_at": "2026-09-27T17:38:16.688753654-07:00"
+  },
+  "mixtral:8x7b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "46.7B",
+    "quantization_level": "Q4_0"
+   },
+   "capabilities": [
+    "completion"
+   ],
+   "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 46702792704,
+    "llama.context_length": 32768,
+    "llama.expert_count": 8,
+    "llama.expert_used_count": 2
+   },
+   "parameters": "stop                           \"[INST]\"\nstop                           \"[/INST]\"",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-27T17:37:14.562158499-07:00"
+  },
+  "granite3.1-moe:3b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "granitemoe",
+    "families": [
+     "granitemoe"
+    ],
+    "parameter_size": "3.3B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ],
+   "model_info": {
+    "general.architecture": "granitemoe",
+    "general.parameter_count": 3298793472,
+    "granitemoe.context_length": 131072,
+    "granitemoe.expert_count": 40,
+    "granitemoe.expert_used_count": 8
+   },
+   "parameters": "",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-27T17:33:13.876279722-07:00"
+  },
+  "mistral-small:22b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "22.2B",
+    "quantization_level": "Q4_0"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ],
+   "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 22247282688,
+    "llama.context_length": 131072
+   },
+   "parameters": "stop                           \"[INST]\"\nstop                           \"[/INST]\"\nstop                           \"</s>\"",
+   "license": "# Mistral AI Research License\n",
+   "modified_at": "2026-09-27T17:32:51.62824691-07:00"
+  },
+  "llama3.3:70b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "70.6B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ],
+   "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 70553706560,
+    "llama.context_length": 131072
+   },
+   "parameters": "stop                           \"<|start_header_id|>\"\nstop                           \"<|end_header_id|>\"\nstop                           \"<|eot_id|>\"",
+   "license": "LLAMA 3.3 COMMUNITY LICENSE AGREEMENT\nLlama 3.3 Version Release Date: December 6, 2024",
+   "modified_at": "2026-09-27T17:30:28.276588408-07:00"
+  },
+  "gpt-oss:20b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "gptoss",
+    "families": [
+     "gptoss"
+    ],
+    "parameter_size": "20.9B",
+    "quantization_level": "MXFP4"
+   },
+   "capabilities": [
+    "completion",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "general.architecture": "gptoss",
+    "general.parameter_count": 20914757184,
+    "gptoss.context_length": 131072,
+    "gptoss.expert_count": 32,
+    "gptoss.expert_used_count": 4
+   },
+   "parameters": "temperature                    1",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-27T17:20:56.749627387-07:00"
+  },
+  "gemma4:12b-mlx": {
+   "details": {
+    "parent_model": "",
+    "format": "safetensors",
+    "family": "gemma4_unified",
+    "families": null,
+    "parameter_size": "12.4B",
+    "quantization_level": "nvfp4"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "audio",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "gemma4_unified.context_length": 262144,
+    "general.architecture": "gemma4_unified",
+    "general.parameter_count": 12382568756
+   },
+   "parameters": "temperature                    1\ntop_k                          64\ntop_p                          0.95",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-15T19:32:48.991765844-07:00"
+  },
+  "gemma4:26b-mlx": {
+   "details": {
+    "parent_model": "",
+    "format": "safetensors",
+    "family": "gemma4",
+    "families": null,
+    "parameter_size": "26.2B",
+    "quantization_level": "nvfp4"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "gemma4.context_length": 262144,
+    "general.architecture": "gemma4",
+    "general.parameter_count": 26225562962
+   },
+   "parameters": "top_k                          64\ntop_p                          0.95\ntemperature                    1",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-27T17:18:44.688462312-07:00"
+  },
+  "gemma4:31b-mlx": {
+   "details": {
+    "parent_model": "",
+    "format": "safetensors",
+    "family": "gemma4",
+    "families": null,
+    "parameter_size": "31.7B",
+    "quantization_level": "nvfp4"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "gemma4.context_length": 262144,
+    "general.architecture": "gemma4",
+    "general.parameter_count": 31742607472
+   },
+   "parameters": "top_k                          64\ntop_p                          0.95\ntemperature                    1",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-27T17:15:56.700778751-07:00"
+  },
+  "mistral:7b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "7.2B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ],
+   "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 7248023552,
+    "llama.context_length": 32768
+   },
+   "parameters": "stop                           \"[INST]\"\nstop                           \"[/INST]\"",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-27T15:44:47.735691376-07:00"
+  },
+  "deepseek-r1:8b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "qwen3",
+    "families": [
+     "qwen3"
+    ],
+    "parameter_size": "8.2B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "tools",
+    "thinking",
+    "completion"
+   ],
+   "model_info": {
+    "general.architecture": "qwen3",
+    "general.parameter_count": 8190735360,
+    "qwen3.context_length": 131072
+   },
+   "parameters": "temperature                    0.6\ntop_p                          0.95\nstop                           \"<\uff5cbegin\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cend\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cUser\uff5c>\"\nstop                           \"<\uff5cAssistant\uff5c>\"",
+   "license": "MIT License\n",
+   "modified_at": "2026-09-27T15:41:40.276253432-07:00"
+  },
+  "deepseek-r1:14b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "qwen2",
+    "families": [
+     "qwen2"
+    ],
+    "parameter_size": "14.8B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "tools",
+    "thinking",
+    "completion"
+   ],
+   "model_info": {
+    "general.architecture": "qwen2",
+    "general.parameter_count": 14770033664,
+    "qwen2.context_length": 131072
+   },
+   "parameters": "stop                           \"<\uff5cbegin\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cend\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cUser\uff5c>\"\nstop                           \"<\uff5cAssistant\uff5c>\"",
+   "license": "MIT License\n",
+   "modified_at": "2026-09-27T15:40:51.023269905-07:00"
+  },
+  "deepseek-r1:32b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "qwen2",
+    "families": [
+     "qwen2"
+    ],
+    "parameter_size": "32.8B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "tools",
+    "thinking",
+    "completion"
+   ],
+   "model_info": {
+    "general.architecture": "qwen2",
+    "general.parameter_count": 32763876352,
+    "qwen2.context_length": 131072
+   },
+   "parameters": "stop                           \"<\uff5cbegin\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cend\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cUser\uff5c>\"\nstop                           \"<\uff5cAssistant\uff5c>\"",
+   "license": "MIT License\n",
+   "modified_at": "2026-09-27T15:39:27.473976504-07:00"
+  },
+  "deepseek-r1:70b": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "llama",
+    "families": [
+     "llama"
+    ],
+    "parameter_size": "70.6B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "tools",
+    "thinking",
+    "completion"
+   ],
+   "model_info": {
+    "general.architecture": "llama",
+    "general.parameter_count": 70553706560,
+    "llama.context_length": 131072
+   },
+   "parameters": "stop                           \"<\uff5cbegin\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cend\u2581of\u2581sentence\uff5c>\"\nstop                           \"<\uff5cUser\uff5c>\"\nstop                           \"<\uff5cAssistant\uff5c>\"",
+   "license": "MIT License\n",
+   "modified_at": "2026-09-27T15:34:46.572517432-07:00"
+  },
+  "qwen3.8-256k:latest": {
+   "details": {
+    "parent_model": "qwen3.8:latest",
+    "format": "gguf",
+    "family": "qwen35",
+    "families": [
+     "qwen35"
+    ],
+    "parameter_size": "27.3B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "general.architecture": "qwen35",
+    "general.parameter_count": 27320697856,
+    "qwen35.context_length": 262144
+   },
+   "parameters": "presence_penalty               0\nrepeat_penalty                 1\ntemperature                    1\ntop_k                          20\ntop_p                          0.95\ndraft_num_predict              4\nmin_p                          0\nnum_ctx                        262144",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-09-17T17:01:23.943989867-07:00"
+  },
+  "qwen3.6:latest": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "qwen35moe",
+    "families": [
+     "qwen35moe"
+    ],
+    "parameter_size": "36.0B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "general.architecture": "qwen35moe",
+    "general.parameter_count": 35951822704,
+    "qwen35moe.context_length": 262144,
+    "qwen35moe.expert_count": 256,
+    "qwen35moe.expert_used_count": 8
+   },
+   "parameters": "min_p                          0\npresence_penalty               1.5\nrepeat_penalty                 1\ntemperature                    1\ntop_k                          20\ntop_p                          0.95",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-08-18T19:29:01.724880696-07:00"
+  },
+  "qwen3.8:latest": {
+   "details": {
+    "parent_model": "qwen3.8:27b-q4_K_M",
+    "format": "gguf",
+    "family": "qwen35",
+    "families": [
+     "qwen35"
+    ],
+    "parameter_size": "27.3B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "vision",
+    "tools",
+    "thinking"
+   ],
+   "model_info": {
+    "general.architecture": "qwen35",
+    "general.parameter_count": 27320697856,
+    "qwen35.context_length": 262144
+   },
+   "parameters": "presence_penalty               0\nrepeat_penalty                 1\ntemperature                    1\ntop_k                          20\ntop_p                          0.95\ndraft_num_predict              4\nmin_p                          0",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-08-18T19:23:37.222043074-07:00"
+  },
+  "qwen3-coder-next:latest": {
+   "details": {
+    "parent_model": "",
+    "format": "gguf",
+    "family": "qwen3next",
+    "families": [
+     "qwen3next"
+    ],
+    "parameter_size": "79.7B",
+    "quantization_level": "Q4_K_M"
+   },
+   "capabilities": [
+    "completion",
+    "tools"
+   ],
+   "model_info": {
+    "general.architecture": "qwen3next",
+    "general.parameter_count": 79674391296,
+    "qwen3next.context_length": 262144,
+    "qwen3next.expert_count": 512,
+    "qwen3next.expert_used_count": 10
+   },
+   "parameters": "temperature                    1\ntop_k                          40\ntop_p                          0.95",
+   "license": "Apache License\n                           Version 2.0, January 2004",
+   "modified_at": "2026-08-18T19:14:47.443709464-07:00"
+  }
+ }
+}

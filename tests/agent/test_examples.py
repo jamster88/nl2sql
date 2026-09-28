@@ -396,3 +396,16 @@ def test_an_unreachable_context_store_during_hydration_is_wrapped():
     """
     with pytest.raises(ExamplesUnavailableError, match="load golden pairs"):
         _library()._hydrate(["eval:q01"])
+
+
+def test_each_pair_carries_its_absolute_question_similarity(monkeypatch):
+    """arch5.2: the fused score is normalised within one search, so the best
+    of a poor shortlist still scores near 1.0. The complexity score needs
+    how near the pair really is, which is the question retriever's cosine --
+    and nothing, for a pair only the keywords found."""
+    library = _library(rerank="relevance")
+    monkeypatch.setattr(library, "rank", lambda q: {BY_QUESTION: [("near", 0.93)],
+                                                    BY_KEYWORDS: [("near", 4.0), ("words", 2.0)]})
+    monkeypatch.setattr(library, "_hydrate", lambda ids: {i: make_pair(chunk_id=i) for i in ids})
+    found = {p.chunk_id: p.similarity for p in library.search("anything", top_k=2)}
+    assert found == {"near": 0.93, "words": None}

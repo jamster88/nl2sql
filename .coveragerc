@@ -49,3 +49,4 @@ include =
     arch_diagrams/*
     docker/*
     multi-agent_arch_specs/*
+    models/*

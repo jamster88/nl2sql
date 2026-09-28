@@ -48,7 +48,9 @@ def _check_reachable(settings: Settings) -> None:
         ) from exc
 
 
-def build_llm(settings: Settings) -> ChatOllama:
+def build_llm(settings: Settings, *, keep_alive: str | None = None) -> ChatOllama:
+    """OLLAMA_MODEL: checked for reachability and validated against the
+    host's model list, because every routed call falls back to it."""
     _check_reachable(settings)
     try:
         return ChatOllama(
@@ -57,6 +59,9 @@ def build_llm(settings: Settings) -> ChatOllama:
             temperature=settings.temperature,
             reasoning=settings.reasoning,
             num_ctx=settings.num_ctx,
+            num_predict=settings.num_predict,
+            client_kwargs={"timeout": settings.ollama_timeout},
+            keep_alive=keep_alive,
             # Fail here, with the model list in hand, rather than several steps
             # into the pipeline.
             validate_model_on_init=True,
@@ -69,3 +74,22 @@ def build_llm(settings: Settings) -> ChatOllama:
         ) from exc
     except ValidationError as exc:
         raise LlmUnavailableError(exc.errors()[0]["msg"].removeprefix("Value error, ")) from exc
+
+
+def build_routed_client(settings: Settings, model: str, num_ctx: int) -> ChatOllama:
+    """A client for one routed model other than OLLAMA_MODEL (arch5.2).
+
+    Not validated on construction: the router has already checked the model
+    against the host's list at startup, and a model that has gone since is
+    what the routed call's fallback is for -- the run should not stop for it.
+    """
+    return ChatOllama(
+        model=model,
+        base_url=settings.ollama_base_url,
+        temperature=settings.temperature,
+        reasoning=settings.reasoning,
+        num_ctx=num_ctx,
+        num_predict=settings.num_predict,
+        client_kwargs={"timeout": settings.ollama_timeout},
+        keep_alive=settings.ollama_keep_alive or None,
+    )

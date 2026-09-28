@@ -147,7 +147,6 @@ def build_promo_participation(
 
     frames = []
     for ev in events:
-        n_p, n_s, n_d = len(ev["products"]), len(ev["stores"]), len(ev["dates"])
         idx = pd.MultiIndex.from_product(
             [ev["products"], ev["stores"]], names=["product_key", "store_key"]
         )

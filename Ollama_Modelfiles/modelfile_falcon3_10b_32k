@@ -1,0 +1,2 @@
+FROM falcon3:10b
+PARAMETER num_ctx 32768

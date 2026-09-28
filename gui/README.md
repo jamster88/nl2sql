@@ -68,15 +68,16 @@ See [the feedback](#the-feedback).
 
 Both profiles, because the `gui` service depends on the `api` service and
 compose will not start what no active profile names.
-[`start.sh`](../start.sh) is the one-command version of all of it: it runs
-`setup.sh` on a first run and `launch.sh` after, waits until this page
-actually answers -- which is later than the container calling itself healthy
--- and opens it. `--no-browser` skips the last step; `BROWSER` chooses what
-does it.
+[`start.sh`](../start.sh) is the one-command version of all of it: it starts
+Docker and this machine's Ollama if they are down, runs `setup.sh` on a first
+run -- and whenever `.env` pins older images than the checkout ships -- and
+`launch.sh` after, waits until this page actually answers -- which is later
+than the container calling itself healthy -- and opens it. `--no-browser`
+skips the last step; `BROWSER` chooses what does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 
-    docker pull mcfaddja/nl2sql-gui:v5_1_2
+    docker pull mcfaddja/nl2sql-gui:v5_2
     ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -84,7 +85,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_1_2 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_2 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from

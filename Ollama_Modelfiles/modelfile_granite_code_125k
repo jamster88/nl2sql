@@ -1,0 +1,2 @@
+FROM granite-code:8b
+PARAMETER num_ctx 125000

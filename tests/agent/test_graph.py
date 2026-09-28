@@ -47,6 +47,7 @@ def make_agent(
     literal_matcher=None,
     contract_resources=None,
     on_progress=None,
+    llm_factory=None,
     **settings_kwargs,
 ) -> Nl2SqlAgent:
     settings = Settings(
@@ -64,6 +65,7 @@ def make_agent(
     agent = Nl2SqlAgent(
         settings,
         llm=llm,
+        llm_factory=llm_factory,
         knowledge_base=knowledge_base,
         example_library=example_library,
         schema_retriever=schema_retriever,

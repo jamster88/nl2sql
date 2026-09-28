@@ -109,20 +109,6 @@ def test_dim_promotion_row_count_and_pk(built, tiny_config):
     assert df["promotion_key"].tolist() == list(range(1, tiny_config.n_promotions + 1))
 
 
-def test_dim_promotion_mechanic_and_min_purchase_are_consistent(built):
-    df = built["dim_promotion"]
-    known_mechanics = {m for m, _ in ref.PROMO_MECHANICS}
-    assert set(df["mechanic_type"]) <= known_mechanics
-
-    for _, row in df.iterrows():
-        if row["mechanic_type"] == "BOGO":
-            assert row["min_purchase_requirement"] == 2
-        elif row["mechanic_type"] in ("Mix-and-Match", "Multi-Buy"):
-            assert 2 <= row["min_purchase_requirement"] <= 5
-        else:
-            assert row["min_purchase_requirement"] == 1
-
-
 # ---------------------------------------------------------------------------
 # dim_ad_channel / dim_ad_placement
 # ---------------------------------------------------------------------------

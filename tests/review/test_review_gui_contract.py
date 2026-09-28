@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal, get_args
+from typing import get_args
 
 import pytest
 

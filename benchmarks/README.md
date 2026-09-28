@@ -202,6 +202,18 @@ the audit could trace back to a cell of the result set. Execution accuracy says
 whether the SQL was right; this says whether the user was told the truth about
 it, which is a different failure and one nothing in the v3 harness could see.
 
+### Which model answered (arch5.2)
+
+With model routing, each trace entry that called a model also names the
+model that answered, the rung it was routed at, and every routed model that
+failed first. The report reads them into a table per agent, rung and model:
+how many calls, how many of the questions it touched came out right, the P50
+of those calls, and the hops. A question counts toward every route its run
+used, which is the calibration's own measure taken on questions in sequence,
+with the models warm and cold as they are in use. Above it, how the
+generator's task was scored across the set -- a rung nothing is ever routed
+at is visible there. `--json` carries both, and each question's routes.
+
 ## Comparing configurations
 
 `--compare` runs the same questions through three configurations that differ

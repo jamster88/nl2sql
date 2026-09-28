@@ -72,8 +72,9 @@ review of section 14, where a reviewed answer goes depending on its verdict.
 [`Multi-Agent_NL2SQL_arch5_2.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md)
 supersedes both as the design, adding section 15, model routing: each model
 call routed by its task's complexity to the cheapest suited model in a
-catalog of the Ollama host's models. This package does not implement it yet
-and sends every call to `OLLAMA_MODEL`.
+catalog of the Ollama host's models. The catalog is built, by
+[`models/build_catalog.py`](../models/build_catalog.py); the router is not,
+and this package still sends every call to `OLLAMA_MODEL`.
 
 ```
 supervise --+-- retrieve_schema ----+

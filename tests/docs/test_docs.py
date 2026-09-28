@@ -29,6 +29,7 @@ DOCS = (
     "data_gen/README.md",
     "rag/README.md",
     "gui/README.md",
+    "models/README.md",
 )
 
 

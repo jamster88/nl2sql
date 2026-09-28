@@ -249,14 +249,15 @@ into the golden set as before; a wrong or correct-but-incomplete one is fixed
 against the live database, and it goes into a corrections or completions store
 of its own. [Feedback](#feedback) has the whole of it.
 
-**v5.2 (arch5.2) is designed and not yet built.** Every model call today
-goes to the one model `OLLAMA_MODEL` names. The design routes each call --
-triage, draft, column check, sentence, diagnosis -- to the cheapest model on
-the Ollama host that its task, at the complexity the question presents, has
-been shown to be suited to, from a catalog that a script (also still to be
-written) builds by listing the host, enriching each model with what
-`/api/show` and the Ollama library say about it, and calibrating the result
-with the benchmark. Repairs climb the ladder; switching routing off is v5.1.
+**v5.2 (arch5.2) is designed, and its first part is built.** Every model
+call today goes to the one model `OLLAMA_MODEL` names. The design routes each
+call -- triage, draft, column check, sentence, diagnosis -- to the cheapest
+model on the Ollama host that its task, at the complexity the question
+presents, has been shown to be suited to. Repairs climb the ladder; switching
+routing off is v5.1. What exists is the list it routes from: the
+[model catalog](#model-catalog), built by listing the host and enriching each
+model with what `/api/show` and the Ollama library say about it. The router,
+and the calibration that measures models through it, come next.
 
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
@@ -912,6 +913,22 @@ the nodes it drew in the SVG, which is what lets
 the pictures against `graph.py` and fail when a node is renamed. Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
+## Model catalog
+
+[`models/`](models) holds the list arch5.2's model router will route from:
+every model the chat host serves, what the host and ollama.com say about it,
+and the highest rung of each task -- light, standard or heavy -- it is
+presumed suited to until calibration measures it.
+
+```bash
+python3 models/build_catalog.py    # writes models/catalog.json for the host .env points at
+```
+
+Standard library only, so it runs with the `python3` a Mac already has.
+Re-run it when the host's models change, and commit the result like code.
+[`models/README.md`](models/README.md) has the rules, the catalog's shape,
+and the three places the script reads the spec rather than quoting it.
+
 ## Synthetic data generator
 
 A synthetic dataset generator for a grocery retail data model, along with the schema it implements, lives in [`data_gen/`](data_gen/README.md) -- see that README for details, setup, and usage.
@@ -1137,8 +1154,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2498 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 2970, including ones that build and run containers
+pytest                                          # 2595 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3069, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1153,12 +1170,14 @@ pytest --run-docker --run-node --run-java       # all 2970, including ones that 
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows, and the review interface's own 128-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
+| [`tests/models/`](tests/models) | The model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 446 tests behind `--run-docker` are the ones that need a working daemon:
+The 448 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, query the four live databases, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
-and skips rather than fails without it. The 20 behind `--run-node`
+and skips rather than fails without it. Two more ask the chat host and
+ollama.com what the model catalog is built from. The 20 behind `--run-node`
 need npm, and run the two GUIs' own suites. The 6 behind `--run-java` need
 Maven and a JDK of 21 or later, and run the desktop client's. Three flags
 rather than one because the three needs are different -- a clone with Docker
@@ -1171,7 +1190,7 @@ binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
 without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 446 also need the **embedding host**: a local Ollama
+Twenty-eight of those 448 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1188,7 +1207,9 @@ an agent running beside them. The retrieval probes in
 [`tests/docker/test_compose_rag_integration.py`](tests/docker/test_compose_rag_integration.py)
 need Ollama too, but reach it the way the agent container does -- through
 compose's settings -- so they are not in that count; they skip, with the same
-reason, when it is down.
+reason, when it is down. The model catalog's live test reads
+`TEST_OLLAMA_BASE_URL` for the chat host, for the same reason, and skips when
+that host cannot be reached.
 
 The 67 database-backed tests in [`tests/rag/`](tests/rag) need the two stores
 but **not** the embedding model: they exercise the storage layer with
@@ -1206,13 +1227,14 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-7,875 statements and 1,878 branches, none missed. `coverage report` fails below
+8,246 statements and 1,992 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the two web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent and its REST
 server, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
-architecture-diagram generator, and the build-time SQL emitter.
+architecture-diagram generator, the build-time SQL emitter, and the model
+catalog builder.
 
 Exactly one statement is excluded, and the reason is written beside it: a
 defensive `continue` in `facts.py` that is unreachable by construction,

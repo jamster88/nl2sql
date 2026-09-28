@@ -249,10 +249,22 @@ into the golden set as before; a wrong or correct-but-incomplete one is fixed
 against the live database, and it goes into a corrections or completions store
 of its own. [Feedback](#feedback) has the whole of it.
 
+**v5.2 (arch5.2) is designed and not yet built.** Every model call today
+goes to the one model `OLLAMA_MODEL` names. The design routes each call --
+triage, draft, column check, sentence, diagnosis -- to the cheapest model on
+the Ollama host that its task, at the complexity the question presents, has
+been shown to be suited to, from a catalog that a script (also still to be
+written) builds by listing the host, enriching each model with what
+`/api/show` and the Ollama library say about it, and calibrating the result
+with the benchmark. Repairs climb the ladder; switching routing off is v5.1.
+
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
 (arch4 plus the answer contract and the Completeness Reviewer, plus the human
-review of section 14).
+review of section 14);
+[`Multi-Agent_NL2SQL_arch5_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md)
+supersedes it on paper with section 15, model routing, and says in its
+status line that it is not built.
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.

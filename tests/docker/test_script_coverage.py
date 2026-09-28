@@ -269,8 +269,6 @@ def test_every_flag_is_exercised_by_a_test(script: str):
     source = _source(script)
     for group in sorted(re.findall(r"^\s*(-[-\w|]+)\)", source, re.MULTILINE)):
         flags = group.split("|")
-        if "*" in flags:
-            continue
         assert any(flag in exercised for flag in flags), (
             f"{script} parses {group} but no test ever passes it"
         )
@@ -455,9 +453,14 @@ def test_the_smoke_script_expands_no_array_that_could_be_empty():
     have shown it, so this is checked by reading rather than by running.
     """
     source = _source(SMOKE)
-    for name in re.findall(r"^(\w+)=\(\)$", source, re.MULTILINE):
-        assert f'"${{{name}[@]}}"' not in source, (
+    expanded = set(re.findall(r'"\$\{(\w+)\[@\]\}"', source))
+    assert expanded, "the smoke script expands no arrays -- the pattern needs updating"
+    for name in sorted(expanded):
+        assert not re.search(rf"^\s*{name}=\(\s*\)", source, re.MULTILINE), (
             f"{name} is initialised empty and expanded unguarded; bash 3.2 aborts on that"
+        )
+        assert re.search(rf"^\s*{name}=\(\S", source, re.MULTILINE), (
+            f"{name} is expanded but never given an element"
         )
 
 

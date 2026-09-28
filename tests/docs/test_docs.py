@@ -11,6 +11,7 @@ pointing at files a fresh clone does not have.
 from __future__ import annotations
 
 import argparse
+import configparser
 import re
 import subprocess
 import sys
@@ -509,9 +510,7 @@ def test_launch_does_not_pull_images(launch_sh: str):
 # ---------------------------------------------------------------------------
 
 
-def _coverage_config() -> "configparser.ConfigParser":
-    import configparser
-
+def _coverage_config() -> configparser.ConfigParser:
     parser = configparser.ConfigParser()
     parser.read(REPO_ROOT / ".coveragerc")
     return parser

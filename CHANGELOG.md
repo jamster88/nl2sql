@@ -96,11 +96,23 @@ question's similarity, not the fused score.
   `xdg-settings` and the browsers' own commands; a fake `docker compose
   config` that leaves out a service whose profile is not named, as the real
   one does; and each script's helper run against the real compose file.
+- `tests/review/test_review_compose.py` -- the review service's settings and
+  its proxy's checked against compose in both directions, as the agent's, the
+  API's and the GUI's already were.
+- `tests/` -- measured with themselves in the report: a structured call that
+  raises, a calibration model that is down and an embedding host answering 500
+  each given a test; seven tests that repeated another's scenario and
+  assertions folded into it; a promotion test that only ever saw three of the
+  six mechanics removed in favour of the one that sees all six; the smoke
+  script's array check, which matched nothing, made to check every array the
+  script expands; an unused container helper, a fake's unused failure mode, a
+  guard that could never fire and unused imports removed.
+- `data_gen/datagen/facts.py`, `config.py` -- an unused assignment and an
+  unused import removed; the dataset is unchanged.
 - Version 5.2.0 in every declaration; `setup.sh` pins `v5_2`.
 
 ### Fixed
 - A model call had neither an output cap nor a timeout, so a model that degenerated could generate without end -- Ollama shifts a full window rather than stopping -- and hold its question with it. Found when a calibration probe ran for over an hour; every client now carries `OLLAMA_NUM_PREDICT` and `OLLAMA_TIMEOUT`.
-
 - `launch.sh` and `setup.sh` read the agent's settings from `docker compose
   config` without naming the agent's profile, so the agent was left out, the
   read found nothing, and both checked the default chat host and model

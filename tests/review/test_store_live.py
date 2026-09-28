@@ -49,7 +49,6 @@ from nl2sql_review.store import (
     VERDICTS,
     WRITER_ROLE,
     Repository,
-    Submission,
     connection,
     ensure_writer_role,
 )

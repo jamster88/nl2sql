@@ -28,6 +28,7 @@ their own and are listed under the release they shipped with. A version marked
 - `start.sh --review` opens the review page in a browser window of its own.
 - `launch.sh` says which models the calls will be routed to, or why they all go to one.
 - Re-running `setup.sh` keeps every setting in `.env` it does not write itself.
+- The tests: the review service's settings checked against compose, duplicate tests merged, and test code nothing ran removed.
 - All nine app image tags published as `v5_2`.
 
 **Fixed**

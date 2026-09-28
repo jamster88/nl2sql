@@ -14,9 +14,7 @@ re-test of the other two.
 from __future__ import annotations
 
 import os
-
 import re
-import subprocess
 import time
 from pathlib import Path
 
@@ -85,16 +83,18 @@ def test_one_command_brings_up_the_databases_the_api_and_the_gui(run_start):
 def test_it_opens_a_browser_at_the_interface(run_start):
     result = run_start()
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened, f"no browser was opened:\n" + "\n".join(result.calls)
+    assert opened, "no browser was opened:\n" + "\n".join(result.calls)
     assert opened[0].endswith("http://localhost:8080")
     assert "Opening http://localhost:8080" in result.output
 
 
 def test_it_opens_the_page_only_once(run_start):
     """Each opener is tried until one succeeds; all of them succeeding must
-    not mean eight tabs."""
+    not mean eight tabs -- and without --review the review page is not one
+    of them."""
     result = run_start()
     assert len([call for call in result.calls if call.startswith("browser ")]) == 1
+    assert "8081" not in result.output
 
 
 def test_it_waits_for_the_page_before_opening_it(run_start):
@@ -213,13 +213,6 @@ def test_a_page_that_never_answers_is_reported_rather_than_opened(run_start):
     assert "never answered at http://localhost:8080" in result.output
     assert "logs gui" in result.output
     assert not any(call.startswith("browser ") for call in result.calls)
-
-
-def test_a_missing_daemon_is_named_before_anything_is_started(run_start):
-    result = run_start(env={"FAKE_NO_DAEMON": "1"})
-    assert result.returncode != 0
-    assert "the Docker daemon is not running" in result.output
-    assert not result.called("compose up")
 
 
 def test_compose_v2_is_required(run_start):
@@ -410,25 +403,14 @@ def test_review_brings_up_the_whole_feedback_stack(run_start):
     assert result.called("--profile api --profile gui up -d gui")
 
 
-def test_review_opens_both_pages(run_start):
+def test_review_opens_both_pages_the_review_one_second(run_start):
+    """So the interface people actually ask questions in is left in front."""
     result = run_start("--review")
 
     assert pages(result) == ["http://localhost:8080", "http://localhost:8081"], (
         "expected two pages:\n" + "\n".join(result.calls))
-
-
-def test_the_review_page_is_opened_second(run_start):
-    """So the interface people actually ask questions in is left in front."""
-    result = run_start("--review")
     order = [line for line in result.output.splitlines() if "Opening http" in line]
     assert order == ["==> Opening http://localhost:8080", "==> Opening http://localhost:8081"]
-
-
-def test_without_review_only_one_page_opens(run_start):
-    result = run_start()
-    opened = [call for call in result.calls if call.startswith("browser ")]
-    assert len(opened) == 1
-    assert "8081" not in result.output
 
 
 def test_review_waits_for_the_second_page_too(run_start):
@@ -859,13 +841,16 @@ def test_a_machine_this_script_cannot_start_docker_on_says_so(run_start):
 
 
 def test_a_docker_that_never_answers_is_not_waited_on_forever(run_start):
-    """Started, and still not answering after two minutes."""
+    """Started, and still not answering after two minutes -- which is named
+    as such before anything is started."""
     result = run_start(env={"FAKE_UNAME_S": "Darwin", "FAKE_NO_DAEMON": "1"})
 
     assert result.returncode != 0
     assert result.calls_matching("app Docker")
     assert "waiting for its daemon" in result.output
     assert len(result.calls_matching("info")) > 30
+    assert "the Docker daemon is not running" in result.output
+    assert not result.called("compose up")
 
 
 # ---------------------------------------------------------------------------

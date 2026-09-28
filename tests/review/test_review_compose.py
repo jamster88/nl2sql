@@ -318,6 +318,58 @@ def test_the_review_proxy_outlasts_a_promotion(reviewgui: dict, review: dict):
 
 
 # ---------------------------------------------------------------------------
+# Nothing set that is not read, nothing read that cannot be set
+#
+# The check the agent, the API and the GUI's proxy already have. A setting
+# the service reads that compose never passes can only be changed by
+# rebuilding the image; one compose passes that nothing reads is a knob that
+# silently does nothing.
+# ---------------------------------------------------------------------------
+
+REVIEW_DIR = REPO_ROOT / "review"
+
+
+def _review_settings() -> set[str]:
+    source = (REVIEW_DIR / "nl2sql_review" / "settings.py").read_text()
+    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    assert read, "no environment variables found in settings.py -- the regex needs updating"
+    return read
+
+
+def test_every_setting_the_review_service_reads_can_be_set_through_compose(review: dict):
+    missing = sorted(_review_settings() - set(review["environment"]))
+    assert missing == [], f"the review service reads these, but compose never passes them: {missing}"
+
+
+def test_every_variable_compose_sets_on_the_review_service_is_one_it_reads(review: dict):
+    unread = sorted(set(review["environment"]) - _review_settings())
+    assert unread == [], f"compose sets {unread} on the review service, which nothing in it reads"
+
+
+def _review_proxy_variables() -> set[str]:
+    """Every ${NAME} the review GUI's nginx template and start-up script substitute."""
+    gui = REVIEW_DIR / "gui"
+    sources = (gui / "nginx.conf.template").read_text() + (gui / "10-nl2sql-review-config.envsh").read_text()
+    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources))
+    # Worked out by the start-up script rather than set by anyone: the header
+    # from REVIEW_TOKEN, and where it writes the upstream's TLS settings.
+    return names - {"REVIEW_AUTH_HEADER", "NGINX_REVIEW_UPSTREAM_TLS_CONF"}
+
+
+def test_every_setting_the_review_proxy_reads_can_be_set_through_compose(reviewgui: dict):
+    unsettable = sorted(_review_proxy_variables() - set(reviewgui["environment"]))
+    assert unsettable == [], (
+        f"the review proxy reads {unsettable}, which compose never passes, so "
+        "they cannot be changed without rebuilding the image"
+    )
+
+
+def test_every_variable_compose_sets_is_one_the_review_proxy_reads(reviewgui: dict):
+    unread = sorted(set(reviewgui["environment"]) - _review_proxy_variables())
+    assert unread == [], f"compose sets {unread} on the review GUI, which nothing in it reads"
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 

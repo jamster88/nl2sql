@@ -88,7 +88,7 @@ case "$1" in
         # the longer name is matched first or every review-gui inspect would
         # be answered as the service.
         elif [[ "$*" == *nl2sql-review-gui* && "$*" == *Running* ]]; then
-            echo "${FAKE_REVIEW_GUI_RUNNING:-true}"
+            echo true
         elif [[ "$*" == *nl2sql-review-gui* ]]; then
             echo "${FAKE_REVIEW_GUI_HEALTH:-healthy}"
         elif [[ "$*" == *nl2sql-review* && "$*" == *Running* ]]; then

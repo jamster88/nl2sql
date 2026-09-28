@@ -288,6 +288,9 @@ def test_the_repair_diagnosis_must_name_the_fault(calibrate):
     [named] = engine.repair(REFERENCE, Model())
     assert (named.rungs, named.correct) == (("standard", "heavy"), True)
     assert not engine.repair(REFERENCE, Model(diagnosis="Try again."))[0].correct
+    # The repair agent answers a failed call with its generic hint, which
+    # must not pass for a diagnosis.
+    assert not engine.repair(REFERENCE, Model(fail=True))[0].correct
 
 
 # ---------------------------------------------------------------------------

@@ -310,16 +310,25 @@ def test_a_missing_schema_index_warns_about_table_selection(run_launch):
     assert "Table selection falls back" in result.output
 
 
-def test_it_reports_which_scorer_literal_matching_will_use(run_launch):
-    assert "pg_trgm installed" in run_launch().output
+def test_a_database_with_the_trigram_extension_says_which_scorer_it_gets(run_launch):
+    result = run_launch(env={"FAKE_TRGM_INSTALLED": "1"})
+    assert "literal matching: pg_trgm installed (trigram search)" in result.output
+    assert "pg_trgm is not installed" not in result.output
 
 
-def test_a_missing_trigram_extension_warns_without_stopping(run_launch):
-    """The matcher falls back to difflib, so this costs precision and not
-    the run.
+def test_a_database_without_the_trigram_extension_is_warned_about(run_launch):
+    """The agent falls back to difflib without pg_trgm, which is a quieter
+    kind of wrong: literal matching still works, just less well, so nothing
+    fails and the only sign is this line.
+
+    Asserted explicitly rather than incidentally. It used to be covered by a
+    test that happened to quote two words shared with nothing else in the
+    script; adding an unrelated warning elsewhere made those two words
+    ambiguous and the coverage evaporated without anything breaking.
     """
     result = run_launch(env={"FAKE_TRGM_INSTALLED": "0"})
     assert result.returncode == 0
+    assert "pg_trgm is not installed" in result.output
     assert "falls back to difflib" in result.output
 
 
@@ -716,27 +725,6 @@ def test_the_closing_lines_name_the_three_panes_and_where_each_goes(run_launch):
     assert "validate it against the live retail database" in output
     assert "corrections store" in output and "completions store" in output
     assert "never into the golden set" in output
-
-
-def test_a_database_without_the_trigram_extension_is_warned_about(run_launch):
-    """The agent falls back to difflib without pg_trgm, which is a quieter
-    kind of wrong: literal matching still works, just less well, so nothing
-    fails and the only sign is this line.
-
-    Asserted explicitly rather than incidentally. It used to be covered by a
-    test that happened to quote two words shared with nothing else in the
-    script; adding an unrelated warning elsewhere made those two words
-    ambiguous and the coverage evaporated without anything breaking.
-    """
-    result = run_launch(env={"FAKE_TRGM_INSTALLED": "0"})
-    assert "pg_trgm is not installed" in result.output
-    assert "falls back to difflib" in result.output
-
-
-def test_a_database_with_the_trigram_extension_says_so_instead(run_launch):
-    result = run_launch(env={"FAKE_TRGM_INSTALLED": "1"})
-    assert "literal matching: pg_trgm installed (trigram search)" in result.output
-    assert "pg_trgm is not installed" not in result.output
 
 
 # ---------------------------------------------------------------------------

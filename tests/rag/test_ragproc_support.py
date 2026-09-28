@@ -162,6 +162,14 @@ def test_a_missing_model_says_how_to_pull_it(monkeypatch):
         embedder_module.OllamaEmbedder("bge-m3", "http://h").embed(["x"])
 
 
+def test_a_server_error_is_raised_rather_than_read_as_vectors(monkeypatch):
+    """Only a 404 has a fix to suggest; anything else is the host failing,
+    and its body is an error rather than a set of embeddings."""
+    monkeypatch.setattr(embedder_module.requests, "post", lambda *a, **k: _Response(status=500))
+    with pytest.raises(RuntimeError, match="HTTP 500"):
+        embedder_module.OllamaEmbedder("bge-m3", "http://h").embed(["x"])
+
+
 def test_a_response_with_no_vectors_is_an_error_not_an_empty_result(monkeypatch):
     """Returning [] would store nothing and report success, leaving a store that
     is silently half empty.

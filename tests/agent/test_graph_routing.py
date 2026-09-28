@@ -10,9 +10,7 @@ rung; `llm_factory` gives each routed model a client of its own.
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
-import pytest
 from nl2sql_agent import graph as graph_module
 from nl2sql_agent.completeness import ReflectedColumn, Reflection
 from nl2sql_agent.config import Settings

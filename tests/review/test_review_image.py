@@ -78,7 +78,7 @@ def test_the_loaders_are_in_the_image(dockerfile: str):
 def test_the_loaders_land_where_the_settings_look_for_them(dockerfile: str):
     from nl2sql_review.settings import DEFAULT_RAG_DIR
 
-    assert f"./rag/" in dockerfile
+    assert "./rag/" in dockerfile
     assert dockerfile.count("WORKDIR /app") == 1
     assert DEFAULT_RAG_DIR == "/app/rag"
 

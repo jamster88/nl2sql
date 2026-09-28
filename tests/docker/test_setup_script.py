@@ -449,15 +449,6 @@ def test_a_missing_dataset_is_fatal_and_suggests_reset(run_setup):
     assert "--reset" in result.output
 
 
-def test_an_empty_knowledge_base_warns_but_does_not_fail(run_setup):
-    """Retrieval is optional, so an unpopulated store is a warning -- the
-    agent still answers, just without knowledge context.
-    """
-    result = run_setup(env={"FAKE_CHUNK_COUNT": "0"})
-    assert result.returncode == 0
-    assert "no embedded chunks" in result.output
-
-
 def test_reset_removes_the_existing_volumes_first(run_setup):
     result = run_setup("--reset", env={"FAKE_VOLUME_EXISTS": "1"})
     assert result.called("compose down -v")
@@ -582,7 +573,7 @@ def test_a_failed_check_warns_but_leaves_setup_successful(run_setup):
     result = run_setup(env={"FAKE_PROBE_FAILS": "1"})
     assert result.returncode == 0
     assert "could not retrieve from the knowledge base" in result.output
-    assert "without knowledge context" in result.output
+    assert "The agent will still answer, but without knowledge context." in result.output
     assert "Setup complete" in result.output
 
 
@@ -594,10 +585,6 @@ def test_a_check_that_returns_no_chunks_warns(run_setup):
     assert result.returncode == 0
     assert "returned nothing" in result.output
     assert "just without retrieved context" in result.output
-
-
-def test_help_documents_the_no_verify_flag(run_setup):
-    assert "--no-verify" in run_setup("--help").output
 
 
 def test_the_closing_message_names_all_three_containers(run_setup):

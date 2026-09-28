@@ -430,6 +430,15 @@ def test_a_structured_call_hops_on_nothing_parsed():
     assert routed.calls == 1 and routed.hops == ["light:7b: an empty answer"]
 
 
+def test_a_structured_call_hops_on_an_error_too():
+    clients = {"light:7b": Client("light:7b", fail="model 'light:7b' not found"),
+               ANCHOR: Client(ANCHOR, structured="ok")}
+    routed = router(clients).model("generator", "light")
+    assert routed.with_structured_output(dict).invoke([]) == "ok"
+    assert routed.hops == ["light:7b: model 'light:7b' not found"]
+    assert routed.record()["model"] == ANCHOR
+
+
 def test_the_last_model_in_the_chain_is_the_callers_to_handle():
     """Callers have always handled a failed or an empty call, and still do."""
     failing = {"light:7b": Client("light:7b", fail=" "), ANCHOR: Client(ANCHOR, fail="host unreachable")}

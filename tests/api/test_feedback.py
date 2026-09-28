@@ -44,8 +44,6 @@ class FakeSink:
         return "sub-1"
 
     def withdraw(self, job_id: str) -> bool:
-        if self.fail is not None:
-            raise self.fail
         self.withdrawn.append(job_id)
         return self.removes
 

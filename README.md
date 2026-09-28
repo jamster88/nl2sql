@@ -1207,8 +1207,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2865 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3342, including ones that build and run containers
+pytest                                          # 2859 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3340, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1220,12 +1220,12 @@ pytest --run-docker --run-node --run-java       # all 3342, including ones that 
 | [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the nine tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
-| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows, and the review interface's own 128-test review GUI suite run from here |
+| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 128-test review GUI suite run from here |
 | [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 451 tests behind `--run-docker` are the ones that need a working daemon:
+The 455 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, query the four live databases, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1243,7 +1243,7 @@ binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
 without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 451 also need the **embedding host**: a local Ollama
+Twenty-eight of those 455 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1280,7 +1280,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-9,203 statements and 2,266 branches, none missed. `coverage report` fails below
+9,202 statements and 2,266 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the two web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent and its REST
@@ -1340,9 +1340,30 @@ sets. That removed `Database.explain` -- the v3 validator's wrapper, which the
 Planner Gate's `explain_plan` replaced and which only its own two tests still
 called -- along with its fake, a scripted-model mode and a fake-repository
 lookup nothing used, and a fake `docker` case for a command no script makes any
-more. What is left unexecuted in the tests is the part that should be: the
-skips for a missing daemon or registry, the failure messages of assertions
-that pass, and the hooks the shell measurement turns on.
+more. A later pass -- the same run, with `*/tests/*` taken out of `omit` and
+`coverage report --include='tests/*'` -- removed a container helper nothing
+called and a fake sink's failure mode no test chose, and gave three others a
+test each, because each was a path worth one: a structured call that raises,
+a calibration model that is down, an embedding host that answers 500. It also
+found two tests asserting less than they read. One checked promotions against
+the shared four-row dataset, which holds three of the six mechanics, so its
+rule for the other three never ran; a test of three hundred promotions already
+checked all six, and it came out. The other checked the smoke script for
+arrays initialised empty and expanded unguarded -- and there are none, so its
+loop never ran either; it now checks that every array the script expands is
+given an element.
+
+The same pass folded seven tests into others that ran the same scenario and
+asserted the same thing. Removing one of them failed the warning sweep: it had
+been the only quotation of a `setup.sh` warning, by way of its docstring,
+while the test that triggers that warning quoted it too loosely to count. That
+test quotes it in full now.
+
+What is left unexecuted in the tests is the part that should be: the skips
+for a missing daemon, registry or database, the failure messages of
+assertions that pass, the clean-up of what an interrupted run left behind,
+the diagram checks for versions that live on other branches, and the hooks
+the shell measurement turns on.
 
 The other two languages -- TypeScript and Java -- are measured separately,
 because they have different runners, and to the same standard. First the two
@@ -1512,8 +1533,9 @@ script, by a measurement of their own:
   that takes settings: nothing is set that the code never reads, and nothing
   the code reads is missing from it. That holds for the agent's own settings
   against `config.py`, the API's against `api/settings.py`, the GUI proxy's
-  against its nginx template, the smoke script's against the script itself,
-  and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
+  against its nginx template, the review service's against its own
+  `settings.py`, the review interface's proxy against its template and
+  start-up script, the smoke script's against the script itself, and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
   image overrides the start-up scripts `export`, where a name compose does not
   read would make `--image` a silent no-op that pulls a published store and
   then starts a local one.

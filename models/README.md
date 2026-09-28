@@ -188,8 +188,11 @@ Each probe counts toward the rung the router would route it at -- a
 benchmark question toward the rung its score gives it, a flagged triage case
 toward standard -- and for each rung the catalog records correct out of
 tried and the P50. A model is suited to a rung when it scores within one
-question of the reference model on the same probes; the first rung it fails
-stops the climb, since a model suited to heavy is suited to everything
+question of the reference model on the same probes -- the Supervisor within
+none: in the first routed run a light model one question behind the
+reference refused a valid benchmark question as out of domain, and a refusal
+is no answer, with nothing downstream to retry it. The first rung a model
+fails stops the climb, since a model suited to heavy is suited to everything
 below. The reflection is scored against the reference rather than a key:
 whether a result is fleshed out is a judgement, and agreeing with the model
 the pipeline was tuned on is what suited means there.

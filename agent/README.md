@@ -343,7 +343,7 @@ where the committed catalog leaves it until
 another host is refused when it would route anything, and ignored with a
 note when it would not.
 
-Three things the spec says that the code does differently, each found by
+Four things the spec says that the code does differently, each found by
 running it:
 
 - **The window is per model, not per task.** Ollama reloads a model whenever
@@ -367,6 +367,11 @@ running it:
   not a choice), and the bridge signal is gone: closure over the scope says
   nothing about the query. The benchmark now scores six questions light and
   nine standard.
+- **The Supervisor must match the reference on every probe.** The spec calls
+  a model suited within one question of the reference. In the first routed
+  run, a light model that was one question behind refused a valid benchmark
+  question as out of domain: a refusal is no answer, and nothing retries it.
+  Every other task keeps the tolerance of one.
 - **A near worked example is judged by similarity, not the fused score.**
   The fused score is normalised within one search, so the best of even a
   poor shortlist scores near 1.0; the question-vector similarity says how

@@ -576,11 +576,20 @@ def prior_for(name: str, facts: dict, library: dict) -> dict:
 # --- what calibration measured -----------------------------------------------------
 
 
-def measured_rung(model_task: dict, reference_task: dict) -> tuple[bool, str | None]:
+#: How many probes fewer than the reference a suited model may get right,
+#: per task. Section 15.5 allows one. The Supervisor is allowed none: a light
+#: model within one question of the reference refused a valid benchmark
+#: question as out of domain in the first routed run, and a refusal is not a
+#: slower answer but no answer -- nothing downstream retries it, where the
+#: generator's miss goes to repair.
+TOLERANCE = {"supervisor": 0, "generator": 1, "reflection": 1, "narrator": 1, "repair": 1}
+
+
+def measured_rung(model_task: dict, reference_task: dict, tolerance: int = 1) -> tuple[bool, str | None]:
     """The highest rung calibration showed the model suited to for one task.
 
-    A rung is suited when the model scored within one question of the
-    reference model on the same probes (section 15.5). Rungs are read from
+    A rung is suited when the model scored within `tolerance` questions of
+    the reference model on the same probes (section 15.5). Rungs are read from
     the light end and the first failure stops the climb, since a model
     suited to heavy is suited to everything below it and one that fails the
     light probe is no candidate at all. Rungs with no probes on both sides
@@ -597,7 +606,7 @@ def measured_rung(model_task: dict, reference_task: dict) -> tuple[bool, str | N
         return False, None
     best = None
     for rung in comparable:
-        if model_task[rung]["correct"] < reference_task[rung]["correct"] - 1:
+        if model_task[rung]["correct"] < reference_task[rung]["correct"] - tolerance:
             break
         best = rung
     return True, best
@@ -612,7 +621,7 @@ def suitability(model: dict, reference: dict | None) -> tuple[dict, dict]:
     suited, source = {}, {}
     for task in TASKS:
         measured, rung = measured_rung(
-            model["measured"].get(task, {}), reference_measured.get(task, {})
+            model["measured"].get(task, {}), reference_measured.get(task, {}), TOLERANCE[task]
         )
         if measured and model["prior"][task] is not None:
             suited[task], source[task] = rung, "calibration"

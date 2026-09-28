@@ -1167,8 +1167,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 2595 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3069, including ones that build and run containers
+pytest                                          # 2787 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3262, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1185,7 +1185,7 @@ pytest --run-docker --run-node --run-java       # all 3069, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 448 tests behind `--run-docker` are the ones that need a working daemon:
+The 449 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI and desktop images and run them, resolve the real
 compose file, query the four live databases, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1203,7 +1203,7 @@ binaries rather than real Docker -- as are `launch.sh`'s and `start.sh`'s,
 which is worth saying because `launch.sh`'s were marked `docker` for months
 without needing to be, keeping sixty tests out of the default run.
 
-Twenty-eight of those 448 also need the **embedding host**: a local Ollama
+Twenty-eight of those 449 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1240,7 +1240,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-8,246 statements and 1,992 branches, none missed. `coverage report` fails below
+9,141 statements and 2,246 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the two web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent and its REST

@@ -480,3 +480,19 @@ def test_the_real_calibrator_is_wired_to_the_stack(calibrate, monkeypatch, capsy
     assert calibrate.default_calibrator(catalog, [], measure_load=False).host is None
     engine.say("[1/2] qwen3.8-256k:latest")
     assert capsys.readouterr().out == "[1/2] qwen3.8-256k:latest\n"
+
+
+def test_without_load_timing_or_a_memory_size_there_is_nothing_to_warn_about(
+        calibrate, build_catalog, host, tmp_path, capsys):
+    path = _catalog_file(build_catalog, host, tmp_path)
+
+    def factory(catalog, questions, *, measure_load):
+        engine = calibrator(calibrate, catalog, questions=("B01",), say=print)
+        engine.settings = replace(engine.settings, ollama_base_url=host.url)
+        return engine
+
+    assert calibrate.main(["--catalog", str(path), "--models", REFERENCE, "--tasks", "narrator",
+                           "--questions", "B01", "--no-load"], calibrator_factory=factory) == 0
+    reference = next(m for m in json.loads(path.read_text())["models"] if m["name"] == REFERENCE)
+    assert set(reference["measured"]) == {"narrator"}
+    assert "warning" not in capsys.readouterr().err

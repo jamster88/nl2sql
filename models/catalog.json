@@ -2,7 +2,7 @@
   "schema": 2,
   "host": "http://192.168.10.82:11434",
   "ollama_version": "0.34.4",
-  "built": "2026-09-28T01:47:24Z",
+  "built": "2026-09-28T03:20:12Z",
   "reference": "qwen3.8-256k:latest",
   "reference_on_host": true,
   "calibrated": null,
@@ -322,6 +322,308 @@
       }
     },
     {
+      "name": "deepseekR1_14b-128k:latest",
+      "digest": "b3b5def7dbc14710683c339e4ef5d882e2d2c2b822fc7d9d50190f1897c47d40",
+      "chat": true,
+      "facts": {
+        "family": "qwen2",
+        "parent_model": "deepseek-r1:14b",
+        "parameter_size": "14.8B",
+        "parameter_count": 14770033664,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072
+        },
+        "license": "MIT License",
+        "remote_host": null,
+        "size_bytes": 8988111854,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/deepseek-r1",
+        "description": "DeepSeek-R1 is a family of open reasoning models with performance approaching that of leading models, such as O3 and Gemini 2.5 Pro.",
+        "badges": [
+          "tools",
+          "thinking"
+        ],
+        "sizes": [
+          "1.5b",
+          "7b",
+          "8b",
+          "14b",
+          "32b",
+          "70b",
+          "671b"
+        ],
+        "tags": [
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "14.8 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "deepseekR1_32b-128k:latest",
+      "digest": "e59f9d35da26cc68979166a462bd39ebf2d96b1f9a238d17c9712fc3fb324796",
+      "chat": true,
+      "facts": {
+        "family": "qwen2",
+        "parent_model": "deepseek-r1:32b",
+        "parameter_size": "32.8B",
+        "parameter_count": 32763876352,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072
+        },
+        "license": "MIT License",
+        "remote_host": null,
+        "size_bytes": 19851337454,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/deepseek-r1",
+        "description": "DeepSeek-R1 is a family of open reasoning models with performance approaching that of leading models, such as O3 and Gemini 2.5 Pro.",
+        "badges": [
+          "tools",
+          "thinking"
+        ],
+        "sizes": [
+          "1.5b",
+          "7b",
+          "8b",
+          "14b",
+          "32b",
+          "70b",
+          "671b"
+        ],
+        "tags": [
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "32.8 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "deepseekR1_70b-128k:latest",
+      "digest": "519ebbb552916548f9c7b326d13bd884c7ba3275b579a41c45c22f072670f21e",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "deepseek-r1:70b",
+        "parameter_size": "70.6B",
+        "parameter_count": 70553706560,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072
+        },
+        "license": "MIT License",
+        "remote_host": null,
+        "size_bytes": 42520397518,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/deepseek-r1",
+        "description": "DeepSeek-R1 is a family of open reasoning models with performance approaching that of leading models, such as O3 and Gemini 2.5 Pro.",
+        "badges": [
+          "tools",
+          "thinking"
+        ],
+        "sizes": [
+          "1.5b",
+          "7b",
+          "8b",
+          "14b",
+          "32b",
+          "70b",
+          "671b"
+        ],
+        "tags": [
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "heavy",
+        "repair": "heavy",
+        "reasons": [
+          "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "heavy",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "deepseekR1_8b-128k:latest",
+      "digest": "70ef68e6323260f60ef592fbac469a1587be7c91ede2996c513e662fe2b6516f",
+      "chat": true,
+      "facts": {
+        "family": "qwen3",
+        "parent_model": "deepseek-r1:8b",
+        "parameter_size": "8.2B",
+        "parameter_count": 8190735360,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072,
+          "temperature": 0.6,
+          "top_p": 0.95
+        },
+        "license": "MIT License",
+        "remote_host": null,
+        "size_bytes": 5225375692,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/deepseek-r1",
+        "description": "DeepSeek-R1 is a family of open reasoning models with performance approaching that of leading models, such as O3 and Gemini 2.5 Pro.",
+        "badges": [
+          "tools",
+          "thinking"
+        ],
+        "sizes": [
+          "1.5b",
+          "7b",
+          "8b",
+          "14b",
+          "32b",
+          "70b",
+          "671b"
+        ],
+        "tags": [
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "light",
+        "reflection": "heavy",
+        "narrator": "light",
+        "repair": "standard",
+        "reasons": [
+          "8.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "light",
+        "reflection": "heavy",
+        "narrator": "light",
+        "repair": "standard"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
       "name": "devstral-small-2:24b",
       "digest": "24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8",
       "chat": true,
@@ -381,6 +683,209 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "devstral-small-2:latest",
+      "digest": "24277f07f62db8f9cb68e9dfc679ea1818a7fbac47a50eff0a701d3f645b63c8",
+      "chat": true,
+      "facts": {
+        "family": "mistral3",
+        "parent_model": null,
+        "parameter_size": "24.0B",
+        "parameter_count": 24011361280,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 393216,
+        "capabilities": [
+          "completion",
+          "tools",
+          "vision"
+        ],
+        "defaults": {
+          "temperature": 0.15
+        },
+        "license": null,
+        "remote_host": null,
+        "size_bytes": 15177374099,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/devstral-small-2",
+        "description": "24B model that excels at using tools to explore codebases, editing multiple files and power software engineering agents.",
+        "badges": [
+          "vision",
+          "tools"
+        ],
+        "sizes": [
+          "24b"
+        ],
+        "tags": [
+          "code"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "24.0 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a code model by its library description: generator and repair one rung up"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "falcon3-10b-32k:latest",
+      "digest": "1a65c2a42c85d449eaf0aebcaf891fc22bb8a4302decfa61a11001f852ed76dd",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "falcon3:10b",
+        "parameter_size": "10.3B",
+        "parameter_count": 10305653760,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 32768,
+        "capabilities": [
+          "completion"
+        ],
+        "defaults": {
+          "num_ctx": 32768
+        },
+        "license": "Falcon 3 TII Falcon License",
+        "remote_host": null,
+        "size_bytes": 6287533662,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/falcon3",
+        "description": "A family of efficient AI models under 10B parameters performant in science, math, and coding through innovative training techniques.",
+        "badges": [],
+        "sizes": [
+          "1b",
+          "3b",
+          "7b",
+          "10b"
+        ],
+        "tags": [
+          "code"
+        ]
+      },
+      "prior": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "standard",
+        "reasons": [
+          "10.3 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "no tool support: supervisor, reflection and narrator one rung down"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "standard"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "falcon3-7b-32k:latest",
+      "digest": "3aa9527f6a6f789f8cc139347ba014b897fa02b67176f54fd9b9a9b8fd105e74",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "falcon3:7b",
+        "parameter_size": "7.5B",
+        "parameter_count": 7455550464,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 32768,
+        "capabilities": [
+          "completion"
+        ],
+        "defaults": {
+          "num_ctx": 32768
+        },
+        "license": "Falcon 3 TII Falcon License",
+        "remote_host": null,
+        "size_bytes": 4569738621,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/falcon3",
+        "description": "A family of efficient AI models under 10B parameters performant in science, math, and coding through innovative training techniques.",
+        "badges": [],
+        "sizes": [
+          "1b",
+          "3b",
+          "7b",
+          "10b"
+        ],
+        "tags": [
+          "code"
+        ]
+      },
+      "prior": {
+        "supervisor": "standard",
+        "generator": "light",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "light",
+        "reasons": [
+          "7.5 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
+          "no tool support: supervisor, reflection and narrator one rung down"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "standard",
+        "generator": "light",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "light"
       },
       "suited_from": {
         "supervisor": "prior",
@@ -765,6 +1270,269 @@
       }
     },
     {
+      "name": "gemma4_mlx12b-256k:latest",
+      "digest": "c27f7673f8a6dcede2f65345e8967f66c1ede03fbfb28281c08994e8d01b2d98",
+      "chat": true,
+      "facts": {
+        "family": "gemma4_unified",
+        "parent_model": null,
+        "parameter_size": "12.4B",
+        "parameter_count": 12382568756,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "nvfp4",
+        "format": "safetensors",
+        "context_length": 262144,
+        "capabilities": [
+          "audio",
+          "completion",
+          "thinking",
+          "tools",
+          "vision"
+        ],
+        "defaults": {
+          "num_ctx": 262144,
+          "temperature": 1,
+          "top_k": 64,
+          "top_p": 0.95
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 7714091459,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": null,
+        "unavailable": "no page for library/gemma4_mlx12b-256k"
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "12.4 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "gemma4_mlx26b-256k:latest",
+      "digest": "5a25de8296c6de594b371693d532800b03a6a4942fe3f9a6580b67939497462b",
+      "chat": true,
+      "facts": {
+        "family": "gemma4",
+        "parent_model": null,
+        "parameter_size": "26.2B",
+        "parameter_count": 26225562962,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "nvfp4",
+        "format": "safetensors",
+        "context_length": 262144,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools",
+          "vision"
+        ],
+        "defaults": {
+          "num_ctx": 262144,
+          "temperature": 1,
+          "top_k": 64,
+          "top_p": 0.95
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 18334412613,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": null,
+        "unavailable": "no page for library/gemma4_mlx26b-256k"
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "26.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "gemma4_mlx31b-256k:latest",
+      "digest": "3576839ad1f33ed1679da9b6bf07a9cefca45181cb0622821601556b28d722ad",
+      "chat": true,
+      "facts": {
+        "family": "gemma4",
+        "parent_model": null,
+        "parameter_size": "31.7B",
+        "parameter_count": 31742607472,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "nvfp4",
+        "format": "safetensors",
+        "context_length": 262144,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools",
+          "vision"
+        ],
+        "defaults": {
+          "num_ctx": 262144,
+          "temperature": 1,
+          "top_k": 64,
+          "top_p": 0.95
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 19424434840,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": null,
+        "unavailable": "no page for library/gemma4_mlx31b-256k"
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "31.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "gpt-oss-128k:latest",
+      "digest": "0a798786fbd90259cffb0b51fca9d5731308011e15cd4eeed9665792688af18f",
+      "chat": true,
+      "facts": {
+        "family": "gptoss",
+        "parent_model": "gpt-oss:20b",
+        "parameter_size": "20.9B",
+        "parameter_count": 20914757184,
+        "expert_count": 32,
+        "expert_used_count": 4,
+        "quantization": "MXFP4",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072,
+          "temperature": 1
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 13793440889,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/gpt-oss",
+        "description": "OpenAI’s open-weight models designed for powerful reasoning, agentic tasks, and versatile developer use cases.",
+        "badges": [
+          "tools",
+          "thinking",
+          "cloud"
+        ],
+        "sizes": [
+          "20b",
+          "120b"
+        ],
+        "tags": [
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "20.9 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a mixture of 32 experts, 4 active per token: placed by total parameters, so it will measure faster than its size",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
       "name": "gpt-oss:20b",
       "digest": "17052f91a42e97930aa6e28a6c6c06a983e6a58dbb00434885a0cf5313e376f7",
       "chat": true,
@@ -968,6 +1736,205 @@
       }
     },
     {
+      "name": "granite_code-125k:latest",
+      "digest": "8d996c1608aafebaeda38c5a3e1722bd2d4ed0c80e6e0685a2844aca0a0c271f",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "granite-code:8b",
+        "parameter_size": "8.1B",
+        "parameter_count": 8054910976,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_0",
+        "format": "gguf",
+        "context_length": 128000,
+        "capabilities": [
+          "completion",
+          "insert"
+        ],
+        "defaults": {
+          "num_ctx": 125000
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 4590918508,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/granite-code",
+        "description": "A family of open foundation models by IBM for Code Intelligence",
+        "badges": [],
+        "sizes": [
+          "3b",
+          "8b",
+          "20b",
+          "34b"
+        ],
+        "tags": [
+          "code"
+        ]
+      },
+      "prior": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "standard",
+        "reasons": [
+          "8.1 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
+          "a code model by name (granite_code-125k): generator and repair one rung up",
+          "no tool support: supervisor, reflection and narrator one rung down"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "standard"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "granite_moe-128k:latest",
+      "digest": "2d9c99875518c99e5c2bbc2f8dd90bac183b346a4aa82568966bbe8a8bee4b1d",
+      "chat": true,
+      "facts": {
+        "family": "granitemoe",
+        "parent_model": "granite3.1-moe:3b",
+        "parameter_size": "3.3B",
+        "parameter_count": 3298793472,
+        "expert_count": 40,
+        "expert_used_count": 8,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 2035187003,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/granite3.1-moe",
+        "description": "The IBM Granite 1B and 3B models are long-context mixture of experts (MoE) Granite models from IBM designed for low latency usage.",
+        "badges": [
+          "tools"
+        ],
+        "sizes": [
+          "1b",
+          "3b"
+        ],
+        "tags": []
+      },
+      "prior": {
+        "supervisor": "light",
+        "generator": "light",
+        "reflection": "light",
+        "narrator": "light",
+        "repair": "light",
+        "reasons": [
+          "3.3 B parameters: supervisor and reflection light (under 7 B); generator, narrator and repair light (under 10 B)",
+          "a mixture of 40 experts, 8 active per token: placed by total parameters, so it will measure faster than its size"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "light",
+        "generator": "light",
+        "reflection": "light",
+        "narrator": "light",
+        "repair": "light"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "llama3.3-128k:latest",
+      "digest": "4ff89d614b609a39558c1e5d8cb95fe9e345493e1c351089d766dc386de67fbf",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "llama3.3:70b",
+        "parameter_size": "70.6B",
+        "parameter_count": 70553706560,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072
+        },
+        "license": "LLAMA 3.3 COMMUNITY LICENSE AGREEMENT",
+        "remote_host": null,
+        "size_bytes": 42520413487,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/llama3.3",
+        "description": "New state of the art 70B model. Llama 3.3 70B offers similar performance compared to the Llama 3.1 405B model.",
+        "badges": [
+          "tools"
+        ],
+        "sizes": [
+          "70b"
+        ],
+        "tags": []
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "heavy",
+        "repair": "heavy",
+        "reasons": [
+          "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "heavy",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
       "name": "llama3.3:70b",
       "digest": "a6eb4748fd2990ad2952b2335a95a7f952d1a06119a0aa6a2df6cd052a93a3fa",
       "chat": true,
@@ -1155,6 +2122,135 @@
       }
     },
     {
+      "name": "mistral_7b-32k:latest",
+      "digest": "3a4ccabddc0ea9b93755cf8dc2ca256e5350d231c49962d3a0c37ab0c1f3949e",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "mistral:7b",
+        "parameter_size": "7.2B",
+        "parameter_count": 7248023552,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 32768,
+        "capabilities": [
+          "completion",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 32768
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 4372824028,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/mistral",
+        "description": "The 7B model released by Mistral AI, updated to version 0.3.",
+        "badges": [
+          "tools"
+        ],
+        "sizes": [
+          "7b"
+        ],
+        "tags": []
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "light",
+        "reflection": "heavy",
+        "narrator": "light",
+        "repair": "light",
+        "reasons": [
+          "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "light",
+        "reflection": "heavy",
+        "narrator": "light",
+        "repair": "light"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "mistral_small-128k:latest",
+      "digest": "f35a2240b6dd96a0ecf76003a6aea2a15b1ad1b05cb0fc4cc95f05510a170038",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "mistral-small:22b",
+        "parameter_size": "22.2B",
+        "parameter_count": 22247282688,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_0",
+        "format": "gguf",
+        "context_length": 131072,
+        "capabilities": [
+          "completion",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 131072
+        },
+        "license": "# Mistral AI Research License",
+        "remote_host": null,
+        "size_bytes": 12569171786,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/mistral-small",
+        "description": "Mistral Small 3 sets a new benchmark in the “small” Large Language Models category below 70B.",
+        "badges": [
+          "tools"
+        ],
+        "sizes": [
+          "22b",
+          "24b"
+        ],
+        "tags": []
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "standard",
+        "reasons": [
+          "22.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "standard"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
       "name": "mixtral:8x7b",
       "digest": "a3b6bef0f836ff29ddb576a80eeb1b7def43ec9b809466f62e96adb871fe8498",
       "chat": true,
@@ -1175,6 +2271,72 @@
         "license": "Apache License",
         "remote_host": null,
         "size_bytes": 26443602516,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/mixtral",
+        "description": "A set of Mixture of Experts (MoE) model with open weights by Mistral AI in 8x7b and 8x22b parameter sizes.",
+        "badges": [
+          "tools"
+        ],
+        "sizes": [
+          "8x7b",
+          "8x22b"
+        ],
+        "tags": []
+      },
+      "prior": {
+        "supervisor": "standard",
+        "generator": "heavy",
+        "reflection": "standard",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "46.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
+          "a mixture of 8 experts, 2 active per token: placed by total parameters, so it will measure faster than its size",
+          "no tool support: supervisor, reflection and narrator one rung down"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "standard",
+        "generator": "heavy",
+        "reflection": "standard",
+        "narrator": "standard",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "mixtral_8x7b-32k:latest",
+      "digest": "ddbfc0665f5ad51addd57157d365160cd066dea675de6e91451f8528d72cc9aa",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "mixtral:8x7b",
+        "parameter_size": "46.7B",
+        "parameter_count": 46702792704,
+        "expert_count": 8,
+        "expert_used_count": 2,
+        "quantization": "Q4_0",
+        "format": "gguf",
+        "context_length": 32768,
+        "capabilities": [
+          "completion"
+        ],
+        "defaults": {
+          "num_ctx": 32768
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 26443602160,
         "modified_at": "2026-09-27"
       },
       "facts_from": "show",
@@ -1283,6 +2445,141 @@
       }
     },
     {
+      "name": "phi4_reasoning-32k:latest",
+      "digest": "9fd6cf4e0b2f885a9f1cf4c1b8903331eea97c4efb110307b8eb7d14e009bb68",
+      "chat": true,
+      "facts": {
+        "family": "phi3",
+        "parent_model": "phi4-reasoning:14b",
+        "parameter_size": "14.7B",
+        "parameter_count": 14659507200,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 32768,
+        "capabilities": [
+          "completion",
+          "thinking"
+        ],
+        "defaults": {
+          "num_ctx": 32768
+        },
+        "license": "Microsoft.",
+        "remote_host": null,
+        "size_bytes": 11117502803,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/phi4-reasoning",
+        "description": "Phi 4 reasoning and reasoning plus are 14-billion parameter open-weight reasoning models that rival much larger models on complex reasoning tasks.",
+        "badges": [],
+        "sizes": [
+          "14b"
+        ],
+        "tags": [
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "heavy",
+        "reasons": [
+          "14.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere",
+          "no tool support: supervisor, reflection and narrator one rung down"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "qwen3-coder-next-256k:latest",
+      "digest": "ffea208c61c7d431ebd47cd087276456435b8aadd018d4fa03e30822c66cb1cc",
+      "chat": true,
+      "facts": {
+        "family": "qwen3next",
+        "parent_model": "qwen3-coder-next:latest",
+        "parameter_size": "79.7B",
+        "parameter_count": 79674391296,
+        "expert_count": 512,
+        "expert_used_count": 10,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 262144,
+        "capabilities": [
+          "completion",
+          "tools"
+        ],
+        "defaults": {
+          "num_ctx": 262144,
+          "temperature": 1,
+          "top_k": 40,
+          "top_p": 0.95
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 51741611542,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/qwen3-coder-next",
+        "description": "Qwen3-Coder-Next is a coding-focused language model from Alibaba's Qwen team, optimized for agentic coding workflows and local development.",
+        "badges": [
+          "tools"
+        ],
+        "sizes": [],
+        "tags": [
+          "code"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "heavy",
+        "repair": "heavy",
+        "reasons": [
+          "79.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
+          "a mixture of 512 experts, 10 active per token: placed by total parameters, so it will measure faster than its size",
+          "a code model by name (qwen3-coder-next-256k): generator and repair one rung up"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "heavy",
+        "reflection": "heavy",
+        "narrator": "heavy",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
       "name": "qwen3-coder-next:latest",
       "digest": "ca06e9e4087c714d44355bf954099187890e63084b4a632b8e9956c4b9492074",
       "chat": true,
@@ -1340,6 +2637,86 @@
         "generator": "heavy",
         "reflection": "heavy",
         "narrator": "heavy",
+        "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "qwen3.6-256k:latest",
+      "digest": "0526536212ff595af43894516750eec3968bf8057ee2d1e71dd1d6e4797c5361",
+      "chat": true,
+      "facts": {
+        "family": "qwen35moe",
+        "parent_model": "qwen3.6:latest",
+        "parameter_size": "36.0B",
+        "parameter_count": 35951822704,
+        "expert_count": 256,
+        "expert_used_count": 8,
+        "quantization": "Q4_K_M",
+        "format": "gguf",
+        "context_length": 262144,
+        "capabilities": [
+          "completion",
+          "thinking",
+          "tools",
+          "vision"
+        ],
+        "defaults": {
+          "num_ctx": 262144,
+          "presence_penalty": 1.5,
+          "repeat_penalty": 1,
+          "temperature": 1,
+          "top_k": 20,
+          "top_p": 0.95,
+          "min_p": 0
+        },
+        "license": "Apache License",
+        "remote_host": null,
+        "size_bytes": 23938333296,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/qwen3.6",
+        "description": "Qwen3.6 delivers substantial upgrades in agentic coding and thinking preservation than previous Qwen models.",
+        "badges": [
+          "vision",
+          "tools",
+          "thinking"
+        ],
+        "sizes": [
+          "27b",
+          "35b"
+        ],
+        "tags": [
+          "code",
+          "reasoning"
+        ]
+      },
+      "prior": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
+        "repair": "heavy",
+        "reasons": [
+          "36.0 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "a mixture of 256 experts, 8 active per token: placed by total parameters, so it will measure faster than its size",
+          "a reasoning model: repair one rung up, and routed with thinking off everywhere"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "heavy",
+        "generator": "standard",
+        "reflection": "heavy",
+        "narrator": "standard",
         "repair": "heavy"
       },
       "suited_from": {
@@ -1575,6 +2952,72 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy"
+      },
+      "suited_from": {
+        "supervisor": "prior",
+        "generator": "prior",
+        "reflection": "prior",
+        "narrator": "prior",
+        "repair": "prior"
+      }
+    },
+    {
+      "name": "sqlcoder-32k:latest",
+      "digest": "9bf29d6d88c06e68185ac160f7507ad4255e5d1fe70bca51e2434791ea991d27",
+      "chat": true,
+      "facts": {
+        "family": "llama",
+        "parent_model": "sqlcoder:7b",
+        "parameter_size": "7B",
+        "parameter_count": 7241732096,
+        "expert_count": null,
+        "expert_used_count": null,
+        "quantization": "Q4_0",
+        "format": "gguf",
+        "context_length": 32768,
+        "capabilities": [
+          "completion"
+        ],
+        "defaults": {
+          "num_ctx": 32768
+        },
+        "license": null,
+        "remote_host": null,
+        "size_bytes": 4108916516,
+        "modified_at": "2026-09-27"
+      },
+      "facts_from": "show",
+      "library": {
+        "page": "https://ollama.com/library/sqlcoder",
+        "description": "SQLCoder is a code completion model fined-tuned on StarCoder for SQL generation tasks",
+        "badges": [],
+        "sizes": [
+          "7b",
+          "15b"
+        ],
+        "tags": [
+          "code"
+        ]
+      },
+      "prior": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "standard",
+        "reasons": [
+          "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
+          "a code model by name (sqlcoder-32k): generator and repair one rung up",
+          "no tool support: supervisor, reflection and narrator one rung down"
+        ]
+      },
+      "measured": {},
+      "suited": {
+        "supervisor": "standard",
+        "generator": "standard",
+        "reflection": "standard",
+        "narrator": "light",
+        "repair": "standard"
       },
       "suited_from": {
         "supervisor": "prior",

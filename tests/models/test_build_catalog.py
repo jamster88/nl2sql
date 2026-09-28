@@ -724,6 +724,18 @@ def test_a_rung_is_suited_within_one_question_of_the_reference(build_catalog, mo
     assert build_catalog.measured_rung(model, reference) == expected
 
 
+def test_the_supervisor_may_miss_nothing_the_reference_got_right(build_catalog):
+    """Measured: a light Supervisor one question behind the reference refused
+    a valid benchmark question. A refusal is no answer, and nothing retries it."""
+    reference = {"measured": {"supervisor": _scores(light=(9, 9)), "narrator": _scores(light=(9, 9))}}
+    model = {"prior": {task: "heavy" for task in build_catalog.TASKS},
+             "measured": {"supervisor": _scores(light=(8, 9)), "narrator": _scores(light=(8, 9))}}
+    suited, source = build_catalog.suitability(model, reference)
+    assert (suited["supervisor"], source["supervisor"]) == (None, "calibration")
+    assert suited["narrator"] == "light"
+    assert build_catalog.TOLERANCE["supervisor"] == 0 and set(build_catalog.TOLERANCE) == set(build_catalog.TASKS)
+
+
 def test_calibration_overrides_the_prior_task_by_task_but_never_an_exclusion(build_catalog):
     reference = {"measured": {"generator": _scores(light=(6, 6), standard=(6, 6)),
                               "narrator": _scores(light=(9, 10))}}

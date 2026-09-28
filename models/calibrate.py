@@ -11,8 +11,8 @@ measured the way section 15.5 describes. Each model is run through a probe
 per task; for every rung it records correct out of tried and the P50, and
 per model the cold load time and resident size. A model is *suited* to a
 rung when it scores within one question of the reference model on the same
-probes (`build_catalog.measured_rung`), and `suited` in the catalog becomes
-that measurement wherever there is one.
+probes -- the Supervisor within none (`build_catalog.TOLERANCE`) -- and
+`suited` in the catalog becomes that measurement wherever there is one.
 
 | Task | Probe | Correct when |
 |---|---|---|

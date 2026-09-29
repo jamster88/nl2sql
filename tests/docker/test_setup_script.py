@@ -695,6 +695,59 @@ def test_a_failed_review_pull_is_not_fatal(run_setup):
 
 
 # ---------------------------------------------------------------------------
+# The SQL console's interface
+# ---------------------------------------------------------------------------
+
+
+def test_console_pulls_and_pins_its_interface_and_nothing_else(run_setup):
+    """One image: the console behind the page is the agent's own image,
+    pulled anyway, started with a different command. And not the web
+    interface -- the answers being troubleshot come from a terminal as often
+    as from a page."""
+    result = run_setup("--console")
+
+    tag = _shipped_tag("CONSOLE_GUI_TAG")
+    pulled = [call for call in result.calls if call.startswith("pull") and "console" in call]
+    assert pulled == [f"pull mcfaddja/nl2sql-console-gui:{tag}"]
+    env = result.env_file()
+    assert env["CONSOLE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-console-gui"
+    assert env["CONSOLE_GUI_IMAGE_TAG"] == tag
+    assert "GUI_IMAGE_NAME" not in env
+
+
+def test_nothing_about_the_console_is_pinned_unless_it_was_asked_for(run_setup):
+    env = run_setup().env_file()
+    assert "CONSOLE_GUI_IMAGE_NAME" not in env
+
+
+def test_naming_the_console_image_or_tag_implies_the_flag(run_setup):
+    """Written out rather than parametrized, for the reason the review
+    images' test gives."""
+    assert run_setup("--console-gui-image", "example.com/console").env_file()[
+        "CONSOLE_GUI_IMAGE_NAME"
+    ] == "example.com/console"
+    assert run_setup("--console-gui-tag", "v9_9").env_file()["CONSOLE_GUI_IMAGE_TAG"] == "v9_9"
+
+
+def test_a_failed_console_pull_is_not_fatal(run_setup):
+    result = run_setup("--console", env={"FAKE_FAIL_PULL": "nl2sql-console-gui"})
+    assert result.returncode == 0
+    assert "could not pull mcfaddja/nl2sql-console-gui:" in result.output
+    assert "./launch.sh --console will build it from source instead." in result.output
+
+
+def test_a_pinned_console_stays_pinned_without_the_flag(run_setup):
+    run_setup("--console")
+    assert run_setup().env_file()["CONSOLE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-console-gui"
+
+
+def test_setup_ends_by_saying_the_console_is_there(run_setup):
+    output = run_setup().output
+    assert "./launch.sh --console" in output
+    assert "http://localhost:8082" in output
+
+
+# ---------------------------------------------------------------------------
 # Re-running it should not undo the last run
 # ---------------------------------------------------------------------------
 #

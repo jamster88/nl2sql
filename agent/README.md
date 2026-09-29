@@ -25,6 +25,11 @@ library from here -- can ask questions and watch the pipeline work. The
 contract is [`API.md`](API.md); how it is built is
 [Serving it over HTTP](#serving-it-over-http) below.
 
+**v5.3 adds a SQL console.** The same image again, run as
+`python -m nl2sql_agent.console`: a query run as the agent runs its own, with
+the verdict of each of the agent's gates beside the rows -- see
+[The SQL console](#the-sql-console).
+
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
 
@@ -298,6 +303,31 @@ and its fallback to polling, and the whole answer rendered including the
 charts. They are the two worked examples of the contract in
 [`API.md`](API.md), in two languages, and a useful thing to read before
 writing a client of your own.
+
+## The SQL console
+
+[`nl2sql_agent/console/`](nl2sql_agent/console) is a third way into the same
+image, `python -m nl2sql_agent.console`: the retail database queried the way
+the pipeline queries it, for working out why an answer was wrong. It imports
+the pipeline's pieces rather than copying them, so what it reports is what
+the agent would have done -- and it is its own process, apart from the API,
+because the API runs SQL the pipeline wrote and this runs SQL a person
+typed. What it is for, and its settings, are in
+[`console/README.md`](../console/README.md).
+
+| Module | What it owns |
+|---|---|
+| [`query.py`](nl2sql_agent/console/query.py) | The Inspector: `validate.validate` for safety and then with the whole schema as scope, `EXPLAIN` judged by `database.total_cost` and `plan_cost_problem` -- the functions the planner gate calls -- and the query inside `READ ONLY` and the agent's statement timeout, through a server-side cursor |
+| [`settings.py`](nl2sql_agent/console/settings.py) | `CONSOLE_*`, and `AGENT_SETTINGS`: the six of this package's settings it runs under, read through `config.Settings` |
+| [`models.py`](nl2sql_agent/console/models.py) | Its wire shapes; health, readiness and the error envelope are the API's own |
+| [`app.py`](nl2sql_agent/console/app.py) | The routes, the token, readiness with the role's privileges in it |
+| [`server.py`](nl2sql_agent/console/server.py) | Flags, the API's certificate presented rather than generated, the banner |
+
+`plan_cost_problem` is the one change it made here: the planner gate's
+"estimated plan cost ... exceeds the ceiling" used to be written inside
+`_planner_gate`, and a console that wrote its own would have been a second
+copy to drift. `Database.engine` is the other addition, for a caller that
+runs statements of its own on the same pool.
 
 ## Model routing (arch5.2)
 

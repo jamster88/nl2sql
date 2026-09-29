@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from tests.shell_coverage import (
+    _HEREDOC_START,
     DRIVEN_BY,
     _percent,
     logical_commands,
@@ -316,7 +317,21 @@ def test_no_script_is_scanned_only_part_way(script: str):
         n for n, raw in enumerate(lines, 1) if raw.strip() and not raw.strip().startswith("#")
     ]
     assert commands, f"{script} has no commands at all"
-    assert commands[-1][0] >= meaningful[-1] - 30, (
+    # A script that ends by printing a message ends in a heredoc, and its
+    # body is text rather than commands however long it grows. The scan has
+    # reached the end when the heredoc the last command opens is closed by
+    # the file's last line -- everything between is then that heredoc's.
+    # Anything else is held to the slack below.
+    last = commands[-1][0]
+    opened = _HEREDOC_START.search(lines[last - 1])
+    if opened:
+        closing = next(
+            (n for n in range(last + 1, len(lines) + 1) if lines[n - 1].strip() == opened.group(2)),
+            None,
+        )
+        if closing == meaningful[-1]:
+            return
+    assert last >= meaningful[-1] - 30, (
         f"{script}: the scanner stopped at line {commands[-1][0]}, but the file "
         f"has commands as late as line {meaningful[-1]}"
     )

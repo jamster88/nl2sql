@@ -200,7 +200,9 @@ services:
     environment: &agent-environment
       # The read-only role, not the owner: the agent only ever SELECTs.
       # launch.sh / setup.sh create it on every start (docker/reader_role.sql).
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_READER_USER:-nl2sql_reader}:${POSTGRES_READER_PASSWORD:-nl2sql_reader}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
+      # Anchored because the SQL console below reads the same database as the
+      # same role, and two copies of a URL are two chances for them to differ.
+      DATABASE_URL: &agent-database-url postgresql+psycopg://${POSTGRES_READER_USER:-nl2sql_reader}:${POSTGRES_READER_PASSWORD:-nl2sql_reader}@postgres:5432/${POSTGRES_DB:-nl2sql_retail}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://192.168.10.82:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3.8-256k}
       # 256k. Multi-shot puts the schema, the knowledge block and three
@@ -239,7 +241,7 @@ services:
       # and six repairs (arch5 section 6.4).
       MAX_ATTEMPTS: ${MAX_ATTEMPTS:-7}
       # Estimated-plan cost ceiling, calibrated against this dataset.
-      MAX_PLAN_COST: ${MAX_PLAN_COST:-1000000}
+      MAX_PLAN_COST: &agent-max-plan-cost ${MAX_PLAN_COST:-1000000}
       # --- arch5.2 model routing ---------------------------------------
       # Each model call goes to the cheapest model the catalog shows is
       # suited to its task at the question's complexity; off is v5.1, every
@@ -339,10 +341,12 @@ services:
       API_TLS_KEY_FILE: ${API_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
       API_TLS_GENERATE: ${API_TLS_GENERATE:-true}
       API_TLS_ALLOW_SELF_SIGNED: ${API_TLS_ALLOW_SELF_SIGNED:-true}
-      # nl2sql-review is in this list because the review service presents
-      # this same certificate rather than generating a second one, and its
-      # GUI's nginx verifies the name it connects to.
-      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,nl2sql-review,review,127.0.0.1,::1}
+      # nl2sql-review and nl2sql-console are in this list because the review
+      # service and the SQL console present this same certificate rather
+      # than generating one each, and their interfaces' nginx verifies the
+      # name it connects to. A name added here is picked up on the API's next
+      # start: it reissues a development certificate that does not cover it.
+      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,nl2sql-review,review,nl2sql-console,console,127.0.0.1,::1}
       API_TLS_DAYS: ${API_TLS_DAYS:-}
       # --- who may call ----------------------------------------------
       API_TOKEN: ${API_TOKEN:-}
@@ -576,6 +580,114 @@ services:
       - apitls:/etc/nl2sql/tls:ro
     profiles: ["reviewgui"]
 
+  # The SQL console: the retail database as the agent sees it, for working
+  # out why an answer was wrong.
+  #
+  # The same image as the agent and the API, a third way in, because every
+  # answer it gives has to be the agent's: the same role (the URL is the
+  # agent's own, anchored above), the same statement timeout, row cap and
+  # plan-cost ceiling, the same validator and the same introspection. A
+  # separate process from the API because of what it does: the API runs SQL
+  # the pipeline wrote, and this runs SQL a person typed.
+  #
+  # Its ports are published on this machine only unless CONSOLE_BIND_ADDRESS
+  # says otherwise. Every other port here is open to the network the way
+  # Docker opens ports; a page that runs SQL is not one to offer the LAN by
+  # default.
+  console:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
+    container_name: nl2sql-console
+    restart: unless-stopped
+    command: ["python", "-m", "nl2sql_agent.console"]
+    entrypoint: []
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # --- the agent's, and only these -------------------------------
+      # What the console reads of the agent's configuration. The pipeline's
+      # other settings -- the models, retrieval, the stages -- are nothing
+      # to a process that runs no pipeline, so they are not passed.
+      DATABASE_URL: *agent-database-url
+      DB_SCHEMA: ${DB_SCHEMA:-}
+      MAX_ROWS: ${MAX_ROWS:-}
+      SAMPLE_ROWS: ${SAMPLE_ROWS:-}
+      STATEMENT_TIMEOUT_MS: ${STATEMENT_TIMEOUT_MS:-}
+      MAX_PLAN_COST: *agent-max-plan-cost
+      # --- the socket ------------------------------------------------
+      CONSOLE_HOST: ${CONSOLE_HOST:-0.0.0.0}
+      CONSOLE_PORT: ${CONSOLE_PORT:-8445}
+      CONSOLE_ROOT_PATH: ${CONSOLE_ROOT_PATH:-}
+      # Presents the certificate the API generates, as the review service
+      # does; API_TLS_HOSTNAMES above covers nl2sql-console for that reason.
+      CONSOLE_TLS_ENABLED: ${CONSOLE_TLS_ENABLED:-true}
+      CONSOLE_TLS_CERT_FILE: ${CONSOLE_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      CONSOLE_TLS_KEY_FILE: ${CONSOLE_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
+      # --- who may call ----------------------------------------------
+      CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
+      CONSOLE_CORS_ORIGINS: ${CONSOLE_CORS_ORIGINS:-}
+      # --- what a query may return -----------------------------------
+      CONSOLE_MAX_ROWS: ${CONSOLE_MAX_ROWS:-}
+      CONSOLE_DOCS_ENABLED: ${CONSOLE_DOCS_ENABLED:-}
+      CONSOLE_LOG_LEVEL: ${CONSOLE_LOG_LEVEL:-}
+    ports:
+      - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_PORT:-8445}:${CONSOLE_PORT:-8445}"
+    volumes:
+      # Read-only: the certificate the API wrote, which this process presents.
+      - apitls:/etc/nl2sql/tls:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os,ssl,urllib.request;
+          p=os.environ.get('CONSOLE_PORT','8445');
+          s='https' if os.environ.get('CONSOLE_TLS_ENABLED','true').lower() not in ('0','false','no','off') else 'http';
+          c=ssl._create_unverified_context();
+          urllib.request.urlopen(f'{s}://127.0.0.1:{p}/healthz', context=c, timeout=5).read()"
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+    profiles: ["console"]
+
+  # The console interface: a third React/TypeScript single page, built to
+  # static files and served by its own nginx, which proxies the console.
+  #
+  # Its own container and npm project, like the review interface and for the
+  # same reason: an entry point in the public GUI's project would be served
+  # by the public GUI's image, to anyone who could reach it.
+  consolegui:
+    build:
+      context: .
+      dockerfile: console/Dockerfile
+    image: ${CONSOLE_GUI_IMAGE_NAME:-nl2sql-console-gui}:${CONSOLE_GUI_IMAGE_TAG:-latest}
+    container_name: nl2sql-console-gui
+    restart: unless-stopped
+    depends_on:
+      console:
+        condition: service_healthy
+    environment:
+      CONSOLE_GUI_PORT: ${CONSOLE_GUI_PORT:-8082}
+      # nl2sql-console rather than console: the certificate is issued for
+      # that name and proxy_ssl_name has to match something it covers.
+      CONSOLE_UPSTREAM: ${CONSOLE_GUI_UPSTREAM:-https://nl2sql-console:8445}
+      CONSOLE_SSL_NAME: ${CONSOLE_GUI_SSL_NAME:-nl2sql-console}
+      CONSOLE_CACERT: ${CONSOLE_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      # Longer than the agent's statement timeout, which is the longest a
+      # query can take, or the proxy cuts off an answer that is coming.
+      CONSOLE_READ_TIMEOUT: ${CONSOLE_GUI_READ_TIMEOUT:-120s}
+      CONSOLE_GUI_RESOLVER: ${CONSOLE_GUI_RESOLVER:-127.0.0.11}
+      # Held here so the browser never sees it.
+      CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
+    ports:
+      - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_GUI_PORT:-8082}:${CONSOLE_GUI_PORT:-8082}"
+    volumes:
+      - apitls:/etc/nl2sql/tls:ro
+    profiles: ["consolegui"]
+
   # An outside client. Nothing of this project is installed in it -- it is a
   # curl image on the same network, which is the point: if the API can only
   # be driven by something that imports nl2sql_agent, it is not an API.
@@ -623,7 +735,7 @@ services:
     # Tagged by platform: one jar is one platform, and a cached image built
     # for another machine is a jar that will not start on this one. The tag
     # is a version *and* a platform, which is how the published ones are
-    # named -- `v5_2-mac-aarch64`. Unpinned it says `local`, which has
+    # named -- `v5_3-mac-aarch64`. Unpinned it says `local`, which has
     # nowhere to be pulled from and is built here instead.
     image: ${DESKTOP_IMAGE_NAME:-nl2sql-desktop-build}:${DESKTOP_IMAGE_TAG:-local}-${JAVAFX_PLATFORM:-linux}
     volumes:

@@ -60,6 +60,10 @@ GUI_ENVSH = "gui/10-nl2sql-config.envsh"
 #: set. Driven in tests/review/test_review_project.py.
 REVIEW_GUI_ENVSH = "review/gui/10-nl2sql-review-config.envsh"
 
+#: The SQL console interface's equivalent: the same two decisions, for a page
+#: that runs SQL. Driven in tests/console/test_console_project.py.
+CONSOLE_GUI_ENVSH = "console/10-nl2sql-console-config.envsh"
+
 SMOKE = "docker/apitest/smoke.sh"
 
 #: Runs once, inside `docker build`, to bake a populated cluster into the
@@ -72,15 +76,16 @@ INIT_DB = "docker/init_db.sh"
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, INIT_DB)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, INIT_DB)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
 #: sandbox is in tests/rag/, the GUI's start-up script is driven from
-#: tests/gui/, and the review interface's from tests/review/.
+#: tests/gui/, the review interface's from tests/review/, and the console
+#: interface's from tests/console/.
 TEST_FILES = [
     path
-    for directory in ("docker", "api", "rag", "gui", "review")
+    for directory in ("docker", "api", "rag", "gui", "review", "console")
     for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
 ]
 TEST_SOURCES = "".join(path.read_text() for path in TEST_FILES)
@@ -520,6 +525,7 @@ DOCKERFILES = {
     ),
     "review/Dockerfile": ("tests/review/test_review_image.py",),
     "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
+    "console/Dockerfile": ("tests/console/test_console_project.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/restore.Dockerfile": ("tests/rag/test_rag_images.py",),
@@ -532,6 +538,7 @@ COMPOSE_FILES = {
         "tests/docker/test_api_compose.py",
         "tests/docker/test_gui_compose.py",
         "tests/review/test_review_compose.py",
+        "tests/console/test_console_compose.py",
     ),
     "rag/docker-compose.yml": ("tests/rag/test_rag_images.py",),
 }
@@ -557,6 +564,8 @@ COMPOSE_SERVICES = {
         "review": ("tests/review/test_review_compose.py",),
         "reviewgui": ("tests/review/test_review_compose.py",),
         "apitest": ("tests/docker/test_api_compose.py",),
+        "console": ("tests/console/test_console_compose.py",),
+        "consolegui": ("tests/console/test_console_compose.py",),
         "desktop": (
             "tests/java/test_desktop_project.py",
             "tests/docker/test_desktop_image.py",

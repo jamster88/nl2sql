@@ -181,29 +181,29 @@ def test_the_total_cost_is_read_from_an_explain_json_payload():
     column type it infers. Both have to work or the gate silently stops
     gating.
     """
-    from nl2sql_agent.database import _total_cost
+    from nl2sql_agent.database import total_cost
 
     decoded = [{"Plan": {"Node Type": "Seq Scan", "Total Cost": 20096.24}}]
-    assert _total_cost(decoded) == 20096.24
-    assert _total_cost(json.dumps(decoded)) == 20096.24
+    assert total_cost(decoded) == 20096.24
+    assert total_cost(json.dumps(decoded)) == 20096.24
 
 
 def test_a_plan_without_a_cost_is_not_an_error():
     """The gate then has nothing to compare, which is different from the
     query being rejected: a missing cost must not fail a valid query.
     """
-    from nl2sql_agent.database import _total_cost
+    from nl2sql_agent.database import total_cost
 
-    assert _total_cost([{"Plan": {"Node Type": "Result"}}]) is None
-    assert _total_cost("not json at all") is None
-    assert _total_cost(None) is None
-    assert _total_cost([]) is None
+    assert total_cost([{"Plan": {"Node Type": "Result"}}]) is None
+    assert total_cost("not json at all") is None
+    assert total_cost(None) is None
+    assert total_cost([]) is None
 
 
 def test_a_non_numeric_cost_is_refused_rather_than_crashing():
-    from nl2sql_agent.database import _total_cost
+    from nl2sql_agent.database import total_cost
 
-    assert _total_cost([{"Plan": {"Total Cost": "expensive"}}]) is None
+    assert total_cost([{"Plan": {"Total Cost": "expensive"}}]) is None
 
 
 def test_an_identifier_is_escaped_before_it_becomes_a_role_name():

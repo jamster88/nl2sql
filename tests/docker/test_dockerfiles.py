@@ -569,8 +569,8 @@ def test_init_db_sh_builds_a_working_cluster(tmp_path, docker_daemon_available: 
 
 
 def test_no_node_modules_is_sent_to_the_daemon():
-    """Each one is over four thousand files and a hundred megabytes, and both
-    images install their own from the lockfile.
+    """Each one is over four thousand files and a hundred megabytes, and every
+    image installs its own from the lockfile.
 
     `review/gui/node_modules` was missed when the review interface was added:
     it was put in .gitignore and not here, so every build uploaded it to the
@@ -604,6 +604,7 @@ def test_the_dockerignore_keeps_what_the_images_actually_need():
     needed = [
         "review/nl2sql_review", "review/requirements.txt", "review/gui/src",
         "review/gui/package.json", "agent/nl2sql_agent", "gui/src",
+        "console/src", "console/package.json",
         "rag/ragproc", "context_questions",
     ]
     for path in needed:

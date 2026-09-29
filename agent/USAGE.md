@@ -249,6 +249,22 @@ this platform yet, and opens it -- a Java runtime of 21 or later is all it
 needs. Verdicts from it land in the same review queue as the web interface's.
 [`desktop/README.md`](../desktop/README.md) explains it.
 
+## When an answer is wrong
+
+The SQL console runs a query the way the agent runs its own -- as its
+read-only role, under its timeout and plan-cost ceiling, through its own
+validator -- and says beside the rows which of those gates would have stopped
+it, in that gate's words:
+
+```bash
+./launch.sh --console      # http://localhost:8082
+./start.sh --console       # the same, with the page opened for you
+```
+
+Paste the SQL from the answer (`--json` prints it as `sql`), or pick a table
+and see the block of the prompt the agent was given about it.
+[`console/README.md`](../console/README.md) explains it.
+
 ## Asking over the network instead
 
 The same agent also answers over HTTPS, for a GUI of your own or anything

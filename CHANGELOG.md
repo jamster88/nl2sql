@@ -8,8 +8,8 @@ per change.
 **Versions.** The number is the agent's: `__version__` 5.1.2 is published as
 the tag `v5_1_2`, and a tag with fewer components names a line
 (`v5_1` is 5.1.x). The app images -- `nl2sql-agent`, `nl2sql-gui`,
-`nl2sql-review`, `nl2sql-review-gui` and the five `nl2sql-desktop-build`
-platforms -- are released together at one number, which
+`nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` and the five
+`nl2sql-desktop-build` platforms -- are released together at one number, which
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds every
 declaration in the repository to. The dataset images --
 `nl2sql-retail-postgres`, `nl2sql-rag-vectordb`, `nl2sql-rag-chunkdb` --
@@ -26,6 +26,47 @@ Docker Hub's, in UTC; release dates are the repository's.
 
 **Artifacts.** Paths are relative to the repository root. Tests are named by
 file where a file is new; the tests a version merely extended are summarised.
+
+---
+
+## v5_3 (5.3.0) -- 2026-09-28
+
+The SQL console: the retail database, queried the way the agent queries it,
+for working out why an answer was wrong. A third process from the agent's
+image, `python -m nl2sql_agent.console`, runs a query as the agent's read-only
+role, in a read-only transaction, under the agent's statement timeout,
+through the agent's own static validator and planner gate -- and says beside
+the rows or the plan which gate would have refused it, in that gate's words,
+against which limit. A third React/TypeScript interface, served by its own
+nginx on this machine only, puts in one page the schema as the agent's
+introspection reads it, the block of the agent's prompt for each table, three
+ways to run a query -- Run, Plan, Analyze -- and the queries run before.
+`start.sh --console`, `launch.sh --console` and `setup.sh --console` bring it
+up. The pipeline is v5.2's.
+
+### Created
+- `agent/nl2sql_agent/console/` -- the SQL console:
+  - `query.py` -- the Inspector: the agent's validator twice (for safety, then with the whole schema as scope), `EXPLAIN` judged by the planner gate's own functions, the query read through a server-side cursor inside `READ ONLY` and the agent's timeout, and the verdict; the `plan` and `analyze` modes;
+  - `app.py`, `models.py` -- `/v1/meta`, `/v1/schema`, `/v1/schema/{table}/prompt` and `POST /v1/query`, with the API's error envelope and readiness;
+  - `settings.py`, `server.py`, `__main__.py` -- `CONSOLE_*`, the six agent settings it runs under, the API's certificate presented rather than generated, and the banner.
+- `console/` -- the interface (React/TypeScript), a separate npm project and image from the other two:
+  - `App.tsx`, `SchemaBrowser`, `SqlEditor`, `Verdict`, `ResultTable`, `PlanView`, `PromptView`, `History`, `StatusBar`;
+  - `api/client.ts`, `api/types.ts`, `api/plan.ts`, `api/format.ts`, `api/history.ts`;
+  - `Dockerfile`, `nginx.conf.template`, `10-nl2sql-console-config.envsh`, `README.md`, and its own suite in `console/test/`.
+- Tests: `tests/console/` -- `test_query.py`, `test_app.py`, `test_settings.py`, `test_server.py`, `test_console_live.py`, `test_console_compose.py`, `test_console_container.py`, `test_console_project.py`, `test_console_gui_contract.py`, `test_console_gui_suite.py`.
+
+### Updated
+- `agent/nl2sql_agent/database.py`, `graph.py` -- the planner gate's cost judgement moved into `plan_cost_problem` and `total_cost` made public, so the gate and the console read one function; `Database.engine` for a caller that runs statements of its own. The agent's behaviour is unchanged.
+- `docker-compose.yml`:
+  - `console` and `consolegui` services (profiles `console`, `consolegui`), their ports published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise;
+  - the agent's `DATABASE_URL` and `MAX_PLAN_COST` anchored, so the console reads the same values;
+  - `nl2sql-console` in `API_TLS_HOSTNAMES`.
+- `start.sh`, `launch.sh`, `setup.sh` -- `--console`, and `setup.sh --console-gui-image` and `--console-gui-tag`. `launch.sh`'s proxy repair is given the container's name rather than deriving it, which only worked for the first two interfaces.
+- `tests/docker/` -- the fake `docker` answers for the console's containers; the three scripts' `--console` paths; the inventories name the console's Dockerfile, services and start-up script; `test_published_images.py` asks for the console's interface too.
+- `tests/docs/` -- `console/README.md` held to the console's settings, defaults, routes, error codes and flags; the new project's version declarations and lockfile.
+- `.gitignore`, `.dockerignore` -- the console's `node_modules`, `dist` and `coverage`.
+- `README.md`, `agent/USAGE.md`, `gui/README.md`, `desktop/README.md` -- the SQL console, a `v5_3` row in the tag table, the tags, test counts and coverage.
+- Version 5.3.0 in every declaration; `setup.sh` pins `v5_3`.
 
 ---
 

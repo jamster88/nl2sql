@@ -1,0 +1,574 @@
+/*
+ * One stylesheet, written against roles rather than colours.
+ *
+ * The tokens are the web GUI's and the review interface's, deliberately:
+ * three applications, one system. Defined once and redefined once for dark,
+ * so every rule below is correct in both without asking which is on.
+ */
+
+:root {
+  color-scheme: light;
+
+  --surface: #fcfcfb;
+  --surface-raised: #ffffff;
+  --surface-sunken: #f4f3f0;
+  --border: #dedcd6;
+  --border-strong: #b9b6ad;
+
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #77756d;
+
+  --accent: #2a78d6;
+  --accent-contrast: #ffffff;
+  --good: #008300;
+  --bad: #c62a2a;
+  --warn: #9a6400;
+
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface: #1a1a19;
+    --surface-raised: #232322;
+    --surface-sunken: #131312;
+    --border: #383835;
+    --border-strong: #55544f;
+
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #96958c;
+
+    --accent: #5fa2ec;
+    --accent-contrast: #0b0b0b;
+    --good: #46c246;
+    --bad: #ef6f6f;
+    --warn: #dda022;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface: #1a1a19;
+  --surface-raised: #232322;
+  --surface-sunken: #131312;
+  --border: #383835;
+  --border-strong: #55544f;
+
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #96958c;
+
+  --accent: #5fa2ec;
+  --accent-contrast: #0b0b0b;
+  --good: #46c246;
+  --bad: #ef6f6f;
+  --warn: #dda022;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background: var(--surface);
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.small {
+  font-size: 0.84rem;
+}
+
+.good {
+  color: var(--good);
+}
+
+.bad {
+  color: var(--bad);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+.mono,
+.code {
+  font-family: var(--mono);
+}
+
+.error {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--bad);
+  border-radius: var(--radius);
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+  white-space: pre-wrap;
+}
+
+/* --- frame ------------------------------------------------------------ */
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.masthead {
+  padding: 14px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 1.15rem;
+  font-weight: 650;
+}
+
+.masthead-sub {
+  margin-left: 8px;
+  font-weight: 400;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+
+.main {
+  flex: 1;
+  display: grid;
+  /* The schema and the history are for scanning, so they keep their width;
+     the work in the middle takes the rest and scrolls its own tables. */
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(200px, 260px);
+  gap: 20px;
+  padding: 20px 24px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .main {
+    grid-template-columns: minmax(200px, 260px) minmax(0, 1fr);
+  }
+
+  .history {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 720px) {
+  .main {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px;
+  }
+}
+
+.panel-title {
+  display: block;
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.work {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* --- controls --------------------------------------------------------- */
+
+.input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+}
+
+.button {
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+  color: inherit;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+
+.button-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.button-small {
+  padding: 3px 10px;
+  font-size: 0.8rem;
+}
+
+/* --- schema ----------------------------------------------------------- */
+
+.schema {
+  position: sticky;
+  top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: calc(100vh - 120px);
+}
+
+.schema-list,
+.columns,
+.constraints,
+.history-list,
+.issues {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.schema-list {
+  overflow-y: auto;
+}
+
+.schema-table + .schema-table {
+  border-top: 1px solid var(--border);
+}
+
+.schema-name {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.schema-name[aria-expanded="true"] {
+  color: var(--accent);
+}
+
+.schema-detail {
+  padding: 0 4px 10px;
+}
+
+.schema-detail p {
+  margin: 0 0 8px;
+}
+
+.schema-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.columns li {
+  padding: 2px 0;
+  font-size: 0.84rem;
+}
+
+.constraints {
+  margin-top: 8px;
+  color: var(--text-secondary);
+}
+
+/* --- editor ----------------------------------------------------------- */
+
+.sql {
+  width: 100%;
+  min-height: 11rem;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  color: inherit;
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* --- verdict ---------------------------------------------------------- */
+
+.verdict {
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+}
+
+.verdict-good {
+  border-left-color: var(--good);
+}
+
+.verdict-bad {
+  border-left-color: var(--bad);
+}
+
+.verdict-title {
+  margin: 0 0 6px;
+  font-size: 1rem;
+}
+
+.verdict p {
+  margin: 6px 0 0;
+}
+
+.issues li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 6px 0;
+}
+
+.gate {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--bad) 14%, transparent);
+  color: var(--bad);
+}
+
+.gate-static {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.issue-message {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  white-space: pre-wrap;
+}
+
+/* --- tabs and tables -------------------------------------------------- */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabs button {
+  padding: 6px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.tabs button[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.results-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.88rem;
+}
+
+.table-scroll {
+  overflow: auto;
+  max-height: 60vh;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.grid {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.85rem;
+}
+
+.grid th,
+.grid td {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.grid thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-sunken);
+  font-weight: 600;
+}
+
+.grid .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.grid .rownum {
+  width: 1%;
+  color: var(--text-muted);
+}
+
+.grid .null {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.coltype {
+  display: block;
+  font-weight: 400;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+/* The node column takes the width, and wraps; the numbers beside it do not. */
+.plan-grid td:first-child {
+  width: 100%;
+  min-width: 16rem;
+  white-space: normal;
+}
+
+.plan-node {
+  font-weight: 600;
+}
+
+.raw {
+  margin-top: 10px;
+}
+
+.code {
+  margin: 8px 0 0;
+  padding: 12px 14px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.82rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* --- history ---------------------------------------------------------- */
+
+.history {
+  position: sticky;
+  top: 20px;
+}
+
+.history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.history-item {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-sql {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot-good {
+  background: var(--good);
+}
+
+.dot-bad {
+  background: var(--bad);
+}
+
+/* --- status bar ------------------------------------------------------- */
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 10px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+}
+
+.status-bad {
+  color: var(--bad);
+}
+
+.status-warn {
+  color: var(--warn);
+}

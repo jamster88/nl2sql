@@ -103,7 +103,7 @@ from .render import Draft
 from .settings import ReviewSettings
 from .store import STATES, VERDICTS, Repository, Submission
 
-__version__ = "5.2.0"
+__version__ = "5.3.0"
 
 #: What each verdict's submissions are for, in the words a refusal uses.
 #: `yes` is promoted into the golden set; the other two are fixed into the

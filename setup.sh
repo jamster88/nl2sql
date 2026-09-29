@@ -22,19 +22,24 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1_1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v5_2"
+AGENT_TAG="v5_3"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v5_2"
+GUI_TAG="v5_3"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v5_2"
+REVIEW_TAG="v5_3"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v5_2"
+REVIEW_GUI_TAG="v5_3"
+# The SQL console's interface. The console behind it runs from the agent
+# image above, started with a different command, so this is the one image
+# --console adds.
+CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
+CONSOLE_GUI_TAG="v5_3"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v5_2"
+DESKTOP_TAG="v5_3"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3_1"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -52,6 +57,7 @@ BUILD_AGENT=0
 # from this checkout instead, which is slower but needs no registry.
 WITH_GUI=0
 WITH_REVIEW=0
+WITH_CONSOLE=0
 WITH_DESKTOP=0
 WITH_RAG=1
 VERIFY=1
@@ -69,25 +75,31 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v5_2)
+      --agent-tag TAG    Agent image tag to pull (default: v5_3)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v5_2)
+      --gui-tag TAG      GUI image tag to pull (default: v5_3)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v5_2)
+      --review-tag TAG   Review service image tag (default: v5_3)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v5_2)
+      --review-gui-tag TAG   Review interface image tag (default: v5_3)
+      --console          Also pull and pin the SQL console's interface, where
+                         the retail database is queried as the agent sees it
+                         (the console itself runs from the agent image)
+      --console-gui-image N  SQL console interface image
+                         (default: mcfaddja/nl2sql-console-gui)
+      --console-gui-tag TAG  SQL console interface image tag (default: v5_3)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v5_2). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v5_3). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_1)
@@ -129,6 +141,11 @@ while [[ $# -gt 0 ]]; do
         --review-tag) REVIEW_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-gui-image) REVIEW_GUI_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-gui-tag) REVIEW_GUI_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
+        # Not --gui as well: the console is for troubleshooting the agent's
+        # answers, and those come from a terminal as often as from a page.
+        --console) WITH_CONSOLE=1; shift ;;
+        --console-gui-image) CONSOLE_GUI_IMAGE="$2"; WITH_CONSOLE=1; shift 2 ;;
+        --console-gui-tag) CONSOLE_GUI_TAG="$2"; WITH_CONSOLE=1; shift 2 ;;
         --desktop) WITH_DESKTOP=1; shift ;;
         --desktop-image) DESKTOP_IMAGE="$2"; WITH_DESKTOP=1; shift 2 ;;
         --desktop-tag) DESKTOP_TAG="$2"; WITH_DESKTOP=1; shift 2 ;;
@@ -279,13 +296,16 @@ carry EMBED_URL EMBED_BASE_URL
 carry EMBED_MODEL_NAME EMBED_MODEL
 carry POSTGRES_PORT POSTGRES_PORT
 
-# The two optional image sets are pinned only when asked for, so "was it
-# asked for last time" is the same question as "is it pinned in .env".
+# The optional image sets are pinned only when asked for, so "was it asked
+# for last time" is the same question as "is it pinned in .env".
 if [[ $WITH_GUI -eq 0 && -n "$(env_value GUI_IMAGE_NAME)" ]]; then
     WITH_GUI=1
 fi
 if [[ $WITH_REVIEW -eq 0 && -n "$(env_value REVIEW_IMAGE_NAME)" ]]; then
     WITH_REVIEW=1
+fi
+if [[ $WITH_CONSOLE -eq 0 && -n "$(env_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
+    WITH_CONSOLE=1
 fi
 if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
     WITH_DESKTOP=1
@@ -317,6 +337,12 @@ fi
         echo "REVIEW_IMAGE_TAG=$REVIEW_TAG"
         echo "REVIEW_GUI_IMAGE_NAME=$REVIEW_GUI_IMAGE"
         echo "REVIEW_GUI_IMAGE_TAG=$REVIEW_GUI_TAG"
+    fi
+    # And again. The console itself needs no pin of its own: it is the
+    # agent's image, pinned above.
+    if [[ $WITH_CONSOLE -eq 1 ]]; then
+        echo "CONSOLE_GUI_IMAGE_NAME=$CONSOLE_GUI_IMAGE"
+        echo "CONSOLE_GUI_IMAGE_TAG=$CONSOLE_GUI_TAG"
     fi
     # Same reasoning again. Unpinned, compose resolves the desktop service to
     # a local tag with nowhere to be pulled from, and launch.sh builds the
@@ -409,6 +435,16 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
             warn "./launch.sh --review will build it from source instead."
         fi
     done
+fi
+
+# The SQL console's interface. One image: the console behind it is the
+# agent's, pulled above, started with a different command.
+if [[ $WITH_CONSOLE -eq 1 ]]; then
+    step "Pulling $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (the SQL console)"
+    if ! docker pull "$CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG"; then
+        warn "could not pull $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (private repo, or not logged in);"
+        warn "./launch.sh --console will build it from source instead."
+    fi
 fi
 
 # The desktop client, whose image is tagged by JavaFX platform rather than by
@@ -627,6 +663,11 @@ cat <<EOF
     Rather use a browser? There is a web interface:
 
     ./launch.sh --gui                        # http://localhost:8080
+
+    Working out why an answer was wrong? The SQL console runs a query the way
+    the agent runs its own, and says which of its gates would have stopped it:
+
+    ./launch.sh --console                    # http://localhost:8082
 
     Or connect a GUI of your own: the same image serves a REST API over TLS,
     and agent/API.md is the contract a client is written against:

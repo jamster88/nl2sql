@@ -31,6 +31,7 @@ DOCS = (
     "rag/README.md",
     "gui/README.md",
     "models/README.md",
+    "console/README.md",
 )
 
 
@@ -286,7 +287,7 @@ def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_rea
     """setup.sh pins a tag per image; if the README's tag tables do not list
     it, the default nobody passes is also the one nobody has read about.
     """
-    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE"):
+    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE", "CONSOLE_GUI_IMAGE"):
         image = re.search(rf'^{var}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         tag = re.search(rf'^{var.replace("_IMAGE", "_TAG")}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         assert f"{image}:{tag}" in root_readme, f"README never shows {image}:{tag}"
@@ -437,6 +438,112 @@ def _table_row(text: str, name: str) -> str:
         if line.startswith("|") and f"`{name}`" in line:
             return line
     raise AssertionError(f"{name} has no row in the README config table")
+
+
+# ---------------------------------------------------------------------------
+# The SQL console's surface
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def console_readme() -> str:
+    return (REPO_ROOT / "console" / "README.md").read_text()
+
+
+def _rows(doc: str, name: str) -> list[str]:
+    return [line for line in doc.splitlines() if line.startswith("|") and f"`{name}`" in line]
+
+
+def test_every_console_setting_is_documented(console_readme: str):
+    """Its own `CONSOLE_*`, and the agent settings it runs under -- the ones a
+    person has to know are shared before changing one on the host."""
+    from nl2sql_agent.console.settings import AGENT_SETTINGS
+
+    source = (AGENT_DIR / "nl2sql_agent" / "console" / "settings.py").read_text()
+    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    assert names, "no environment variables found in console/settings.py -- the regex needs updating"
+    for name in sorted(names | set(AGENT_SETTINGS)):
+        assert _rows(console_readme, name), f"{name} is read by the console but has no row in console/README.md"
+
+
+def test_the_documented_console_defaults_are_the_real_defaults(console_readme: str):
+    from nl2sql_agent.config import Settings
+    from nl2sql_agent.console.settings import ConsoleSettings
+
+    console, agent = ConsoleSettings(), Settings()
+    for name, value in (
+        ("CONSOLE_HOST", console.host),
+        ("CONSOLE_PORT", console.port),
+        ("CONSOLE_TLS_CERT_FILE", console.tls_cert_file),
+        ("CONSOLE_TLS_KEY_FILE", console.tls_key_file),
+        ("CONSOLE_MAX_ROWS", console.max_rows),
+        ("CONSOLE_LOG_LEVEL", console.log_level),
+        ("DB_SCHEMA", agent.db_schema),
+        ("STATEMENT_TIMEOUT_MS", agent.statement_timeout_ms),
+        ("MAX_PLAN_COST", f"{agent.max_plan_cost:.0f}"),
+        ("MAX_ROWS", agent.max_rows),
+        ("SAMPLE_ROWS", agent.sample_rows),
+    ):
+        rows = _rows(console_readme, name)
+        assert any(f"`{value}`" in row for row in rows), (
+            f"console/README.md never says {name} defaults to {value}: {rows!r}"
+        )
+
+
+def test_every_setting_the_console_proxy_reads_is_documented(console_readme: str):
+    sources = "".join(
+        (REPO_ROOT / "console" / name).read_text()
+        for name in ("nginx.conf.template", "10-nl2sql-console-config.envsh")
+    )
+    # Worked out by the start-up script rather than set by anyone.
+    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {
+        "CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF"
+    }
+    for name in sorted(names):
+        assert _rows(console_readme, name), f"the console's proxy reads {name}, which console/README.md never lists"
+    assert "`CONSOLE_BIND_ADDRESS`" in console_readme
+
+
+def test_every_route_the_console_serves_is_documented(console_readme: str):
+    from nl2sql_agent.config import Settings
+    from nl2sql_agent.console.app import create_app
+    from nl2sql_agent.console.settings import ConsoleSettings
+
+    app = create_app(settings=Settings(), console_settings=ConsoleSettings(), inspector_factory=lambda: None)
+    internal = {"/docs/oauth2-redirect"}
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        if path and path not in internal:
+            assert path in console_readme, f"the console serves {path}, which console/README.md never mentions"
+
+
+def test_every_error_code_the_console_can_return_is_documented(console_readme: str):
+    source = (AGENT_DIR / "nl2sql_agent" / "console" / "app.py").read_text()
+    codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
+    codes |= set(re.findall(r'_error_response\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
+    assert {"unauthorized", "unknown_table", "database_unavailable", "invalid_request"} <= codes, (
+        "the error codes were not all found in console/app.py -- the regexes need updating"
+    )
+    for code in sorted(codes | {"not_found"}):
+        assert f"`{code}`" in console_readme, f"the console returns {code!r}, which console/README.md never lists"
+
+
+def test_every_console_flag_is_documented(console_readme: str):
+    from nl2sql_agent.console import server
+
+    source = (AGENT_DIR / "nl2sql_agent" / "console" / "server.py").read_text()
+    flags = set(re.findall(r'p\.add_argument\(\s*"(--[a-z-]+)"', source))
+    assert flags, "no flags found in console/server.py -- the pattern needs updating"
+    for flag in sorted(flags):
+        assert f"`{flag}" in console_readme, f"{flag} is not documented in console/README.md"
+    assert server.parse_args(["--no-tls"]).tls is False, "--no-tls is documented, so it must parse"
+
+
+def test_the_console_is_documented_where_someone_would_look(root_readme: str, agent_usage: str):
+    for doc in (root_readme, agent_usage):
+        assert "./launch.sh --console" in doc
+    assert "./start.sh --console" in root_readme
+    assert "[`console/README.md`](console/README.md)" in root_readme
 
 
 # ---------------------------------------------------------------------------

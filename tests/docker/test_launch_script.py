@@ -806,6 +806,136 @@ def test_a_review_proxy_a_restart_does_not_fix_is_reported_too(run_launch):
 
 
 # ---------------------------------------------------------------------------
+# The SQL console (--console)
+# ---------------------------------------------------------------------------
+
+
+def test_the_console_is_not_started_unless_it_is_asked_for(run_launch):
+    """It runs SQL. A port nobody asked to be opened should not be."""
+    result = run_launch()
+    assert not result.called("up -d console")
+    assert not result.called("up -d consolegui")
+
+
+def test_the_console_flag_starts_the_console_and_its_interface(run_launch):
+    result = run_launch("--console")
+
+    assert result.returncode == 0
+    assert result.called("--profile console up -d console")
+    assert result.called("--profile console --profile consolegui up -d consolegui")
+    assert "SQL console is healthy at https://localhost:8445" in result.output
+    assert "SQL console interface is healthy at http://localhost:8082" in result.output
+
+
+def test_asking_for_the_console_starts_the_api_first(run_launch):
+    """The console presents the certificate the API writes -- and reissues,
+    on the first start after an upgrade, to cover the console's name."""
+    result = run_launch("--console")
+    assert result.index_of("--profile api up -d api") < result.index_of("--profile console up -d console")
+
+
+def test_the_console_needs_neither_the_gui_nor_the_feedback_system(run_launch):
+    result = run_launch("--console")
+    assert not result.called("up -d gui")
+    assert not result.called("up -d feedbackdb")
+
+
+def test_the_console_scheme_follows_the_tls_setting(run_launch):
+    result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_TLS_ENABLED=false\n")
+    assert "SQL console is healthy at http://localhost:8445" in result.output
+
+
+def test_the_console_ports_follow_what_compose_will_use(run_launch):
+    result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_PORT=9445\nCONSOLE_GUI_PORT=9082\n")
+    assert "https://localhost:9445" in result.output
+    assert "SQL console interface is healthy at http://localhost:9082" in result.output
+    assert "open http://localhost:9082" in result.output
+
+
+def test_a_console_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--console", env={"FAKE_CONSOLE_HEALTH": "starting", "FAKE_CONSOLE_RUNNING": "false"})
+
+    assert "the SQL console did not become healthy." in result.output
+    assert "Check what it said: docker compose --profile console logs console" in result.output
+    assert "SQL console is healthy" not in result.output
+
+
+def test_an_agent_image_older_than_the_console_is_named_as_the_reason(run_launch):
+    """A pinned image from before 5.3 has no `nl2sql_agent.console` in it,
+    and the container dies saying so. That is a rebuild, not a bug."""
+    result = run_launch("--console", env={
+        "FAKE_CONSOLE_RUNNING": "false",
+        "FAKE_CONSOLE_HEALTH": "starting",
+        "FAKE_API_LOGS": "/usr/local/bin/python: No module named nl2sql_agent.console",
+    })
+
+    assert "The pinned agent image has no SQL console in it -- it predates this" in result.output
+    assert "docker compose --profile console build console" in result.output
+
+
+def test_a_console_interface_that_never_comes_up_is_reported(run_launch):
+    result = run_launch("--console", env={"FAKE_CONSOLE_GUI_HEALTH": "starting"}, timeout=240)
+    assert "the SQL console's interface did not become healthy." in result.output
+    assert (
+        "Check what it said: docker compose --profile console --profile consolegui logs consolegui"
+        in result.output
+    )
+
+
+def test_the_console_interface_is_checked_through_its_proxy(run_launch):
+    result = run_launch("--console")
+    assert result.called("localhost:8082/readyz")
+    assert not result.called("restart consolegui")
+
+
+def test_a_console_interface_whose_proxy_is_stale_is_restarted(run_launch):
+    """The API reissues its certificate the first time it is started with the
+    console's name in API_TLS_HOSTNAMES; a proxy that loaded the old one is
+    cured by a restart."""
+    result = run_launch("--console", env={"FAKE_PROXY_BROKEN": "8082"})
+
+    assert result.called("--profile console --profile consolegui restart consolegui")
+    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-console-gui")
+    assert "SQL console interface is healthy at http://localhost:8082" in result.output
+
+
+def test_a_console_proxy_a_restart_does_not_fix_is_reported(run_launch):
+    result = run_launch("--console", env={"FAKE_PROXY_DEAD": "8082"})
+
+    assert result.called("restart consolegui")
+    assert "the SQL console's interface is up but cannot reach the console." in result.output
+    assert "docker compose --profile consolegui logs consolegui" in result.output
+    assert "SQL console interface is healthy" not in result.output
+
+
+@pytest.mark.parametrize("bind", ["127.0.0.1", "localhost", "::1"])
+def test_a_console_on_this_machine_only_needs_no_token(run_launch, bind):
+    result = run_launch("--console", env_file=f"IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS={bind}\n")
+    assert "with no CONSOLE_TOKEN" not in result.output
+
+
+def test_a_console_opened_to_the_network_without_a_token_is_warned_about(run_launch):
+    result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\n")
+    assert "the SQL console is published on 0.0.0.0 with no CONSOLE_TOKEN, so" in result.output
+    assert "anything that can reach it may run SQL as the agent's database role." in result.output
+
+
+def test_a_console_opened_to_the_network_with_a_token_is_not(run_launch):
+    result = run_launch(
+        "--console", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\nCONSOLE_TOKEN=s3cret\n"
+    )
+    assert "with no CONSOLE_TOKEN" not in result.output
+
+
+def test_the_closing_lines_say_where_the_console_is_and_what_it_answers(run_launch):
+    output = " ".join(run_launch("--console").output.split())
+    assert "open http://localhost:8082" in output
+    assert "Run returns the rows, Plan stops at the planner's estimate, Analyze times a real run" in output
+    assert "which of its gates would have refused it" in output
+    assert "console/README.md" in output
+
+
+# ---------------------------------------------------------------------------
 # The desktop client
 # ---------------------------------------------------------------------------
 
@@ -915,9 +1045,9 @@ DESKTOP_PINNED_ENV = (
     "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
     "IMAGE_TAG=v1\n"
     "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
-    "AGENT_IMAGE_TAG=v5_2\n"
+    "AGENT_IMAGE_TAG=v5_3\n"
     "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build\n"
-    "DESKTOP_IMAGE_TAG=v5_2\n"
+    "DESKTOP_IMAGE_TAG=v5_3\n"
     "RAG_ENABLED=true\n"
 )
 
@@ -929,7 +1059,7 @@ def test_a_pinned_image_that_is_here_is_copied_from_rather_than_rebuilt(run_laun
                         env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64",
                              "FAKE_DESKTOP_IMAGE_PRESENT": "1"})
 
-    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_2-mac-aarch64" in result.output
+    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_3-mac-aarch64" in result.output
     assert "Building it for" not in result.output
     # And it never asks a registry: launch.sh is the fast path.
     assert not result.calls_matching("pull ")

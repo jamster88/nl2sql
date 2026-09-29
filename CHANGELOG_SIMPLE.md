@@ -5,11 +5,24 @@ What each version added, updated or fixed, one line per change, newest first.
 each version created, updated or fixed.
 
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
-The app images -- agent, web interface, review service, review interface and
-the desktop client's jar -- are released together at one number. The three
+The app images -- agent, web interface, review service, review interface, the
+SQL console's interface and the desktop client's jar -- are released together
+at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v5_3 (5.3.0) -- 2026-09-28
+
+**Added**
+- The SQL console: the retail database queried as the agent's read-only role, under its limits and through its own validator and planner gate, with each gate's verdict beside the rows.
+- Run, Plan (exactly the agent's planner gate) and Analyze (a timed run), the schema as the agent's introspection reads it, and the block of the agent's prompt for each table.
+- The console's interface, a third React/TypeScript page and image, published on this machine only unless asked otherwise.
+- `start.sh --console`, `launch.sh --console` and `setup.sh --console`.
+
+**Updated**
+- The planner gate's cost judgement is one function the gate and the console share; the agent behaves as before.
+- The API's development certificate covers `nl2sql-console`.
 
 ## v5_2 (5.2.0) -- 2026-09-28
 

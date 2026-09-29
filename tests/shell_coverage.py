@@ -56,6 +56,9 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # The token it turns into a header is the one that can rewrite the
     # golden question set, so its empty case matters more than most.
     "review/gui/10-nl2sql-review-config.envsh": ("tests/review/test_review_project.py",),
+    # And the SQL console interface's: a page that runs SQL, so the same
+    # empty-token case matters as much.
+    "console/10-nl2sql-console-config.envsh": ("tests/console/test_console_project.py",),
     # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
     # running it for real would mean building the dataset image.
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),

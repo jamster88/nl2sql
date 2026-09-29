@@ -23,6 +23,7 @@ their own and are listed under the release they shipped with. A version marked
 **Updated**
 - The planner gate's cost judgement is one function the gate and the console share; the agent behaves as before.
 - The API's development certificate covers `nl2sql-console`.
+- All ten app image tags published as `v5_3`, the console's interface for the first time.
 
 ## v5_2 (5.2.0) -- 2026-09-28
 

@@ -68,6 +68,9 @@ up. The pipeline is v5.2's.
 - `README.md`, `agent/USAGE.md`, `gui/README.md`, `desktop/README.md` -- the SQL console, a `v5_3` row in the tag table, the tags, test counts and coverage.
 - Version 5.3.0 in every declaration; `setup.sh` pins `v5_3`.
 
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui` `:v5_3`; `nl2sql-console-gui:v5_3` -- first publish; all amd64 and arm64. `nl2sql-desktop-build:v5_3-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-09-29 UTC).
+
 ---
 
 ## v5_2 (5.2.0) -- 2026-09-28

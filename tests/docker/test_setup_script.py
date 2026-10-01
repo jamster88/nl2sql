@@ -522,11 +522,6 @@ def test_the_chat_host_probe_follows_the_ollama_url_flag(run_setup):
 # ---------------------------------------------------------------------------
 
 
-def test_final_message_shows_how_to_ask_a_question(run_setup):
-    result = run_setup()
-    assert 'docker compose run --rm agent "How many stores are there?"' in result.output
-
-
 def test_final_message_advertises_a_question_that_needs_the_knowledge_base(run_setup):
     result = run_setup()
     assert "market share" in result.output

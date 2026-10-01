@@ -69,6 +69,35 @@ v5.3's.
 ### Published
 - `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` `:v5_4` (amd64, arm64); `nl2sql-desktop-build:v5_4-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-01 UTC).
 
+### After publishing
+In the checkout, not in the `v5_4` images: tests and documentation, and in
+`agent/` and `review/` nothing but comments and an `except` that re-raised,
+so no behaviour changed and no tag was needed.
+- Coverage exclusions: the README said one statement was excluded, and eight
+  were. Seven `# pragma: no cover` lines came out of
+  `review/nl2sql_review/app.py`, `promote.py`,
+  `agent/nl2sql_agent/completeness.py` and `api/feedback.py`. Six paths are
+  tested now: a submission deleted by another reviewer while it was being
+  judged or reopened, a loader whose interpreter cannot be started, the
+  feedback sink's real connection, and pglast failing to print or walk a
+  statement it parsed. The seventh was `except ModuleNotFoundError: raise`,
+  which did nothing, and was removed.
+- `tests/docs/test_docs.py` -- the check that every agent setting is
+  documented matched two of `config.py`'s readers and saw 32 of its 60
+  settings. It reads all of them now, and is held to every upper-case name
+  `config.py` passes to a call. `rag/README.md`'s test count is checked.
+- `tests/docker/test_compose_config.py` -- the agent's compose settings are
+  checked in the other direction too, as every other service's already were.
+- `tests/docker/test_launch_script.py`, `test_setup_script.py` -- the review
+  interface's proxy test asserts the request it is named for; a test whose
+  only assertion another test makes is removed.
+- `tests/review/test_app.py` -- a row deleted mid-request is deleted, so the
+  fake repository answers as the real one would, rather than the method being
+  replaced with one that returns nothing.
+- `README.md`, `rag/README.md` -- the console interface's suite in Coverage,
+  the review interface's 155 tests where it still said 128, `rag/`'s 281 where
+  it said 265, the test counts and this pass.
+
 ---
 
 ## v5_3 (5.3.0) -- 2026-09-28

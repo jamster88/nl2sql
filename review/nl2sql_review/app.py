@@ -608,7 +608,7 @@ def create_app(
             review_note=body.review_note,
             draft=body.draft.model_dump() if body.draft is not None else None,
         )
-        if updated is None:  # pragma: no cover - the row was deleted mid-request
+        if updated is None:  # deleted by another reviewer since it was read
             raise ReviewHTTPError(
                 HTTP_404_NOT_FOUND, "not_found", f"no submission {submission_id}"
             )
@@ -785,7 +785,7 @@ def create_app(
             )
         withdrawn, draft = _withdraw(found)
         reopened = repo.reopen(submission_id, draft=draft)
-        if reopened is None:  # pragma: no cover - the row was deleted mid-request
+        if reopened is None:  # deleted by another reviewer since it was read
             raise ReviewHTTPError(HTTP_404_NOT_FOUND, "not_found", f"no submission {submission_id}")
         return UndoModel(action="reopened", submission=_to_model(reopened), withdrawn=withdrawn)
 

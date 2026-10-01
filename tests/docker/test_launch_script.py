@@ -773,7 +773,8 @@ def test_the_restart_says_why_rather_than_just_doing_it(run_launch):
 
 def test_the_review_interface_is_checked_through_its_proxy_too(run_launch):
     result = run_launch("--review")
-    assert "Review interface is healthy at http://localhost:8081" in result.output
+    assert result.called("localhost:8081/readyz")
+    assert not result.called("restart reviewgui")
 
 
 def test_a_review_interface_whose_proxy_is_stale_is_restarted(run_launch):

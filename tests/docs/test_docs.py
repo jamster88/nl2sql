@@ -85,13 +85,19 @@ def test_every_cli_flag_is_documented(agent_readme: str, agent_usage: str):
 
 def test_every_setting_the_agent_reads_is_documented(agent_readme: str):
     """config.py is the authority on what the environment can set; the README
-    config table is how anyone finds out. This is the mirror image of the
-    compose test that checks nothing is set that the agent never reads.
+    config table is how anyone finds out.
+
+    Every reader config.py has, not two of them: this once matched only
+    `_env_bool` and `_env_int`, and so checked 32 of the 60 settings --
+    `OLLAMA_MODEL`, `DATABASE_URL` and every model route among the 28 it
+    never looked for.
     """
     config_py = (AGENT_DIR / "nl2sql_agent" / "config.py").read_text()
-    env_vars = set(re.findall(r'os\.getenv\(\s*"([A-Z_]+)"', config_py))
-    env_vars |= set(re.findall(r'_env_(?:bool|int)\(\s*"([A-Z_]+)"', config_py))
-    assert env_vars, "no environment variables found in config.py -- the regex needs updating"
+    env_vars = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple)?|os\.getenv)\(\s*"([A-Z_]+)"', config_py))
+    # Any call handed an upper-case name: a reader added under a new name is
+    # caught here rather than silently left out of the check.
+    named = set(re.findall(r'\w\(\s*"([A-Z][A-Z0-9_]+)"', config_py))
+    assert env_vars and env_vars == named, f"config.py reads {sorted(named - env_vars)} through a reader this regex misses"
     for name in sorted(env_vars):
         assert f"`{name}`" in agent_readme, f"{name} is read by config.py but absent from the README config table"
 
@@ -707,3 +713,12 @@ def test_the_readme_quotes_the_real_number_of_database_backed_rag_tests(root_rea
     """
     quoted = int(re.search(r"The (\d+) database-backed tests", root_readme).group(1))
     assert quoted == _collected("--run-docker", "-m", "docker", "tests/rag")
+
+
+def test_the_rag_readme_quotes_the_real_number_of_rag_tests():
+    """The count under its Tests heading said 265 while the suite grew to 281,
+    because nothing read it -- the same drift as the one above, a page over.
+    """
+    text = (REPO_ROOT / "rag" / "README.md").read_text()
+    quoted = int(re.search(r"pytest tests/rag --run-docker\n```\n\n(\d+) tests:", text).group(1))
+    assert quoted == _collected("--run-docker", "tests/rag")

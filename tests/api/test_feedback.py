@@ -400,6 +400,15 @@ def test_any_other_driver_failure_is_reported_as_unavailable():
         sink.record(Capture(job_id="j", verdict="yes", question="q"))
 
 
+def test_without_a_fake_the_sink_connects_with_psycopg_and_a_bounded_wait():
+    """The one path every other test here replaces. A closed loopback port
+    refuses at once, so this needs no database -- and what readiness reports
+    is psycopg's own error, not a stand-in's."""
+    ready, detail = PostgresSink("postgresql://nl2sql@127.0.0.1:9/feedback").check()
+    assert ready is False
+    assert detail.startswith("OperationalError:")
+
+
 def test_a_withdrawal_reports_whether_it_removed_anything():
     removed = PostgresSink("postgresql://x/y", connect=lambda url: FakeConnection(rowcount=1))
     assert removed.withdraw("j") is True

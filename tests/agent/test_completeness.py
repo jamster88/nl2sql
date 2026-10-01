@@ -11,6 +11,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
+from nl2sql_agent import completeness
 from nl2sql_agent.completeness import (
     MAX_REFLECTION_COLUMNS,
     NO_ROWS,
@@ -158,6 +159,32 @@ def test_a_query_that_does_not_parse_or_is_not_one_select_is_read_as_text_only()
     union = read_query("SELECT store_id FROM dim_store UNION SELECT sku_id FROM dim_product")
     assert union.select is None and union.relations == {"dim_store", "dim_product"}
     assert read_query("").select is None
+
+
+def test_relations_pglast_cannot_list_leave_the_query_read_without_them(monkeypatch):
+    """pglast lists the relations of anything it parsed. Were a version not
+    to, the select list is still worth reading: the rules that need a fact
+    table stand down rather than the whole review failing."""
+    def unreadable(sql):
+        raise ValueError("cannot walk this statement")
+
+    monkeypatch.setattr(completeness, "referenced_relations", unreadable)
+    query = read_query("SELECT store_name, SUM(net_sales_amt) AS total FROM fact_pos_retail_sales GROUP BY 1")
+    assert query.relations == set()
+    assert query.outputs == {"store_name", "total"}
+
+
+def test_an_order_pglast_cannot_print_is_still_reported_as_hidden(monkeypatch):
+    """Printing is how an ORDER BY expression is matched to a selected one.
+    One that cannot be printed cannot be shown to be selected, so it is
+    reported -- the review's cautious side -- rather than crashing it."""
+    class Unprintable:
+        def __call__(self, node):
+            raise ValueError("cannot deparse")
+
+    monkeypatch.setattr(completeness, "RawStream", Unprintable)
+    query = read_query("SELECT store_name FROM dim_store ORDER BY store_id + 1")
+    assert hidden_order_by(query) == [""]
 
 
 def test_a_star_is_noted_so_the_select_list_checks_stand_down():

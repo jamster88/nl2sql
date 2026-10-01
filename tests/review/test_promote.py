@@ -303,6 +303,20 @@ def test_a_loader_that_hangs_is_given_up_on(settings, draft, monkeypatch):
     assert "timed out" in result.steps[0].detail
 
 
+def test_a_loader_that_cannot_be_started_is_a_failed_step_not_a_crash(settings, draft, monkeypatch):
+    """An interpreter that has gone from under the service -- a broken venv,
+    an image rebuilt beneath a running container -- raises rather than exits.
+    The pair is in the document by then, so it is reported, not raised."""
+    def unstartable(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+    monkeypatch.setattr(promotion.subprocess, "run", unstartable)
+    result = promotion.promote(replace(settings, reload_context=True), draft)
+    assert result.pair_id == NEXT_ID
+    assert (result.steps[0].ran, result.steps[0].ok) == (True, False)
+    assert "No such file or directory" in result.steps[0].detail
+
+
 def test_a_missing_loader_script_is_named(settings, draft, tmp_path):
     result = promotion.promote(replace(settings, reload_context=True, rag_dir=str(tmp_path)), draft)
     assert "is not there" in result.steps[0].detail

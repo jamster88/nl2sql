@@ -392,6 +392,12 @@ def test_patching_something_that_is_not_there_is_a_404(client):
     assert client.patch("/v1/submissions/nope", json={"state": "accepted"}).status_code == 404
 
 
+def test_a_submission_deleted_while_it_was_being_judged_is_a_404(client, repository):
+    deleted_meanwhile(repository, "review")
+    response = client.patch("/v1/submissions/sub-1", json={"state": "accepted"})
+    assert (response.status_code, response.json()["error"]["code"]) == (404, "not_found")
+
+
 # ---------------------------------------------------------------------------
 # Preview
 # ---------------------------------------------------------------------------
@@ -833,9 +839,21 @@ def test_embedding_can_be_switched_off(make_client, settings, fixing, fix_stores
     assert fix_stores["corrections"].embedders == []
 
 
+def deleted_meanwhile(repo: FakeRepository, write: str) -> None:
+    """Have the row go between the service reading it and writing it -- which
+    is what another reviewer's DELETE does -- so the write finds nothing."""
+    original = getattr(repo, write)
+
+    def racing(submission_id, **kwargs):
+        repo.submissions.pop(submission_id)
+        return original(submission_id, **kwargs)
+
+    setattr(repo, write, racing)
+
+
 def test_a_fix_the_staging_row_vanished_from_under_still_reports(fixing, fix_stores):
     client, repo = fixing
-    repo.mark_corrected = lambda *args, **kwargs: None
+    deleted_meanwhile(repo, "mark_corrected")
     body = client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL}).json()
     assert body["fix"]["fix_id"] == "W0001"
     assert body["submission"]["id"] == "sub-w"
@@ -1005,6 +1023,14 @@ def test_a_pending_submission_has_nothing_to_reopen(judged):
 def test_reopening_or_deleting_an_unknown_submission_is_a_404(judged, method, path):
     client, _ = judged
     assert getattr(client, method)(path).status_code == 404
+
+
+def test_a_submission_deleted_while_it_was_being_reopened_is_a_404(judged):
+    client, repo = judged
+    client.patch("/v1/submissions/sub-1", json={"state": "rejected"})
+    deleted_meanwhile(repo, "reopen")
+    response = client.post("/v1/submissions/sub-1/reopen")
+    assert (response.status_code, response.json()["error"]["code"]) == (404, "not_found")
 
 
 def test_reopening_a_promoted_submission_takes_its_pair_out_of_the_golden_set(judged, draft, document):

@@ -474,7 +474,7 @@ The error envelope is the agent API's, so one client parses both:
 | --- | --- | --- |
 | `invalid_request` | 422 | The body or query string is wrong |
 | `unauthorized` | 401 | Missing or wrong token |
-| `not_found` | 404 | No such submission |
+| `not_found` | 404 | No such submission -- including one another reviewer deleted while this request was judging or reopening it |
 | `already_promoted` | 409 | It is in the golden set; reopen it to change it |
 | `already_fixed` | 409 | It is in a fix store; reopen it to change it. It is not fixed twice |
 | `already_pending` | 409 | Reopening something nobody has judged |

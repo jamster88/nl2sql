@@ -26,6 +26,11 @@ their own and are listed under the release they shipped with. A version marked
 **Fixed**
 - Tests across the review service, the RAG loaders and the agent failed once anything had been promoted, because they pinned the golden set at 45 pairs or expected every pair's SQL to end in a semicolon.
 
+**After publishing** (tests and documentation; no behaviour change, no new tag)
+- Seven paths the coverage report had been told to skip are tested, or removed where they did nothing.
+- The agent's settings are checked against its README in full, and against compose in both directions.
+- Stale test counts in the READMEs corrected, and the console interface's suite added to Coverage.
+
 ## v5_3 (5.3.0) -- 2026-09-28
 
 **Added**

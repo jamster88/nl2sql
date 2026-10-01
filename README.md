@@ -1285,8 +1285,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3134 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3691, including ones that build and run containers
+pytest                                          # 3140 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3698, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1304,7 +1304,7 @@ pytest --run-docker --run-node --run-java       # all 3691, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, and the scorer tested against both kinds of mistake it could make |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 521 tests behind `--run-docker` are the ones that need a working daemon:
+The 522 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console and desktop images and run them, resolve the real
 compose file, query the four live databases, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1325,7 +1325,7 @@ default run. Those three scripts' suites are most of the five minutes: each
 test runs the real script, and each of `start.sh`'s runs the real `setup.sh`
 and `launch.sh` beneath it.
 
-Twenty-eight of those 521 also need the **embedding host**: a local Ollama
+Twenty-eight of those 522 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1362,7 +1362,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-9,817 statements and 2,352 branches, none missed. `coverage report` fails below
+9,830 statements and 2,356 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the three web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST
@@ -1441,6 +1441,22 @@ been the only quotation of a `setup.sh` warning, by way of its docstring,
 while the test that triggers that warning quoted it too loosely to count. That
 test quotes it in full now.
 
+A third pass, after 5.4, found the sentence above about exactly one excluded
+statement no longer true: seven more lines carried `# pragma: no cover`, and
+the 100% had been measured around them. Six were reachable and have tests now
+-- a submission deleted by another reviewer while it was being judged or
+reopened, which the review interface's Delete made possible; a loader whose
+interpreter cannot be started; the feedback sink's real connection, which
+every other test replaced; and the two fallbacks for a pglast that cannot
+print or walk what it parsed. The seventh was an `except` that only re-raised,
+and it came out. The same pass found the agent's settings checked against
+compose in one direction only, and against its README by a pattern that knew
+two of `config.py`'s readers and so saw 32 of its 60 settings; both are
+checked in full now. It also traced the fake binaries the script tests run
+against -- with a `DEBUG` trap writing to a file, since a trace on stderr
+would reach what the scripts read -- and every command in them runs except
+the catch-alls for commands no script makes.
+
 What is left unexecuted in the tests is the part that should be: the skips
 for a missing daemon, registry or database, the failure messages of
 assertions that pass, the clean-up of what an interrupted run left behind,
@@ -1448,24 +1464,27 @@ the diagram checks for versions that live on other branches, and the hooks
 the shell measurement turns on.
 
 The other two languages -- TypeScript and Java -- are measured separately,
-because they have different runners, and to the same standard. First the two
-web interfaces:
+because they have different runners, and to the same standard. First the
+three web interfaces:
 
 ```bash
 cd gui && npm test           # the web interface
 cd review/gui && npm test    # the review interface
+cd console && npm test       # the SQL console's interface
 ```
 
 **100% of statements, branches, functions and lines** across 312 tests, with
 only `main.tsx` excluded -- it mounts React onto a DOM element that exists
 only in a browser, and a test pins the exclusion list so nothing else joins
-it. The review interface is held to the same thresholds and reaches them in
-128 tests: it decides what goes into the question set the agent is measured
-against, so a partially tested path there is a partially tested benchmark.
+it. The review interface is held to the same thresholds in its 155-test
+review GUI suite: it decides what goes into the question set the agent is
+measured against, so a partially tested path there is a partially tested
+benchmark. The console's is held to them in its 130-test console GUI suite:
+what it shows is what someone decides the agent did wrong from.
 
 The thresholds are in each project's `vitest.config.ts` and fail the run
-rather than printing a number, and `pytest --run-node` runs both suites from
-the Python one so neither can go stale unnoticed.
+rather than printing a number, and `pytest --run-node` runs all three suites
+from the Python one so none can go stale unnoticed.
 
 Getting there deleted code in the same way. Four guards came out that no
 input could reach: a poll that re-checked a flag every caller had already

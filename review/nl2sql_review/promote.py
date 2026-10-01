@@ -144,10 +144,8 @@ def _parser():
     import so that everything else in this service -- settings, the store,
     the whole HTTP surface -- works in an environment that has no `rag/`.
     """
-    try:
-        from ragproc import golden_pairs as gp  # type: ignore[import-not-found]
-    except ModuleNotFoundError:  # pragma: no cover - exercised via rag_dir below
-        raise
+    from ragproc import golden_pairs as gp  # type: ignore[import-not-found]
+
     return gp
 
 
@@ -449,7 +447,7 @@ def _run_loader(
             ok=False,
             detail=f"timed out after {settings.reload_timeout_seconds:g}s",
         )
-    except OSError as exc:  # pragma: no cover - needs a broken interpreter path
+    except OSError as exc:  # the interpreter itself could not be started
         return StepResult(name=name, ran=True, ok=False, detail=str(exc))
 
     output = _tail((completed.stdout or "") + (completed.stderr or ""))

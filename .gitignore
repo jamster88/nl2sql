@@ -19,7 +19,7 @@ Screenshot.png
 context_questions/RAW/
 context_questions/example_question_table_translation.txt
 *.swp
-./.claude
+.claude/
 
 # The GUIs' build inputs and outputs. package-lock.json is committed; what
 # it installs is not.

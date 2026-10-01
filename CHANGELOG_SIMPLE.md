@@ -20,6 +20,9 @@ their own and are listed under the release they shipped with. A version marked
 - A stored fix is deleted from its store with its vector.
 - A reopened submission keeps its work: the pair as its draft, or the corrected SQL in the query editor.
 
+**Updated**
+- All ten app image tags published as `v5_4`.
+
 **Fixed**
 - Tests across the review service, the RAG loaders and the agent failed once anything had been promoted, because they pinned the golden set at 45 pairs or expected every pair's SQL to end in a semicolon.
 

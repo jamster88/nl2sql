@@ -66,6 +66,9 @@ v5.3's.
 - Twenty-four tests pinned the golden set at 45 pairs, with Q46 next, while reading the live document -- so they failed for the first person who promoted anything through the review interface: the review service's (`test_app.py`, `test_promote.py`, `test_render.py`), the RAG loaders' (`test_golden_pairs_parser.py`, `test_pipeline_cli.py`), the agent's live store test and the compose retrieval probe. The count, the suites and the next id are read from the document now.
 - `test_golden_pairs_parser.py` took a SQL block not ending in `;` as truncated. Every hand-written pair ends in one and no promoted pair does -- the agent strips them -- so it compares each pair's SQL with its whole fenced block instead.
 
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` `:v5_4` (amd64, arm64); `nl2sql-desktop-build:v5_4-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-01 UTC).
+
 ---
 
 ## v5_3 (5.3.0) -- 2026-09-28

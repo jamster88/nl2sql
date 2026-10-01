@@ -29,6 +29,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator
 
+from .. import tracing
+
 #: What the store is handed to actually answer a question:
 #: `runner(question, principal, on_progress) -> AgentState`.
 Runner = Callable[[str, str | None, Callable[[str, str], None]], dict]
@@ -169,7 +171,10 @@ class JobStore:
                 job.condition.notify_all()
 
         try:
-            state = self._runner(job.question, job.principal, on_progress)
+            # The job's id on the run's MLflow trace, which is how a job --
+            # and the verdict given on it -- finds its trace.
+            with tracing.tagged({"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id}):
+                state = self._runner(job.question, job.principal, on_progress)
         except BaseException as exc:  # noqa: BLE001 -- the job records it, the server survives
             with job.condition:
                 job.status = "failed"

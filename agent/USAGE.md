@@ -216,6 +216,15 @@ still there, or one left on the last attempt, which the answer then names.
 `assumptions` are the defaults the pipeline chose for the question; the
 narrative states each one.
 
+With tracing on (`MLFLOW_TRACKING_URI`, which `setup.sh` points at the
+`mlflow` service), `trace_id` names the run's trace in MLflow -- open the
+experiment at <http://localhost:5001> and filter on it -- and the CLI says
+where its traces go before it answers:
+
+```
+[tracing] tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent
+```
+
 The exit code is 0 on success and 1 when the agent could not answer, so it
 works in a shell pipeline. Pull out just the SQL with
 `... --json | jq -r .sql`, or see which knowledge shaped an answer with

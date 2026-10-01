@@ -203,19 +203,22 @@ def test_main_exits_two_and_prints_a_clean_message_when_the_llm_is_unavailable(m
 class _StubAgentFactory:
     """Replaces Nl2SqlAgent so main() can be driven without a model or database."""
 
-    def __init__(self, state: dict | None = None):
+    def __init__(self, state: dict | None = None, tracer=None):
         self.state = state or {"result": {"columns": ["n"], "rows": [[1]], "truncated": False}}
         self.questions: list[str] = []
         self.on_progress = None
+        self._tracer = tracer
 
     def __call__(self, settings, on_progress=None):
         from types import SimpleNamespace
 
         from nl2sql_agent.router import build_table
+        from nl2sql_agent.tracing import Tracer
 
         self.settings = settings
         self.on_progress = on_progress
         self.router = SimpleNamespace(table=build_table(settings))
+        self.tracer = self._tracer or Tracer(settings)
         return self
 
     def run(self, question: str, *, principal: str | None = None) -> dict:
@@ -429,3 +432,83 @@ def test_a_routing_configuration_that_cannot_be_used_is_an_error_not_a_traceback
     monkeypatch.setattr(cli, "Nl2SqlAgent", refuse)
     assert cli.main(["q"]) == 2
     assert "error: the catalog describes http://elsewhere:11434" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Tracing
+# ---------------------------------------------------------------------------
+
+
+def _tracer(*, answers: bool = True):
+    from nl2sql_agent.config import Settings
+    from nl2sql_agent.tracing import Tracer
+
+    from tests.fake_mlflow import FakeMlflow
+
+    def probe(uri):
+        if not answers:
+            raise ConnectionRefusedError("connection refused")
+
+    return Tracer(
+        Settings(mlflow_tracking_uri="http://nl2sql-mlflow:5000"), client=FakeMlflow(), probe=probe
+    )
+
+
+def test_one_question_says_where_its_trace_goes(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer()))
+    assert cli.main(["q"]) == 0
+    err = capsys.readouterr().err
+    assert "[tracing] tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent" in err
+
+
+def test_one_question_says_when_it_will_not_be_traced(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer(answers=False)))
+    assert cli.main(["q"]) == 0
+    err = capsys.readouterr().err
+    assert (
+        "[tracing] MLflow at http://nl2sql-mlflow:5000 did not answer (connection refused); "
+        "runs are not traced"
+    ) in err
+
+
+@pytest.mark.parametrize("flag", ["--quiet", "--json"])
+def test_the_tracing_line_is_left_out_where_progress_is(monkeypatch, capsys, flag):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer()))
+    cli.main(["q", flag])
+    assert "[tracing]" not in capsys.readouterr().err
+
+
+def test_with_tracing_unset_the_cli_says_nothing_about_it(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
+    cli.main(["q"])
+    cli.main([])
+    captured = capsys.readouterr()
+    assert "[tracing]" not in captured.err
+    assert "Traces:" not in captured.out
+
+
+def test_interactive_mode_says_where_traces_go(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer()))
+    monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
+    assert cli.main([]) == 0
+    assert "Traces: tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent" in capsys.readouterr().out
+
+
+def test_a_question_asked_here_is_tagged_as_the_clis(capsys):
+    from nl2sql_agent import tracing
+
+    seen = []
+
+    class Recording(StubAgent):
+        def run(self, question, **kwargs):
+            seen.append(dict(tracing._tags.get()))
+            return super().run(question, **kwargs)
+
+    cli.answer(Recording({"result": None, "answer": "ok"}), "q", as_json=False, quiet=True)
+    assert seen == [{"nl2sql.entrypoint": "cli"}]
+
+
+def test_json_mode_names_the_trace(capsys):
+    cli.answer(StubAgent({"sql": "SELECT 1", "trace_id": "tr-42"}), "q", as_json=True, quiet=False)
+    assert json.loads(capsys.readouterr().out)["trace_id"] == "tr-42"

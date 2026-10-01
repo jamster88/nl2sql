@@ -105,6 +105,10 @@ case "$1" in
             echo "${FAKE_CONSOLE_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-console* ]]; then
             echo "${FAKE_CONSOLE_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-mlflow* && "$*" == *Running* ]]; then
+            echo "${FAKE_MLFLOW_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-mlflow* ]]; then
+            echo "${FAKE_MLFLOW_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi
@@ -704,6 +708,7 @@ def run_start(tmp_path: Path):
         "CONTEXT_IMAGE_NAME=mcfaddja/nl2sql-rag-chunkdb\n"
         "CONTEXT_IMAGE_TAG=v3\n"
         "RAG_ENABLED=true\n"
+        "MLFLOW_TRACKING_URI=http://nl2sql-mlflow:5000\n"
     )
 
     def _run(*args: str, env: dict | None = None, env_file: str | None = DEFAULT_ENV_FILE,

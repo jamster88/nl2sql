@@ -64,7 +64,7 @@ from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
 
 from . import complexity
-from . import completeness as reviewer, contract as answer_contract, present, repair as repair_agent, supervisor
+from . import completeness as reviewer, contract as answer_contract, present, repair as repair_agent, supervisor, tracing
 from .config import Settings
 from .contract import ContractResources
 from .database import Database, plan_cost_problem, strip_sql
@@ -164,6 +164,38 @@ def step_label(step: str) -> str:
     return STEP_LABELS.get(step, step)
 
 
+#: Each node as a span in the run's MLflow trace (`tracing.py`): the agent's
+#: name as the architecture gives it (arch5 section 1, "Name reconciliation"),
+#: the kind of span MLflow should draw it as, and the state it reads --
+#: recorded as the span's inputs, beside what it wrote back as its outputs.
+#: Beside the labels above for the same reason: a node added without one is a
+#: visible gap.
+TRACE_SPANS = {
+    "supervise": ("Supervisor", "AGENT", ("question",)),
+    "refuse": ("Refusal", "TASK", ("verdict", "clarification")),
+    "retrieve_schema": ("Schema Retriever", "RETRIEVER", ("question",)),
+    "retrieve_literals": ("Literal Matcher", "RETRIEVER", ("question",)),
+    "retrieve_knowledge": ("Knowledge Retriever", "RETRIEVER", ("question",)),
+    "retrieve_examples": ("Example Retriever", "RETRIEVER", ("question",)),
+    "aggregate": (
+        "Context Aggregator",
+        "TASK",
+        ("answer_contract", "schema_tables", "knowledge_tables", "example_tables"),
+    ),
+    "generate_sql": ("SQL Generator", "AGENT", ("question", "attempts", "generation_rung", "issues")),
+    "validate_static": ("Static Validator", "GUARDRAIL", ("sql", "selected_tables")),
+    "planner_gate": ("Planner Gate", "GUARDRAIL", ("sql",)),
+    "execute_query": ("Safe Executor", "TOOL", ("sql", "principal")),
+    "review": ("Completeness Reviewer", "EVALUATOR", ("sql", "result", "answer_contract")),
+    "repair": ("Repair Agent", "AGENT", ("sql", "issues", "attempts", "generation_rung")),
+    "give_up": ("Give Up", "TASK", ("attempts", "issues")),
+    "visualise": ("Visual Formatter", "TASK", ("result", "intent")),
+    "narrate": ("Insight Narrator", "AGENT", ("result", "chart", "assumptions", "audit")),
+    "audit": ("Audit Checker", "EVALUATOR", ("claims", "result", "assumptions")),
+    "finish": ("Answer", "TASK", ("claims", "audit", "completeness")),
+}
+
+
 class Nl2SqlAgent:
     """The pipeline. Construct once, call `run` per question."""
 
@@ -179,8 +211,12 @@ class Nl2SqlAgent:
         literal_matcher: LiteralMatcher | None = None,
         contract_resources: ContractResources | None = None,
         on_progress: ProgressFn | None = None,
+        tracer: tracing.Tracer | None = None,
     ) -> None:
         self.settings = settings
+        # Connects on the first run, not here: an MLflow server that is not
+        # up yet costs the traces until it is, and never the agent's start.
+        self.tracer = tracer or tracing.Tracer(settings)
         self.db = Database(
             settings.database_url,
             db_schema=settings.db_schema,
@@ -357,10 +393,15 @@ class Nl2SqlAgent:
         """
         token = _progress.set(on_progress) if on_progress is not None else None
         try:
-            return self._graph.invoke(
-                new_state(question, principal=principal),
-                config={"recursion_limit": RECURSION_LIMIT},
-            )
+            with self.tracer.run(question, principal=principal) as trace:
+                state = self._graph.invoke(
+                    new_state(question, principal=principal),
+                    config={"recursion_limit": RECURSION_LIMIT},
+                )
+                if trace is not None:
+                    trace.finish(state)
+                    state["trace_id"] = trace.trace_id
+            return state
         finally:
             if token is not None:
                 _progress.reset(token)
@@ -375,13 +416,18 @@ class Nl2SqlAgent:
         are stripped here rather than reaching the state.
         """
 
+        agent, span_type, reads = TRACE_SPANS[name]
+
         def node(state: AgentState) -> dict:
-            started = time.perf_counter()
-            update = dict(fn(state) or {})
-            detail = str(update.pop(_DETAIL, ""))
-            route = update.pop(_ROUTE, None) or {}
-            update["trace"] = [
-                TraceEntry(
+            # The same wrapper puts the node in the MLflow trace, so the two
+            # records of a run -- the state's and MLflow's -- cannot disagree
+            # about what ran.
+            with tracing.agent_span(agent, span_type, lambda: {k: state.get(k) for k in reads}) as span:
+                started = time.perf_counter()
+                update = dict(fn(state) or {})
+                detail = str(update.pop(_DETAIL, ""))
+                route = update.pop(_ROUTE, None) or {}
+                entry = TraceEntry(
                     node=name,
                     ms=round((time.perf_counter() - started) * 1000, 2),
                     model_calls=int(update.pop(_MODEL_CALLS, 0)),
@@ -391,7 +437,8 @@ class Nl2SqlAgent:
                     route=route.get("route", ""),
                     hops=list(route.get("hops", [])),
                 )
-            ]
+                update["trace"] = [entry]
+                tracing.finish_agent_span(span, entry, update)
             (_progress.get() or self._on_progress)(name, detail)
             return update
 
@@ -564,14 +611,19 @@ class Nl2SqlAgent:
         """
         catalog = self.tools["describe_all_tables"].invoke({})
         known = set(self.db.table_names())
+        messages = TABLE_SELECTION_PROMPT.format_messages(
+            catalog=catalog,
+            knowledge=knowledge_block(state.get("knowledge", "")),
+            question=state["question"],
+        )
         try:
-            selection = self.llm.with_structured_output(TableSelection).invoke(
-                TABLE_SELECTION_PROMPT.format_messages(
-                    catalog=catalog,
-                    knowledge=knowledge_block(state.get("knowledge", "")),
-                    question=state["question"],
-                )
-            )
+            # Not routed -- this is v3's call, on v3's model -- so it is
+            # traced here rather than by the router.
+            with tracing.model_span(
+                self.settings.ollama_model, messages, task="table selection", schema=TableSelection
+            ) as span:
+                selection = self.llm.with_structured_output(TableSelection).invoke(messages)
+                tracing.finish_model_span(span, selection)
             tables = [t for t in selection.tables if t in known]
         except Exception as exc:
             return {"schema_tables": [], "retrieval_errors": {"schema": str(exc)}}

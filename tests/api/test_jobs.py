@@ -376,3 +376,19 @@ def test_a_wakeup_with_nothing_behind_it_does_not_end_the_stream(store):
 
     threading.Thread(target=poke, daemon=True).start()
     assert [chunk.kind for chunk in stream][-1] == "done"
+
+
+def test_a_jobs_run_carries_its_id_onto_the_trace(store):
+    """The id is what a verdict on the job finds its trace by -- and, once
+    the job is forgotten, the only thing it can find it by."""
+    from nl2sql_agent import tracing
+
+    seen = []
+
+    def runner(question, principal, on_progress):
+        seen.append(dict(tracing._tags.get()))
+        return {"question": question}
+
+    jobs = store(runner)
+    job = finished(jobs, jobs.submit("q"))
+    assert seen == [{"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id}]

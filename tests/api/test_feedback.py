@@ -257,6 +257,110 @@ def test_withdrawing_from_an_unconfigured_server_is_a_503(make_client):
 
 
 # ---------------------------------------------------------------------------
+# On the answer's MLflow trace, as well
+# ---------------------------------------------------------------------------
+
+
+def _traced(make_client, sink, *, answers: bool = True, job_id: str | None = None):
+    """A client whose one answer has an MLflow trace, and the fake holding it."""
+    from nl2sql_agent.config import Settings
+    from nl2sql_agent.tracing import Tracer
+
+    from tests.fake_mlflow import FakeMlflow
+
+    mlflow = FakeMlflow()
+    with mlflow.start_span("nl2sql") as root:
+        trace_id = root.trace_id
+    if job_id:
+        mlflow.traces[trace_id].tags["nl2sql.job_id"] = job_id
+
+    def probe(uri):
+        if not answers:
+            raise ConnectionRefusedError("connection refused")
+
+    tracer = Tracer(Settings(mlflow_tracking_uri="http://nl2sql-mlflow:5000"), client=mlflow, probe=probe)
+    runner = make_runner(state=dict(ANSWERED, trace_id=trace_id))
+    return make_client(runner, feedback=sink, tracer=tracer), mlflow, trace_id
+
+
+def test_a_verdict_is_recorded_on_the_answers_trace_too(make_client, sink):
+    client, mlflow, trace_id = _traced(make_client, sink)
+    job = ask(client)
+    response = client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "no", "comment": "wrong key"})
+
+    assert response.status_code == 201
+    [verdict] = mlflow.traces[trace_id].assessments
+    assert (verdict.name, verdict.value, verdict.rationale) == ("verdict", "no", "wrong key")
+    assert verdict.source.source_type == "HUMAN"
+
+
+def test_voting_again_replaces_the_verdict_on_the_trace_as_it_does_in_staging(make_client, sink):
+    client, mlflow, trace_id = _traced(make_client, sink)
+    job = ask(client)
+    client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "no"})
+    client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
+
+    assert [(a.value, a.valid) for a in mlflow.traces[trace_id].assessments] == [("no", False), ("yes", True)]
+
+
+def test_a_withdrawn_verdict_comes_off_the_trace(make_client, sink):
+    client, mlflow, trace_id = _traced(make_client, sink)
+    job = ask(client)
+    client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
+
+    assert client.delete(f"/v1/questions/{job['id']}/feedback").status_code == 204
+    assert mlflow.traces[trace_id].assessments == []
+
+
+def test_a_verdict_withdrawn_after_its_job_is_forgotten_is_found_by_the_jobs_tag(make_client, sink):
+    client, mlflow, trace_id = _traced(make_client, sink, job_id="feedbeef")
+    mlflow.log_feedback(trace_id=trace_id, name="verdict", value="yes")
+
+    assert client.delete("/v1/questions/feedbeef/feedback").status_code == 204
+    assert sink.withdrawn == ["feedbeef"]
+    assert mlflow.traces[trace_id].assessments == []
+
+
+def test_mlflow_being_down_costs_the_trace_its_verdict_and_nothing_else(make_client, sink):
+    client, mlflow, trace_id = _traced(make_client, sink, answers=False)
+    job = ask(client)
+    response = client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
+
+    assert response.status_code == 201
+    assert len(sink.captures) == 1
+    assert mlflow.traces[trace_id].assessments == []
+    assert client.delete(f"/v1/questions/{job['id']}/feedback").status_code == 204
+
+
+def test_a_verdict_staging_would_not_take_is_not_put_on_the_trace_either(make_client):
+    sink = FakeSink(fail=FeedbackUnavailable("cannot record feedback: OperationalError"))
+    client, mlflow, trace_id = _traced(make_client, sink)
+    job = ask(client)
+
+    assert client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"}).status_code == 503
+    assert mlflow.traces[trace_id].assessments == []
+
+
+def test_the_server_shares_one_tracer_between_its_agent_and_its_verdicts(monkeypatch, api_settings):
+    from nl2sql_agent.api import app as app_module
+    from nl2sql_agent.config import Settings
+
+    built = {}
+
+    def agent(settings, *, tracer):
+        built["tracer"] = tracer
+        return object()
+
+    monkeypatch.setattr(app_module, "Nl2SqlAgent", agent)
+    app = app_module.create_app(settings=Settings(), api_settings=api_settings, feedback=FakeSink())
+    try:
+        app.state.agent.get()
+        assert built["tracer"] is app.state.tracer
+    finally:
+        app.state.jobs.shutdown()
+
+
+# ---------------------------------------------------------------------------
 # What the rest of the API says about it
 # ---------------------------------------------------------------------------
 

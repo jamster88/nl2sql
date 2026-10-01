@@ -953,3 +953,39 @@ def test_the_tag_pulled_names_the_machine_this_is(run_setup, system, machine, cl
     assert result.called(
         f"pull mcfaddja/nl2sql-desktop-build:{DESKTOP_TAG}-{classifier}")
 
+
+
+# ---------------------------------------------------------------------------
+# Where traces go
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_is_pointed_at_the_mlflow_service(run_setup):
+    """Written whether or not MLflow is ever started: a run that finds no
+    server is answered untraced, as the feedback URL beside it is harmless
+    without the staging database."""
+    assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
+
+
+@pytest.mark.parametrize("chosen", ["", "http://mlflow.example.org"])
+def test_a_tracking_uri_someone_chose_is_written_back_as_it_was(run_setup, chosen):
+    """Empty is how tracing is turned off, and start.sh re-runs this script
+    on every upgrade -- writing the default over it would turn it back on."""
+    first = run_setup()
+    dotenv = first.workdir / ".env"
+    dotenv.write_text(dotenv.read_text().replace(
+        "MLFLOW_TRACKING_URI=http://nl2sql-mlflow:5000", f"MLFLOW_TRACKING_URI={chosen}"))
+
+    second = run_setup()
+    lines = (second.workdir / ".env").read_text().splitlines()
+    assert [line for line in lines if line.startswith("MLFLOW_TRACKING_URI=")] == [f"MLFLOW_TRACKING_URI={chosen}"]
+    assert "# Kept from the previous .env" not in lines
+
+
+def test_an_old_backup_is_not_where_the_tracking_uri_comes_from(run_setup):
+    """Only the file just moved aside is a source; an .env.bak lying about
+    from some earlier run is a backup."""
+    first = run_setup()
+    (first.workdir / ".env").unlink()
+    (first.workdir / ".env.bak").write_text("MLFLOW_TRACKING_URI=\n")
+    assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"

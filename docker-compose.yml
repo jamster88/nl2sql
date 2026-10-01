@@ -289,6 +289,12 @@ services:
       MODEL_MAX_LOADED: ${MODEL_MAX_LOADED:-}
       MODEL_NUM_CTX: ${MODEL_NUM_CTX:-}
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-}
+      # --- tracing ----------------------------------------------------
+      # setup.sh writes the mlflow service's address into .env; with it,
+      # every run is traced whenever that service is up (--mlflow), and
+      # runs untraced when it is not. Empty is off.
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     extra_hosts:
@@ -688,6 +694,85 @@ services:
       - apitls:/etc/nl2sql/tls:ro
     profiles: ["consolegui"]
 
+  # The tracking store behind MLflow: experiments, traces and the verdicts on
+  # them. A stock Postgres of its own, like feedbackdb and for its reason --
+  # what it holds accumulates from use, not from a build -- and unpublished:
+  # nothing reads it but the server below, and a trace holds questions,
+  # queries and the rows they returned.
+  mlflowdb:
+    image: ${MLFLOW_DB_IMAGE:-postgres:18}
+    container_name: nl2sql-mlflowdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${MLFLOW_DB_USER:-mlflow}
+      POSTGRES_PASSWORD: ${MLFLOW_DB_PASSWORD:-mlflow}
+      POSTGRES_DB: ${MLFLOW_DB_NAME:-mlflow}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - mlflowdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${MLFLOW_DB_USER:-mlflow} -d ${MLFLOW_DB_NAME:-mlflow}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    profiles: ["mlflow"]
+
+  # MLflow: where the agent's traces go -- one per question, a span per agent
+  # and per model call -- with the verdicts given on its answers and the
+  # benchmark's runs. See agent/nl2sql_agent/tracing.py.
+  #
+  # The project's own image is not involved: this is MLflow's published
+  # server, pinned, in the variant that carries a Postgres driver. The
+  # agent's tracing client (agent/requirements.txt) is pinned to the same
+  # version, which a test holds.
+  #
+  # Published on this machine only unless MLFLOW_BIND_ADDRESS says otherwise,
+  # like the SQL console: the interface has no login, can delete what it
+  # shows, and what it shows includes the rows every question returned.
+  mlflow:
+    image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:v3.16.1-full}
+    container_name: nl2sql-mlflow
+    restart: unless-stopped
+    depends_on:
+      mlflowdb:
+        condition: service_healthy
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=postgresql://${MLFLOW_DB_USER:-mlflow}:${MLFLOW_DB_PASSWORD:-mlflow}@nl2sql-mlflowdb:5432/${MLFLOW_DB_NAME:-mlflow}
+      # Artifacts -- a trace's attachments, the benchmark's report -- are
+      # uploaded through the server into the volume, so a client needs the
+      # server's address and nothing else.
+      - --serve-artifacts
+      - --artifacts-destination=/mlflow/artifacts
+      # The Host headers the server answers, against DNS rebinding: the
+      # agent's names for it on this network, then MLflow's own default --
+      # loopback and private addresses, restated exactly, because naming
+      # any host replaces that default rather than adding to it.
+      - --allowed-hosts=${MLFLOW_ALLOWED_HOSTS:-nl2sql-mlflow,nl2sql-mlflow:*,mlflow,mlflow:*,localhost,127.0.0.1,[::1],0.0.0.0,localhost:*,127.0.0.1:*,[[]::1]:*,0.0.0.0:*,192.168.*,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.20.*,172.21.*,172.22.*,172.23.*,172.24.*,172.25.*,172.26.*,172.27.*,172.28.*,172.29.*,172.30.*,172.31.*,fc00:*,fd00:*}
+      - --workers=${MLFLOW_WORKERS:-2}
+    ports:
+      # 5001 on the host: macOS keeps 5000 for AirPlay.
+      - "${MLFLOW_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-5001}:5000"
+    volumes:
+      - mlflowartifacts:/mlflow/artifacts
+    healthcheck:
+      # Python, because the image has no curl.
+      test:
+        - CMD-SHELL
+        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=5).read()"
+      interval: 10s
+      timeout: 8s
+      retries: 6
+      start_period: 30s
+    profiles: ["mlflow"]
+
   # An outside client. Nothing of this project is installed in it -- it is a
   # curl image on the same network, which is the point: if the API can only
   # be driven by something that imports nl2sql_agent, it is not an API.
@@ -735,7 +820,7 @@ services:
     # Tagged by platform: one jar is one platform, and a cached image built
     # for another machine is a jar that will not start on this one. The tag
     # is a version *and* a platform, which is how the published ones are
-    # named -- `v5_4-mac-aarch64`. Unpinned it says `local`, which has
+    # named -- `v5_5-mac-aarch64`. Unpinned it says `local`, which has
     # nowhere to be pulled from and is built here instead.
     image: ${DESKTOP_IMAGE_NAME:-nl2sql-desktop-build}:${DESKTOP_IMAGE_TAG:-local}-${JAVAFX_PLATFORM:-linux}
     volumes:
@@ -758,6 +843,10 @@ volumes:
     # Reviewed corrections of wrong answers, and their embeddings.
   completionsdata:
     # Reviewed completions of incomplete answers, and their embeddings.
+  mlflowdata:
+    # MLflow's tracking store: experiments, runs, traces and their verdicts.
+  mlflowartifacts:
+    # What MLflow stores beside them: trace attachments, benchmark reports.
   chunkdata:
     # Project-scoped, seeded from the published image on first start -- the
     # same arrangement as vectordata below.

@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from . import tracing
 from .complexity import RUNGS
 from .config import Settings
 
@@ -468,12 +469,18 @@ class RoutedModel:
         self.hops: list[str] = []
 
     def invoke(self, messages: Any) -> Any:
-        return self._answer(lambda client: client.invoke(messages), _empty_message)
+        return self._answer(lambda client: client.invoke(messages), _empty_message, messages)
 
     def with_structured_output(self, schema: type) -> "_Structured":
         return _Structured(self, schema)
 
-    def _answer(self, call: Callable[[Any], Any], empty: Callable[[Any], bool]) -> Any:
+    def _answer(
+        self,
+        call: Callable[[Any], Any],
+        empty: Callable[[Any], bool],
+        messages: Any,
+        schema: type | None = None,
+    ) -> Any:
         """The first usable answer down the chain. The last model's answer is
         returned whatever it is, and its failure raised: the caller has
         always handled a failed or empty call, and still does."""
@@ -482,7 +489,7 @@ class RoutedModel:
         for name in earlier:
             self.answered_by = name
             try:
-                answer = call(self._client(name))
+                answer = self._traced_call(name, call, messages, schema)
             except Exception as exc:
                 self.hops.append(f"{name}: {_reason(exc)}")
                 continue
@@ -490,7 +497,22 @@ class RoutedModel:
                 return answer
             self.hops.append(f"{name}: an empty answer")
         self.answered_by = last
-        return call(self._client(last))
+        return self._traced_call(last, call, messages, schema)
+
+    def _traced_call(self, name: str, call: Callable[[Any], Any], messages: Any, schema: type | None) -> Any:
+        """One model's attempt, as its own span in the run's trace: a hop
+        down the chain is then two spans, the first failed or empty."""
+        with tracing.model_span(
+            name,
+            messages,
+            task=self.choice.task,
+            rung=self.choice.rung,
+            route=self.choice.reason,
+            schema=schema,
+        ) as span:
+            answer = call(self._client(name))
+            tracing.finish_model_span(span, answer)
+            return answer
 
     def record(self) -> dict[str, Any]:
         """For the trace: which model answered, at what rung, and why."""
@@ -511,6 +533,8 @@ class _Structured:
         return self._routed._answer(
             lambda client: client.with_structured_output(self._schema).invoke(messages),
             lambda answer: answer is None,
+            messages,
+            self._schema,
         )
 
 

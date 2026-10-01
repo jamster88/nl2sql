@@ -437,6 +437,50 @@ running it:
   near the pair really is. The spec's "with the same intent" is not
   applied: the golden pairs carry no intent.
 
+## Tracing (MLflow)
+
+[`tracing.py`](nl2sql_agent/tracing.py) writes every run into MLflow when
+`MLFLOW_TRACKING_URI` names a server: one trace per question, filed under
+`MLFLOW_EXPERIMENT_NAME`. The trace is drawn by the same wrapper that writes
+the state's `trace` entries (`Nl2SqlAgent._traced`), so the two records of a
+run cannot disagree about what ran:
+
+| Span | Type | Holds |
+|---|---|---|
+| `nl2sql` | `AGENT` | the question in; the answer, SQL and error out. Tagged `nl2sql.outcome` (`answered`, `gave_up`, `refused`), `nl2sql.screening`, `nl2sql.attempts`, `nl2sql.model_calls`, `nl2sql.rows`, `nl2sql.version`, and where the run came from: `nl2sql.entrypoint` (`cli`, `api`, `benchmark`) and, from the API, `nl2sql.job_id`. The principal, when there is one, is MLflow's own user field |
+| one per agent | from `graph.TRACE_SPANS` | the state the agent reads, as inputs; the update it returns, as outputs; its trace entry -- detail, model calls, model, rung, route, hops -- as attributes. Named as the architecture names them: Supervisor, Schema Retriever, ..., Repair Agent, Insight Narrator, Audit Checker |
+| one per model call | `CHAT_MODEL` | inside the agent that made it, named for the model that was asked: the messages, the answer (a chat completion, or the object a structured call parsed), the tokens it cost -- for a plain call; LangChain's structured output, which the Supervisor, reflection and narrator use, does not pass the count on -- and the task, rung and route. A call the router passed down its chain is a span per model asked, the failed ones marked |
+
+`graph.TRACE_SPANS`, beside `STEP_LABELS`, is the one place a node's name,
+span type and inputs are written down, and a test fails when a node is added
+without one.
+
+**Verdicts.** The REST API records each verdict -- `yes`, `no`,
+`incomplete` -- on the answer's trace as human feedback named `verdict`,
+after the staging database has taken it. Voting again overrides it, which
+MLflow keeps as history; withdrawing deletes it, finding a job the server has
+already forgotten by its `nl2sql.job_id` tag. The staged verdict is the
+record of truth; MLflow is told second, and not hearing does not fail the
+vote.
+
+**Best effort, like retrieval.** Nothing here imports MLflow until a server
+has answered its health check, so with the setting unset the agent never
+loads it. A server that does not answer costs the run its trace and nothing
+else; the reason is logged once, and runs go untraced for thirty seconds
+before one asks again, so a server started after the API is found without a
+restart. MLflow's HTTP client would otherwise retry a failed send for
+minutes -- measured: four, holding the CLI's exit -- so the agent bounds it
+(`MLFLOW_HTTP_REQUEST_MAX_RETRIES`, `_BACKOFF_FACTOR`, `_TIMEOUT`) unless the
+environment already has.
+
+**The client is MLflow's tracing package alone**, `mlflow-tracing`: spans,
+traces and assessments, without the tracking server, model registry or the
+scientific stack the full `mlflow` package brings into an image. It is
+pinned to the server's version in `docker-compose.yml`, and a test holds the
+two together. The benchmark's runs need `mlflow-skinny`, which
+`tests/requirements.txt` installs on the host; see
+[`benchmarks/README.md`](../benchmarks/README.md#mlflow).
+
 ## Configuration
 
 Every setting is an environment variable, most with a CLI override. Every one
@@ -831,6 +875,13 @@ Model routing (arch5.2, [above](#model-routing-arch52)) adds these:
 | `MODEL_MAX_LOADED` | -- | 3 distinct models in the table, `OLLAMA_MODEL` among them |
 | `MODEL_NUM_CTX` | -- | 32768, the window of every routed model but `OLLAMA_MODEL` |
 | `OLLAMA_KEEP_ALIVE` | -- | `30m` with routing on, so a session's models stay loaded; not sent with routing off |
+
+Tracing ([above](#tracing-mlflow)) adds these:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `MLFLOW_TRACKING_URI` | -- | none: nothing is traced. `setup.sh` writes `http://nl2sql-mlflow:5000`, the compose `mlflow` service, into `.env`; empty there turns tracing off |
+| `MLFLOW_EXPERIMENT_NAME` | -- | `nl2sql-agent`, created on first use |
 
 ## Running outside Docker
 

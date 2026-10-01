@@ -284,6 +284,8 @@ class QuestionResult:
     routes: list[dict[str, Any]] = field(default_factory=list)
     #: The rung the Context Aggregator scored the generator's task at.
     rung: str | None = None
+    #: The run's MLflow trace, when it was traced (`benchmarks/tracking.py`).
+    trace_id: str = ""
 
     @property
     def correct(self) -> bool:

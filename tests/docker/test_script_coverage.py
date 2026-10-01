@@ -566,6 +566,8 @@ COMPOSE_SERVICES = {
         "apitest": ("tests/docker/test_api_compose.py",),
         "console": ("tests/console/test_console_compose.py",),
         "consolegui": ("tests/console/test_console_compose.py",),
+        "mlflowdb": ("tests/docker/test_mlflow_compose.py",),
+        "mlflow": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
         "desktop": (
             "tests/java/test_desktop_project.py",
             "tests/docker/test_desktop_image.py",

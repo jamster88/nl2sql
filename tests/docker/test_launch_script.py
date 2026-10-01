@@ -1046,9 +1046,9 @@ DESKTOP_PINNED_ENV = (
     "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\n"
     "IMAGE_TAG=v1\n"
     "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
-    "AGENT_IMAGE_TAG=v5_4\n"
+    "AGENT_IMAGE_TAG=v5_5\n"
     "DESKTOP_IMAGE_NAME=mcfaddja/nl2sql-desktop-build\n"
-    "DESKTOP_IMAGE_TAG=v5_4\n"
+    "DESKTOP_IMAGE_TAG=v5_5\n"
     "RAG_ENABLED=true\n"
 )
 
@@ -1060,7 +1060,7 @@ def test_a_pinned_image_that_is_here_is_copied_from_rather_than_rebuilt(run_laun
                         env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64",
                              "FAKE_DESKTOP_IMAGE_PRESENT": "1"})
 
-    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_4-mac-aarch64" in result.output
+    assert "Taking it from mcfaddja/nl2sql-desktop-build:v5_5-mac-aarch64" in result.output
     assert "Building it for" not in result.output
     # And it never asks a registry: launch.sh is the fast path.
     assert not result.calls_matching("pull ")
@@ -1151,3 +1151,86 @@ def test_a_probe_that_would_not_run_says_what_docker_said(run_launch):
     assert result.returncode == 0
     assert "could not ask the agent image which models it will route to" in result.output
     assert "no such image" in result.output
+
+
+# ---------------------------------------------------------------------------
+# MLflow (--mlflow)
+# ---------------------------------------------------------------------------
+
+TRACED_ENV_FILE = "IMAGE_NAME=x\nMLFLOW_TRACKING_URI=http://nl2sql-mlflow:5000\n"
+
+
+def test_mlflow_is_not_started_unless_it_is_asked_for(run_launch):
+    result = run_launch()
+    assert not result.called("--profile mlflow")
+    assert "MLflow" not in result.output
+
+
+def test_the_mlflow_flag_starts_mlflow_and_says_where_traces_go(run_launch):
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE)
+
+    assert result.returncode == 0
+    assert result.called("--profile mlflow up -d mlflow")
+    assert "MLflow is healthy at http://localhost:5001" in result.output
+    assert "==> MLflow is up:" in result.output
+    assert "open http://localhost:5001" in result.output
+    output = " ".join(result.output.split())
+    assert "is a trace in the experiment nl2sql-agent: one span per agent and per model call" in output
+    assert "docker compose --profile mlflow logs -f mlflow" in output
+    assert "WARNING" not in result.output
+
+
+def test_mlflow_needs_neither_the_api_nor_an_interface(run_launch):
+    """A question asked from a terminal is traced too, so tracing is no
+    reason to open the API's port."""
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE)
+    assert not result.called("up -d api")
+    assert not result.called("up -d gui")
+
+
+def test_mlflow_comes_up_after_the_api_it_does_not_hold_up(run_launch):
+    """The agent asks for the server on its first question, so nothing
+    waits on it -- and the API is not held back while MLflow's image pulls."""
+    result = run_launch("--gui", "--mlflow", env_file=TRACED_ENV_FILE)
+    assert result.index_of("--profile api up -d api") < result.index_of("--profile mlflow up -d mlflow")
+
+
+def test_mlflows_port_and_experiment_follow_what_compose_will_use(run_launch):
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE + "MLFLOW_PORT=6001\nMLFLOW_EXPERIMENT_NAME=ablations\n")
+    assert "MLflow is healthy at http://localhost:6001" in result.output
+    assert "open http://localhost:6001" in result.output
+    assert "the experiment ablations" in " ".join(result.output.split())
+
+
+def test_mlflow_without_a_tracking_uri_in_env_is_a_server_nothing_traces_to(run_launch):
+    """An .env from before 5.5 has no MLFLOW_TRACKING_URI, and compose
+    forwards it empty -- which is tracing off."""
+    result = run_launch("--mlflow")
+    assert "MLFLOW_TRACKING_URI is not set, so the agent will not trace to it." in result.output
+    assert "setup.sh writes one into .env; add it there or export it before starting." in result.output
+
+
+def test_mlflow_that_never_comes_up_is_reported_and_the_rest_carries_on(run_launch):
+    result = run_launch(
+        "--mlflow", env_file=TRACED_ENV_FILE,
+        env={"FAKE_MLFLOW_HEALTH": "starting", "FAKE_MLFLOW_RUNNING": "false"},
+    )
+    assert result.returncode == 0
+    assert "MLflow did not become healthy, so questions are answered untraced." in result.output
+    assert "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb" in result.output
+    assert "MLflow is healthy" not in result.output
+
+
+@pytest.mark.parametrize("bind", ["127.0.0.1", "localhost", "::1"])
+def test_mlflow_on_this_machine_only_is_not_warned_about(run_launch, bind):
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE + f"MLFLOW_BIND_ADDRESS={bind}\n")
+    assert "with no login" not in result.output
+
+
+def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE + "MLFLOW_BIND_ADDRESS=0.0.0.0\n")
+    output = " ".join(result.output.split())
+    assert "MLflow is published on 0.0.0.0 with no login: anything that can" in result.output
+    assert "reach it can read every question, query and result, and delete them." in result.output
+    assert "WARNING: MLflow is published" in output
+

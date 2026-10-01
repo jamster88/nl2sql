@@ -8,6 +8,7 @@ from nl2sql_agent.config import (
     DEFAULT_DATABASE_URL,
     DEFAULT_EMBED_BASE_URL,
     DEFAULT_EMBED_MODEL,
+    DEFAULT_MLFLOW_EXPERIMENT,
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_MODEL,
     DEFAULT_VECTOR_DB_URL,
@@ -261,3 +262,25 @@ def test_every_call_is_capped_in_tokens_and_time(monkeypatch):
     monkeypatch.setenv("OLLAMA_NUM_PREDICT", "4096")
     monkeypatch.setenv("OLLAMA_TIMEOUT", "120")
     assert (Settings.from_env().num_predict, Settings.from_env().ollama_timeout) == (4096, 120.0)
+
+
+def test_tracing_is_off_unless_a_tracking_server_is_named(monkeypatch):
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    monkeypatch.delenv("MLFLOW_EXPERIMENT_NAME", raising=False)
+    s = Settings.from_env()
+    assert s.mlflow_tracking_uri == ""
+    assert s.mlflow_experiment_name == DEFAULT_MLFLOW_EXPERIMENT == "nl2sql-agent"
+
+
+def test_the_tracking_server_and_experiment_are_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://nl2sql-mlflow:5000")
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "ablations")
+    s = Settings.from_env()
+    assert (s.mlflow_tracking_uri, s.mlflow_experiment_name) == ("http://nl2sql-mlflow:5000", "ablations")
+
+
+def test_an_empty_experiment_name_is_the_default_one_rather_than_no_name(monkeypatch):
+    """Compose forwards it empty when the host has not set it, and an
+    experiment called "" is not one MLflow will create."""
+    monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "")
+    assert Settings.from_env().mlflow_experiment_name == "nl2sql-agent"

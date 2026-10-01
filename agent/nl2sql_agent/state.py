@@ -381,6 +381,10 @@ class AgentState(TypedDict, total=False):
     answer: str
     error: str | None
     trace: Annotated[list[TraceEntry], operator.add]
+    #: MLflow's id for this run's trace (`tracing.py`), empty when the run was
+    #: not traced. Written after the graph ends, by `Nl2SqlAgent.run`: it is
+    #: the trace's name for the run, not something any agent decides.
+    trace_id: str
 
 
 def new_state(question: str, *, principal: str | None = None) -> AgentState:
@@ -427,6 +431,7 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "answer": "",
         "error": None,
         "trace": [],
+        "trace_id": "",
     }
 
 

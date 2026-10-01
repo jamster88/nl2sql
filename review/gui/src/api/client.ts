@@ -1,5 +1,5 @@
 /**
- * The HTTP client. Twelve calls and an error class.
+ * The HTTP client. Fourteen calls and an error class.
  *
  * Deliberately thin, like the web GUI's: the API is already a good client
  * interface, and wrapping it in a layer with opinions of its own would only
@@ -8,12 +8,13 @@
  * `{"error": {"code", "message"}}` -- because code that unwraps that at each
  * call site eventually forgets to somewhere.
  *
- * `promote` and `fix` are the only calls here with consequences outside the
- * staging database -- one writes the golden question set, the other a
- * corrections or completions store -- and they are the only ones that are a
- * POST to a named action rather than a field on a PATCH. That is not
- * decoration: it is what stops a form that saves as you type from writing
- * either. `validate` is a POST too, but it only runs the query.
+ * `promote`, `fix`, `reopen` and `remove` are the only calls here with
+ * consequences outside the staging database -- the first writes the golden
+ * question set, the second a corrections or completions store, and the last
+ * two take back out whatever a submission had put into either -- and none of
+ * them is a field on a PATCH. That is not decoration: it is what stops a form
+ * that saves as you type from doing any of them. `validate` is a POST too,
+ * but it only runs the query.
  */
 
 import type {
@@ -32,6 +33,7 @@ import type {
   State,
   SubmissionList,
   SubmissionModel,
+  UndoModel,
   ValidationModel,
   Verdict,
 } from "./types";
@@ -87,6 +89,10 @@ export interface Client {
   /** Validates again, server side, then stores the fix. Not undoable here. */
   fix(id: string, sql: string, reviewer?: string, note?: string, signal?: AbortSignal): Promise<FixResultModel>;
   fixes(kind: FixKind, limit?: number, signal?: AbortSignal): Promise<FixList>;
+  /** Back to pending, taking a promoted pair or a stored fix back out first. */
+  reopen(id: string, signal?: AbortSignal): Promise<UndoModel>;
+  /** Gone for good, with whatever it put into the golden set or a fix store. */
+  remove(id: string, signal?: AbortSignal): Promise<UndoModel>;
 }
 
 function isErrorBody(value: unknown): value is ApiErrorBody {
@@ -230,6 +236,20 @@ export function createClient(options: ClientOptions = {}): Client {
       request<FixList>(`/v1/fixes/${kind}`, {
         headers: headers(),
         query: { limit },
+        signal: signal ?? null,
+      }),
+
+    reopen: (value, signal) =>
+      request<UndoModel>(`/v1/submissions/${id(value)}/reopen`, {
+        method: "POST",
+        headers: headers(),
+        signal: signal ?? null,
+      }),
+
+    remove: (value, signal) =>
+      request<UndoModel>(`/v1/submissions/${id(value)}`, {
+        method: "DELETE",
+        headers: headers(),
         signal: signal ?? null,
       }),
   };

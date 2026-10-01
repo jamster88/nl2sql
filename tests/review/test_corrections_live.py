@@ -257,3 +257,35 @@ def test_an_embedding_host_that_is_down_costs_the_vector_not_the_record(store):
 def test_an_empty_store_has_nothing_to_embed(store):
     result = store.embed_pending(WordEmbedder())
     assert (result.embedded, result.pending, result.error) == (0, 0, None)
+
+
+@pytest.mark.docker
+def test_deleting_a_submissions_fix_takes_its_vector_with_it(store):
+    """Reopening a corrected submission deletes its fix. A vector left behind
+    would keep the deleted fix retrievable by whatever reads the store next."""
+    store.save(fix("sub-1", question="top 10 SKUs by net sales"))
+    store.save(fix("sub-2", question="which vendor supplies dairy"))
+    embedder = WordEmbedder()
+    store.embed_pending(embedder)
+
+    removed = store.delete("sub-1")
+
+    assert (removed.fix_id, removed.question) == (f"{store.kind.prefix}0001", "top 10 SKUs by net sales")
+    assert removed.corrected_sql == "SELECT sku_id, product_name FROM dim_product"
+    assert store.count() == 1
+    hits = store.search(embedder.embed(["top SKUs by net sales"])[0], limit=5)
+    assert [hit["question"] for hit in hits] == ["which vendor supplies dairy"]
+
+
+@pytest.mark.docker
+def test_a_deleted_fix_can_be_saved_again(store):
+    store.save(fix("sub-1"))
+    store.delete("sub-1")
+    again = store.save(fix("sub-1", corrected_sql="SELECT 2"))
+    assert again.corrected_sql == "SELECT 2"
+    assert store.find_by_submission("sub-1") == again.fix_id
+
+
+@pytest.mark.docker
+def test_deleting_what_the_store_does_not_hold_is_none(store):
+    assert store.delete("never-fixed") is None

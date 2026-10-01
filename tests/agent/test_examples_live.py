@@ -13,6 +13,8 @@ unavailable -- the agent degrades in exactly the same situation.
 from __future__ import annotations
 
 import os
+import re
+from pathlib import Path
 
 import pytest
 from nl2sql_agent.examples import (
@@ -34,7 +36,12 @@ VECTOR_DB_URL = os.environ.get(
 EMBED_BASE_URL = os.environ.get("TEST_EMBED_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.environ.get("TEST_EMBED_MODEL", "bge-m3")
 
-EXPECTED_PAIRS = 45
+DOCUMENT = Path(__file__).resolve().parent.parent.parent / "context_questions" / "translated_questions.md"
+
+#: How many pairs the golden question document holds. Read from it rather
+#: than written down as 45: the document is the live golden set, and every
+#: promotion made through the review interface grows it.
+EXPECTED_PAIRS = len(re.findall(r"^## Q\d{2} - ", DOCUMENT.read_text(), re.M))
 
 
 class _Settings:

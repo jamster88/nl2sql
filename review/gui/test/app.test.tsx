@@ -21,7 +21,9 @@ import {
   makePreview,
   makePromotion,
   makeSubmission,
+  makeUndo,
   makeValidation,
+  makeWithdrawal,
 } from "./helpers";
 
 afterEach(cleanup);
@@ -268,7 +270,7 @@ describe("promoting", () => {
     });
     await userEvent.click(await screen.findByText(/total net sales for Produce/i));
 
-    expect(await screen.findByText(/already promoted as/i)).toBeInTheDocument();
+    expect(await screen.findByText(/already promoted as/i)).toHaveTextContent(/put it back to pending below/);
     expect(screen.queryByLabelText(/^Title/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /promote to golden set/i })).not.toBeInTheDocument();
   });
@@ -342,7 +344,9 @@ function mountWrong(overrides: Parameters<typeof fakeClient>[0] = {}, submission
       counts: {},
       counts_by_verdict: { no: { pending: 1 } },
     }),
-    submission: vi.fn().mockResolvedValue({ ...submission, draft: makeDraft() }),
+    // Seeded as the service seeds it: a wrong answer's draft carries the
+    // agent's own SQL, which is where a fix starts.
+    submission: vi.fn().mockResolvedValue({ ...submission, draft: makeDraft({ sql_code: submission.sql_code }) }),
     ...overrides,
   });
 }
@@ -585,6 +589,7 @@ describe("fixing a wrong answer", () => {
     await userEvent.click(await screen.findByRole("tab", { name: /^Wrong/ }));
     await userEvent.click(await screen.findByText("top 10 SKUs"));
     expect(await screen.findByText(/Already fixed as/)).toHaveTextContent("W0003");
+    expect(screen.getByText(/Already fixed as/)).toHaveTextContent(/deletes the fix and gives its SQL back/);
     expect(screen.queryByLabelText("Corrected SQL")).not.toBeInTheDocument();
   });
 });
@@ -622,5 +627,132 @@ describe("the reviewer's name", () => {
     await userEvent.type(await screen.findByLabelText("Reviewer"), "ada");
     await openWrong();
     expect(screen.getByLabelText("Reviewer")).toHaveValue("ada");
+  });
+});
+
+describe("taking a judgement back", () => {
+  it("puts an accepted submission back at once, and says so", async () => {
+    const accepted = { ...makeSubmission({ state: "accepted" }), draft: makeDraft() };
+    const { client } = mount({
+      submission: vi.fn().mockResolvedValueOnce(accepted).mockResolvedValue({ ...accepted, state: "pending" }),
+      reopen: vi.fn().mockResolvedValue(makeUndo({ withdrawn: null })),
+    });
+    await openFirst();
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+
+    expect(client.reopen).toHaveBeenCalledWith("sub-1");
+    expect(await screen.findByRole("status", { name: "Undo result" })).toHaveTextContent(
+      "Back in the queue as pending",
+    );
+    // The queue and the counts move, and the submission is shown as it now is.
+    await waitFor(() => expect(client.submissions).toHaveBeenCalledTimes(2));
+    expect(client.meta).toHaveBeenCalledTimes(2);
+    expect(client.submission).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Back to pending" })).not.toBeInTheDocument());
+  });
+
+  it("takes a promoted pair out of the golden set and gives it back as the draft", async () => {
+    const promoted = { ...makeSubmission({ state: "promoted", promoted_pair_id: "Q46" }), draft: makeDraft() };
+    const reopened = { ...makeSubmission(), draft: makeDraft({ keywords: "from the golden set" }) };
+    const { client } = mount({
+      submission: vi.fn().mockResolvedValueOnce(promoted).mockResolvedValue(reopened),
+    });
+    await userEvent.click(await screen.findByText(/total net sales for Produce/i));
+    expect(await screen.findByText(/put it back to pending below/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Title/)).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    await userEvent.click(screen.getByRole("button", { name: "Take Q46 out and reopen" }));
+
+    expect(client.reopen).toHaveBeenCalledWith("sub-1");
+    expect(await screen.findByText("Q46 taken out of the golden set — 46 → 45 pairs.")).toBeInTheDocument();
+    expect(await screen.findByLabelText(/^Keywords/)).toHaveValue("from the golden set");
+  });
+
+  it("gives a reopened fix's SQL back to edit rather than the agent's", async () => {
+    const corrected = wrong({ state: "corrected", promoted_pair_id: "W0003" });
+    mountWrong(
+      {
+        submission: vi
+          .fn()
+          .mockResolvedValueOnce({ ...corrected, draft: makeDraft() })
+          .mockResolvedValue({ ...wrong(), draft: { sql_code: "SELECT sku_id, product_name FROM dim_product" } }),
+        reopen: vi.fn().mockResolvedValue(
+          makeUndo({ withdrawn: makeWithdrawal({ kind: "corrections", id: "W0003", backup: "", steps: [] }) }),
+        ),
+      },
+      corrected,
+    );
+    await userEvent.click(await screen.findByRole("tab", { name: /^Wrong/ }));
+    await userEvent.click(await screen.findByText("top 10 SKUs"));
+    await userEvent.click(await screen.findByRole("button", { name: "Back to pending" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete W0003 and reopen" }));
+
+    expect(await screen.findByLabelText("Corrected SQL")).toHaveValue("SELECT sku_id, product_name FROM dim_product");
+    expect(screen.getByText("W0003 deleted from the corrections store, with its vector.")).toBeInTheDocument();
+  });
+
+  it("starts a fix from the agent's SQL when the draft carries none", async () => {
+    mountWrong({ submission: vi.fn().mockResolvedValue({ ...wrong(), draft: {} }) });
+    await openWrong();
+    expect(screen.getByLabelText("Corrected SQL")).toHaveValue("SELECT sku_id FROM dim_product");
+  });
+
+  it("deletes for good once asked twice, and closes the submission", async () => {
+    const { client } = mount();
+    await openFirst();
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete for good" }));
+
+    expect(client.remove).toHaveBeenCalledWith("sub-1");
+    expect(await screen.findByText("Submission deleted")).toBeInTheDocument();
+    expect(screen.getByText(/Pick something from the queue/)).toBeInTheDocument();
+    await waitFor(() => expect(client.submissions).toHaveBeenCalledTimes(2));
+  });
+
+  it.each(["reopen", "remove"] as const)("reports a %s the service refused, and changes nothing on screen", async (call) => {
+    const accepted = { ...makeSubmission({ state: "accepted" }), draft: makeDraft() };
+    mount({
+      submission: vi.fn().mockResolvedValue(accepted),
+      [call]: vi.fn().mockRejectedValue(new Error("the corrections store could not be written")),
+    });
+    await openFirst();
+    if (call === "reopen") {
+      await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    } else {
+      await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+      await userEvent.click(screen.getByRole("button", { name: "Delete for good" }));
+    }
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("the corrections store could not be written");
+    expect(screen.queryByRole("status", { name: "Undo result" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/^Title/)).toBeInTheDocument();
+  });
+
+  it("closes the report when it is dismissed, or another submission is opened", async () => {
+    const accepted = { ...makeSubmission({ state: "accepted" }), draft: makeDraft() };
+    mount({ submission: vi.fn().mockResolvedValue(accepted) });
+    await openFirst();
+
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    await screen.findByRole("status", { name: "Undo result" });
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("status", { name: "Undo result" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    await screen.findByRole("status", { name: "Undo result" });
+    // The queue's entry, which comes before the open submission's own copy.
+    await userEvent.click(screen.getAllByText(/total net sales for Produce/i)[0]!);
+    await waitFor(() => expect(screen.queryByRole("status", { name: "Undo result" })).not.toBeInTheDocument());
+  });
+
+  it("closes the report when the pane changes", async () => {
+    mount();
+    await openFirst();
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete for good" }));
+    await screen.findByText("Submission deleted");
+    await userEvent.click(screen.getByRole("tab", { name: /^Wrong/ }));
+    expect(screen.queryByText("Submission deleted")).not.toBeInTheDocument();
   });
 });

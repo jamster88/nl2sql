@@ -11,6 +11,7 @@ Offline -- argument parsing and the dry-run path touch no database.
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,13 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RAG_DIR = REPO_ROOT / "rag"
 DOCUMENT = REPO_ROOT / "context_questions" / "translated_questions.md"
+
+#: How many pairs the golden question document holds. Read from it rather
+#: than written down as 45: the document is the live golden set, and every
+#: promotion made through the review interface grows it.
+PAIRS = len(re.findall(r"^## Q\d{2} - ", DOCUMENT.read_text(), re.M))
+#: And how many suites they fall into, which the loader reports beside it.
+SUITES = len(re.findall(r"^# Suite ", DOCUMENT.read_text(), re.M))
 
 if str(RAG_DIR) not in sys.path:
     sys.path.insert(0, str(RAG_DIR))
@@ -78,7 +86,7 @@ def test_a_dry_run_parses_everything_and_writes_nothing(loader, capsys):
     """
     assert loader.main(["--dry-run", "--db-url", "postgresql://nobody@127.0.0.1:1/none"]) == 0
     out = capsys.readouterr().out
-    assert "45 pairs across 25 suites" in out
+    assert f"{PAIRS} pairs across {SUITES} suites" in out
     assert "nothing written" in out
 
 
@@ -183,7 +191,7 @@ def test_the_loader_writes_every_pair_and_builds_the_keyword_index(loader, chunk
     output = capsys.readouterr().out
 
     [(written,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TABLE}")
-    assert written == 45, f"the context store holds {written} pairs"
+    assert written == PAIRS, f"the context store holds {written} pairs"
     assert f"{written} rows written" in output
     assert "0 stale rows removed" in output
 
@@ -206,7 +214,7 @@ def test_loading_twice_updates_rather_than_duplicates(loader, chunk_conn):
     [(first,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TABLE}")
     loader.main(["--db-url", chunk_conn.scratch_url])
     [(second,)] = read(chunk_conn, f"SELECT count(*) FROM {gp.TABLE}")
-    assert first == second == 45
+    assert first == second == PAIRS
 
 
 @pytest.mark.docker
@@ -266,11 +274,11 @@ def test_the_embedder_writes_one_vector_table_per_field(
     ) == 0
     output = capsys.readouterr().out
 
-    assert "45 golden pairs in the context store" in output
+    assert f"{PAIRS} golden pairs in the context store" in output
     for field in embedder.FIELDS:
         stored = gv.current_state(vector_conn, field)
         vector_conn.commit()
-        assert len(stored) == 45, f"{field} has {len(stored)} vectors"
+        assert len(stored) == PAIRS, f"{field} has {len(stored)} vectors"
         assert field in output
 
 
@@ -289,7 +297,7 @@ def test_only_the_named_field_is_embedded_when_one_is_chosen(
     ])
     question = gv.current_state(vector_conn, "question")
     vector_conn.commit()
-    assert len(question) == 45
+    assert len(question) == PAIRS
     assert gv.current_state(vector_conn, "reasoning_target") == {}
     vector_conn.commit()
 
@@ -313,7 +321,7 @@ def test_re_running_the_embedder_embeds_nothing_that_has_not_changed(
 
     embedder.main(args)
     assert len(fake.calls) == after_first, "it re-embedded rows nothing had changed"
-    assert "0 embedded, 45 already current" in capsys.readouterr().out
+    assert f"0 embedded, {PAIRS} already current" in capsys.readouterr().out
 
     embedder.main([*args, "--force"])
     assert len(fake.calls) > after_first, "--force embedded nothing"

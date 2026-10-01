@@ -348,7 +348,7 @@ pip install -r rag/requirements.txt
 pytest tests/rag --run-docker
 ```
 
-265 tests: the parser against the real document, the BM25 ranking compared
+281 tests: the parser against the real document, the BM25 ranking compared
 score for score against an independent Okapi implementation, the pgvector
 storage layer, both loader scripts as command line programs, and the seven
 shell scripts on this page.

@@ -50,6 +50,8 @@ MIRRORED = {
     "FixModel": models.FixModel,
     "FixList": models.FixList,
     "FixResultModel": models.FixResultModel,
+    "WithdrawalModel": models.WithdrawalModel,
+    "UndoModel": models.UndoModel,
 }
 
 

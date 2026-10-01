@@ -133,7 +133,7 @@ class PostgresSink:
         self._connect = connect or self._psycopg_connect
 
     @staticmethod
-    def _psycopg_connect(url: str):  # pragma: no cover - needs a live database
+    def _psycopg_connect(url: str):
         import psycopg
 
         return psycopg.connect(url, connect_timeout=5)

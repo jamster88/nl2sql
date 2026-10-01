@@ -36,6 +36,11 @@
 # window of its own. That page opens whichever interface was chosen, because
 # reviewing happens in one place and there is no desktop half of it.
 #
+# With --console it brings up the SQL console as well -- the retail database
+# queried as the agent sees it, through the agent's own gates, for working
+# out why an answer was wrong -- and opens it at http://localhost:8082, in a
+# window of its own for the same reason.
+#
 # Use those two directly when you want the parts separately -- a terminal
 # session with no API, a different agent tag, no knowledge base. This script
 # is for when you want the whole thing and do not want to think about it,
@@ -47,6 +52,7 @@ cd "$(dirname "$0")"
 OPEN_BROWSER=1
 QUIET=0
 WITH_REVIEW=0
+WITH_CONSOLE=0
 WITH_DESKTOP=0
 WITH_RAG=1
 # Flags handed on. The interface itself is decided after parsing, because
@@ -81,6 +87,10 @@ Brings up the whole stack and opens the web interface in your browser.
                      golden questions, corrections and completions, the two
                      stores for those fixes, and the review interface -- and
                      open that in a browser window of its own
+      --console      Also bring up the SQL console -- the retail database
+                     queried as the agent's read-only role, through the
+                     agent's own gates -- and open it in a browser window of
+                     its own
       --feedback     Keep verdicts without the review interface: starts the
                      staging database only, so votes are staged for later
       --no-browser   Start everything, but print the URLs instead of opening them
@@ -98,9 +108,10 @@ Docker is started if its daemon is not running (Docker Desktop, on macOS or
 Linux), and so is the Ollama on this machine when the embedding model is
 served from here; that Ollama is given the embedding model if it lacks it.
 
-Set BROWSER to choose what opens the pages. Without it the review page is
-opened in a window of its own by Safari, Firefox, Chrome and the browsers
-built on Chromium; macOS asks once before a terminal may ask Safari.
+Set BROWSER to choose what opens the pages. Without it the review page and
+the console are opened in windows of their own by Safari, Firefox, Chrome
+and the browsers built on Chromium; macOS asks once before a terminal may
+ask Safari.
 
 ./setup.sh and ./launch.sh are the same steps with the parts separated.
 EOF
@@ -114,6 +125,9 @@ while [[ $# -gt 0 ]]; do
         # so one flag asks for the lot. launch.sh resolves the chain.
         --review) WITH_REVIEW=1; LAUNCH_ARGS+=(--review); SETUP_ARGS+=(--review); shift ;;
         --feedback) LAUNCH_ARGS+=(--feedback); shift ;;
+        # A troubleshooting tool beside whichever interface was chosen, not
+        # instead of it. launch.sh brings the API up for it.
+        --console) WITH_CONSOLE=1; LAUNCH_ARGS+=(--console); SETUP_ARGS+=(--console); shift ;;
         # The desktop client is an interface, not an addition to one: with
         # this the web interface is not started and no browser is opened for
         # it. --review still opens the review page, which has no desktop
@@ -282,6 +296,8 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
         printf "the desktop client is not pinned, so its jar would be built here from source"
     elif [[ $WITH_REVIEW -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
         printf 'the review images are not pinned, so they would be built here from source'
+    elif [[ $WITH_CONSOLE -eq 1 && -z "$(env_file_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
+        printf "the SQL console's interface is not pinned, so it would be built here from source"
     fi
 }
 
@@ -307,6 +323,8 @@ gui_port=$(compose_env GUI_PORT 8080)
 url="http://localhost:${gui_port}"
 review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
 review_url="http://localhost:${review_gui_port}"
+console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
+console_url="http://localhost:${console_gui_port}"
 
 # Healthy is not the same as answering. The container reports healthy as soon
 # as nginx is up, and nginx is up a moment before it has read its generated
@@ -343,6 +361,20 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         warn "the review interface never answered at $review_url."
         warn "Check what it said: docker compose --profile reviewgui logs reviewgui"
         warn "The web interface is up; verdicts are staged and can be reviewed later."
+    fi
+fi
+
+# The console likewise: a troubleshooting page that did not come up is not a
+# reason to take the rest away.
+console_ready=0
+if [[ $WITH_CONSOLE -eq 1 ]]; then
+    step "Waiting for the SQL console"
+    if wait_for_page "$console_url"; then
+        console_ready=1
+    else
+        warn "the SQL console never answered at $console_url."
+        warn "Check what it said: docker compose --profile console --profile consolegui logs"
+        warn "Everything else is up; ./launch.sh --console tries it again on its own."
     fi
 fi
 
@@ -589,12 +621,23 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
             warn "$review_url"
         fi
     fi
+    if [[ $console_ready -eq 1 ]]; then
+        # Its own window as well: it is where someone works out what went
+        # wrong, next to -- not inside -- the page where it went wrong.
+        step "Opening $console_url"
+        if ! open_window "$console_url"; then
+            warn "could not open the SQL console. Open it yourself:"
+            warn "$console_url"
+        fi
+    fi
 elif [[ $WITH_DESKTOP -eq 0 ]]; then
     step "Ready at $url"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
+    [[ $console_ready -eq 1 ]] && info "SQL console at $console_url"
 else
     step "The desktop client is running"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
+    [[ $console_ready -eq 1 ]] && info "SQL console at $console_url"
 fi
 
 # Deliberately short. launch.sh has just printed what the stack is and how
@@ -619,6 +662,12 @@ EOF
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
     $review_url                     review what people said: promote, correct, complete
+
+EOF
+    fi
+    if [[ $WITH_CONSOLE -eq 1 ]]; then
+        cat <<EOF
+    $console_url                     query the retail database as the agent sees it
 
 EOF
     fi
@@ -648,6 +697,13 @@ EOF
 
     $url
     docker compose --profile api --profile gui down    stop everything
+
+EOF
+    fi
+    if [[ $WITH_CONSOLE -eq 1 ]]; then
+        cat <<EOF
+    $console_url                     query the retail database as the agent sees it
+    docker compose --profile console --profile consolegui down    and the console
 
 EOF
     fi

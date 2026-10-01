@@ -428,17 +428,28 @@ def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):
 def _settings_read() -> set[str]:
     """Every environment variable config.py reads, by name."""
     source = Path(REPO_ROOT / "agent" / "nl2sql_agent" / "config.py").read_text()
-    return set(re.findall(r'_env(?:_str|_bool|_int|_float)\(\s*"([A-Z_]+)"', source))
+    return set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple)?|os\.getenv)\(\s*"([A-Z_]+)"', source))
 
 
 def test_every_setting_the_agent_reads_can_be_set_through_compose(agent_profile_config: dict):
-    """The mirror of the test above, and the one that was missing. A knob the
-    README documents but compose never forwards cannot be set on the
-    containerised agent at all, which is the way almost everyone runs it.
+    """A knob the README documents but compose never forwards cannot be set
+    on the containerised agent at all, which is the way almost everyone runs
+    it.
     """
     env = set(agent_profile_config["services"]["agent"]["environment"])
     missing = sorted(_settings_read() - env)
     assert missing == [], f"config.py reads these, but compose never passes them: {missing}"
+
+
+def test_every_variable_compose_sets_on_the_agent_is_one_it_reads(agent_profile_config: dict):
+    """The other direction, which every other service here already had. A
+    variable compose forwards and nothing reads is a knob that does nothing
+    -- usually a setting renamed in config.py and left behind in compose, so
+    that setting it changes nothing and says nothing.
+    """
+    env = set(agent_profile_config["services"]["agent"]["environment"])
+    unread = sorted(env - _settings_read())
+    assert unread == [], f"compose passes these to the agent, and config.py never reads them: {unread}"
 
 
 def test_a_forwarded_setting_the_host_has_not_set_arrives_empty(agent_profile_config: dict):

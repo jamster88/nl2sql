@@ -48,10 +48,12 @@ PROMOTIONS = "feedback_promotions"
 WRITER_ROLE = "nl2sql_feedback_writer"
 
 #: Every state a submission can be in, in the order it travels through them.
-#: `promoted` and `corrected` are terminal: the pair is in the golden set, or
-#: the fix is in the corrections or completions store, and the row is now a
-#: record of how it got there. The CHECK is re-applied on every start under a
-#: fixed name, for the same reason as the verdict's below.
+#: `promoted` and `corrected` are where the queue ends: the pair is in the
+#: golden set, or the fix is in the corrections or completions store, and the
+#: row is a record of how it got there. They are left only by reopening the
+#: submission, which takes the pair or the fix back out first (`reopen`). The
+#: CHECK is re-applied on every start under a fixed name, for the same reason
+#: as the verdict's below.
 STATES = ("pending", "accepted", "rejected", "promoted", "corrected")
 STATE_CHECK = "feedback_submissions_state_check"
 
@@ -485,6 +487,61 @@ def mark_corrected(
     return _row_to_submission(row) if row else None
 
 
+def reopen(
+    conn: psycopg.Connection, submission_id: str, *, draft: dict[str, Any] | None = None
+) -> Submission | None:
+    """Put a submission back in the queue, unjudged.
+
+    Called once whatever it produced -- a golden pair, a fix -- has been taken
+    back out, so the row stops naming it. Its promotion log entries go in the
+    same transaction: they record a promotion that no longer stands, and a
+    pair id that may be given out again. The reviewer and the note are kept,
+    as the history of who looked at it last and why; `draft`, when given,
+    replaces the draft -- with the withdrawn pair, or the withdrawn fix's SQL,
+    so reopening does not throw the work away.
+    """
+    conn.execute(
+        sql.SQL("DELETE FROM {} WHERE submission_id = %s").format(sql.Identifier(PROMOTIONS)),
+        (submission_id,),
+    )
+    assignments = [
+        sql.SQL("state = 'pending'"),
+        sql.SQL("promoted_pair_id = NULL"),
+        sql.SQL("reviewed_at = NULL"),
+    ]
+    values: list[Any] = []
+    if draft is not None:
+        assignments.append(sql.SQL("draft = %s::jsonb"))
+        values.append(json.dumps(draft))
+    row = conn.execute(
+        sql.SQL("UPDATE {} SET {} WHERE id = %s RETURNING *").format(
+            sql.Identifier(SUBMISSIONS), sql.SQL(", ").join(assignments)
+        ),
+        [*values, submission_id],
+    ).fetchone()
+    conn.commit()
+    return _row_to_submission(row) if row else None
+
+
+def delete(conn: psycopg.Connection, submission_id: str) -> Submission | None:
+    """Remove a submission for good, with its promotion log entries.
+
+    The log references the submission with `ON DELETE RESTRICT`, so they go
+    first, in the same transaction. Returns the row as it was, or None when
+    there was no such row.
+    """
+    conn.execute(
+        sql.SQL("DELETE FROM {} WHERE submission_id = %s").format(sql.Identifier(PROMOTIONS)),
+        (submission_id,),
+    )
+    row = conn.execute(
+        sql.SQL("DELETE FROM {} WHERE id = %s RETURNING *").format(sql.Identifier(SUBMISSIONS)),
+        (submission_id,),
+    ).fetchone()
+    conn.commit()
+    return _row_to_submission(row) if row else None
+
+
 def promotions(conn: psycopg.Connection, limit: int = 50) -> list[dict[str, Any]]:
     rows = conn.execute(
         sql.SQL("SELECT * FROM {} ORDER BY promoted_at DESC LIMIT %s").format(
@@ -555,6 +612,14 @@ class Repository:
     def mark_promoted(self, submission_id: str, **kwargs: Any) -> None:
         with connection(self.url) as conn:
             mark_promoted(conn, submission_id, **kwargs)
+
+    def reopen(self, submission_id: str, **kwargs: Any) -> Submission | None:
+        with connection(self.url) as conn:
+            return reopen(conn, submission_id, **kwargs)
+
+    def delete(self, submission_id: str) -> Submission | None:
+        with connection(self.url) as conn:
+            return delete(conn, submission_id)
 
     def promotions(self, limit: int = 50) -> list[dict[str, Any]]:
         with connection(self.url) as conn:

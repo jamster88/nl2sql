@@ -95,6 +95,16 @@ case "$1" in
             echo "${FAKE_REVIEW_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-review* ]]; then
             echo "${FAKE_REVIEW_HEALTH:-healthy}"
+        # The same containment as the review pair: the console interface's
+        # name holds the console's, so it is matched first.
+        elif [[ "$*" == *nl2sql-console-gui* && "$*" == *Running* ]]; then
+            echo true
+        elif [[ "$*" == *nl2sql-console-gui* ]]; then
+            echo "${FAKE_CONSOLE_GUI_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-console* && "$*" == *Running* ]]; then
+            echo "${FAKE_CONSOLE_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-console* ]]; then
+            echo "${FAKE_CONSOLE_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi

@@ -15,6 +15,12 @@
 #     ./launch.sh --api
 #     curl --cacert <cert> https://localhost:8443/v1/meta
 #
+# Or, to work out why an answer was wrong, the SQL console -- the retail
+# database queried as the agent sees it:
+#
+#     ./launch.sh --console
+#     open http://localhost:8082
+#
 # This is the every-time script. setup.sh is the first-time one: it pulls the
 # images and writes the .env that pins them. launch.sh assumes that has already
 # happened and just starts what is down, then checks that each piece actually
@@ -38,6 +44,7 @@ WITH_API=0
 WITH_GUI=0
 WITH_FEEDBACK=0
 WITH_REVIEW=0
+WITH_CONSOLE=0
 WITH_DESKTOP=0
 RESTART=0
 QUIET=0
@@ -62,6 +69,9 @@ Usage: ./launch.sh [options]
                    turned into golden questions, corrections and completions,
                    and the two stores those fixes are kept in (implies
                    --feedback)
+      --console    Also start the SQL console, where the retail database is
+                   queried as the agent's read-only role and through its
+                   gates, to work out why an answer was wrong (implies --api)
       --desktop    Also build the desktop client and copy the API's
                    certificate out, so the client can run on this machine
       --restart    Recreate the containers instead of reusing what is running
@@ -85,6 +95,9 @@ while [[ $# -gt 0 ]]; do
         # The review interface is nothing without the service behind it, and
         # the service is nothing without the database in front of it.
         --review) WITH_REVIEW=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
+        # The console presents the certificate the API writes, so the API is
+        # what it cannot start without -- and what it is troubleshooting.
+        --console) WITH_CONSOLE=1; WITH_API=1; shift ;;
         # The desktop client talks to the API directly rather than through a
         # proxy of its own, so that is the one thing it cannot do without.
         --desktop) WITH_DESKTOP=1; WITH_API=1; shift ;;
@@ -475,14 +488,14 @@ proxy_reaches_api() {  # proxy_reaches_api PORT
     [[ "$code" == "200" || "$code" == "503" ]]
 }
 
-repair_proxy() {  # repair_proxy NAME PORT PROFILES...
-    local name="$1" port="$2"
-    shift 2
+repair_proxy() {  # repair_proxy SERVICE CONTAINER PORT PROFILES...
+    local name="$1" container="$2" port="$3"
+    shift 3
     proxy_reaches_api "$port" && return 0
     info "$name cannot reach the API through its proxy -- restarting it to pick up"
     info "the current certificate (the API reissues one when a service name is added)"
     docker compose "$@" restart "$name" >/dev/null 2>&1 || return 1
-    await_health "nl2sql-${name/reviewgui/review-gui}" || return 1
+    await_health "$container" || return 1
     proxy_reaches_api "$port"
 }
 
@@ -592,7 +605,7 @@ start_gui() {
 if [[ $WITH_GUI -eq 1 ]]; then
     step "Starting the web interface"
     if start_gui; then
-        if repair_proxy gui "$gui_port" --profile api --profile gui; then
+        if repair_proxy gui nl2sql-gui "$gui_port" --profile api --profile gui; then
             info "GUI is healthy at http://localhost:$gui_port"
         else
             warn "the GUI is up but cannot reach the API through its proxy."
@@ -685,7 +698,7 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
 
     step "Starting the review interface"
     if start_reviewgui; then
-        if repair_proxy reviewgui "$review_gui_port" \
+        if repair_proxy reviewgui nl2sql-review-gui "$review_gui_port" \
             --profile feedback --profile review --profile reviewgui; then
             info "Review interface is healthy at http://localhost:$review_gui_port"
         else
@@ -695,6 +708,69 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
     else
         warn "the review interface did not become healthy."
         warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
+    fi
+fi
+
+# --- The SQL console -------------------------------------------------------
+# The agent's own image started a third way, and a page in front of it. After
+# the API, because it presents the certificate the API writes -- and on the
+# first start after an upgrade that is a certificate the API has just
+# reissued, because API_TLS_HOSTNAMES has grown to name the console.
+console_port=$(compose_env CONSOLE_PORT 8445)
+console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
+console_bind=$(compose_env CONSOLE_BIND_ADDRESS 127.0.0.1)
+
+start_console() {
+    docker compose --profile console up -d console >/dev/null 2>&1 || return 1
+    await_health nl2sql-console
+}
+
+start_consolegui() {
+    docker compose --profile console --profile consolegui up -d consolegui >/dev/null 2>&1 || return 1
+    await_health nl2sql-console-gui
+}
+
+if [[ $WITH_CONSOLE -eq 1 ]]; then
+    step "Starting the SQL console"
+    if start_console; then
+        case "$(compose_env CONSOLE_TLS_ENABLED true)" in
+            0|false|no|off|FALSE|NO|OFF) console_scheme=http ;;
+            *) console_scheme=https ;;
+        esac
+        info "SQL console is healthy at $console_scheme://localhost:$console_port"
+    else
+        warn "the SQL console did not become healthy."
+        if docker compose --profile console logs console 2>/dev/null | grep -q "No module named"; then
+            warn "The pinned agent image has no SQL console in it -- it predates this"
+            warn "checkout. Build it here instead: docker compose --profile console build console"
+        else
+            warn "Check what it said: docker compose --profile console logs console"
+        fi
+    fi
+
+    step "Starting the SQL console's interface"
+    if start_consolegui; then
+        if repair_proxy consolegui nl2sql-console-gui "$console_gui_port" \
+            --profile console --profile consolegui; then
+            info "SQL console interface is healthy at http://localhost:$console_gui_port"
+        else
+            warn "the SQL console's interface is up but cannot reach the console."
+            warn "Check what it said: docker compose --profile consolegui logs consolegui"
+        fi
+    else
+        warn "the SQL console's interface did not become healthy."
+        warn "Check what it said: docker compose --profile console --profile consolegui logs consolegui"
+    fi
+
+    # Loopback by default, which is what makes no token reasonable. Opened
+    # to the network, it is a page that runs SQL for anyone who finds it.
+    case "$console_bind" in
+        127.0.0.1|localhost|::1) console_exposed=0 ;;
+        *) console_exposed=1 ;;
+    esac
+    if [[ $console_exposed -eq 1 && -z "$(compose_env CONSOLE_TOKEN "")" ]]; then
+        warn "the SQL console is published on $console_bind with no CONSOLE_TOKEN, so"
+        warn "anything that can reach it may run SQL as the agent's database role."
     fi
 fi
 
@@ -763,6 +839,24 @@ EOF
 
     docker compose --profile feedback --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
+EOF
+    fi
+    if [[ $WITH_CONSOLE -eq 1 ]]; then
+        cat <<EOF
+
+==> The SQL console is up:
+
+    open http://localhost:$console_gui_port
+
+    Paste the SQL an answer was built from, or pick a table, and run it one
+    of three ways: Run returns the rows, Plan stops at the planner's
+    estimate, Analyze times a real run. Beside each is what the agent would
+    have made of it -- which of its gates would have refused it, in that
+    gate's words, against which of its limits. It runs as the agent's
+    read-only role, in a read-only transaction, under the agent's timeout.
+
+    docker compose --profile console --profile consolegui logs -f console
+    console/README.md explains how it is put together.
 EOF
     fi
     if [[ $WITH_DESKTOP -eq 1 ]]; then

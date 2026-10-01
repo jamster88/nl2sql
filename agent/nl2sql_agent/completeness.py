@@ -178,7 +178,7 @@ def _column_name(ref: ast.ColumnRef) -> str | None:
 def _deparse(node: ast.Node) -> str:
     try:
         return RawStream()(node)
-    except Exception:  # pragma: no cover - pglast deparses anything it parsed
+    except Exception:  # pglast prints anything it parsed; this is for one that does not
         return ""
 
 
@@ -199,7 +199,7 @@ def read_query(sql: str, label_map: LabelMap | None = None) -> _Query:
     statement = statements[0].stmt
     try:
         query.relations = {name.split(".")[-1].strip('"').lower() for name in referenced_relations(sql)}
-    except Exception:  # pragma: no cover - a statement that parsed has relations
+    except Exception:  # a statement that parsed has relations; this is for one that has none
         query.relations = set()
     query.functions = {
         node.funcname[-1].sval.lower()

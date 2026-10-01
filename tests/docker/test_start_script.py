@@ -515,6 +515,115 @@ def test_a_machine_that_cannot_open_the_review_page_still_says_where_it_is(run_s
 
 
 # ---------------------------------------------------------------------------
+# The SQL console (--console)
+# ---------------------------------------------------------------------------
+
+
+def test_console_brings_up_the_console_beside_the_web_interface(run_start):
+    """A troubleshooting tool beside the interface, not instead of it: the
+    answer being troubleshot was asked for in the web interface."""
+    result = run_start("--console")
+
+    assert result.returncode == 0
+    assert result.called("--profile console up -d console")
+    assert result.called("--profile console --profile consolegui up -d consolegui")
+    assert result.called("--profile api --profile gui up -d gui")
+
+
+def test_console_opens_its_page_second_in_a_window_of_its_own(run_start):
+    result = run_start("--console")
+
+    assert pages(result) == ["http://localhost:8080", "http://localhost:8082"]
+    assert [call for call in result.calls if call.startswith("window ")], (
+        "the console was opened in a tab rather than asked for a window"
+    )
+    assert "==> Opening http://localhost:8082" in result.output
+
+
+def test_review_and_console_open_three_pages_in_order(run_start):
+    result = run_start("--review", "--console")
+    assert pages(result) == ["http://localhost:8080", "http://localhost:8081", "http://localhost:8082"]
+
+
+def test_console_waits_for_its_page_too(run_start):
+    result = run_start("--console")
+    assert "Waiting for the SQL console" in result.output
+    assert result.called("curl http://localhost:8082")
+
+
+def test_a_console_page_that_never_answers_does_not_take_the_stack_down(run_start):
+    result = run_start("--console", env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "8082"})
+
+    assert result.returncode == 0
+    assert "the SQL console never answered at http://localhost:8082." in result.output
+    assert "docker compose --profile console --profile consolegui logs" in result.output
+    assert "Everything else is up; ./launch.sh --console tries it again on its own." in result.output
+    assert pages(result) == ["http://localhost:8080"]
+
+
+def test_a_machine_that_cannot_open_the_console_still_says_where_it_is(run_start):
+    result = run_start("--console", env={
+        "FAKE_BROWSER_EXIT": "3", "FAKE_UNAME_S": "Darwin", "FAKE_OSASCRIPT_EXIT": "1"})
+
+    assert result.returncode == 0
+    assert "could not open the SQL console. Open it yourself:" in result.output
+    assert "http://localhost:8082" in result.output
+
+
+def test_no_browser_prints_the_console_url_rather_than_opening_it(run_start):
+    result = run_start("--console", "--no-browser")
+    assert pages(result) == []
+    assert "SQL console at http://localhost:8082" in result.output
+
+
+def test_the_console_port_follows_what_compose_will_publish(run_start):
+    result = run_start("--console", env_file="IMAGE_NAME=x\nCONSOLE_GUI_PORT=9082\n")
+    assert pages(result)[-1] == "http://localhost:9082"
+
+
+def test_the_closing_lines_say_what_the_console_is_for_and_how_to_stop_it(run_start):
+    output = " ".join(run_start("--console").output.split())
+    assert "http://localhost:8082 query the retail database as the agent sees it" in output
+    assert "docker compose --profile console --profile consolegui down and the console" in output
+
+
+def test_desktop_and_console_still_opens_the_console_page(run_start):
+    """The console is a page whichever interface asked the question."""
+    result = run_start("--desktop", "--console", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert result.calls_matching("java -jar")
+    assert pages(result) == ["http://localhost:8082"]
+    assert "query the retail database as the agent sees it" in result.output
+
+
+def test_desktop_console_and_no_browser_prints_the_console_url(run_start):
+    result = run_start(
+        "--desktop", "--console", "--no-browser", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"}
+    )
+    assert "SQL console at http://localhost:8082" in result.output
+
+
+def test_a_console_that_was_never_pinned_is_pulled_rather_than_built(run_start):
+    """Its interface would otherwise be an npm build inside a container on
+    first start, when the published image is a pull away."""
+    result = run_start("--console")
+
+    assert "the SQL console's interface is not pinned" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-console-gui:{SHIPPED}")
+    assert result.env_file()["CONSOLE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-console-gui"
+
+
+def test_a_pinned_console_is_not_fetched_again(run_start):
+    env_file = (
+        f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
+        f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+        f"CONSOLE_GUI_IMAGE_NAME=mcfaddja/nl2sql-console-gui\nCONSOLE_GUI_IMAGE_TAG={SHIPPED}\n"
+    )
+    result = run_start("--console", env_file=env_file)
+    assert "Fetching the images" not in result.output
+
+
+# ---------------------------------------------------------------------------
 # The desktop client
 # ---------------------------------------------------------------------------
 

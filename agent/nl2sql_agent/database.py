@@ -91,6 +91,18 @@ class Database:
     def dialect(self) -> str:
         return self._engine.dialect.name
 
+    @property
+    def engine(self) -> Engine:
+        """The connection pool, for a caller that runs statements of its own.
+
+        The SQL console is that caller: it runs a person's query inside the
+        same fence as `run_select` -- READ ONLY, the statement timeout -- but
+        needs what `run_select` throws away, the plan and the column types.
+        One pool, so the console's connections are the same role and the
+        same database as the introspection it shows beside them.
+        """
+        return self._engine
+
     def table_names(self) -> list[str]:
         return [t.name for t in self._load_tables()]
 
@@ -282,7 +294,7 @@ class Database:
                     ).scalar()
         except Exception as exc:  # surfaced to the Repair Agent as feedback
             return None, str(getattr(exc, "orig", exc)).strip()
-        return _total_cost(row), None
+        return total_cost(row), None
 
     def run_select(self, sql: str, *, principal: str | None = None) -> QueryResult:
         """Execute inside a READ ONLY transaction with a timeout and a row cap.
@@ -314,7 +326,22 @@ def _quote_identifier(name: str) -> str:
     return name.replace('"', '""')
 
 
-def _total_cost(plan: Any) -> float | None:
+def plan_cost_problem(cost: float | None, ceiling: float) -> str | None:
+    """What the Planner Gate says about a cost: why it is refused, or None.
+
+    Here rather than inside the gate because it has two readers. The gate
+    turns the message into an `Issue`; the SQL console (`console/query.py`)
+    shows it to a person asking why a query was never run. One function is
+    what keeps the console's account of the gate from drifting away from
+    the gate. A plan with no cost is not refused: there is nothing to
+    compare.
+    """
+    if cost is not None and cost > ceiling:
+        return f"estimated plan cost {cost:,.2f} exceeds the ceiling of {ceiling:,.2f}"
+    return None
+
+
+def total_cost(plan: Any) -> float | None:
     """`Plan."Total Cost"` out of an EXPLAIN (FORMAT JSON) payload.
 
     psycopg may hand back the JSON already decoded or as text depending on the

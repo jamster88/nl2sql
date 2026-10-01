@@ -67,7 +67,7 @@ from . import complexity
 from . import completeness as reviewer, contract as answer_contract, present, repair as repair_agent, supervisor
 from .config import Settings
 from .contract import ContractResources
-from .database import Database, strip_sql
+from .database import Database, plan_cost_problem, strip_sql
 from .examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING, GoldenPairLibrary
 from .literals import LiteralMatcher, build_catalog, render_literal_map
 from .llm import build_llm, build_routed_client
@@ -759,11 +759,8 @@ class Nl2SqlAgent:
                 "issues": [Issue(source=PLANNER, message=error)],
                 _DETAIL: error.splitlines()[0],
             }
-        ceiling = self.settings.max_plan_cost
-        if cost is not None and cost > ceiling:
-            message = (
-                f"estimated plan cost {cost:,.2f} exceeds the ceiling of {ceiling:,.2f}"
-            )
+        message = plan_cost_problem(cost, self.settings.max_plan_cost)
+        if message:
             return {
                 "plan_cost": cost,
                 "issues": [Issue(source=PLANNER, message=message)],

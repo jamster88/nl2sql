@@ -8,8 +8,8 @@ per change.
 **Versions.** The number is the agent's: `__version__` 5.1.2 is published as
 the tag `v5_1_2`, and a tag with fewer components names a line
 (`v5_1` is 5.1.x). The app images -- `nl2sql-agent`, `nl2sql-gui`,
-`nl2sql-review`, `nl2sql-review-gui` and the five `nl2sql-desktop-build`
-platforms -- are released together at one number, which
+`nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` and the five
+`nl2sql-desktop-build` platforms -- are released together at one number, which
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds every
 declaration in the repository to. The dataset images --
 `nl2sql-retail-postgres`, `nl2sql-rag-vectordb`, `nl2sql-rag-chunkdb` --
@@ -26,6 +26,121 @@ Docker Hub's, in UTC; release dates are the repository's.
 
 **Artifacts.** Paths are relative to the repository root. Tests are named by
 file where a file is new; the tests a version merely extended are summarised.
+
+---
+
+## v5_4 (5.4.0) -- 2026-09-30
+
+A judgement in the review interface can be taken back. Every submission can
+be put back to pending or deleted, and when it had been acted on, what it
+produced comes out with it: a promoted pair is taken back out of
+`context_questions/translated_questions.md` -- checked by the loader's own
+parser to have lost exactly that pair and changed no other, the previous
+version kept beside it, both stores reloaded -- and a fix is deleted from the
+corrections or completions store with its vector. The queue and what it
+produced are never allowed to disagree, so a reopened question cannot be
+promoted into the golden set twice. A reopened submission keeps its work: the
+pair comes back as its draft, the corrected SQL comes back to the query
+editor. The agent, the web interface, the desktop client and the console are
+v5.3's.
+
+### Created
+- `review/gui/src/components/RecordEditor.tsx` -- "Change this review": back to pending, and delete; anything that reaches past the staging table asks first, in the words of the file or store it changes.
+- `review/gui/src/components/Withdrawn.tsx` -- what reopening or deleting did: the pair or fix that came out, the counts, the backup and whether the stores caught up.
+
+### Updated
+- `review/nl2sql_review/app.py`:
+  - `POST /v1/submissions/{id}/reopen` and `DELETE /v1/submissions/{id}`, each taking a promoted pair or a stored fix back out before the row changes, so a failure changes nothing and a failure after it heals on the next attempt;
+  - `already_pending` and `not_withdrawable`; the `already_promoted` and `already_fixed` refusals say how to change one.
+- `review/nl2sql_review/promote.py` -- `withdraw`: promotion in reverse, round-tripped through the loader's parser with every remaining pair compared field by field; the pair as the document held it, as a draft.
+- `review/nl2sql_review/render.py` -- `remove_pair`: the block from its heading to the next, with a suite heading left empty by it; undoes `append_pair` exactly.
+- `review/nl2sql_review/store.py` -- `reopen` and `delete`, each clearing the submission's promotion log entries in the same transaction.
+- `review/nl2sql_review/corrections.py` -- `delete_by_submission`, returning the fix as it was; its vector goes by the existing cascade.
+- `review/nl2sql_review/models.py` -- `WithdrawalModel`, `UndoModel`; `review/gui/src/api/types.ts` mirrors them.
+- `review/gui/src/App.tsx`, `api/client.ts`, `styles.css` -- the editor under every submission, `reopen` and `remove`, a reopened fix's SQL seeded into the query editor.
+- `tests/review/` -- reopen and delete over HTTP, end to end through the real promoter and withdrawal on a copy of the document; `remove_pair` on every layout the document has; `withdraw` refusing what the parser will not accept; both live against Postgres -- the promotion log cleared, a reopened row handed back to the public process, a fix deleted with its vector.
+- `review/README.md`, `README.md` -- changing your mind, the two routes and their errors, a `v5_4` row in the tag table, test counts.
+- Version 5.4.0 in every declaration; `setup.sh` pins `v5_4`.
+
+### Fixed
+- Twenty-four tests pinned the golden set at 45 pairs, with Q46 next, while reading the live document -- so they failed for the first person who promoted anything through the review interface: the review service's (`test_app.py`, `test_promote.py`, `test_render.py`), the RAG loaders' (`test_golden_pairs_parser.py`, `test_pipeline_cli.py`), the agent's live store test and the compose retrieval probe. The count, the suites and the next id are read from the document now.
+- `test_golden_pairs_parser.py` took a SQL block not ending in `;` as truncated. Every hand-written pair ends in one and no promoted pair does -- the agent strips them -- so it compares each pair's SQL with its whole fenced block instead.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` `:v5_4` (amd64, arm64); `nl2sql-desktop-build:v5_4-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-01 UTC).
+
+### After publishing
+In the checkout, not in the `v5_4` images: tests and documentation, and in
+`agent/` and `review/` nothing but comments and an `except` that re-raised,
+so no behaviour changed and no tag was needed.
+- Coverage exclusions: the README said one statement was excluded, and eight
+  were. Seven `# pragma: no cover` lines came out of
+  `review/nl2sql_review/app.py`, `promote.py`,
+  `agent/nl2sql_agent/completeness.py` and `api/feedback.py`. Six paths are
+  tested now: a submission deleted by another reviewer while it was being
+  judged or reopened, a loader whose interpreter cannot be started, the
+  feedback sink's real connection, and pglast failing to print or walk a
+  statement it parsed. The seventh was `except ModuleNotFoundError: raise`,
+  which did nothing, and was removed.
+- `tests/docs/test_docs.py` -- the check that every agent setting is
+  documented matched two of `config.py`'s readers and saw 32 of its 60
+  settings. It reads all of them now, and is held to every upper-case name
+  `config.py` passes to a call. `rag/README.md`'s test count is checked.
+- `tests/docker/test_compose_config.py` -- the agent's compose settings are
+  checked in the other direction too, as every other service's already were.
+- `tests/docker/test_launch_script.py`, `test_setup_script.py` -- the review
+  interface's proxy test asserts the request it is named for; a test whose
+  only assertion another test makes is removed.
+- `tests/review/test_app.py` -- a row deleted mid-request is deleted, so the
+  fake repository answers as the real one would, rather than the method being
+  replaced with one that returns nothing.
+- `README.md`, `rag/README.md` -- the console interface's suite in Coverage,
+  the review interface's 155 tests where it still said 128, `rag/`'s 281 where
+  it said 265, the test counts and this pass.
+
+---
+
+## v5_3 (5.3.0) -- 2026-09-28
+
+The SQL console: the retail database, queried the way the agent queries it,
+for working out why an answer was wrong. A third process from the agent's
+image, `python -m nl2sql_agent.console`, runs a query as the agent's read-only
+role, in a read-only transaction, under the agent's statement timeout,
+through the agent's own static validator and planner gate -- and says beside
+the rows or the plan which gate would have refused it, in that gate's words,
+against which limit. A third React/TypeScript interface, served by its own
+nginx on this machine only, puts in one page the schema as the agent's
+introspection reads it, the block of the agent's prompt for each table, three
+ways to run a query -- Run, Plan, Analyze -- and the queries run before.
+`start.sh --console`, `launch.sh --console` and `setup.sh --console` bring it
+up. The pipeline is v5.2's.
+
+### Created
+- `agent/nl2sql_agent/console/` -- the SQL console:
+  - `query.py` -- the Inspector: the agent's validator twice (for safety, then with the whole schema as scope), `EXPLAIN` judged by the planner gate's own functions, the query read through a server-side cursor inside `READ ONLY` and the agent's timeout, and the verdict; the `plan` and `analyze` modes;
+  - `app.py`, `models.py` -- `/v1/meta`, `/v1/schema`, `/v1/schema/{table}/prompt` and `POST /v1/query`, with the API's error envelope and readiness;
+  - `settings.py`, `server.py`, `__main__.py` -- `CONSOLE_*`, the six agent settings it runs under, the API's certificate presented rather than generated, and the banner.
+- `console/` -- the interface (React/TypeScript), a separate npm project and image from the other two:
+  - `App.tsx`, `SchemaBrowser`, `SqlEditor`, `Verdict`, `ResultTable`, `PlanView`, `PromptView`, `History`, `StatusBar`;
+  - `api/client.ts`, `api/types.ts`, `api/plan.ts`, `api/format.ts`, `api/history.ts`;
+  - `Dockerfile`, `nginx.conf.template`, `10-nl2sql-console-config.envsh`, `README.md`, and its own suite in `console/test/`.
+- Tests: `tests/console/` -- `test_query.py`, `test_app.py`, `test_settings.py`, `test_server.py`, `test_console_live.py`, `test_console_compose.py`, `test_console_container.py`, `test_console_project.py`, `test_console_gui_contract.py`, `test_console_gui_suite.py`.
+
+### Updated
+- `agent/nl2sql_agent/database.py`, `graph.py` -- the planner gate's cost judgement moved into `plan_cost_problem` and `total_cost` made public, so the gate and the console read one function; `Database.engine` for a caller that runs statements of its own. The agent's behaviour is unchanged.
+- `docker-compose.yml`:
+  - `console` and `consolegui` services (profiles `console`, `consolegui`), their ports published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise;
+  - the agent's `DATABASE_URL` and `MAX_PLAN_COST` anchored, so the console reads the same values;
+  - `nl2sql-console` in `API_TLS_HOSTNAMES`.
+- `start.sh`, `launch.sh`, `setup.sh` -- `--console`, and `setup.sh --console-gui-image` and `--console-gui-tag`. `launch.sh`'s proxy repair is given the container's name rather than deriving it, which only worked for the first two interfaces.
+- `tests/docker/` -- the fake `docker` answers for the console's containers; the three scripts' `--console` paths; the inventories name the console's Dockerfile, services and start-up script; `test_published_images.py` asks for the console's interface too.
+- `tests/docs/` -- `console/README.md` held to the console's settings, defaults, routes, error codes and flags; the new project's version declarations and lockfile.
+- `.gitignore`, `.dockerignore` -- the console's `node_modules`, `dist` and `coverage`.
+- `README.md`, `agent/USAGE.md`, `gui/README.md`, `desktop/README.md` -- the SQL console, a `v5_3` row in the tag table, the tags, test counts and coverage.
+- Version 5.3.0 in every declaration; `setup.sh` pins `v5_3`.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui` `:v5_3`; `nl2sql-console-gui:v5_3` -- first publish; all amd64 and arm64. `nl2sql-desktop-build:v5_3-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-09-29 UTC).
 
 ---
 

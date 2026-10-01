@@ -29,9 +29,18 @@ verdict has one way forward:
 The golden set is what the agent is measured against, so a wrong or
 incomplete answer never reaches it, however well it is fixed; and a fix is
 stored only if the query runs, which `/fix` checks again for itself rather
-than taking the browser's word for it. Promotion and fixing are the only
-steps with consequences outside the staging database, and they are the only
-ones that are POSTs to a named action rather than a field on a PATCH.
+than taking the browser's word for it.
+
+A judgement can be taken back (since 5.4). `/reopen` puts a submission back
+in the queue and `DELETE` removes it -- and when it had been promoted or
+fixed, either one takes the pair back out of the question document, or the
+fix out of its store, first. The queue and what it produced are never
+allowed to disagree: a reopened submission that was still in the golden set
+would be promoted into it a second time.
+
+Promotion, fixing, reopening and deleting are the only steps with
+consequences outside the staging database, and none of them is a field on a
+PATCH: each is its own action.
 """
 
 from __future__ import annotations
@@ -95,15 +104,17 @@ from .models import (
     StepModel,
     SubmissionList,
     SubmissionModel,
+    UndoModel,
     ValidateRequest,
     ValidationModel,
+    WithdrawalModel,
 )
 from .promote import PromotionError
 from .render import Draft
 from .settings import ReviewSettings
 from .store import STATES, VERDICTS, Repository, Submission
 
-__version__ = "5.2.0"
+__version__ = "5.4.0"
 
 #: What each verdict's submissions are for, in the words a refusal uses.
 #: `yes` is promoted into the golden set; the other two are fixed into the
@@ -216,11 +227,12 @@ def create_app(
     validator: Callable[[str, str], validation_module.Validation] | None = None,
     embedder_factory: Callable[[], Any] | None = None,
     retail_pinger: Callable[[], None] | None = None,
+    withdrawer: Callable[[ReviewSettings, str], promotion_module.Withdrawal] | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
-    `promoter` and `previewer` are separated from the repository because they
-    are the two things that touch the filesystem. A test that wants to prove
+    `promoter`, `previewer` and `withdrawer` are separated from the repository
+    because they are the three things that touch the filesystem. A test that wants to prove
     the routes behave when a promotion fails should not have to arrange for a
     real markdown file to be unwritable. The fix path is split the same way:
     the two stores, the validator that runs SQL against the retail database,
@@ -231,6 +243,7 @@ def create_app(
     repo = repository if repository is not None else Repository(config.feedback_db_url)
     do_promote = promoter or promotion_module.promote
     do_preview = previewer or promotion_module.preview
+    do_withdraw = withdrawer or promotion_module.withdraw
     stores = fix_stores if fix_stores is not None else {
         CORRECTIONS.slug: FixStore(CORRECTIONS, config.corrections_db_url),
         COMPLETIONS.slug: FixStore(COMPLETIONS, config.completions_db_url),
@@ -267,7 +280,7 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(config.cors_origins),
             allow_credentials="*" not in config.cors_origins,
-            allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type", "X-API-Key"],
         )
 
@@ -409,6 +422,8 @@ def create_app(
                 "promote": "POST /v1/submissions/{id}/promote",
                 "validate": "POST /v1/submissions/{id}/validate",
                 "fix": "POST /v1/submissions/{id}/fix",
+                "reopen": "POST /v1/submissions/{id}/reopen",
+                "delete": "DELETE /v1/submissions/{id}",
                 "fixes": "/v1/fixes/{corrections|completions}",
                 "golden": "/v1/golden",
                 "promotions": "/v1/promotions",
@@ -575,14 +590,16 @@ def create_app(
                 HTTP_409_CONFLICT,
                 "already_promoted",
                 f"{submission_id} is already in the golden set as "
-                f"{found.promoted_pair_id}; its record is not editable",
+                f"{found.promoted_pair_id}; reopen it (POST /v1/submissions/{{id}}/reopen), "
+                "which takes the pair back out, to change it",
             )
         if found.state == "corrected":
             raise ReviewHTTPError(
                 HTTP_409_CONFLICT,
                 "already_fixed",
                 f"{submission_id} is already fixed as {found.promoted_pair_id}; "
-                "its record is not editable",
+                "reopen it (POST /v1/submissions/{id}/reopen), which deletes the fix, "
+                "to change it",
             )
         updated = repo.review(
             submission_id,
@@ -591,7 +608,7 @@ def create_app(
             review_note=body.review_note,
             draft=body.draft.model_dump() if body.draft is not None else None,
         )
-        if updated is None:  # pragma: no cover - the row was deleted mid-request
+        if updated is None:  # deleted by another reviewer since it was read
             raise ReviewHTTPError(
                 HTTP_404_NOT_FOUND, "not_found", f"no submission {submission_id}"
             )
@@ -697,6 +714,99 @@ def create_app(
             pairs_after=result.pairs_after,
             reloaded=result.reloaded,
             steps=[StepModel(**step.__dict__) for step in result.steps],
+        )
+
+    # --- taking a judgement back ------------------------------------------------
+
+    def _withdraw(found: Submission) -> tuple[WithdrawalModel | None, dict[str, Any] | None]:
+        """Take back out whatever this submission produced, before its row changes.
+
+        Returns what came out, and the draft the submission should carry if it
+        is reopened: the pair as the document held it, or the fix's SQL --
+        the work, kept. Done before the row is touched, so a failure here
+        leaves everything as it was, and a failure after it is healed by
+        trying again: the pair or the fix is then simply not found.
+        """
+        if found.state == "promoted":
+            try:
+                result = do_withdraw(config, found.promoted_pair_id or "")
+            except PromotionError as exc:
+                raise ReviewHTTPError(
+                    HTTP_422_UNPROCESSABLE, "not_withdrawable", "; ".join(exc.reasons)
+                ) from exc
+            model = WithdrawalModel(
+                kind="golden",
+                id=result.pair_id,
+                found=result.found,
+                document=result.document,
+                backup=result.backup,
+                pairs_before=result.pairs_before,
+                pairs_after=result.pairs_after,
+                reloaded=result.reloaded,
+                steps=[StepModel(**step.__dict__) for step in result.steps],
+            )
+            return model, result.draft.as_dict() if result.draft is not None else None
+        if found.state == "corrected":
+            kind = KINDS[found.verdict]
+            try:
+                removed = stores[kind.slug].delete(found.id)
+            except Exception as exc:  # noqa: BLE001 - reported, and nothing was changed
+                raise ReviewHTTPError(
+                    HTTP_503_SERVICE_UNAVAILABLE,
+                    "unavailable",
+                    f"the {kind.slug} store could not be written: {type(exc).__name__}: {exc}",
+                ) from exc
+            model = WithdrawalModel(
+                kind=kind.slug, id=found.promoted_pair_id or "", found=removed is not None
+            )
+            return model, {"sql_code": removed.corrected_sql} if removed is not None else None
+        return None, None
+
+    @app.post(
+        "/v1/submissions/{submission_id}/reopen",
+        tags=["submissions"],
+        response_model=UndoModel,
+        dependencies=guarded,
+        summary="Put a submission back in the queue, taking out what it produced",
+        responses={
+            HTTP_404_NOT_FOUND: {"model": ApiError},
+            HTTP_409_CONFLICT: {"model": ApiError},
+            HTTP_422_UNPROCESSABLE: {"model": ApiError},
+            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
+        },
+    )
+    def reopen_submission(submission_id: str) -> UndoModel:
+        found = _require(submission_id)
+        if found.state == "pending":
+            raise ReviewHTTPError(
+                HTTP_409_CONFLICT,
+                "already_pending",
+                f"{submission_id} is already pending; there is nothing to reopen",
+            )
+        withdrawn, draft = _withdraw(found)
+        reopened = repo.reopen(submission_id, draft=draft)
+        if reopened is None:  # deleted by another reviewer since it was read
+            raise ReviewHTTPError(HTTP_404_NOT_FOUND, "not_found", f"no submission {submission_id}")
+        return UndoModel(action="reopened", submission=_to_model(reopened), withdrawn=withdrawn)
+
+    @app.delete(
+        "/v1/submissions/{submission_id}",
+        tags=["submissions"],
+        response_model=UndoModel,
+        dependencies=guarded,
+        summary="Delete a submission for good, taking out what it produced",
+        responses={
+            HTTP_404_NOT_FOUND: {"model": ApiError},
+            HTTP_422_UNPROCESSABLE: {"model": ApiError},
+            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
+        },
+    )
+    def delete_submission(submission_id: str) -> UndoModel:
+        found = _require(submission_id)
+        withdrawn, _ = _withdraw(found)
+        deleted = repo.delete(submission_id)
+        return UndoModel(
+            action="deleted", submission=_to_model(deleted or found), withdrawn=withdrawn
         )
 
     # --- fixing a wrong or incomplete answer --------------------------------

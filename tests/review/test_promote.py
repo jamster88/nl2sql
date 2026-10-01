@@ -21,6 +21,8 @@ from nl2sql_review.render import Draft
 
 from ragproc import golden_pairs as gp
 
+from .conftest import BASE_PAIRS, NEXT_ID, pair_after
+
 
 # ---------------------------------------------------------------------------
 # The happy path, measured against the real document
@@ -31,14 +33,14 @@ def test_a_pair_is_added_and_the_document_still_parses(settings, draft, document
     before = len(gp.parse_document(document))
     result = promotion.promote(settings, draft)
 
-    assert result.pair_id == "Q46"
-    assert result.chunk_id == "eval:q46"
-    assert (before, result.pairs_after) == (45, 46)
+    assert result.pair_id == NEXT_ID
+    assert result.chunk_id == f"eval:{NEXT_ID.lower()}"
+    assert (before, result.pairs_after) == (BASE_PAIRS, BASE_PAIRS + 1)
 
     pairs = gp.parse_document(document)
     assert len(pairs) == before + 1
     added = pairs[-1]
-    assert added.pair_id == "Q46"
+    assert added.pair_id == NEXT_ID
     assert added.question == draft.question
     assert added.sql_code == draft.sql_code
     assert added.keyword_list == ["net sales", "produce", "department", "fiscal year"]
@@ -59,8 +61,8 @@ def test_a_second_promotion_takes_the_next_id(settings, draft, document):
     promotion.promote(settings, draft)
     second = replace(draft, question="How many stores are in the Tristate Metro region?")
     result = promotion.promote(settings, second)
-    assert result.pair_id == "Q47"
-    assert len(gp.parse_document(document)) == 47
+    assert result.pair_id == pair_after(NEXT_ID)
+    assert len(gp.parse_document(document)) == BASE_PAIRS + 2
 
 
 def test_the_written_pair_is_the_markdown_that_was_reported(settings, draft, document):
@@ -152,13 +154,13 @@ def test_a_render_that_adds_a_second_pair_is_caught(settings, draft, monkeypatch
         lambda text, value, pair_id: original(text, value, pair_id)
         + original("", replace(value, title="stowaway"), "Q47"),
     )
-    with pytest.raises(PromotionError, match="not 46"):
+    with pytest.raises(PromotionError, match=f"not {BASE_PAIRS + 1}"):
         promotion.promote(settings, draft)
 
 
 def test_a_render_that_produces_nothing_parseable_is_caught(settings, draft, monkeypatch):
     monkeypatch.setattr(promotion.render, "append_pair", lambda text, value, pair_id: text)
-    with pytest.raises(PromotionError, match="not 46"):
+    with pytest.raises(PromotionError, match=f"not {BASE_PAIRS + 1}"):
         promotion.promote(settings, draft)
 
 
@@ -171,14 +173,14 @@ def test_preview_returns_the_block_without_writing(settings, draft, document):
     before = document.read_text()
     pair_id, markdown, problems = promotion.preview(settings, draft)
 
-    assert (pair_id, problems) == ("Q46", [])
-    assert markdown.startswith("## Q46 - ")
+    assert (pair_id, problems) == (NEXT_ID, [])
+    assert markdown.startswith(f"## {NEXT_ID} - ")
     assert document.read_text() == before
 
 
 def test_preview_reports_problems_instead_of_a_block(settings):
     pair_id, markdown, problems = promotion.preview(settings, Draft(title="t"))
-    assert (pair_id, markdown) == ("Q46", "")
+    assert (pair_id, markdown) == (NEXT_ID, "")
     assert problems
 
 
@@ -287,8 +289,8 @@ def test_a_failed_reload_does_not_un_write_the_pair(settings, draft, document, m
     # The document is the source of truth and it is already correct. Rolling
     # it back because a downstream store did not rebuild would be undoing
     # the part that worked.
-    assert result.pair_id == "Q46"
-    assert len(gp.parse_document(document)) == 46
+    assert result.pair_id == NEXT_ID
+    assert len(gp.parse_document(document)) == BASE_PAIRS + 1
     assert result.reloaded is False
 
 
@@ -299,6 +301,20 @@ def test_a_loader_that_hangs_is_given_up_on(settings, draft, monkeypatch):
     monkeypatch.setattr(promotion.subprocess, "run", timeout)
     result = promotion.promote(replace(settings, reload_context=True), draft)
     assert "timed out" in result.steps[0].detail
+
+
+def test_a_loader_that_cannot_be_started_is_a_failed_step_not_a_crash(settings, draft, monkeypatch):
+    """An interpreter that has gone from under the service -- a broken venv,
+    an image rebuilt beneath a running container -- raises rather than exits.
+    The pair is in the document by then, so it is reported, not raised."""
+    def unstartable(argv, **kwargs):
+        raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+    monkeypatch.setattr(promotion.subprocess, "run", unstartable)
+    result = promotion.promote(replace(settings, reload_context=True), draft)
+    assert result.pair_id == NEXT_ID
+    assert (result.steps[0].ran, result.steps[0].ok) == (True, False)
+    assert "No such file or directory" in result.steps[0].detail
 
 
 def test_a_missing_loader_script_is_named(settings, draft, tmp_path):
@@ -390,3 +406,101 @@ def test_a_render_that_adds_the_wrong_pair_is_caught(settings, draft, monkeypatc
     )
     with pytest.raises(PromotionError, match="not in the reparsed document"):
         promotion.promote(settings, draft)
+
+
+# ---------------------------------------------------------------------------
+# Withdrawing a promoted pair (5.4)
+# ---------------------------------------------------------------------------
+
+
+def test_a_withdrawn_pair_leaves_the_document_as_it_was_before(settings, draft, document):
+    original = document.read_text()
+    promotion.promote(settings, draft)
+    promoted = document.read_text()
+
+    result = promotion.withdraw(settings, NEXT_ID)
+
+    assert document.read_text() == original
+    assert (result.found, result.pairs_before, result.pairs_after) == (True, BASE_PAIRS + 1, BASE_PAIRS)
+    assert Path(result.backup).read_text() == promoted
+    assert result.document == str(document)
+
+
+def test_the_withdrawn_pair_comes_back_as_the_draft_that_would_promote_it(settings, draft):
+    draft.extra_meta = {"source": "feedback"}
+    promotion.promote(settings, draft)
+
+    withdrawn = promotion.withdraw(settings, NEXT_ID).draft
+
+    for name in ("title", "question", "tables", "keywords", "reasoning_target", "sql_code", "result"):
+        assert getattr(withdrawn, name) == getattr(draft, name).strip(), name
+    assert withdrawn.extra_meta == {"source": "feedback"}
+    assert "Promoted from web GUI feedback" in withdrawn.translation_note
+
+
+def test_a_pair_the_document_no_longer_holds_is_reported_not_refused(settings, document):
+    before = document.read_text()
+    result = promotion.withdraw(settings, "Q98")
+    assert (result.found, result.backup, result.draft) == (False, "", None)
+    assert document.read_text() == before
+
+
+def test_the_stores_are_reloaded_after_a_withdrawal_even_of_a_pair_already_gone(settings, monkeypatch):
+    """They follow the document, whoever last edited it."""
+    calls: list[str] = []
+
+    class Done:
+        returncode = 0
+        stdout = "45 rows written, 1 removed"
+        stderr = ""
+
+    monkeypatch.setattr(promotion.subprocess, "run", lambda argv, **kw: (calls.append(Path(argv[1]).name), Done())[1])
+    result = promotion.withdraw(replace(settings, reload_context=True, reload_vectors=True), "Q98")
+
+    assert calls == ["05_load_golden_pairs.py", "06_embed_golden_pairs.py"]
+    assert result.reloaded is True
+
+
+def test_with_both_loaders_off_a_withdrawal_is_not_called_reloaded(settings, draft):
+    promotion.promote(settings, draft)
+    assert promotion.withdraw(settings, NEXT_ID).reloaded is False
+
+
+def test_a_document_that_does_not_parse_is_not_taken_from(settings, draft, document):
+    promotion.promote(settings, draft)
+    broken = document.read_text() + "\n## Q97 - half a pair\n\nnothing else\n"
+    document.write_text(broken)
+
+    with pytest.raises(PromotionError, match="does not parse, so nothing can be taken out"):
+        promotion.withdraw(settings, NEXT_ID)
+    assert document.read_text() == broken
+
+
+def test_a_removal_that_would_change_another_pair_is_refused(settings, draft, document, monkeypatch):
+    promotion.promote(settings, draft)
+    before = document.read_text()
+    original = promotion.render.remove_pair
+    monkeypatch.setattr(
+        promotion.render,
+        "remove_pair",
+        lambda text, pair_id: original(text, pair_id).replace('**Question:** "', '**Question:** "Edited: ', 1),
+    )
+
+    with pytest.raises(PromotionError, match="would change other pairs as well"):
+        promotion.withdraw(settings, NEXT_ID)
+    assert document.read_text() == before
+
+
+def test_a_removal_that_would_break_the_document_is_refused(settings, draft, document, monkeypatch):
+    promotion.promote(settings, draft)
+    before = document.read_text()
+    original = promotion.render.remove_pair
+    monkeypatch.setattr(
+        promotion.render,
+        "remove_pair",
+        lambda text, pair_id: original(text, pair_id) + "\n## Q97 - stowaway heading\n",
+    )
+
+    with pytest.raises(PromotionError, match="would leave a document that does not parse"):
+        promotion.withdraw(settings, NEXT_ID)
+    assert document.read_text() == before

@@ -39,6 +39,7 @@ reviewer ──nginx──▶ review service ──owner──────┘
 - [The fence around the public process](#the-fence-around-the-public-process)
 - [Promotion](#promotion)
 - [Fixing a wrong or incomplete answer](#fixing-a-wrong-or-incomplete-answer)
+- [Changing your mind](#changing-your-mind)
 - [Running it](#running-it)
 - [Endpoints](#endpoints)
 - [Configuration](#configuration)
@@ -298,8 +299,9 @@ that matches nothing, and only the reviewer knows which.
 | `user_comment`, `reviewer`, `review_note`, `agent_version`, `submission_id`, `job_id`, `created_at` | Where it came from, and who fixed it |
 
 The staging row moves to the state **`corrected`** and records the fix id
-where a promoted one records its pair id. A corrected submission is history:
-it cannot be edited, fixed a second time, or promoted. If a save stores its
+where a promoted one records its pair id. A corrected submission cannot be
+edited, fixed a second time, or promoted -- to change it, it is
+[put back to pending](#changing-your-mind), which deletes the fix. If a save stores its
 record and then loses the connection before the staging row is marked, the
 next attempt finds the record, marks the row, and answers `already_fixed`
 rather than storing it twice.
@@ -334,6 +336,55 @@ Each store's schema is created on start by this service, so a fresh volume
 needs nothing run by hand. Either store being down does not stop the
 service: `/readyz` answers 503 and names which one, and only a fix into that
 store is refused -- promotion and the other store carry on.
+
+## Changing your mind
+
+A judgement can be taken back (5.4). Under every submission in the interface
+is **Change this review**, with two actions:
+
+| | What it does | Asks first? |
+| --- | --- | --- |
+| **Back to pending** | Puts the submission back in the queue, unjudged. The reviewer and the note are kept, as the history of who looked at it last and why | Only when it had been promoted or fixed |
+| **Delete** | Removes the submission from the staging database for good | Always |
+
+Neither is a plain state change when the submission had been acted on. The
+queue and what it produced are never allowed to disagree -- a reopened
+submission whose pair was still in the golden set would be promoted into it a
+second time -- so both take it back out first:
+
+| It had been | Back to pending, or Delete, first |
+| --- | --- |
+| **promoted** | Takes its pair out of `context_questions/translated_questions.md` -- the previous version kept beside it as `.bak`, as a promotion keeps one -- and reloads both stores, whose loaders drop a pair the document no longer holds. Its promotion log entry goes too. Reopened, the submission gets the pair back **as its draft**, exactly as the document held it, hand edits included |
+| **corrected** | Deletes its fix from the corrections or completions store; its vector goes with it, by the vector table's `ON DELETE CASCADE`. Reopened, the submission gets the corrected SQL back in the query editor, ready to edit rather than retype |
+| accepted, rejected or pending | Nothing else: nothing was produced |
+
+Taking a pair out is held to the standard putting one in is. The candidate
+document is parsed with the loader's own parser before it is written, and has
+to have lost exactly that pair and changed **no other** -- every remaining
+pair is compared field by field, because a removal that ate the start of the
+next pair would leave the count right and that pair broken. The block goes
+from its `## Qnn -` heading to the next heading, so a pair taken off the end
+leaves the document exactly as it was before the pair was added; a suite
+heading written for the pair, with no other pair under it, goes too.
+
+The order is chosen so a failure costs nothing: the pair or the fix comes out
+first, then the staging row changes. A document the parser will not let go
+of (`not_withdrawable`), or a fix store that cannot be reached
+(`unavailable`), refuses the whole thing and changes nothing. A failure
+*after* the pair or fix is out heals on the next attempt, which finds it
+already gone -- and so does a pair or fix someone removed by hand: it is
+reported as not found, not as an error.
+
+Two consequences worth knowing:
+
+- **A pair id can be given out again.** The next promotion takes the id after
+  the highest one in the document, so taking out the highest pair frees its
+  number. The stores are reloaded in between, so nothing ever holds two
+  pairs under one id.
+- **A reopened submission is the voter's again.** Pending is pending: the
+  row-level policies hand it back to the public process, so the person who
+  voted can change their vote again, exactly as they could before anyone
+  looked at it.
 
 ## Running it
 
@@ -389,6 +440,8 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `GET` | `/v1/submissions` | yes | The queue. `?state=` `?verdict=` `?limit=` `?offset=` |
 | `GET` | `/v1/submissions/{id}` | yes | One submission, with a seeded draft if it has none |
 | `PATCH` | `/v1/submissions/{id}` | yes | Accept, reject, or save a draft |
+| `POST` | `/v1/submissions/{id}/reopen` | yes | Back to pending, taking a promoted pair or a stored fix back out first |
+| `DELETE` | `/v1/submissions/{id}` | yes | Remove it for good, taking a promoted pair or a stored fix back out first |
 | `POST` | `/v1/submissions/{id}/preview` | yes | The markdown a draft would add, without writing |
 | `POST` | `/v1/submissions/{id}/promote` | yes | Write the pair into the golden set. Correct answers only |
 | `POST` | `/v1/submissions/{id}/validate` | yes | Run a corrected query against the live retail database. Wrong and incomplete answers only |
@@ -397,11 +450,17 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `GET` | `/v1/golden` | yes | The set as the document holds it |
 | `GET` | `/v1/promotions` | yes | What has been promoted, newest first |
 
-`promote` and `fix` are the only calls with a consequence outside this
-service's staging database, and they are POSTs to named actions rather than
-fields on a `PATCH`. That is what stops a form which saves as you type from
-writing the golden question set or a fix store. `validate` is a POST too,
-but it changes nothing: its transaction is read-only and rolled back.
+`promote`, `fix`, `reopen` and `DELETE` are the only calls with a
+consequence outside this service's staging database, and none of them is a
+field on a `PATCH`. That is what stops a form which saves as you type from
+writing the golden question set or a fix store, or taking anything out of
+either. `validate` is a POST too, but it changes nothing: its transaction is
+read-only and rolled back.
+
+`reopen` and `DELETE` answer with what they did: the submission (as it is
+now, or as it was), and `withdrawn` -- which pair or fix came out, whether it
+was found, and for a pair the counts, the backup and the reload, as a
+promotion reports them.
 
 `state` cannot be set to `promoted` or `corrected` through `PATCH`. They are
 things that happen, not things that are set; setting one by hand would mark
@@ -415,14 +474,16 @@ The error envelope is the agent API's, so one client parses both:
 | --- | --- | --- |
 | `invalid_request` | 422 | The body or query string is wrong |
 | `unauthorized` | 401 | Missing or wrong token |
-| `not_found` | 404 | No such submission |
-| `already_promoted` | 409 | It is in the golden set; the record is not editable |
-| `already_fixed` | 409 | It is in a fix store; the record is not editable and is not fixed twice |
+| `not_found` | 404 | No such submission -- including one another reviewer deleted while this request was judging or reopening it |
+| `already_promoted` | 409 | It is in the golden set; reopen it to change it |
+| `already_fixed` | 409 | It is in a fix store; reopen it to change it. It is not fixed twice |
+| `already_pending` | 409 | Reopening something nobody has judged |
 | `rejected` | 409 | Accept it before promoting or fixing it |
 | `wrong_workflow` | 409 | Promoting a wrong or incomplete answer, or validating or fixing a correct one |
 | `not_promotable` | 422 | The draft cannot become a pair. Every reason, not the first |
 | `not_valid` | 422 | The corrected query did not pass validation. Every reason, not the first |
-| `unavailable` | 503 | The fix store could not be written or read |
+| `not_withdrawable` | 422 | Taking the pair out would leave a document the loader cannot read, or change another pair. Nothing was changed |
+| `unavailable` | 503 | A fix store could not be written or read. Nothing was changed |
 
 ## Configuration
 
@@ -534,11 +595,18 @@ reason it did not. The save button is enabled only while the editor holds
 exactly the text that last passed. The status bar counts what each fix
 store holds.
 
+Beneath every submission, **Change this review** puts it back to pending or
+deletes it -- [Changing your mind](#changing-your-mind) has what each does
+to a promoted or fixed one. Anything that reaches past the staging table asks
+first, in the words of the file or store it is about to change, and the
+result is reported the way a promotion's is: what came out, the counts, and
+whether the stores caught up.
+
 ```bash
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 128 tests, 100% coverage
+npm run test     # review GUI: 155 tests, 100% coverage
 ```
 
 ## Tests
@@ -566,6 +634,12 @@ constraint, the embedding catch-up and a nearest-neighbour search.
 The promotion tests use a real copy of the real question document, not a
 miniature stand-in. The whole contract is a bet that a rendered pair survives
 the loader's parser, and that bet is only worth anything against the file the
-loader actually reads: 45 pairs, 25 suites, prose between them, and a
-`## How to read a pair` heading that is not a pair and must not be counted as
-one.
+loader actually reads: the original 45 pairs and whatever has been promoted
+since, 25 suites, prose between them, and a `## How to read a pair` heading
+that is not a pair and must not be counted as one. How many pairs there are,
+and the id the next promotion takes, are read from the copy rather than
+written into the tests: the document is the live golden set, and the tests
+used to fail for the first person who promoted anything through the review
+interface. Withdrawal is tested against the same copy, taking out a pair
+just promoted, one between two others, and one of the original pairs between
+`---` separators.

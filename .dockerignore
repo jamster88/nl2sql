@@ -7,8 +7,8 @@ __pycache__
 .DS_Store
 
 # The GUIs' build inputs and outputs. node_modules alone is over four
-# thousand files and a hundred megabytes *each*, and both images install
-# their own from the lockfile -- so sending them is a hundred megabytes
+# thousand files and a hundred megabytes *each*, and every image installs
+# its own from the lockfile -- so sending them is a hundred megabytes
 # uploaded to the daemon to be thrown away.
 gui/node_modules
 gui/dist
@@ -16,6 +16,9 @@ gui/coverage
 review/gui/node_modules
 review/gui/dist
 review/gui/coverage
+console/node_modules
+console/dist
+console/coverage
 
 # The desktop client's build output: a jar of about ten megabytes, built from
 # the sources beside it.

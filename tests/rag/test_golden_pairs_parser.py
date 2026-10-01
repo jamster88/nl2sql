@@ -11,6 +11,7 @@ No database and no embedding model: the parser is pure text.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -27,7 +28,10 @@ pytest.importorskip("psycopg", reason="rag/requirements.txt not installed")
 
 from ragproc.golden_pairs import GoldenPair, parse_document, parse_meta  # noqa: E402
 
-EXPECTED_PAIRS = 45
+#: How many pairs the golden question document holds. Read from it rather
+#: than written down as 45: the document is the live golden set, and every
+#: promotion made through the review interface grows it.
+EXPECTED_PAIRS = len(re.findall(r"^## Q\d{2} - ", DOCUMENT.read_text(), re.M))
 
 # The eight columns the pairs are loaded into, as the task specifies them.
 REQUIRED_FIELDS = (
@@ -61,12 +65,21 @@ def test_chunk_ids_are_unique_and_namespaced(pairs):
 def test_the_sql_is_captured_whole_and_without_its_fence(pairs):
     """A fence left in, or SQL cut short at one, would be invisible in the
     database and fatal as an example.
+
+    Whole means the entire fenced block, read here with a split rather than
+    the parser's expression. It used to mean "ends with a semicolon", which
+    every hand-written pair does and no pair promoted from the agent's SQL
+    ever has -- the agent strips them -- so the check failed on the first
+    promotion while proving nothing the block comparison does not.
     """
+    text = DOCUMENT.read_text()
     for pair in pairs:
         assert "```" not in pair.sql_code, f"{pair.pair_id} kept a fence"
         upper = pair.sql_code.upper()
         assert upper.startswith(("SELECT", "WITH")), f"{pair.pair_id} does not start a query"
-        assert pair.sql_code.rstrip().endswith(";"), f"{pair.pair_id} looks truncated"
+        section = text.split(f"## {pair.pair_id} - ", 1)[1]
+        block = section.split("```sql\n", 1)[1].split("\n```", 1)[0]
+        assert pair.sql_code == block.strip(), f"{pair.pair_id} is not its whole SQL block"
 
 
 def test_the_question_is_captured_without_its_surrounding_quotes(pairs):

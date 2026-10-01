@@ -5,11 +5,44 @@ What each version added, updated or fixed, one line per change, newest first.
 each version created, updated or fixed.
 
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
-The app images -- agent, web interface, review service, review interface and
-the desktop client's jar -- are released together at one number. The three
+The app images -- agent, web interface, review service, review interface, the
+SQL console's interface and the desktop client's jar -- are released together
+at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v5_4 (5.4.0) -- 2026-09-30
+
+**Added**
+- In the review interface, any submission can be put back to pending or deleted.
+- A promoted pair comes back out of the golden set with it, checked by the loader's parser, the previous document kept and both stores reloaded.
+- A stored fix is deleted from its store with its vector.
+- A reopened submission keeps its work: the pair as its draft, or the corrected SQL in the query editor.
+
+**Updated**
+- All ten app image tags published as `v5_4`.
+
+**Fixed**
+- Tests across the review service, the RAG loaders and the agent failed once anything had been promoted, because they pinned the golden set at 45 pairs or expected every pair's SQL to end in a semicolon.
+
+**After publishing** (tests and documentation; no behaviour change, no new tag)
+- Seven paths the coverage report had been told to skip are tested, or removed where they did nothing.
+- The agent's settings are checked against its README in full, and against compose in both directions.
+- Stale test counts in the READMEs corrected, and the console interface's suite added to Coverage.
+
+## v5_3 (5.3.0) -- 2026-09-28
+
+**Added**
+- The SQL console: the retail database queried as the agent's read-only role, under its limits and through its own validator and planner gate, with each gate's verdict beside the rows.
+- Run, Plan (exactly the agent's planner gate) and Analyze (a timed run), the schema as the agent's introspection reads it, and the block of the agent's prompt for each table.
+- The console's interface, a third React/TypeScript page and image, published on this machine only unless asked otherwise.
+- `start.sh --console`, `launch.sh --console` and `setup.sh --console`.
+
+**Updated**
+- The planner gate's cost judgement is one function the gate and the console share; the agent behaves as before.
+- The API's development certificate covers `nl2sql-console`.
+- All ten app image tags published as `v5_3`, the console's interface for the first time.
 
 ## v5_2 (5.2.0) -- 2026-09-28
 

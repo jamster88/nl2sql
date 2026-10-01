@@ -1988,3 +1988,106 @@ ORDER BY line.sale_type;
 **Translation note:** 'Beverages' is a department here, not a category. The original grouped by the CASE expression while filtering on a category of the same name, so it would have returned nothing.
 
 ---
+
+## Q46 - How many stores does each banner operate
+
+```meta
+chunk_id: eval:q46
+type: golden pair
+tables: dim_store, dim_competitor, dim_promotion, dim_product, fact_competitor_pricing, fact_ad_performance, fact_promo_performance, fact_pos_retail_sales, fact_market_share_weekly, dim_geography
+keywords: stores, banner
+```
+
+**Question:** "How many stores does each banner operate?"
+
+**Reasoning target:** this tests the number of stores under each banner
+
+```sql
+SELECT store.banner_name,
+       COUNT(DISTINCT store.store_id) AS store_count
+FROM dim_store store
+GROUP BY store.banner_name
+ORDER BY store_count DESC, store.banner_name
+```
+
+**Result:** table of banners with the number of stores in each banner
+
+**Translation note:** Promoted from web GUI feedback; the SQL is the answer the agent produced and a reviewer confirmed.
+
+## Q47 - What were our net sales by state in fiscal year 2025
+
+```meta
+chunk_id: eval:q47
+type: golden pair
+tables: fact_pos_retail_sales, dim_date, fact_market_share_weekly, fact_item_prices, dim_store, fact_ad_performance, dim_product, fact_item_cogs
+keywords: net sales, state, fiscal year
+```
+
+**Question:** "What were our net sales by state in fiscal year 2025?"
+
+**Reasoning target:** net sales per state in fiscal year 2025
+
+```sql
+SELECT store.state_code,
+       ROUND(SUM(sales.net_sales_amt), 2) AS net_sales
+FROM fact_pos_retail_sales sales
+JOIN dim_store store ON store.store_key = sales.store_key
+JOIN dim_date  d     ON d.date_key      = sales.sales_date_key
+WHERE d.fiscal_year = 2025
+GROUP BY store.state_code
+ORDER BY net_sales DESC
+```
+
+**Result:** list of states with the net sales for each state in fiscal year 2025
+
+**Translation note:** Promoted from web GUI feedback; the SQL is the answer the agent produced and a reviewer confirmed.
+
+## Q48 - What are the top 10 product by banner for each of the last two complete fiscal...
+
+```meta
+chunk_id: eval:q48
+type: golden pair
+tables: dim_product, dim_competitor, dim_date, fact_promo_performance, fact_market_share_weekly, dim_promo_calendar, dim_store, fact_competitor_pricing, fact_pos_retail_sales, dim_promotion
+keywords: products, banner, top, fiscal quarters, banner
+```
+
+**Question:** "What are the top 10 product by banner for each of the last two complete fiscal quarters?"
+
+**Reasoning target:** the top 10 items for each banner in each of the last two completed fiscal quarters.
+
+```sql
+SELECT prod.product_name,
+       prod.sku_id,
+       store.banner_name,
+       d.fiscal_quarter,
+       ROUND(SUM(sales.net_sales_amt), 2) AS net_sales
+FROM fact_pos_retail_sales sales
+JOIN dim_product prod ON prod.product_key = sales.product_key
+JOIN dim_store store ON store.store_key = sales.store_key
+JOIN dim_date d ON d.date_key = sales.sales_date_key
+WHERE d.fiscal_quarter IN (SELECT fiscal_quarter
+                           FROM (
+                                 SELECT fiscal_quarter,
+                                        ROW_NUMBER() OVER (ORDER BY fiscal_quarter DESC) AS quarter_rank
+                                 FROM (
+                                       SELECT fiscal_quarter
+                                       FROM dim_date
+                                       WHERE calendar_date >= '2024-04-01'
+                                         AND calendar_date <= '2024-06-30'
+                                       UNION ALL
+                                       SELECT fiscal_quarter
+                                       FROM dim_date
+                                       WHERE calendar_date >= '2024-07-01'
+                                         AND calendar_date <= '2024-09-30'
+                                     ) sub
+                                ) sub2
+                           WHERE quarter_rank <= 2
+                          )
+GROUP BY prod.product_name, prod.sku_id, store.banner_name, d.fiscal_quarter
+ORDER BY store.banner_name, d.fiscal_quarter DESC, net_sales DESC
+LIMIT 10
+```
+
+**Result:** list of items, fiscal quarters, and banners, with the list limited to the top 10 items for each banner in each of the last two completed fiscal quarters.
+
+**Translation note:** Promoted from web GUI feedback; the SQL is the answer the agent produced and a reviewer confirmed.

@@ -17,7 +17,9 @@ import type {
   PromotionModel,
   ReviewMeta,
   SubmissionModel,
+  UndoModel,
   ValidationModel,
+  WithdrawalModel,
 } from "../src/api/types";
 
 export function makeSubmission(overrides: Partial<SubmissionModel> = {}): SubmissionModel {
@@ -204,6 +206,36 @@ export function fakeClient(overrides: Partial<Client> = {}): Client {
     validate: vi.fn().mockResolvedValue(makeValidation()),
     fix: vi.fn().mockResolvedValue(makeFixResult()),
     fixes: vi.fn().mockResolvedValue({ kind: "corrections", fixes: [], count: 0 }),
+    reopen: vi.fn().mockResolvedValue(makeUndo()),
+    remove: vi.fn().mockResolvedValue(makeUndo({ action: "deleted" })),
+    ...overrides,
+  };
+}
+
+/** A promoted pair taken back out, as the service reports it. */
+export function makeWithdrawal(overrides: Partial<WithdrawalModel> = {}): WithdrawalModel {
+  return {
+    kind: "golden",
+    id: "Q46",
+    found: true,
+    document: "/app/context_questions/translated_questions.md",
+    backup: "/app/context_questions/translated_questions.md.bak",
+    pairs_before: 46,
+    pairs_after: 45,
+    reloaded: true,
+    steps: [
+      { name: "load_golden_pairs", ran: true, ok: true, detail: "45 rows written, 1 removed" },
+      { name: "embed_golden_pairs", ran: true, ok: true, detail: "1 removed" },
+    ],
+    ...overrides,
+  };
+}
+
+export function makeUndo(overrides: Partial<UndoModel> = {}): UndoModel {
+  return {
+    action: "reopened",
+    submission: makeSubmission(),
+    withdrawn: makeWithdrawal(),
     ...overrides,
   };
 }

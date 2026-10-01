@@ -9,7 +9,11 @@
  * gains something the other did not.
  */
 
-/** Where a submission is in its life. `promoted` is terminal. */
+/**
+ * Where a submission is in its life. `promoted` and `corrected` are where the
+ * queue ends; reopening takes the pair or the fix back out and returns it to
+ * `pending`.
+ */
 export type State = "pending" | "accepted" | "rejected" | "promoted" | "corrected";
 
 /**
@@ -245,6 +249,34 @@ export interface FixResultModel {
   submission: SubmissionModel;
   embedded: boolean;
   embed_detail: string;
+}
+
+/**
+ * What reopening or deleting a submission took back out: a pair from the
+ * golden set (`golden`, with the counts and the reload a promotion reports)
+ * or a fix from its store. `found: false` means it was already gone --
+ * removed by hand -- and there was nothing to take out.
+ */
+export interface WithdrawalModel {
+  kind: "golden" | FixKind;
+  id: string;
+  found: boolean;
+  document: string;
+  backup: string;
+  pairs_before: number;
+  pairs_after: number;
+  /** For `golden`: whether both stores were rebuilt from the document. */
+  reloaded: boolean;
+  steps: StepModel[];
+}
+
+/** A submission reopened or deleted, and what came out with it. */
+export interface UndoModel {
+  action: "reopened" | "deleted";
+  /** As it is now when reopened; as it was when deleted. */
+  submission: SubmissionModel;
+  /** Null when it had produced nothing. */
+  withdrawn: WithdrawalModel | null;
 }
 
 export interface ReviewMeta {

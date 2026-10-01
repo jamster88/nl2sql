@@ -29,6 +29,45 @@ file where a file is new; the tests a version merely extended are summarised.
 
 ---
 
+## v5_4 (5.4.0) -- 2026-09-30
+
+A judgement in the review interface can be taken back. Every submission can
+be put back to pending or deleted, and when it had been acted on, what it
+produced comes out with it: a promoted pair is taken back out of
+`context_questions/translated_questions.md` -- checked by the loader's own
+parser to have lost exactly that pair and changed no other, the previous
+version kept beside it, both stores reloaded -- and a fix is deleted from the
+corrections or completions store with its vector. The queue and what it
+produced are never allowed to disagree, so a reopened question cannot be
+promoted into the golden set twice. A reopened submission keeps its work: the
+pair comes back as its draft, the corrected SQL comes back to the query
+editor. The agent, the web interface, the desktop client and the console are
+v5.3's.
+
+### Created
+- `review/gui/src/components/RecordEditor.tsx` -- "Change this review": back to pending, and delete; anything that reaches past the staging table asks first, in the words of the file or store it changes.
+- `review/gui/src/components/Withdrawn.tsx` -- what reopening or deleting did: the pair or fix that came out, the counts, the backup and whether the stores caught up.
+
+### Updated
+- `review/nl2sql_review/app.py`:
+  - `POST /v1/submissions/{id}/reopen` and `DELETE /v1/submissions/{id}`, each taking a promoted pair or a stored fix back out before the row changes, so a failure changes nothing and a failure after it heals on the next attempt;
+  - `already_pending` and `not_withdrawable`; the `already_promoted` and `already_fixed` refusals say how to change one.
+- `review/nl2sql_review/promote.py` -- `withdraw`: promotion in reverse, round-tripped through the loader's parser with every remaining pair compared field by field; the pair as the document held it, as a draft.
+- `review/nl2sql_review/render.py` -- `remove_pair`: the block from its heading to the next, with a suite heading left empty by it; undoes `append_pair` exactly.
+- `review/nl2sql_review/store.py` -- `reopen` and `delete`, each clearing the submission's promotion log entries in the same transaction.
+- `review/nl2sql_review/corrections.py` -- `delete_by_submission`, returning the fix as it was; its vector goes by the existing cascade.
+- `review/nl2sql_review/models.py` -- `WithdrawalModel`, `UndoModel`; `review/gui/src/api/types.ts` mirrors them.
+- `review/gui/src/App.tsx`, `api/client.ts`, `styles.css` -- the editor under every submission, `reopen` and `remove`, a reopened fix's SQL seeded into the query editor.
+- `tests/review/` -- reopen and delete over HTTP, end to end through the real promoter and withdrawal on a copy of the document; `remove_pair` on every layout the document has; `withdraw` refusing what the parser will not accept; both live against Postgres -- the promotion log cleared, a reopened row handed back to the public process, a fix deleted with its vector.
+- `review/README.md`, `README.md` -- changing your mind, the two routes and their errors, a `v5_4` row in the tag table, test counts.
+- Version 5.4.0 in every declaration; `setup.sh` pins `v5_4`.
+
+### Fixed
+- Twenty-four tests pinned the golden set at 45 pairs, with Q46 next, while reading the live document -- so they failed for the first person who promoted anything through the review interface: the review service's (`test_app.py`, `test_promote.py`, `test_render.py`), the RAG loaders' (`test_golden_pairs_parser.py`, `test_pipeline_cli.py`), the agent's live store test and the compose retrieval probe. The count, the suites and the next id are read from the document now.
+- `test_golden_pairs_parser.py` took a SQL block not ending in `;` as truncated. Every hand-written pair ends in one and no promoted pair does -- the agent strips them -- so it compares each pair's SQL with its whole fenced block instead.
+
+---
+
 ## v5_3 (5.3.0) -- 2026-09-28
 
 The SQL console: the retail database, queried the way the agent queries it,

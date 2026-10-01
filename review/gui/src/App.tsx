@@ -20,6 +20,10 @@
  * of it. That they are two panels rather than one form is what stops a
  * curator quietly rewriting the question until it matches the SQL.
  *
+ * Any judgement can be taken back (5.4): a submission can be put back to
+ * pending or deleted, and if it had been promoted or fixed, the pair or the
+ * fix comes back out with it -- see `RecordEditor`.
+ *
  * Every collaborator is a prop with a default, which is what lets the whole
  * interface be tested against a fake client with no service, no database
  * and no network.
@@ -33,7 +37,9 @@ import { Fixed } from "./components/Fixed";
 import { Original } from "./components/Original";
 import { Promoted } from "./components/Promoted";
 import { Queue } from "./components/Queue";
+import { RecordEditor } from "./components/RecordEditor";
 import { StatusBar } from "./components/StatusBar";
+import { Withdrawn } from "./components/Withdrawn";
 import { createClient, type Client } from "./api/client";
 import { missing, toDraft } from "./api/draft";
 import type {
@@ -44,6 +50,7 @@ import type {
   PromotionModel,
   State,
   SubmissionModel,
+  UndoModel,
   ValidationModel,
   Verdict,
 } from "./api/types";
@@ -102,6 +109,7 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [promotion, setPromotion] = useState<PromotionModel | null>(null);
+  const [undo, setUndo] = useState<UndoModel | null>(null);
 
   // --- what the server is ---------------------------------------------
 
@@ -147,16 +155,31 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
     setValidatedSql(null);
     setFixResult(null);
     setPromotion(null);
+    setUndo(null);
     setError(null);
   }, []);
 
   // --- opening one ------------------------------------------------------
+
+  /** A submission as the server has it now, with its draft and fix ready to edit. */
+  const show = useCallback((full: SubmissionModel) => {
+    const seeded = toDraft(full.draft);
+    setSelected(full);
+    setDraft(seeded);
+    setValidation(null);
+    setValidatedSql(null);
+    // A fix starts from what the agent wrote, which the seeded draft carries
+    // -- most fixes are an edit. A reopened fix's draft carries the SQL it
+    // was fixed with instead, so the work is not retyped.
+    setFixSql(seeded.sql_code || full.sql_code);
+  }, []);
 
   const open = useCallback(
     (submission: SubmissionModel) => {
       setError(null);
       setPromotion(null);
       setFixResult(null);
+      setUndo(null);
       setPreview(null);
       setValidation(null);
       setValidatedSql(null);
@@ -168,15 +191,10 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
       // away the seed the moment the user typed.
       client
         .submission(submission.id)
-        .then((full) => {
-          setSelected(full);
-          setDraft(toDraft(full.draft));
-          // A fix starts from what the agent wrote: most are an edit.
-          setFixSql(full.sql_code);
-        })
+        .then(show)
         .catch((cause: unknown) => setError(message(cause)));
     },
-    [client],
+    [client, show],
   );
 
   // --- the preview, which is the only opinion that counts ---------------
@@ -283,6 +301,50 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
     [client, fixSql, reviewer, note, refresh, refreshMeta],
   );
 
+  // --- taking a judgement back ------------------------------------------
+
+  const reopen = useCallback(
+    (submission: SubmissionModel) => {
+      setBusy(true);
+      setError(null);
+      setPromotion(null);
+      setFixResult(null);
+      client
+        .reopen(submission.id)
+        .then((result) => {
+          setUndo(result);
+          refresh();
+          refreshMeta();
+          // Re-fetched for the same reason as opening: the draft comes back seeded.
+          return client.submission(submission.id).then(show);
+        })
+        .catch((cause: unknown) => setError(message(cause)))
+        .finally(() => setBusy(false));
+    },
+    [client, refresh, refreshMeta, show],
+  );
+
+  const remove = useCallback(
+    (submission: SubmissionModel) => {
+      setBusy(true);
+      setError(null);
+      setPromotion(null);
+      setFixResult(null);
+      client
+        .remove(submission.id)
+        .then((result) => {
+          setUndo(result);
+          setSelected(null);
+          setDraft(null);
+          refresh();
+          refreshMeta();
+        })
+        .catch((cause: unknown) => setError(message(cause)))
+        .finally(() => setBusy(false));
+    },
+    [client, refresh, refreshMeta],
+  );
+
   const promotedAlready = selected?.state === "promoted";
   const fixedAlready = selected?.state === "corrected";
   const terminal = promotedAlready || fixedAlready;
@@ -349,6 +411,7 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
 
           {promotion && <Promoted promotion={promotion} onDismiss={() => setPromotion(null)} />}
           {fixResult && <Fixed result={fixResult} onDismiss={() => setFixResult(null)} />}
+          {undo && <Withdrawn result={undo} onDismiss={() => setUndo(null)} />}
 
           {selected === null || draft === null ? (
             <p className="muted detail-empty">
@@ -361,14 +424,16 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
 
               {promotedAlready && (
                 <p className="notice notice-quiet">
-                  Already promoted as <strong>{selected.promoted_pair_id}</strong>. This record is
-                  history now and is not editable.
+                  Already promoted as <strong>{selected.promoted_pair_id}</strong>, so the pair is not
+                  editable here. To change it, put it back to pending below: that takes it out of the
+                  golden set and gives it back as the draft.
                 </p>
               )}
               {fixedAlready && (
                 <p className="notice notice-quiet">
-                  Already fixed as <strong>{selected.promoted_pair_id}</strong>. This record is
-                  history now and is not editable.
+                  Already fixed as <strong>{selected.promoted_pair_id}</strong>, so the fix is not
+                  editable here. To change it, put it back to pending below: that deletes the fix and
+                  gives its SQL back to edit.
                 </p>
               )}
 
@@ -449,6 +514,14 @@ export function App({ client: given, previewDelayMs = DEFAULT_PREVIEW_DELAY_MS }
                   </div>
                 </>
               )}
+
+              <RecordEditor
+                key={selected.id}
+                submission={selected}
+                busy={busy}
+                onReopen={() => reopen(selected)}
+                onDelete={() => remove(selected)}
+              />
             </>
           )}
         </div>

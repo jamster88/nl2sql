@@ -15,13 +15,18 @@ import { DraftEditor } from "../src/components/DraftEditor";
 import { Original } from "../src/components/Original";
 import { Promoted } from "../src/components/Promoted";
 import { Queue } from "../src/components/Queue";
+import { RecordEditor } from "../src/components/RecordEditor";
 import { StatusBar } from "../src/components/StatusBar";
+import { Withdrawn } from "../src/components/Withdrawn";
+import type { SubmissionModel } from "../src/api/types";
 import {
   makeDraft,
   makeMeta,
   makePreview,
   makePromotion,
   makeSubmission,
+  makeUndo,
+  makeWithdrawal,
 } from "./helpers";
 
 afterEach(cleanup);
@@ -488,5 +493,135 @@ describe("StatusBar", () => {
     );
     expect(screen.getByText(/connection refused/)).toBeInTheDocument();
     expect(screen.getByText("No REVIEW_TOKEN is set")).toBeInTheDocument();
+  });
+});
+
+describe("RecordEditor", () => {
+  function mount(overrides: Partial<SubmissionModel> = {}, busy = false) {
+    const onReopen = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <RecordEditor submission={makeSubmission(overrides)} busy={busy} onReopen={onReopen} onDelete={onDelete} />,
+    );
+    return { onReopen, onDelete };
+  }
+
+  it("offers only deletion for a submission nobody has judged", async () => {
+    mount();
+    expect(screen.queryByRole("button", { name: "Back to pending" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete…" })).toBeEnabled();
+  });
+
+  it.each(["accepted", "rejected"] as const)("reopens a %s submission at once, since nothing else changes", async (state) => {
+    const { onReopen } = mount({ state });
+    expect(screen.getByText(/back in the queue, unjudged/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    expect(onReopen).toHaveBeenCalledOnce();
+  });
+
+  it("asks before taking a promoted pair out of the golden set, saying what it will do", async () => {
+    const { onReopen } = mount({ state: "promoted", promoted_pair_id: "Q47" });
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    expect(onReopen).not.toHaveBeenCalled();
+
+    const asking = screen.getByRole("alertdialog", { name: "Are you sure?" });
+    expect(asking).toHaveTextContent("Takes Q47 back out of the golden set");
+    expect(asking).toHaveTextContent("with the pair as its draft");
+    await userEvent.click(screen.getByRole("button", { name: "Take Q47 out and reopen" }));
+    expect(onReopen).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["no", "corrections"],
+    ["incomplete", "completions"],
+  ] as const)("asks before deleting a %s answer's fix from the %s store", async (verdict, store) => {
+    const { onReopen } = mount({ verdict, state: "corrected", promoted_pair_id: "W0002" });
+    await userEvent.click(screen.getByRole("button", { name: "Back to pending" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(`Deletes W0002 and its vector from the ${store} store`);
+    await userEvent.click(screen.getByRole("button", { name: "Delete W0002 and reopen" }));
+    expect(onReopen).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    [{}, "for good. It cannot be brought back."],
+    [{ state: "promoted" as const, promoted_pair_id: "Q47" }, "and takes Q47 out of the golden set first."],
+    [{ verdict: "no" as const, state: "corrected" as const, promoted_pair_id: "W0002" }, "and W0002 out of the corrections store first."],
+  ])("always asks before deleting, and says what else goes", async (overrides, said) => {
+    const { onDelete } = mount(overrides);
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(said);
+    await userEvent.click(screen.getByRole("button", { name: "Delete for good" }));
+    expect(onDelete).toHaveBeenCalledOnce();
+  });
+
+  it("can be talked out of it", async () => {
+    const { onDelete, onReopen } = mount({ state: "promoted", promoted_pair_id: "Q47" });
+    await userEvent.click(screen.getByRole("button", { name: "Delete…" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(onReopen).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Back to pending" })).toBeInTheDocument();
+  });
+
+  it("does nothing while something else is in flight", () => {
+    mount({ state: "accepted" }, true);
+    expect(screen.getByRole("button", { name: "Back to pending" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete…" })).toBeDisabled();
+  });
+});
+
+describe("Withdrawn", () => {
+  it("reports a pair taken out of the golden set, with the reload", () => {
+    render(<Withdrawn result={makeUndo()} onDismiss={vi.fn()} />);
+    const panel = screen.getByRole("status", { name: "Undo result" });
+    expect(panel).toHaveClass("promoted-complete");
+    expect(panel).toHaveTextContent("Back in the queue as pending");
+    expect(panel).toHaveTextContent("Q46 taken out of the golden set — 46 → 45 pairs.");
+    expect(panel).toHaveTextContent("previous version kept at /app/context_questions/translated_questions.md.bak");
+    expect(screen.getByText("load_golden_pairs").closest("li")).toHaveClass("step-ok");
+  });
+
+  it("says the stores have not caught up when the reload did not finish", () => {
+    const withdrawn = makeWithdrawal({
+      reloaded: false,
+      steps: [
+        { name: "load_golden_pairs", ran: true, ok: false, detail: "no route to chunkdb" },
+        { name: "embed_golden_pairs", ran: false, ok: true, detail: "" },
+      ],
+    });
+    render(<Withdrawn result={makeUndo({ withdrawn })} onDismiss={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveClass("promoted-partial");
+    expect(screen.getByText("load_golden_pairs").closest("li")).toHaveClass("step-failed");
+    expect(screen.getByText("embed_golden_pairs").closest("li")).toHaveClass("step-skipped");
+    expect(screen.getByText(/the agent can still retrieve it/)).toBeInTheDocument();
+  });
+
+  it("reports a fix deleted from its store", () => {
+    const withdrawn = makeWithdrawal({ kind: "corrections", id: "W0002", backup: "", document: "", steps: [] });
+    render(<Withdrawn result={makeUndo({ action: "deleted", withdrawn })} onDismiss={vi.fn()} />);
+    const panel = screen.getByRole("status");
+    expect(panel).toHaveTextContent("Submission deleted");
+    expect(panel).toHaveTextContent("W0002 deleted from the corrections store, with its vector.");
+    expect(panel).toHaveClass("promoted-complete");
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [makeWithdrawal({ found: false, backup: "", steps: [] }), "Q46 was no longer in the golden set"],
+    [makeWithdrawal({ kind: "completions", id: "I0003", found: false }), "I0003 was no longer in the completions store"],
+  ])("says when there was nothing to take out", (withdrawn, said) => {
+    render(<Withdrawn result={makeUndo({ withdrawn })} onDismiss={vi.fn()} />);
+    expect(screen.getByRole("status")).toHaveTextContent(said);
+    expect(screen.queryByText(/previous version kept/)).not.toBeInTheDocument();
+  });
+
+  it("says nothing about a pair or a fix when there was none", async () => {
+    const onDismiss = vi.fn();
+    render(<Withdrawn result={makeUndo({ withdrawn: null })} onDismiss={onDismiss} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Back in the queue as pending");
+    expect(screen.getByRole("status")).not.toHaveTextContent("golden set");
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onDismiss).toHaveBeenCalledOnce();
   });
 });

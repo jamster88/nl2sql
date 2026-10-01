@@ -12,6 +12,17 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v5_4 (5.4.0) -- 2026-09-30
+
+**Added**
+- In the review interface, any submission can be put back to pending or deleted.
+- A promoted pair comes back out of the golden set with it, checked by the loader's parser, the previous document kept and both stores reloaded.
+- A stored fix is deleted from its store with its vector.
+- A reopened submission keeps its work: the pair as its draft, or the corrected SQL in the query editor.
+
+**Fixed**
+- Tests across the review service, the RAG loaders and the agent failed once anything had been promoted, because they pinned the golden set at 45 pairs or expected every pair's SQL to end in a semicolon.
+
 ## v5_3 (5.3.0) -- 2026-09-28
 
 **Added**

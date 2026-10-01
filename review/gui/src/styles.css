@@ -467,6 +467,45 @@ textarea.input {
   background: transparent;
 }
 
+/* Deleting, and the confirmation that commits to it. Outlined until it is
+   the button that actually does it. */
+.button-danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.confirm .button-danger {
+  background: var(--bad);
+  color: var(--surface-raised);
+  font-weight: 600;
+}
+
+/* --- changing a review ------------------------------------------------ */
+
+/* Dashed rather than solid: it is not part of the work on the submission,
+   it is the way out of it. */
+.record {
+  padding: 16px 20px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+}
+
+.record-title {
+  margin: 0 0 6px;
+  font-size: 0.95rem;
+}
+
+.record p {
+  margin: 0 0 12px;
+  font-size: 0.88rem;
+}
+
+.confirm {
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
 /* --- notices and results ---------------------------------------------- */
 
 .notice {

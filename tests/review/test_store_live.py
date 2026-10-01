@@ -571,3 +571,81 @@ def test_a_rotated_password_is_put_back_by_the_test_that_rotates_it(repo, owner)
     _set_writer_password(owner, WRITER_PASSWORD)
     assert PostgresSink(_writer_url(owner)).check()[0] is True
 
+
+
+# ---------------------------------------------------------------------------
+# Reopening and deleting (5.4)
+# ---------------------------------------------------------------------------
+
+
+def _promoted(repo, sink, pair_id: str = "Q46"):
+    item = capture()
+    sink.record(item)
+    held = repo.get_by_job(item.job_id)
+    repo.review(held.id, state="accepted", reviewer="sam", review_note="good one")
+    repo.mark_promoted(
+        held.id, pair_id=pair_id, chunk_id=f"eval:{pair_id.lower()}", suite="", title="t",
+        markdown=f"## {pair_id} - t\n", reviewer="sam", reloaded=True, reload_detail="ok",
+    )
+    return repo.get(held.id)
+
+
+def test_reopening_puts_a_promoted_submission_back_and_forgets_the_promotion(repo, sink):
+    held = _promoted(repo, sink)
+
+    reopened = repo.reopen(held.id, draft={"title": "the pair, as it was"})
+
+    assert reopened.state == "pending"
+    assert reopened.promoted_pair_id is None
+    assert reopened.reviewed_at is None
+    assert (reopened.reviewer, reopened.review_note) == ("sam", "good one")
+    assert reopened.draft == {"title": "the pair, as it was"}
+    assert repo.promotions() == []
+
+
+def test_reopening_without_a_draft_keeps_the_one_it_had(repo, sink):
+    item = capture()
+    sink.record(item)
+    held = repo.get_by_job(item.job_id)
+    repo.review(held.id, state="rejected", draft={"title": "kept"})
+    assert repo.reopen(held.id).draft == {"title": "kept"}
+
+
+def test_a_reopened_submission_is_the_users_to_revote_again(repo, sink):
+    """Pending is pending: the row-level policies hand it back to the public
+    process, so the person who voted can change their mind again, as they
+    could before anyone looked at it."""
+    held = _promoted(repo, sink)
+    repo.reopen(held.id)
+
+    sink.record(capture(job_id=held.job_id, verdict="no", comment="on reflection"))
+
+    again = repo.get_by_job(held.job_id)
+    assert (again.verdict, again.comment, again.state) == ("no", "on reflection", "pending")
+
+
+def test_a_pair_id_given_back_can_be_promoted_again(repo, sink):
+    """The log's key is the pair id, so a log entry left behind would refuse
+    the next promotion that took the same id."""
+    held = _promoted(repo, sink, "Q46")
+    repo.reopen(held.id)
+    again = _promoted(repo, sink, "Q46")
+    assert [row["pair_id"] for row in repo.promotions()] == ["Q46"]
+    assert again.state == "promoted"
+
+
+def test_deleting_takes_the_promotion_log_with_it(repo, sink):
+    """The log restricts deletes of the rows it names; the delete clears it
+    first, in the same transaction."""
+    held = _promoted(repo, sink)
+
+    deleted = repo.delete(held.id)
+
+    assert (deleted.id, deleted.state) == (held.id, "promoted")
+    assert repo.get(held.id) is None
+    assert repo.promotions() == []
+    assert repo.delete(held.id) is None
+
+
+def test_reopening_a_submission_that_is_not_there_is_none(repo):
+    assert repo.reopen("not-a-submission") is None

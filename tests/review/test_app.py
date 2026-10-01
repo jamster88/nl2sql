@@ -20,7 +20,7 @@ from nl2sql_review.promote import Promotion, PromotionError, StepResult
 from nl2sql_review.render import Draft
 from nl2sql_review.store import STATES, Submission
 
-from .conftest import FakeRepository
+from .conftest import BASE_PAIRS, NEXT_ID, FakeRepository
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def test_the_root_names_every_endpoint(client):
     assert body["service"] == "nl2sql-review"
     assert set(body["endpoints"]) == {
         "meta", "submissions", "submission", "preview", "promote",
-        "validate", "fix", "fixes",
+        "validate", "fix", "fixes", "reopen", "delete",
         "golden", "promotions", "health", "readiness",
     }
 
@@ -84,7 +84,7 @@ def test_readiness_checks_the_database_the_document_and_the_write(client):
         "staging_database", "golden_document", "document_writable",
         "retail_database", "corrections_store", "completions_store",
     }
-    assert "45 pairs, next is Q46" in body["checks"]["golden_document"]["detail"]
+    assert f"{BASE_PAIRS} pairs, next is {NEXT_ID}" in body["checks"]["golden_document"]["detail"]
 
 
 def test_readiness_reports_an_unreachable_staging_database(make_client, repository):
@@ -220,8 +220,8 @@ def test_a_query_string_token_is_not_accepted(make_client):
 def test_meta_tells_a_client_everything_it_needs(client):
     body = client.get("/v1/meta").json()
     assert body["states"] == list(STATES)
-    assert body["golden_count"] == 45
-    assert body["next_pair_id"] == "Q46"
+    assert body["golden_count"] == BASE_PAIRS
+    assert body["next_pair_id"] == NEXT_ID
     assert body["authentication"] == "bearer"
     assert body["limits"]["max_pair_number"] == 99
     assert body["counts"]["pending"] == 1
@@ -402,8 +402,8 @@ def test_preview_returns_the_block_that_would_be_written(client, draft, document
     body = client.post("/v1/submissions/sub-1/preview", json={"draft": complete(draft)}).json()
 
     assert body["valid"] is True
-    assert body["pair_id"] == "Q46"
-    assert body["markdown"].startswith("## Q46 - ")
+    assert body["pair_id"] == NEXT_ID
+    assert body["markdown"].startswith(f"## {NEXT_ID} - ")
     assert body["suite_in_force"].startswith("Suite 25")
     assert document.read_text() == before
 
@@ -466,12 +466,12 @@ def test_promoting_writes_the_pair_and_records_it(client, draft, document, repos
         headers={"X-Reviewer": "sam"},
     ).json()
 
-    assert body["pair_id"] == "Q46"
-    assert (body["pairs_before"], body["pairs_after"]) == (45, 46)
-    assert "## Q46 - " in document.read_text()
+    assert body["pair_id"] == NEXT_ID
+    assert (body["pairs_before"], body["pairs_after"]) == (BASE_PAIRS, BASE_PAIRS + 1)
+    assert f"## {NEXT_ID} - " in document.read_text()
 
     assert repository.submissions["sub-1"].state == "promoted"
-    assert repository.submissions["sub-1"].promoted_pair_id == "Q46"
+    assert repository.submissions["sub-1"].promoted_pair_id == NEXT_ID
     assert repository.promotion_log[0]["reviewer"] == "sam"
 
 
@@ -562,8 +562,8 @@ def test_a_promotion_error_raised_late_is_still_a_422(make_client, draft):
 
 def test_the_golden_set_is_read_from_the_document(client):
     body = client.get("/v1/golden").json()
-    assert body["count"] == 45
-    assert body["next_pair_id"] == "Q46"
+    assert body["count"] == BASE_PAIRS
+    assert body["next_pair_id"] == NEXT_ID
     assert body["error"] is None
     first = body["pairs"][0]
     assert first["pair_id"] == "Q01"
@@ -579,9 +579,11 @@ def test_an_unreadable_golden_set_says_so_rather_than_looking_empty(make_client,
 
 
 def test_a_full_golden_set_still_lists_its_pairs(make_client, document):
-    document.write_text(document.read_text().replace("## Q45 - ", "## Q99 - "))
+    # The highest pair renumbered to the last id the loader's pattern allows.
+    highest = f"## Q{int(NEXT_ID[1:]) - 1:02d} - "
+    document.write_text(document.read_text().replace(highest, "## Q99 - "))
     body = make_client().get("/v1/golden").json()
-    assert body["count"] == 45
+    assert body["count"] == BASE_PAIRS
     assert body["next_pair_id"] == ""
     assert "golden set is full" in body["error"]
 
@@ -591,7 +593,7 @@ def test_the_promotion_log_is_returned_without_every_pairs_full_text(client, dra
     body = client.get("/v1/promotions").json()
 
     assert body["count"] == 1
-    assert body["promotions"][0]["pair_id"] == "Q46"
+    assert body["promotions"][0]["pair_id"] == NEXT_ID
     assert "markdown" not in body["promotions"][0]
 
 
@@ -611,7 +613,7 @@ def test_the_openapi_document_describes_every_route(client):
         "/v1/submissions/{submission_id}", "/v1/submissions/{submission_id}/preview",
         "/v1/submissions/{submission_id}/promote", "/v1/golden", "/v1/promotions",
         "/v1/submissions/{submission_id}/validate", "/v1/submissions/{submission_id}/fix",
-        "/v1/fixes/{kind}",
+        "/v1/submissions/{submission_id}/reopen", "/v1/fixes/{kind}",
     }
 
 
@@ -962,3 +964,198 @@ def test_the_default_retail_ping_round_trips_the_database(settings, monkeypatch)
     monkeypatch.setattr(psycopg, "connect", connect)
     default_retail_pinger(replace(settings, retail_db_url="postgresql://r/db"))()
     assert opened == [("postgresql://r/db", {"connect_timeout": 5}), "SELECT 1"]
+
+
+# ---------------------------------------------------------------------------
+# Taking a judgement back (5.4)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def judged(make_client, submission, wrong_submission):
+    """A correct answer, a wrong one and an incomplete one, all pending."""
+    incomplete = replace(wrong_submission, id="sub-i", job_id="job-i", verdict="incomplete")
+    repo = FakeRepository([submission, wrong_submission, incomplete])
+    return make_client(repository=repo), repo
+
+
+def test_reopening_a_judged_submission_puts_it_back_unjudged(judged):
+    client, repo = judged
+    client.patch("/v1/submissions/sub-1", json={"state": "rejected", "reviewer": "ada", "review_note": "dupe"})
+
+    response = client.post("/v1/submissions/sub-1/reopen")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["action"] == "reopened"
+    assert body["withdrawn"] is None
+    assert body["submission"]["state"] == "pending"
+    assert body["submission"]["reviewed_at"] is None
+    # Who looked at it last, and why, is history worth keeping.
+    assert (body["submission"]["reviewer"], body["submission"]["review_note"]) == ("ada", "dupe")
+
+
+def test_a_pending_submission_has_nothing_to_reopen(judged):
+    client, _ = judged
+    response = client.post("/v1/submissions/sub-1/reopen")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "already_pending"
+
+
+@pytest.mark.parametrize("method,path", [("post", "/v1/submissions/nope/reopen"), ("delete", "/v1/submissions/nope")])
+def test_reopening_or_deleting_an_unknown_submission_is_a_404(judged, method, path):
+    client, _ = judged
+    assert getattr(client, method)(path).status_code == 404
+
+
+def test_reopening_a_promoted_submission_takes_its_pair_out_of_the_golden_set(judged, draft, document):
+    client, repo = judged
+    client.post("/v1/submissions/sub-1/promote", json={"draft": complete(draft)})
+    assert f"## {NEXT_ID} - " in document.read_text()
+
+    body = client.post("/v1/submissions/sub-1/reopen").json()
+
+    withdrawn = body["withdrawn"]
+    assert (withdrawn["kind"], withdrawn["id"], withdrawn["found"]) == ("golden", NEXT_ID, True)
+    assert withdrawn["pairs_after"] == withdrawn["pairs_before"] - 1
+    assert withdrawn["backup"].endswith(".bak")
+    assert f"## {NEXT_ID} - " not in document.read_text()
+    assert body["submission"]["state"] == "pending"
+    assert body["submission"]["promoted_pair_id"] is None
+    # The pair comes back as the draft, so promoting again starts from it.
+    assert body["submission"]["draft"]["keywords"] == draft.keywords
+    assert body["submission"]["draft"]["reasoning_target"] == draft.reasoning_target
+    assert client.get("/v1/promotions").json()["count"] == 0
+
+
+def test_a_reopened_pair_can_be_promoted_again_under_the_id_it_left(judged, draft, document):
+    client, repo = judged
+    client.post("/v1/submissions/sub-1/promote", json={"draft": complete(draft)})
+    reopened = client.post("/v1/submissions/sub-1/reopen").json()["submission"]
+
+    again = client.post("/v1/submissions/sub-1/promote", json={"draft": reopened["draft"]}).json()
+
+    assert again["pair_id"] == NEXT_ID
+    assert document.read_text().count(f"## {NEXT_ID} - ") == 1
+
+
+def test_a_pair_already_taken_out_by_hand_is_not_an_error(judged, document):
+    client, repo = judged
+    repo.submissions["sub-1"].state = "promoted"
+    repo.submissions["sub-1"].promoted_pair_id = "Q98"
+    before = document.read_text()
+
+    body = client.post("/v1/submissions/sub-1/reopen").json()
+
+    assert body["withdrawn"]["found"] is False
+    assert document.read_text() == before
+    assert body["submission"]["state"] == "pending"
+
+
+def test_a_withdrawal_the_parser_refuses_changes_nothing(make_client, repository, submission):
+    def refuse(settings, pair_id):
+        raise PromotionError(["taking out Q46 would change other pairs as well"])
+
+    submission.state, submission.promoted_pair_id = "promoted", "Q46"
+    client = make_client(withdrawer=refuse)
+
+    for method, path in (("post", "/v1/submissions/sub-1/reopen"), ("delete", "/v1/submissions/sub-1")):
+        response = getattr(client, method)(path)
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "not_withdrawable"
+    assert repository.submissions["sub-1"].state == "promoted"
+
+
+def test_reopening_a_corrected_submission_deletes_its_fix(judged, fix_stores):
+    client, repo = judged
+    client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+
+    body = client.post("/v1/submissions/sub-w/reopen").json()
+
+    assert body["withdrawn"] == {
+        "kind": "corrections", "id": "W0001", "found": True, "document": "", "backup": "",
+        "pairs_before": 0, "pairs_after": 0, "reloaded": False, "steps": [],
+    }
+    assert fix_stores["corrections"].saved == []
+    assert body["submission"]["state"] == "pending"
+    # The corrected SQL comes back as the draft, ready to edit rather than retype.
+    assert body["submission"]["draft"] == {"sql_code": GOOD_SQL}
+
+
+def test_reopening_an_incomplete_answer_deletes_from_the_completions_store(judged, fix_stores):
+    client, _ = judged
+    client.post("/v1/submissions/sub-i/fix", json={"sql": GOOD_SQL})
+    body = client.post("/v1/submissions/sub-i/reopen").json()
+    assert (body["withdrawn"]["kind"], body["withdrawn"]["id"]) == ("completions", "I0001")
+    assert fix_stores["completions"].saved == []
+
+
+def test_a_fix_already_gone_is_not_an_error_and_keeps_the_draft(judged):
+    client, repo = judged
+    wrong = repo.submissions["sub-w"]
+    wrong.state, wrong.promoted_pair_id, wrong.draft = "corrected", "W0009", {"sql_code": "kept"}
+
+    body = client.post("/v1/submissions/sub-w/reopen").json()
+
+    assert (body["withdrawn"]["id"], body["withdrawn"]["found"]) == ("W0009", False)
+    assert body["submission"]["draft"] == {"sql_code": "kept"}
+
+
+def test_a_fix_store_that_cannot_be_written_changes_nothing(judged, fix_stores):
+    client, repo = judged
+    client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    fix_stores["corrections"].fail_delete = ConnectionError("refused")
+
+    for method, path in (("post", "/v1/submissions/sub-w/reopen"), ("delete", "/v1/submissions/sub-w")):
+        response = getattr(client, method)(path)
+        assert response.status_code == 503
+        assert "the corrections store could not be written: ConnectionError: refused" in (
+            response.json()["error"]["message"]
+        )
+    assert repo.submissions["sub-w"].state == "corrected"
+    assert len(fix_stores["corrections"].saved) == 1
+
+
+def test_deleting_removes_the_submission_and_what_it_produced(judged, draft, document):
+    client, repo = judged
+    client.post("/v1/submissions/sub-1/promote", json={"draft": complete(draft)})
+
+    response = client.delete("/v1/submissions/sub-1")
+
+    body = response.json()
+    assert response.status_code == 200
+    assert body["action"] == "deleted"
+    # As it was: the snapshot says what was deleted.
+    assert body["submission"]["state"] == "promoted"
+    assert (body["withdrawn"]["kind"], body["withdrawn"]["found"]) == ("golden", True)
+    assert f"## {NEXT_ID} - " not in document.read_text()
+    assert "sub-1" not in repo.submissions
+    assert client.get("/v1/submissions/sub-1").status_code == 404
+    assert client.get("/v1/promotions").json()["count"] == 0
+
+
+def test_deleting_a_corrected_submission_deletes_its_fix(judged, fix_stores):
+    client, repo = judged
+    client.post("/v1/submissions/sub-w/fix", json={"sql": GOOD_SQL})
+    body = client.delete("/v1/submissions/sub-w").json()
+    assert (body["withdrawn"]["kind"], body["withdrawn"]["id"]) == ("corrections", "W0001")
+    assert fix_stores["corrections"].saved == []
+    assert "sub-w" not in repo.submissions
+
+
+def test_deleting_a_pending_submission_takes_nothing_else_with_it(judged):
+    client, repo = judged
+    body = client.delete("/v1/submissions/sub-1").json()
+    assert body["withdrawn"] is None
+    assert body["submission"]["state"] == "pending"
+    assert "sub-1" not in repo.submissions
+
+
+@pytest.mark.parametrize("state,said", [("promoted", "takes the pair back out"), ("corrected", "deletes the fix")])
+def test_a_finished_submission_says_how_to_change_it(judged, state, said):
+    client, repo = judged
+    repo.submissions["sub-1"].state = state
+    repo.submissions["sub-1"].promoted_pair_id = "Q46"
+    response = client.patch("/v1/submissions/sub-1", json={"review_note": "x"})
+    assert response.status_code == 409
+    message = response.json()["error"]["message"]
+    assert "/v1/submissions/{id}/reopen" in message and said in message

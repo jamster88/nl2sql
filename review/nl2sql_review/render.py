@@ -238,6 +238,39 @@ def _csv(value: str) -> str:
     return ", ".join(part.strip() for part in value.split(",") if part.strip())
 
 
+#: Any heading a pair's block ends at: the next pair, or a suite or section.
+_NEXT_HEADING_RE = re.compile(r"^#{1,2} ", re.M)
+#: A suite heading with nothing but blank lines after it.
+_TRAILING_SUITE_RE = re.compile(r"^# Suite .*\n\s*\Z", re.M)
+
+
+def remove_pair(document: str, pair_id: str) -> str | None:
+    """The whole document without `pair_id`'s block, or None if it has none.
+
+    The block runs from its `## Qnn -` heading to the next heading of any
+    level, or to the end -- so the blank lines and the `---` separator that
+    followed it go with it, and the text on either side is laid out as it was
+    before the pair arrived. `append_pair`'s output is undone exactly: a pair
+    taken off the end leaves the document ending where it ended before.
+
+    A suite heading left with no pair under it goes too. `append_pair` writes
+    one when a pair asks for a suite the end of the document is not already
+    in, and once that pair is gone the heading would be claiming every pair
+    appended after it.
+    """
+    heading = re.search(rf"^## {re.escape(pair_id)} - .*$", document, re.M)
+    if heading is None:
+        return None
+    following = _NEXT_HEADING_RE.search(document, heading.end())
+    end = following.start() if following else len(document)
+    start = heading.start()
+    suite = _TRAILING_SUITE_RE.search(document, 0, start)
+    if suite and (following is None or not document.startswith("## ", end)):
+        start = suite.start()
+    remaining = document[:start] + document[end:]
+    return remaining if following else remaining.rstrip() + "\n"
+
+
 def append_pair(document: str, draft: Draft, pair_id: str) -> str:
     """The whole document with the new pair on the end.
 

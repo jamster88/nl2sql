@@ -19,13 +19,26 @@ import pytest
 from dataclasses import replace
 
 from nl2sql_review.corrections import COMPLETIONS, CORRECTIONS, AlreadyFixed, EmbedResult, Kind
-from nl2sql_review.render import Draft
+from nl2sql_review.render import HEADING_RE, Draft, next_pair_id
 from nl2sql_review.settings import ReviewSettings
 from nl2sql_review.store import Submission
 from nl2sql_review.validation import Validation, clean
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 REAL_DOCUMENT = ROOT / "context_questions" / "translated_questions.md"
+
+#: The golden set as the copied document holds it when a test starts: how
+#: many pairs, and the id the next promotion takes. Derived rather than
+#: written down as 45 and Q46, because the document is the live golden set
+#: and every promotion made through the review interface grows it -- a suite
+#: that pinned the count failed for the first person who used the feature.
+BASE_PAIRS = len(HEADING_RE.findall(REAL_DOCUMENT.read_text()))
+NEXT_ID = next_pair_id(REAL_DOCUMENT.read_text())
+
+
+def pair_after(pair_id: str, steps: int = 1) -> str:
+    """`Q49` -> `Q50`: the id `steps` promotions after this one."""
+    return f"Q{int(pair_id[1:]) + steps:02d}"
 
 
 @pytest.fixture
@@ -169,6 +182,22 @@ class FakeRepository:
             found.draft = draft
         return found
 
+    def reopen(self, submission_id, *, draft=None):
+        found = self.submissions.get(submission_id)
+        if found is None:
+            return None
+        self.promotion_log = [row for row in self.promotion_log if row["submission_id"] != submission_id]
+        found.state = "pending"
+        found.promoted_pair_id = None
+        found.reviewed_at = None
+        if draft is not None:
+            found.draft = draft
+        return found
+
+    def delete(self, submission_id):
+        self.promotion_log = [row for row in self.promotion_log if row["submission_id"] != submission_id]
+        return self.submissions.pop(submission_id, None)
+
     def mark_promoted(self, submission_id, **kwargs):
         found = self.submissions[submission_id]
         found.state = "promoted"
@@ -214,6 +243,7 @@ class FakeFixStore:
         self.fail_save: Exception | None = None
         self.fail_count: Exception | None = None
         self.fail_listing: Exception | None = None
+        self.fail_delete: Exception | None = None
         self.already: str | None = None
         self.embed_result = EmbedResult(embedded=1, pending=0, ran=True)
 
@@ -234,6 +264,14 @@ class FakeFixStore:
         fix.fix_id = f"{self.kind.prefix}{len(self.saved) + 1:04d}"
         self.saved.append(fix)
         return fix
+
+    def delete(self, submission_id):
+        if self.fail_delete is not None:
+            raise self.fail_delete
+        found = next((fix for fix in self.saved if fix.submission_id == submission_id), None)
+        if found is not None:
+            self.saved.remove(found)
+        return found
 
     def listing(self, limit: int = 50):
         if self.fail_listing is not None:

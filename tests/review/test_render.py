@@ -15,6 +15,8 @@ import pytest
 from nl2sql_review import render
 from nl2sql_review.render import Draft
 
+from .conftest import NEXT_ID
+
 
 # ---------------------------------------------------------------------------
 # What the document already says
@@ -22,7 +24,7 @@ from nl2sql_review.render import Draft
 
 
 def test_the_next_pair_id_follows_the_highest_one_present(document):
-    assert render.next_pair_id(document.read_text()) == "Q46"
+    assert render.next_pair_id(document.read_text()) == NEXT_ID
 
 
 def test_the_next_pair_id_is_the_highest_plus_one_not_the_count():
@@ -232,3 +234,71 @@ def test_a_non_string_field_becomes_empty_rather_than_breaking_the_render():
 
 def test_extra_meta_that_is_not_a_mapping_is_ignored():
     assert Draft.from_mapping({"extra_meta": "nope"}).extra_meta == {}
+
+
+# ---------------------------------------------------------------------------
+# Removing (5.4)
+# ---------------------------------------------------------------------------
+
+from ragproc import golden_pairs as gp  # noqa: E402
+
+from .conftest import pair_after  # noqa: E402
+
+
+def _pairs(text: str, tmp_path) -> dict[str, tuple]:
+    path = tmp_path / "check.md"
+    path.write_text(text)
+    return {p.pair_id: (p.title, p.question, p.sql_code, p.suite) for p in gp.parse_document(path)}
+
+
+def test_removing_the_pair_just_appended_restores_the_document_exactly(document, draft):
+    before = document.read_text()
+    after = render.append_pair(before, draft, NEXT_ID)
+    assert render.remove_pair(after, NEXT_ID) == before
+
+
+def test_removing_one_of_two_appended_pairs_leaves_the_other_as_it_was(document, draft):
+    before = document.read_text()
+    second = pair_after(NEXT_ID)
+    both = render.append_pair(render.append_pair(before, draft, NEXT_ID), draft, second)
+    assert render.remove_pair(both, NEXT_ID) == render.append_pair(before, draft, second)
+
+
+def test_removing_a_pair_between_separators_keeps_one_separator(document, tmp_path):
+    """The original pairs sit between `---` lines; taking one out must not
+    leave two separators in a row, or eat the next pair's heading."""
+    before = document.read_text()
+    after = render.remove_pair(before, "Q10")
+
+    assert "---\n\n---" not in after
+    kept = _pairs(before, tmp_path)
+    del kept["Q10"]
+    assert _pairs(after, tmp_path) == kept
+
+
+def test_a_pair_that_is_not_there_is_none(document):
+    assert render.remove_pair(document.read_text(), "Q98") is None
+
+
+def test_a_suite_heading_written_for_the_pair_goes_with_it(document, draft):
+    before = document.read_text()
+    draft.suite = "Suite 26 - Feedback derived"
+    after = render.append_pair(before, draft, NEXT_ID)
+    assert "# Suite 26 - Feedback derived" in after
+    assert render.remove_pair(after, NEXT_ID) == before
+
+
+def test_a_suite_heading_that_still_has_a_pair_under_it_stays(document, draft, tmp_path):
+    draft.suite = "Suite 26 - Feedback derived"
+    second = pair_after(NEXT_ID)
+    both = render.append_pair(render.append_pair(document.read_text(), draft, NEXT_ID), draft, second)
+
+    after = render.remove_pair(both, NEXT_ID)
+
+    assert "# Suite 26 - Feedback derived" in after
+    assert _pairs(after, tmp_path)[second][3] == "Suite 26 - Feedback derived"
+
+
+def test_a_suite_heading_before_a_pair_followed_by_another_suite_goes(draft):
+    text = "# Suite 1 - A\n\n" + render.render_pair(draft, "Q01") + "\n# Suite 2 - B\n\nprose\n"
+    assert render.remove_pair(text, "Q01") == "# Suite 2 - B\n\nprose\n"

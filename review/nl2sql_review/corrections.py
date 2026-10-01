@@ -317,6 +317,22 @@ def save(conn: psycopg.Connection, kind: Kind, fix: Fix) -> Fix:
     return fix
 
 
+def delete_by_submission(conn: psycopg.Connection, kind: Kind, submission_id: str) -> Fix | None:
+    """Take a submission's fix out of the store, and return it as it was.
+
+    Its vector goes with it: the vector table's key references the record
+    with `ON DELETE CASCADE`, so a fix cannot be retrievable after it is
+    gone. None when the store holds nothing for the submission -- deleted by
+    hand, or never saved.
+    """
+    row = conn.execute(
+        sql.SQL("DELETE FROM {} WHERE submission_id = %s RETURNING *").format(sql.Identifier(kind.table)),
+        (submission_id,),
+    ).fetchone()
+    conn.commit()
+    return Fix(**dict(row)) if row else None
+
+
 def listing(conn: psycopg.Connection, kind: Kind, limit: int = 50) -> list[Fix]:
     """Newest first, each saying whether its question has a vector yet."""
     if _vector_table_exists(conn, kind):
@@ -440,6 +456,10 @@ class FixStore:
     def save(self, fix: Fix) -> Fix:
         with connection(self.url) as conn:
             return save(conn, self.kind, fix)
+
+    def delete(self, submission_id: str) -> Fix | None:
+        with connection(self.url) as conn:
+            return delete_by_submission(conn, self.kind, submission_id)
 
     def find_by_submission(self, submission_id: str) -> str | None:
         with connection(self.url) as conn:

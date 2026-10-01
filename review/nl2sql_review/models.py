@@ -320,6 +320,38 @@ class FixResultModel(BaseModel):
     embed_detail: str = ""
 
 
+class WithdrawalModel(BaseModel):
+    """What reopening or deleting a submission took back out.
+
+    `kind` says where from: `golden` for a promoted pair taken out of the
+    question document -- with the counts, the backup and the reload, as a
+    promotion reports them -- or the fix store a correction or completion was
+    deleted from. `found` false means it was already gone, removed by hand,
+    and there was nothing to take out.
+    """
+
+    kind: Literal["golden", "corrections", "completions"]
+    id: str
+    found: bool
+    document: str = ""
+    backup: str = ""
+    pairs_before: int = 0
+    pairs_after: int = 0
+    #: For `golden`: whether both stores were rebuilt from the document.
+    reloaded: bool = False
+    steps: list[StepModel] = Field(default_factory=list)
+
+
+class UndoModel(BaseModel):
+    """A submission reopened or deleted, and what came out with it."""
+
+    action: Literal["reopened", "deleted"]
+    #: As it is now when reopened; as it was when deleted.
+    submission: SubmissionModel
+    #: None when it had produced nothing: it was pending, accepted or rejected.
+    withdrawn: WithdrawalModel | None = None
+
+
 class ReviewMeta(BaseModel):
     """Everything the review GUI needs to configure itself."""
 

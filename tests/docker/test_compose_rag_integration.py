@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -242,7 +243,10 @@ def test_the_agent_container_reaches_the_context_store(examples_probe: dict):
     """
     assert examples_probe["context_db_url"].startswith("postgresql+psycopg://")
     assert "@chunkdb:5432/" in examples_probe["context_db_url"]
-    assert examples_probe["pair_count"] == 45
+    # As many as the document holds: promotions through the review
+    # interface reload the store, so the two grow together.
+    document = (REPO_ROOT / "context_questions" / "translated_questions.md").read_text()
+    assert examples_probe["pair_count"] == len(re.findall(r"^## Q\d{2} - ", document, re.M))
 
 
 def test_all_three_retrieval_legs_fire_inside_the_container(examples_probe: dict):

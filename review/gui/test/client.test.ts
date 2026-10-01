@@ -17,6 +17,7 @@ import {
   makePreview,
   makePromotion,
   makeSubmission,
+  makeUndo,
   makeValidation,
 } from "./helpers";
 
@@ -158,6 +159,23 @@ describe("createClient", () => {
     expect(calls[0]?.[0]).toBe("/v1/fixes/completions?limit=50");
     await createClient({ fetch }).fixes("corrections", 5);
     expect(calls[1]?.[0]).toBe("/v1/fixes/corrections?limit=5");
+  });
+
+  it("reopens with a POST to its own action, and deletes with DELETE", async () => {
+    const { fetch, calls } = spyFetch(json(makeUndo()));
+    const client = createClient({ fetch, token: "t" });
+
+    await client.reopen("sub 1");
+    await client.remove("sub 1");
+
+    expect(calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/v1/submissions/sub%201/reopen", "POST"],
+      ["/v1/submissions/sub%201", "DELETE"],
+    ]);
+    // Neither sends a body: what is undone is decided by the server, from the
+    // row, never by what a browser claims the row says.
+    expect(calls.every(([, init]) => init.body === undefined)).toBe(true);
+    expect((calls[0]![1].headers as Record<string, string>)["Authorization"]).toBe("Bearer t");
   });
 
   it("unwraps the error envelope", async () => {

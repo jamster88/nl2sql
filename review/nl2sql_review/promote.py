@@ -93,8 +93,7 @@ class Promotion:
         claiming the stores were rebuilt when nothing touched them is the one
         kind of audit record that is worse than none.
         """
-        ran = [step for step in self.steps if step.ran]
-        return bool(ran) and all(step.ok for step in ran)
+        return _reloaded(self.steps)
 
     @property
     def detail(self) -> str:
@@ -105,6 +104,36 @@ class Promotion:
             else:
                 parts.append(f"{step.name}: {'ok' if step.ok else 'FAILED'} {step.detail}".strip())
         return " | ".join(parts)
+
+
+@dataclass
+class Withdrawal:
+    """What taking a promoted pair back out of the golden set did.
+
+    `found` is False when the document no longer held the pair -- it was
+    removed by hand -- and then nothing was written; the stores are reloaded
+    either way, so they agree with the document whoever edited it. `draft` is
+    the pair as the document held it, so the submission it came from can be
+    reopened with the pair as its draft rather than starting over.
+    """
+
+    pair_id: str
+    found: bool
+    document: str
+    backup: str = ""
+    pairs_before: int = 0
+    pairs_after: int = 0
+    draft: Draft | None = None
+    steps: list[StepResult] = field(default_factory=list)
+
+    @property
+    def reloaded(self) -> bool:
+        return _reloaded(self.steps)
+
+
+def _reloaded(steps: list[StepResult]) -> bool:
+    ran = [step for step in steps if step.ran]
+    return bool(ran) and all(step.ok for step in ran)
 
 
 def _parser():
@@ -174,6 +203,85 @@ def promote(settings: ReviewSettings, draft: Draft) -> Promotion:
     )
     promotion.steps = _reload(settings)
     return promotion
+
+
+def withdraw(settings: ReviewSettings, pair_id: str) -> Withdrawal:
+    """Take a promoted pair back out of the document, then reload the stores.
+
+    Promotion in reverse, held to the same standard: the new document is
+    parsed with the loader's own parser before it is written, and has to have
+    lost exactly that pair and changed no other. The loaders already delete
+    the rows and vectors of a pair the document no longer holds, so the
+    stores need nothing but the reload promotion runs.
+    """
+    _ensure_importable(settings.rag_dir)
+    path = settings.document_path
+    document = _read(path)
+    updated = render.remove_pair(document, pair_id)
+    if updated is None:
+        withdrawal = Withdrawal(pair_id=pair_id, found=False, document=str(path))
+    else:
+        removed, before, after = _round_trip_removal(document, updated, pair_id)
+        withdrawal = Withdrawal(
+            pair_id=pair_id,
+            found=True,
+            document=str(path),
+            backup=_write_atomically(path, updated),
+            pairs_before=before,
+            pairs_after=after,
+            draft=_as_draft(removed),
+        )
+    withdrawal.steps = _reload(settings)
+    return withdrawal
+
+
+def _round_trip_removal(document: str, updated: str, pair_id: str) -> tuple[object, int, int]:
+    """The pair being removed, and the counts, once the parser agrees.
+
+    Every pair that stays is compared field by field, not only counted: a
+    removal that ate the start of the next pair would leave the count one
+    short as intended and that pair silently broken.
+    """
+    gp = _parser()
+    try:
+        before = _parse_text(gp, document)
+    except ValueError as exc:
+        raise PromotionError(
+            [f"the question document does not parse, so nothing can be taken out of it safely: {exc}"]
+        ) from exc
+    # Always there: `remove_pair` found its heading, and the parser refuses
+    # a document with a heading it cannot read as a pair.
+    removed = next(pair for pair in before if pair.pair_id == pair_id)
+    try:
+        after = _parse_text(gp, updated)
+    except ValueError as exc:
+        raise PromotionError([f"taking out {pair_id} would leave a document that does not parse: {exc}"]) from exc
+    kept = {pair.pair_id: _fields(pair) for pair in before if pair.pair_id != pair_id}
+    if {pair.pair_id: _fields(pair) for pair in after} != kept:
+        raise PromotionError(
+            [f"taking out {pair_id} would change other pairs as well, so it was not written"]
+        )
+    return removed, len(before), len(after)
+
+
+def _fields(pair) -> tuple:
+    return (pair.chunk_id, pair.title, pair.question, pair.reasoning_target, pair.sql_code, pair.result)
+
+
+def _as_draft(pair) -> Draft:
+    """A parsed pair as the draft that would promote it again."""
+    return Draft(
+        title=pair.title,
+        question=pair.question,
+        tables=pair.tables,
+        keywords=pair.keywords,
+        reasoning_target=pair.reasoning_target,
+        sql_code=pair.sql_code,
+        result=pair.result,
+        translation_note=pair.translation_note,
+        suite=pair.suite,
+        extra_meta={k: v for k, v in pair.meta.items() if k not in render.META_KEYS},
+    )
 
 
 def _round_trip(document: str, updated: str, draft: Draft, pair_id: str) -> tuple[int, int]:

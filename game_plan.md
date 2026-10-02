@@ -27,9 +27,10 @@
 * v6_2 - answer assembly + tests and release
 
 ## V7
-* v7 - user support
-* v7_1 - short and long-term memory
-* v7_2 - semantic cache
+* v7 - user support (_via DB_)
+* v7_1 - via LDAP
+* v7_2 - short and long-term memory
+* v7_3 - semantic cache
 
 ## V8
 * v8 - reset containers and initialize + tests and release

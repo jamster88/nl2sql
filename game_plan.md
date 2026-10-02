@@ -34,6 +34,10 @@
 
 ## V8
 * v8 - reset containers and initialize + tests and release
-* v8_1 - once “primed” everything is internal
+* v8_1 - once “primed” everything is internal (*loads from given docs and targeted DB*)
 * v8_2 - kubernetes deployment (rasPi proxmox cluster)
-* v8_3 - iPhone App
+
+## V9
+* v9 - multiple (*independent*) instances of the overall agent package
+* v9_1 - iPad App
+* v9_2 - iPhone App

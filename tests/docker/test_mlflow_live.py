@@ -1,10 +1,10 @@
-"""Tracing against a real MLflow server: the image compose pins, run here.
+"""Tracing against a real MLflow server: docker/mlflow/Dockerfile, built and run here.
 
 Everything else about tracing is tested on a fake (tests/fake_mlflow.py);
 this is where the fake is held to the real thing. The pipeline runs on the
 same fakes as test_graph.py -- no Ollama, no Postgres -- and its trace goes to
-a throwaway server started from the image docker-compose.yml names, on a
-private network where it answers to `nl2sql-mlflow`, the name setup.sh
+a throwaway server started from the image compose builds, on a private
+network where it answers to `nl2sql-mlflow`, the name setup.sh
 writes into .env, behind the rebinding guard compose gives it. Read back
 with MLflow's own client, the trace has to be what the fake said it would.
 
@@ -32,7 +32,8 @@ pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 COMPOSE = (REPO_ROOT / "docker-compose.yml").read_text()
-IMAGE = re.search(r"\$\{MLFLOW_IMAGE:-([^}]+)\}", COMPOSE).group(1)
+#: Built from docker/mlflow/Dockerfile, as compose builds it unpinned.
+IMAGE = "nl2sql-mlflow:pytest"
 ALLOWED_HOSTS = re.search(r"--allowed-hosts=\$\{MLFLOW_ALLOWED_HOSTS:-([^}]+)\}", COMPOSE).group(1)
 AGENT_IMAGE = "nl2sql-agent:pytest"
 
@@ -46,6 +47,12 @@ def server(docker_daemon_available: bool):
     """A server on its own network, answering to the name compose gives it."""
     if not docker_daemon_available:
         pytest.skip("no working docker daemon")
+    built = subprocess.run(
+        ["docker", "build", "-f", "docker/mlflow/Dockerfile", "-t", IMAGE, "."],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=900,
+    )
+    if built.returncode != 0:
+        pytest.skip(f"could not build the MLflow image:\n{built.stderr[-2000:]}")
     suffix = uuid.uuid4().hex[:8]
     network, name = f"nl2sql-mlflow-test-{suffix}", f"nl2sql-mlflow-test-{suffix}"
     _docker("network", "create", network)

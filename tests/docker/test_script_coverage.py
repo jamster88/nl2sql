@@ -526,6 +526,8 @@ DOCKERFILES = {
     "review/Dockerfile": ("tests/review/test_review_image.py",),
     "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
     "console/Dockerfile": ("tests/console/test_console_project.py",),
+    "docker/mlflow/Dockerfile": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
+    "docker/mlflowdb/Dockerfile": ("tests/docker/test_mlflow_compose.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/restore.Dockerfile": ("tests/rag/test_rag_images.py",),

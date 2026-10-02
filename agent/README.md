@@ -476,8 +476,9 @@ environment already has.
 **The client is MLflow's tracing package alone**, `mlflow-tracing`: spans,
 traces and assessments, without the tracking server, model registry or the
 scientific stack the full `mlflow` package brings into an image. It is
-pinned to the server's version in `docker-compose.yml`, and a test holds the
-two together. The benchmark's runs need `mlflow-skinny`, which
+pinned to the server's version in
+[`docker/mlflow/Dockerfile`](../docker/mlflow/Dockerfile), and a test holds
+the two together. The benchmark's runs need `mlflow-skinny`, which
 `tests/requirements.txt` installs on the host; see
 [`benchmarks/README.md`](../benchmarks/README.md#mlflow).
 

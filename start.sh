@@ -138,9 +138,7 @@ while [[ $# -gt 0 ]]; do
         # A troubleshooting tool beside whichever interface was chosen, not
         # instead of it. launch.sh brings the API up for it.
         --console) WITH_CONSOLE=1; LAUNCH_ARGS+=(--console); SETUP_ARGS+=(--console); shift ;;
-        # Nothing for setup.sh: MLflow's image is MLflow's, pinned in
-        # docker-compose.yml, and pulled by launch.sh the first time.
-        --mlflow) WITH_MLFLOW=1; LAUNCH_ARGS+=(--mlflow); shift ;;
+        --mlflow) WITH_MLFLOW=1; LAUNCH_ARGS+=(--mlflow); SETUP_ARGS+=(--mlflow); shift ;;
         # The desktop client is an interface, not an addition to one: with
         # this the web interface is not started and no browser is opened for
         # it. --review still opens the review page, which has no desktop
@@ -311,6 +309,8 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
         printf 'the review images are not pinned, so they would be built here from source'
     elif [[ $WITH_CONSOLE -eq 1 && -z "$(env_file_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
         printf "the SQL console's interface is not pinned, so it would be built here from source"
+    elif [[ $WITH_MLFLOW -eq 1 && -z "$(env_file_value MLFLOW_IMAGE_NAME)" ]]; then
+        printf "MLflow's images are not pinned, so they would be built here from source"
     fi
 }
 

@@ -43,7 +43,7 @@ def _pinned(name: str) -> str:
     return f"{image}:{tag}"
 
 
-PINNED = [_pinned(name) for name in ("AGENT", "GUI", "REVIEW", "REVIEW_GUI", "CONSOLE_GUI")]
+PINNED = [_pinned(name) for name in ("AGENT", "GUI", "REVIEW", "REVIEW_GUI", "CONSOLE_GUI", "MLFLOW", "MLFLOW_DB")]
 PINNED += [f"{_pinned('DESKTOP')}-{platform}" for platform in DESKTOP_PLATFORMS]
 
 
@@ -118,6 +118,6 @@ def test_setup_sh_does_not_pin_the_retail_image_from_before_the_reader_role():
 
 
 def test_the_list_is_every_image_setup_sh_moves_together():
-    """Six image families, the desktop one per platform: ten references."""
-    assert len(PINNED) == 10
-    assert len({reference.split(":")[0] for reference in PINNED}) == 6
+    """Eight image families, the desktop one per platform: twelve references."""
+    assert len(PINNED) == 12
+    assert len({reference.split(":")[0] for reference in PINNED}) == 8

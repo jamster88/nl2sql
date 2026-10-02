@@ -801,7 +801,7 @@ start_mlflow() {
 
 if [[ $WITH_MLFLOW -eq 1 ]]; then
     step "Starting MLflow"
-    info "The first start pulls MLflow's own image, about 370 MB."
+    info "The first start fetches MLflow's image, about 370 MB."
     if start_mlflow; then
         info "MLflow is healthy at http://localhost:$mlflow_port"
         if [[ -z "$(compose_env MLFLOW_TRACKING_URI "")" ]]; then

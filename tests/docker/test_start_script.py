@@ -1256,12 +1256,24 @@ def test_desktop_mlflow_and_no_browser_prints_the_mlflow_url(run_start):
     assert "MLflow at http://localhost:5001" in result.output
 
 
-def test_a_first_run_with_mlflow_writes_where_traces_go_and_hands_setup_nothing(run_start):
-    """MLflow's image is MLflow's, so setup.sh has nothing to pull or pin for
-    it -- and would refuse a flag it does not know."""
+def test_a_first_run_with_mlflow_pulls_its_images_and_writes_where_traces_go(run_start):
     result = run_start("--mlflow", env_file=None)
 
     assert result.returncode == 0
-    assert result.env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
+    assert result.called("pull mcfaddja/nl2sql-mlflow:")
+    assert result.called("pull mcfaddja/nl2sql-mlflowdb:")
+    env = result.env_file()
+    assert env["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
+    assert env["MLFLOW_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflow"
     assert "MLFLOW_TRACKING_URI is not set" not in result.output
 
+
+def test_mlflow_that_was_never_pinned_is_pulled_rather_than_built(run_start):
+    """A .env from before 5.5 pins no MLflow, and compose would build both
+    images here -- a pull of MLflow's and Postgres's own -- when the
+    published ones are a pull away."""
+    result = run_start("--mlflow")
+
+    assert "MLflow's images are not pinned, so they would be built here from source" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-mlflow:{SHIPPED}")
+    assert result.env_file()["MLFLOW_DB_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflowdb"

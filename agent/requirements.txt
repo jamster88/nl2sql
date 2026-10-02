@@ -18,5 +18,5 @@ cryptography==50.0.1
 # verdicts recorded on it, without the tracking server, the model registry or
 # the scientific stack the full `mlflow` package brings. Only imported once a
 # server has answered, so a run with MLFLOW_TRACKING_URI unset never loads it.
-# Pinned to the server's version in docker-compose.yml, which a test holds.
+# Pinned to the server's version in docker/mlflow/Dockerfile, which a test holds.
 mlflow-tracing==3.16.1

@@ -6,10 +6,14 @@ only parses and resolves, but it needs a working `docker` CLI.
 What carries weight is what joins files that never mention each other:
 
 * **One version of MLflow.** The server is MLflow's own published image,
-  pinned in docker-compose.yml; the agent's tracing client is pinned in
-  agent/requirements.txt and the benchmark's runs client in
-  tests/requirements.txt. A client ahead of its server is a trace format the
-  server does not read, and nothing but a test holds the three together.
+  pinned in docker/mlflow/Dockerfile and built under the release's tag; the
+  agent's tracing client is pinned in agent/requirements.txt and the
+  benchmark's runs client in tests/requirements.txt. A client ahead of its
+  server is a trace format the server does not read, and nothing but a test
+  holds the three together.
+* **Both images are the release's.** They are built here, from
+  docker/mlflow/Dockerfile and docker/mlflowdb/Dockerfile, and pinned by
+  `setup.sh --mlflow` like every other image this project publishes.
 * **The address the agent is given is this service's.** setup.sh writes
   `http://nl2sql-mlflow:5000` into .env; that is a container name and a port
   here, and the server's DNS-rebinding guard must accept it as a Host header.
@@ -74,6 +78,12 @@ def _flags(service: dict) -> dict[str, str]:
     return dict(arg[2:].split("=", 1) for arg in service["command"] if arg.startswith("--") and "=" in arg)
 
 
+def _base(dockerfile: str) -> str:
+    """The image a Dockerfile is built from."""
+    [base] = re.findall(r"^FROM (\S+)$", (REPO_ROOT / dockerfile).read_text(), re.MULTILINE)
+    return base
+
+
 def _pin(path: str, package: str) -> str:
     [version] = re.findall(rf"^{re.escape(package)}==([\d.]+)$", (REPO_ROOT / path).read_text(), re.MULTILINE)
     return version
@@ -100,22 +110,58 @@ def test_both_are_behind_the_mlflow_profile(config: dict, service: str):
 # ---------------------------------------------------------------------------
 
 
-def test_the_server_is_mlflows_own_image_with_a_postgres_driver(mlflow: dict):
-    image, _, tag = mlflow["image"].rpartition(":")
+@pytest.mark.parametrize(
+    ("service", "dockerfile"),
+    [("mlflow", "docker/mlflow/Dockerfile"), ("mlflowdb", "docker/mlflowdb/Dockerfile")],
+)
+def test_both_are_built_here_and_named_as_the_release_publishes_them(config: dict, service: str, dockerfile: str):
+    built = config["services"][service]
+    assert built["build"]["dockerfile"] == dockerfile
+    # Unpinned, the local build; `setup.sh --mlflow` pins the published one.
+    assert built["image"] == f"nl2sql-{service}:latest"
+
+
+@pytest.mark.parametrize("dockerfile", ["docker/mlflow/Dockerfile", "docker/mlflowdb/Dockerfile"])
+def test_the_images_add_nothing_to_what_they_are_built_from(dockerfile: str):
+    """How the server is run is compose's command, which changes without a
+    rebuild; an image that baked any of it in would be a second copy."""
+    instructions = {
+        line.split()[0] for line in (REPO_ROOT / dockerfile).read_text().splitlines()
+        if line and not line.startswith(("#", " "))
+    }
+    assert instructions <= {"FROM", "EXPOSE", "LABEL"}
+
+
+def test_the_server_is_mlflows_own_image_with_a_postgres_driver():
+    image, _, tag = _base("docker/mlflow/Dockerfile").rpartition(":")
     assert image == "ghcr.io/mlflow/mlflow"
     # The plain image has no Postgres driver; `-full` does.
     assert tag.endswith("-full")
 
 
-def test_the_agents_and_the_benchmarks_clients_are_the_servers_version(mlflow: dict):
-    server = mlflow["image"].rpartition(":")[2].removeprefix("v").removesuffix("-full")
+def test_the_store_is_stock_postgres():
+    assert _base("docker/mlflowdb/Dockerfile").startswith("postgres:")
+
+
+def test_the_agents_and_the_benchmarks_clients_are_the_servers_version():
+    server = _base("docker/mlflow/Dockerfile").rpartition(":")[2].removeprefix("v").removesuffix("-full")
     assert _pin("agent/requirements.txt", "mlflow-tracing") == server
     assert _pin("tests/requirements.txt", "mlflow-skinny") == server
 
 
-def test_the_server_image_can_be_replaced(tmp_path_factory):
-    config = _compose_config(tmp_path_factory.mktemp("image"), env={"MLFLOW_IMAGE": "example.org/mlflow:9"})
-    assert config["services"]["mlflow"]["image"] == "example.org/mlflow:9"
+def test_the_pins_setup_writes_are_what_compose_runs(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("pinned"),
+        env={
+            "MLFLOW_IMAGE_NAME": "mcfaddja/nl2sql-mlflow", "MLFLOW_IMAGE_TAG": "v9",
+            "MLFLOW_DB_IMAGE_NAME": "mcfaddja/nl2sql-mlflowdb", "MLFLOW_DB_IMAGE_TAG": "v9",
+        },
+    )
+    assert config["services"]["mlflow"]["image"] == "mcfaddja/nl2sql-mlflow:v9"
+    assert config["services"]["mlflowdb"]["image"] == "mcfaddja/nl2sql-mlflowdb:v9"
+    setup = (REPO_ROOT / "setup.sh").read_text()
+    for key in ("MLFLOW_IMAGE_NAME", "MLFLOW_IMAGE_TAG", "MLFLOW_DB_IMAGE_NAME", "MLFLOW_DB_IMAGE_TAG"):
+        assert f'echo "{key}=' in setup
 
 
 # ---------------------------------------------------------------------------
@@ -123,8 +169,7 @@ def test_the_server_image_can_be_replaced(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 
-def test_the_store_is_a_stock_postgres_of_its_own(mlflowdb: dict, config: dict):
-    assert mlflowdb["image"].startswith("postgres:")
+def test_the_store_is_a_database_of_its_own(mlflowdb: dict, config: dict):
     assert mlflowdb["container_name"] == "nl2sql-mlflowdb"
     others = {s["environment"].get("POSTGRES_DB") for n, s in config["services"].items()
               if n != "mlflowdb" and "environment" in s}

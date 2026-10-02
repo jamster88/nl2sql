@@ -6,7 +6,8 @@ each version created, updated or fixed.
 
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
-SQL console's interface and the desktop client's jar -- are released together
+SQL console's interface, the desktop client's jar and, since v5_5, MLflow's
+server and store -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
@@ -16,7 +17,7 @@ their own and are listed under the release they shipped with. A version marked
 
 **Added**
 - MLflow tracing: every question is one trace, a span per agent with what it read and wrote, and every model call inside it with its messages, answer, tokens and route.
-- MLflow in compose, with a Postgres of its own: `start.sh --mlflow` and `launch.sh --mlflow`, its interface on this machine only.
+- MLflow in compose, with a Postgres of its own, both published with the release: `start.sh --mlflow`, `launch.sh --mlflow` and `setup.sh --mlflow`, its interface on this machine only.
 - A verdict given in the web or desktop interface is recorded on the trace of the answer it judges.
 - The benchmark files each configuration as an MLflow run, with its questions' traces, scores and timings.
 
@@ -24,6 +25,7 @@ their own and are listed under the release they shipped with. A version marked
 - `setup.sh` points the agent at MLflow in `.env`; whenever MLflow is not up the agent answers untraced.
 - The CLI's `--json` names the run's trace.
 - Version 5.5.0 in every declaration; `setup.sh` pins `v5_5`.
+- All twelve app image tags published as `v5_5`, MLflow's server and store for the first time.
 
 ## v5_4 (5.4.0) -- 2026-09-30
 

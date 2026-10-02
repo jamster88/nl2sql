@@ -743,6 +743,59 @@ def test_setup_ends_by_saying_the_console_is_there(run_setup):
 
 
 # ---------------------------------------------------------------------------
+# MLflow (--mlflow)
+# ---------------------------------------------------------------------------
+
+
+def test_mlflow_pulls_and_pins_its_server_and_its_store(run_setup):
+    """Two images, as the review service and its interface are: the server
+    is no use without the store behind it."""
+    result = run_setup("--mlflow")
+
+    server, store = _shipped_tag("MLFLOW_TAG"), _shipped_tag("MLFLOW_DB_TAG")
+    pulled = [call for call in result.calls if call.startswith("pull") and "mlflow" in call]
+    assert pulled == [f"pull mcfaddja/nl2sql-mlflow:{server}", f"pull mcfaddja/nl2sql-mlflowdb:{store}"]
+    env = result.env_file()
+    assert (env["MLFLOW_IMAGE_NAME"], env["MLFLOW_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflow", server)
+    assert (env["MLFLOW_DB_IMAGE_NAME"], env["MLFLOW_DB_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflowdb", store)
+
+
+def test_nothing_about_mlflow_is_pulled_or_pinned_unless_it_was_asked_for(run_setup):
+    result = run_setup()
+    assert not [call for call in result.calls if call.startswith("pull") and "mlflow" in call]
+    assert "MLFLOW_IMAGE_NAME" not in result.env_file()
+
+
+def test_naming_an_mlflow_image_or_tag_implies_the_flag(run_setup):
+    """Written out rather than parametrized, for the reason the review
+    images' test gives."""
+    assert run_setup("--mlflow-image", "example.com/mlflow").env_file()["MLFLOW_IMAGE_NAME"] == "example.com/mlflow"
+    assert run_setup("--mlflow-tag", "v9_9").env_file()["MLFLOW_IMAGE_TAG"] == "v9_9"
+    assert run_setup("--mlflow-db-image", "example.com/store").env_file()[
+        "MLFLOW_DB_IMAGE_NAME"
+    ] == "example.com/store"
+    assert run_setup("--mlflow-db-tag", "v9_8").env_file()["MLFLOW_DB_IMAGE_TAG"] == "v9_8"
+
+
+def test_a_failed_mlflow_pull_is_not_fatal(run_setup):
+    result = run_setup("--mlflow", env={"FAKE_FAIL_PULL": "nl2sql-mlflowdb"})
+    assert result.returncode == 0
+    assert "could not pull mcfaddja/nl2sql-mlflowdb:" in result.output
+    assert "./launch.sh --mlflow will build it from source instead." in result.output
+
+
+def test_a_pinned_mlflow_stays_pinned_without_the_flag(run_setup):
+    run_setup("--mlflow")
+    assert run_setup().env_file()["MLFLOW_DB_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflowdb"
+
+
+def test_setup_ends_by_saying_mlflow_is_there(run_setup):
+    output = run_setup().output
+    assert "./launch.sh --mlflow" in output
+    assert "http://localhost:5001" in output
+
+
+# ---------------------------------------------------------------------------
 # Re-running it should not undo the last run
 # ---------------------------------------------------------------------------
 #

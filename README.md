@@ -50,13 +50,12 @@ Either way the same containers come up:
 | `nl2sql-console` | The agent image again, as the SQL console: the retail database queried as the agent's read-only role and through its gates, with `--console` |
 | `nl2sql-console-gui` | The SQL console's interface, and the proxy in front of it, on this machine only, with `--console` |
 | `nl2sql-mlflowdb` | MLflow's tracking store: every question's trace, and the verdicts given on it, with `--mlflow` |
-| `nl2sql-mlflow` | MLflow's own server and interface, on this machine only, with `--mlflow` |
+| `nl2sql-mlflow` | MLflow's server and interface, on this machine only, with `--mlflow` |
 
 The agent, the GUI, both halves of the review system, the SQL console's
-interface and the desktop client's jar are published images (`v5_5`); the
-rest are built or pulled by `setup.sh` as well, except MLflow's two, which
-are MLflow's and Postgres's own and are pulled the first time `--mlflow`
-asks for them. [Pulling the images](#pulling-the-images) has
+interface, the desktop client's jar and MLflow's server and store are
+published images (`v5_5`); the rest are built or pulled by `setup.sh` as
+well. [Pulling the images](#pulling-the-images) has
 the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
 
 ### Three scripts
@@ -341,12 +340,16 @@ docker pull mcfaddja/nl2sql-gui:v5_5       # the web interface
 docker pull mcfaddja/nl2sql-review:v5_5    # the review service
 docker pull mcfaddja/nl2sql-review-gui:v5_5  # the review interface
 docker pull mcfaddja/nl2sql-console-gui:v5_5  # the SQL console's interface
+docker pull mcfaddja/nl2sql-mlflow:v5_5    # MLflow, where every question is traced
+docker pull mcfaddja/nl2sql-mlflowdb:v5_5  # the Postgres MLflow keeps traces in
 ```
 
 The console has no image of its own: it is the agent's, started a third way.
-Nor has MLflow: its server is MLflow's published image, pinned in
-[`docker-compose.yml`](docker-compose.yml) to the version of the tracing
-client the agent carries.
+MLflow's two are thin: MLflow's own published server
+([`docker/mlflow/Dockerfile`](docker/mlflow/Dockerfile)), pinned to the
+version of the tracing client the agent carries, and stock Postgres
+([`docker/mlflowdb/Dockerfile`](docker/mlflowdb/Dockerfile)), each labelled
+and published with the release so that a release's images are one set.
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
@@ -364,6 +367,7 @@ container that is never started is a download nobody asked for:
 ./setup.sh --gui        # pulls and pins it too, so ./launch.sh --gui runs it
 ./setup.sh              # leaves it out; ./launch.sh --gui builds it here
 ./setup.sh --console    # the same for the SQL console's interface
+./setup.sh --mlflow     # and for MLflow's server and store
 ```
 
 Both work. The difference is that compose builds a service whose image is
@@ -431,6 +435,10 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_5 .
 docker buildx build --platform linux/amd64,linux/arm64 \
   -f console/Dockerfile --push -t mcfaddja/nl2sql-console-gui:v5_5 .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v5_5 .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v5_5 .
 ```
 
 The desktop client is published along a second axis as well. Every tag is
@@ -459,7 +467,7 @@ version with its dots turned into underscores, truncated to however many
 components the tag carries: `v5_1_2` is exactly 5.1.2, `v5_1` is 5.1.x and
 `v5` is 5.x, and
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds the
-eighteen places that say so to the same number.
+twenty places that say so to the same number.
 
 The database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
 (`v1_1`) and the two RAG stores (`v3_1`) version independently, because their
@@ -487,7 +495,7 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. Only the agent image changed; the others are `v5_4`'s under a new version. Pinned -- what `setup.sh` pulls. |
+| `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. MLflow's server and store are published with the release from here on, as `nl2sql-mlflow` and `nl2sql-mlflowdb`. Of the rest only the agent image changed; the others are `v5_4`'s under a new version. Pinned -- what `setup.sh` pulls. |
 | `v5_4` | A judgement in the review interface can be taken back: a submission is put back to pending or deleted, and a promoted pair comes back out of the golden set, or a stored fix out of its store, with it. The agent and the console are `v5_3`'s. Pinned. |
 | `v5_3` | Adds the SQL console: the same image run as `python -m nl2sql_agent.console`, which queries the retail database as the agent's read-only role, under its timeout and plan-cost ceiling, through its validator and planner gate -- and says which gate would have refused a query, in that gate's words -- with an interface of its own, `nl2sql-console-gui`. The pipeline is `v5_2`'s. Pinned. |
 | `v5_2` | arch5.2: every model call is routed -- by its task and the complexity of the question -- to the fastest model on the Ollama host that calibration measured to be suited to it, from a catalog built by `models/build_catalog.py` and measured by `models/calibrate.py`. Repairs climb the ladder, a routed model that cannot answer falls back to `OLLAMA_MODEL`, every call is capped in tokens and time, and `/v1/meta` and the trace say which model answered. With no catalog for its host it behaves as `v5_1_2`. Pinned. |
@@ -912,8 +920,9 @@ run is traced, and when it is not the agent answers untraced and asks again
 thirty seconds later, so MLflow can be started or stopped under a running
 API. `MLFLOW_TRACKING_URI=` (empty) turns tracing off outright, and survives
 `setup.sh` being run again. The server is MLflow's own image, pinned to the
-version of the tracing client in the agent image, with a Postgres of its own
-behind it (`nl2sql-mlflowdb`, not published). Its interface has no login and
+version of the tracing client in the agent image and published with the
+release (`nl2sql-mlflow`), with a Postgres of its own behind it
+(`nl2sql-mlflowdb`, whose port is not published). Its interface has no login and
 shows the rows every question returned, so it is published on this machine
 only unless `MLFLOW_BIND_ADDRESS` says otherwise, and `launch.sh` warns when
 it does.
@@ -1378,8 +1387,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3267 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3859, including ones that build and run containers
+pytest                                          # 3276 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3875, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1388,7 +1397,7 @@ pytest --run-docker --run-node --run-java       # all 3859, including ones that 
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, least privilege -- what the reader role can and cannot do, asked of a live catalog -- and the MLflow trace every run writes, read back as a tree from a fake MLflow: a span per agent named as the architecture names it, the four concurrent retrievers under their own run, a repair as a second generation, a routed call that fell back as two calls, and a server that is down, comes back, or refuses a verdict costing nothing but the trace |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, the curl-only smoke script run against it for real, and a verdict recorded on, replaced on and withdrawn from the answer's trace -- after the staging database takes it, and never instead |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the ten tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures -- and MLflow: its two services as compose resolves them, one version across the server and both clients, and tracing against a real server started from the pinned image on a private network under the name `setup.sh` writes -- the pipeline's trace read back by MLflow's own client, verdicts, the benchmark's runs, and the agent image's own tracing client doing everything the agent asks of it |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the twelve tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures -- and MLflow: its two services as compose resolves them, one version across the server and both clients, and tracing against a real server started from the pinned image on a private network under the name `setup.sh` writes -- the pipeline's trace read back by MLflow's own client, verdicts, the benchmark's runs, and the agent image's own tracing client doing everything the agent asks of it |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, a judgement taken back -- a promoted pair withdrawn from a real copy of the document and checked by the loader's parser, a fix deleted with its vector, the promotion log cleared and the row handed back to the public process -- the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 155-test review GUI suite run from here |
@@ -1397,7 +1406,7 @@ pytest --run-docker --run-node --run-java       # all 3859, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 556 tests behind `--run-docker` are the ones that need a working daemon:
+The 563 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console and desktop images and run them, resolve the real
 compose file, query the four live databases, trace into a real MLflow server, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1418,7 +1427,7 @@ default run. Those three scripts' suites are most of the five minutes: each
 test runs the real script, and each of `start.sh`'s runs the real `setup.sh`
 and `launch.sh` beneath it.
 
-Twenty-eight of those 556 also need the **embedding host**: a local Ollama
+Twenty-eight of those 563 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1642,7 +1651,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   all three `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1323 of 1323**.
+  the traces mention -- **1348 of 1348**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

@@ -34,6 +34,12 @@ REVIEW_GUI_TAG="v5_5"
 # --console adds.
 CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
 CONSOLE_GUI_TAG="v5_5"
+# MLflow, where the agent's runs are traced: its server and the Postgres it
+# keeps traces in, both published with the release. --mlflow adds them.
+MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
+MLFLOW_TAG="v5_5"
+MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
+MLFLOW_DB_TAG="v5_5"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
@@ -58,6 +64,7 @@ BUILD_AGENT=0
 WITH_GUI=0
 WITH_REVIEW=0
 WITH_CONSOLE=0
+WITH_MLFLOW=0
 WITH_DESKTOP=0
 WITH_RAG=1
 VERIFY=1
@@ -94,6 +101,14 @@ Usage: ./setup.sh [options]
       --console-gui-image N  SQL console interface image
                          (default: mcfaddja/nl2sql-console-gui)
       --console-gui-tag TAG  SQL console interface image tag (default: v5_5)
+      --mlflow           Also pull and pin MLflow -- its server and the
+                         Postgres it keeps traces in -- so ./launch.sh
+                         --mlflow starts it instead of building it here
+      --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
+      --mlflow-tag TAG   MLflow server image tag (default: v5_5)
+      --mlflow-db-image N    MLflow store image
+                         (default: mcfaddja/nl2sql-mlflowdb)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v5_5)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
@@ -146,6 +161,12 @@ while [[ $# -gt 0 ]]; do
         --console) WITH_CONSOLE=1; shift ;;
         --console-gui-image) CONSOLE_GUI_IMAGE="$2"; WITH_CONSOLE=1; shift 2 ;;
         --console-gui-tag) CONSOLE_GUI_TAG="$2"; WITH_CONSOLE=1; shift 2 ;;
+        # Both halves together: the server is no use without its store.
+        --mlflow) WITH_MLFLOW=1; shift ;;
+        --mlflow-image) MLFLOW_IMAGE="$2"; WITH_MLFLOW=1; shift 2 ;;
+        --mlflow-tag) MLFLOW_TAG="$2"; WITH_MLFLOW=1; shift 2 ;;
+        --mlflow-db-image) MLFLOW_DB_IMAGE="$2"; WITH_MLFLOW=1; shift 2 ;;
+        --mlflow-db-tag) MLFLOW_DB_TAG="$2"; WITH_MLFLOW=1; shift 2 ;;
         --desktop) WITH_DESKTOP=1; shift ;;
         --desktop-image) DESKTOP_IMAGE="$2"; WITH_DESKTOP=1; shift 2 ;;
         --desktop-tag) DESKTOP_TAG="$2"; WITH_DESKTOP=1; shift 2 ;;
@@ -307,6 +328,9 @@ fi
 if [[ $WITH_CONSOLE -eq 0 && -n "$(env_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
     WITH_CONSOLE=1
 fi
+if [[ $WITH_MLFLOW -eq 0 && -n "$(env_value MLFLOW_IMAGE_NAME)" ]]; then
+    WITH_MLFLOW=1
+fi
 if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
     WITH_DESKTOP=1
 fi
@@ -343,6 +367,14 @@ fi
     if [[ $WITH_CONSOLE -eq 1 ]]; then
         echo "CONSOLE_GUI_IMAGE_NAME=$CONSOLE_GUI_IMAGE"
         echo "CONSOLE_GUI_IMAGE_TAG=$CONSOLE_GUI_TAG"
+    fi
+    # The same again for MLflow's two. Unpinned, compose builds both here,
+    # which is a pull of MLflow's and Postgres's own images.
+    if [[ $WITH_MLFLOW -eq 1 ]]; then
+        echo "MLFLOW_IMAGE_NAME=$MLFLOW_IMAGE"
+        echo "MLFLOW_IMAGE_TAG=$MLFLOW_TAG"
+        echo "MLFLOW_DB_IMAGE_NAME=$MLFLOW_DB_IMAGE"
+        echo "MLFLOW_DB_IMAGE_TAG=$MLFLOW_DB_TAG"
     fi
     # Same reasoning again. Unpinned, compose resolves the desktop service to
     # a local tag with nowhere to be pulled from, and launch.sh builds the
@@ -456,6 +488,17 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
         warn "could not pull $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (private repo, or not logged in);"
         warn "./launch.sh --console will build it from source instead."
     fi
+fi
+
+# MLflow's two, the server and its store: pulled together, as they run.
+if [[ $WITH_MLFLOW -eq 1 ]]; then
+    for pair in "$MLFLOW_IMAGE:$MLFLOW_TAG" "$MLFLOW_DB_IMAGE:$MLFLOW_DB_TAG"; do
+        step "Pulling $pair (MLflow)"
+        if ! docker pull "$pair"; then
+            warn "could not pull $pair (private repo, or not logged in);"
+            warn "./launch.sh --mlflow will build it from source instead."
+        fi
+    done
 fi
 
 # The desktop client, whose image is tagged by JavaFX platform rather than by
@@ -679,6 +722,11 @@ cat <<EOF
     the agent runs its own, and says which of its gates would have stopped it:
 
     ./launch.sh --console                    # http://localhost:8082
+
+    Want to see what the agent did with a question, agent by agent and
+    model call by model call? MLflow traces every one:
+
+    ./launch.sh --mlflow                     # http://localhost:5001
 
     Or connect a GUI of your own: the same image serves a REST API over TLS,
     and agent/API.md is the contract a client is written against:

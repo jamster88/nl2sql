@@ -293,7 +293,7 @@ def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_rea
     """setup.sh pins a tag per image; if the README's tag tables do not list
     it, the default nobody passes is also the one nobody has read about.
     """
-    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE", "CONSOLE_GUI_IMAGE"):
+    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE", "CONSOLE_GUI_IMAGE", "MLFLOW_IMAGE", "MLFLOW_DB_IMAGE"):
         image = re.search(rf'^{var}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         tag = re.search(rf'^{var.replace("_IMAGE", "_TAG")}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         assert f"{image}:{tag}" in root_readme, f"README never shows {image}:{tag}"

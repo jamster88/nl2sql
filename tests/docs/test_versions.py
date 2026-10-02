@@ -1,6 +1,6 @@
 """Every place this repository writes its own version down.
 
-A release bumps eighteen of them, across five languages, and the failure mode
+A release bumps twenty of them, across five languages, and the failure mode
 is not subtle: an image whose label says one thing and whose contents are
 another, or a `setup.sh` that pulls a tag this checkout is not. The existing
 tests pin each declaration to `nl2sql_agent.__version__` one at a time, which
@@ -8,7 +8,7 @@ catches a file that drifts. This catches the other half -- a file that was
 never in anybody's list.
 
 It earns its place twice over. The published tags do not move any more, so a
-correction is a new patch version and an eighteen-place bump rather than a
+correction is a new patch version and a twenty-place bump rather than a
 re-push; and every npm lockfile carries a *dependency* at `5.2.0` as well as
 the project, so a careless find-and-replace corrupts it in a way that only
 `npm ci` notices.
@@ -37,6 +37,8 @@ DECLARATIONS = {
     "gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "review/gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "console/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
+    "docker/mlflow/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
+    "docker/mlflowdb/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "desktop/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "desktop/pom.xml": r"^  <version>([\d.]+)</version>",
     "gui/package.json": r'^  "version": "([\d.]+)"',
@@ -92,7 +94,7 @@ def test_a_lockfile_is_listed_for_every_npm_project():
 
 
 def test_the_published_tags_are_this_version():
-    """`setup.sh` pins six tags and they all move together. A tag is the
+    """`setup.sh` pins eight tags and they all move together. A tag is the
     version with dots turned into underscores, truncated to however many
     components the tag carries -- so `v4_5` is 4.5.x and `v4_5_1` is exactly
     4.5.1, which is what a correction is published as now that a published
@@ -101,7 +103,10 @@ def test_the_published_tags_are_this_version():
     setup_sh = (REPO_ROOT / "setup.sh").read_text()
     tags = {
         name: re.search(rf'^{name}="v([\d_]+)"', setup_sh, re.MULTILINE).group(1)
-        for name in ("AGENT_TAG", "GUI_TAG", "REVIEW_TAG", "REVIEW_GUI_TAG", "CONSOLE_GUI_TAG", "DESKTOP_TAG")
+        for name in (
+            "AGENT_TAG", "GUI_TAG", "REVIEW_TAG", "REVIEW_GUI_TAG", "CONSOLE_GUI_TAG", "DESKTOP_TAG",
+            "MLFLOW_TAG", "MLFLOW_DB_TAG",
+        )
     }
 
     assert len(set(tags.values())) == 1, f"the published tags have drifted apart: {tags}"
@@ -115,12 +120,12 @@ def test_the_published_tags_are_this_version():
 #: reason to name an older tag of one. The agent is not here: `v1` is the
 #: baseline the retrieval comparison is measured against, and named on purpose.
 _INTERFACE_IMAGE = re.compile(
-    r"mcfaddja/nl2sql-(?:gui|review|review-gui|console-gui|desktop-build):(v[\d_]+)"
+    r"mcfaddja/nl2sql-(?:gui|review|review-gui|console-gui|desktop-build|mlflow|mlflowdb):(v[\d_]+)"
 )
-#: A publish of any of the six images `setup.sh` moves together. The dataset
+#: A publish of any of the eight images `setup.sh` moves together. The dataset
 #: and knowledge-base images are versioned on their own and are not among them.
 _PUBLISH = re.compile(
-    r"--push\s+-t\s+mcfaddja/nl2sql-(?:agent|gui|review|review-gui|console-gui|desktop-build):(v[\d_]+)"
+    r"--push\s+-t\s+mcfaddja/nl2sql-(?:agent|gui|review|review-gui|console-gui|desktop-build|mlflow|mlflowdb):(v[\d_]+)"
 )
 
 

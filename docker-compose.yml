@@ -695,12 +695,18 @@ services:
     profiles: ["consolegui"]
 
   # The tracking store behind MLflow: experiments, traces and the verdicts on
-  # them. A stock Postgres of its own, like feedbackdb and for its reason --
-  # what it holds accumulates from use, not from a build -- and unpublished:
-  # nothing reads it but the server below, and a trace holds questions,
-  # queries and the rows they returned.
+  # them. Stock Postgres, like feedbackdb and for its reason -- what it holds
+  # accumulates from use, not from a build -- labelled and published with the
+  # release (docker/mlflowdb/Dockerfile). Its port is not published: nothing
+  # reads it but the server below, and a trace holds questions, queries and
+  # the rows they returned.
   mlflowdb:
-    image: ${MLFLOW_DB_IMAGE:-postgres:18}
+    build:
+      context: .
+      dockerfile: docker/mlflowdb/Dockerfile
+    # Pinned by `setup.sh --mlflow`, like the other images; unpinned, compose
+    # builds it here, which is a pull of the Postgres it is.
+    image: ${MLFLOW_DB_IMAGE_NAME:-nl2sql-mlflowdb}:${MLFLOW_DB_IMAGE_TAG:-latest}
     container_name: nl2sql-mlflowdb
     restart: unless-stopped
     stop_grace_period: 1m
@@ -725,16 +731,19 @@ services:
   # and per model call -- with the verdicts given on its answers and the
   # benchmark's runs. See agent/nl2sql_agent/tracing.py.
   #
-  # The project's own image is not involved: this is MLflow's published
-  # server, pinned, in the variant that carries a Postgres driver. The
-  # agent's tracing client (agent/requirements.txt) is pinned to the same
-  # version, which a test holds.
+  # MLflow's own published server, in the variant that carries a Postgres
+  # driver, built here under the release's tag (docker/mlflow/Dockerfile) and
+  # pinned to the version of the agent's tracing client, which a test holds.
+  # How it is served is the command below, not the image.
   #
   # Published on this machine only unless MLFLOW_BIND_ADDRESS says otherwise,
   # like the SQL console: the interface has no login, can delete what it
   # shows, and what it shows includes the rows every question returned.
   mlflow:
-    image: ${MLFLOW_IMAGE:-ghcr.io/mlflow/mlflow:v3.16.1-full}
+    build:
+      context: .
+      dockerfile: docker/mlflow/Dockerfile
+    image: ${MLFLOW_IMAGE_NAME:-nl2sql-mlflow}:${MLFLOW_IMAGE_TAG:-latest}
     container_name: nl2sql-mlflow
     restart: unless-stopped
     depends_on:

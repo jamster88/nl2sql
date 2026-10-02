@@ -643,6 +643,31 @@ def test_each_file_is_named_by_the_tests_said_to_cover_it(inventory: dict):
             assert basename in source.read_text(), f"{driver} never mentions {basename}"
 
 
+_COUNT_WORDS = (
+    "no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+)
+
+
+def test_the_readme_counts_what_these_inventories_hold():
+    """README.md says how many of each non-Python file there are, and said
+    eleven Dockerfiles for a release after 5.5 made them thirteen: nothing
+    read the sentence, so nothing noticed."""
+    readme = " ".join((REPO_ROOT / "README.md").read_text().split())
+    word = "(" + "|".join(_COUNT_WORDS) + ")"
+    match = re.search(
+        rf"{word} shell scripts, {word} nginx entrypoint fragments, {word} compose files, "
+        rf"{word} Dockerfiles and {word} nginx templates",
+        readme, re.IGNORECASE,
+    )
+    assert match, "README.md no longer says how many of each there are"
+    said = [_COUNT_WORDS.index(number.lower()) for number in match.groups()]
+    assert said == [
+        len(_tracked("*.sh")), len(_tracked("*.envsh")), len(COMPOSE_FILES),
+        len(DOCKERFILES), len(_tracked("*.template")),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # The two file kinds no inventory named
 # ---------------------------------------------------------------------------

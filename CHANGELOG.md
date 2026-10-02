@@ -76,6 +76,37 @@ v5.4's under the new version.
 - `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` `:v5_5` (amd64, arm64); `nl2sql-desktop-build:v5_5-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-01 UTC).
 - `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_5` (amd64, arm64), their first publish (2026-10-01 UTC).
 
+### After publishing
+In the checkout, not in the `v5_5` images: the three scripts, tests and
+documentation. No image changed, so no tag was needed.
+- Every launch mode checked live against the v5_5 stack. `start.sh --review
+  --console --mlflow` brought every service up healthy, and a question asked
+  through the web interface's proxy was in MLflow as one trace of nineteen
+  spans, tagged with its job. `start.sh --desktop` took the jar from
+  `nl2sql-desktop-build:v5_5-mac-aarch64` and opened the client against the
+  API.
+- `launch.sh --review` -- the closing lines say a judgement can be taken back,
+  5.4's *Back to pending* and *Delete*; `start.sh`'s line for the review page
+  says so too.
+- `setup.sh` -- the closing lines named two databases and it starts three:
+  the context store was never named, and with `--no-rag` the vector store was
+  named and never started. They list what was started now. The header
+  comment still described the v2 agent.
+- `start.sh --help` -- the flags combine, and `--review --console --mlflow`
+  brings up every page.
+- `tests/docker/test_setup_script.py` -- the closing-message test looked for
+  two container names the pull lines print anyway, so it passed while the
+  message was wrong. A test that reads the list replaces it.
+- `tests/docker/test_mlflow_compose.py` -- `MLFLOW_WORKERS` and
+  `MLFLOW_ALLOWED_HOSTS` are set through compose by a test.
+- `tests/docs/test_docs.py` -- every setting MLflow's two services read is in
+  the README with its default. `tests/docker/test_script_coverage.py` -- the
+  README's count of shell scripts, Dockerfiles and the rest is held to
+  `git ls-files`: it said eleven Dockerfiles, and 5.5 made thirteen.
+- `README.md` -- MLflow's server settings, the command that brings up every
+  page, the file, command and test counts. `agent/README.md` -- what
+  `setup.sh` starts. `agent/USAGE.md` -- how MLflow is started.
+
 ## v5_4 (5.4.0) -- 2026-09-30
 
 A judgement in the review interface can be taken back. Every submission can

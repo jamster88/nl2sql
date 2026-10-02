@@ -35,9 +35,10 @@ This file covers how it works and how to extend it.
 
 ## Quick start
 
-Run [`../setup.sh`](../setup.sh) once from the repo root. It pulls all three
-images, starts the retail database and the pgvector knowledge base, and
-verifies the agent container can retrieve from it. After that:
+Run [`../setup.sh`](../setup.sh) once from the repo root. It pulls the
+images, starts the retail database and the two retrieval stores -- the
+pgvector knowledge base and the golden pairs -- and verifies the agent
+container can retrieve from them. After that:
 
 ```bash
 docker compose run --rm agent "What were the top 5 departments by net sales in fiscal year 2024?"

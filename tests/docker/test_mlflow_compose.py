@@ -255,6 +255,18 @@ def test_the_published_port_and_address_can_be_changed(tmp_path_factory):
     assert (port["host_ip"], port["published"]) == ("0.0.0.0", "6001")
 
 
+def test_the_servers_workers_and_guard_can_be_changed(mlflow: dict, tmp_path_factory):
+    """Two of the server's flags come from .env: its worker count, and the
+    guard -- replaced whole, as MLflow's own flag is, for a name such as the
+    one a proxy in front of it answers to."""
+    assert _flags(mlflow)["workers"] == "2"
+    config = _compose_config(
+        tmp_path_factory.mktemp("server"), env={"MLFLOW_WORKERS": "4", "MLFLOW_ALLOWED_HOSTS": "mlflow.example.org"}
+    )
+    flags = _flags(config["services"]["mlflow"])
+    assert (flags["workers"], flags["allowed-hosts"]) == ("4", "mlflow.example.org")
+
+
 def test_the_benchmark_looks_for_mlflow_on_the_published_port(mlflow: dict):
     from benchmarks.run_benchmark import HOST_DEFAULTS
 

@@ -888,6 +888,10 @@ EOF
     translated_questions.md.bak. Fixes go to their own databases instead --
     ports $(compose_env CORRECTIONS_DB_PORT 5436) and $(compose_env COMPLETIONS_DB_PORT 5437) -- never into the golden set.
 
+    A judgement can be taken back. Under a reviewed submission, Back to
+    pending returns it to the queue and Delete removes it -- each taking
+    its pair out of the golden set, or its fix out of its store, first.
+
     docker compose --profile feedback --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
 EOF

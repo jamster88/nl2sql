@@ -527,6 +527,23 @@ def test_final_message_advertises_a_question_that_needs_the_knowledge_base(run_s
     assert "market share" in result.output
 
 
+@pytest.mark.parametrize(
+    ("flags", "running"),
+    [
+        ((), ["nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb"]),
+        (("--no-rag",), ["nl2sql-postgres"]),
+    ],
+)
+def test_final_message_lists_exactly_the_databases_it_started(run_setup, flags, running):
+    """It said two for a long time: the context store was started and never
+    named, and without retrieval it named one that was never started. The
+    substring check it replaced passed anyway -- the pull lines name them."""
+    output = run_setup(*flags).output
+    listed = output.split("Running now:")[1].split("The agent runs on demand")[0]
+    assert [line.split()[0] for line in listed.strip().splitlines()] == running
+    assert 'docker compose run --rm agent "How many stores are there?"' in output
+
+
 # ---------------------------------------------------------------------------
 # The end-to-end retrieval check
 #
@@ -580,13 +597,6 @@ def test_a_check_that_returns_no_chunks_warns(run_setup):
     assert result.returncode == 0
     assert "returned nothing" in result.output
     assert "just without retrieved context" in result.output
-
-
-def test_the_closing_message_names_all_three_containers(run_setup):
-    result = run_setup()
-    assert "nl2sql-postgres" in result.output
-    assert "nl2sql-vectordb" in result.output
-    assert 'docker compose run --rm agent "How many stores are there?"' in result.output
 
 
 # ---------------------------------------------------------------------------

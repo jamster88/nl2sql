@@ -727,6 +727,15 @@ def test_the_closing_lines_name_the_three_panes_and_where_each_goes(run_launch):
     assert "never into the golden set" in output
 
 
+def test_the_closing_lines_say_a_judgement_can_be_taken_back(run_launch):
+    """5.4's Back to pending and Delete, which undo what a judgement made --
+    worth a line, because the page shows them only under a reviewed row."""
+    output = run_launch("--review").output
+    assert "Back to" in output and "pending returns it to the queue" in output
+    assert "Delete removes it" in output
+    assert "its pair out of the golden set, or its fix out of its store, first" in output
+
+
 # ---------------------------------------------------------------------------
 # A proxy still trusting a certificate that has been reissued
 # ---------------------------------------------------------------------------

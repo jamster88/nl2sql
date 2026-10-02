@@ -79,6 +79,7 @@ agent tag, no knowledge base.
 ./start.sh --feedback      # keep verdicts, without the review interface
 ./start.sh --console       # and the SQL console, in a window of its own
 ./start.sh --mlflow        # and MLflow, where every question is traced
+./start.sh --review --console --mlflow   # all four pages, the last three in windows of their own
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
 ./start.sh --restart       # recreate the containers
@@ -226,7 +227,7 @@ dataset locally, `--no-verify` to skip the closing check, and `--reset` to
 discard an existing database volume and start from the image's data.
 `./setup.sh --help` lists them all.
 
-Stop everything with `docker compose down`; both databases keep their data.
+Stop the three databases with `docker compose down`; they keep their data.
 
 ## NL2SQL agent (v4, multi-agent)
 
@@ -927,8 +928,18 @@ shows the rows every question returned, so it is published on this machine
 only unless `MLFLOW_BIND_ADDRESS` says otherwise, and `launch.sh` warns when
 it does.
 
-[`agent/README.md`](agent/README.md#tracing-mlflow) has the settings and the
-reasons.
+The server and its store read these from `.env`, like the rest of the stack:
+
+| Setting | Default | |
+|---|---|---|
+| `MLFLOW_PORT` | `5001` | The host port of its interface and API. Not 5000, which macOS keeps for AirPlay |
+| `MLFLOW_BIND_ADDRESS` | `127.0.0.1` | The address that port is published on |
+| `MLFLOW_WORKERS` | `2` | The server's worker processes |
+| `MLFLOW_ALLOWED_HOSTS` | MLflow's own list, plus `nl2sql-mlflow` and `mlflow` | The `Host` headers it answers, against DNS rebinding. Setting it replaces the whole list, as MLflow's own flag does, so keep `nl2sql-mlflow:*` in it or the agent is turned away |
+| `MLFLOW_DB_USER`, `MLFLOW_DB_PASSWORD`, `MLFLOW_DB_NAME` | `mlflow` | The store's role, password and database, each one setting that both containers read |
+
+[`agent/README.md`](agent/README.md#tracing-mlflow) has the agent's two
+settings and the reasons.
 
 
 ## Connecting a GUI
@@ -1387,8 +1398,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3276 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3875, including ones that build and run containers
+pytest                                          # 3280 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3880, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1406,7 +1417,7 @@ pytest --run-docker --run-node --run-java       # all 3875, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 563 tests behind `--run-docker` are the ones that need a working daemon:
+The 564 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console and desktop images and run them, resolve the real
 compose file, query the four live databases, trace into a real MLflow server, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1427,7 +1438,7 @@ default run. Those three scripts' suites are most of the five minutes: each
 test runs the real script, and each of `start.sh`'s runs the real `setup.sh`
 and `launch.sh` beneath it.
 
-Twenty-eight of those 563 also need the **embedding host**: a local Ollama
+Twenty-eight of those 564 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1633,7 +1644,7 @@ raising. The test that found it is now the one that pins the order.
 #### The parts a coverage report cannot see
 
 Twelve shell scripts, three nginx entrypoint fragments, two compose files,
-eleven Dockerfiles and three nginx templates, none of them Python. They are covered by
+thirteen Dockerfiles and three nginx templates, none of them Python. They are covered by
 reading and by running -- and, since nothing in coverage.py can see a shell
 script, by a measurement of their own:
 
@@ -1651,7 +1662,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   all three `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1348 of 1348**.
+  the traces mention -- **1351 of 1351**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

@@ -27,6 +27,12 @@ their own and are listed under the release they shipped with. A version marked
 - Version 5.5.0 in every declaration; `setup.sh` pins `v5_5`.
 - All twelve app image tags published as `v5_5`, MLflow's server and store for the first time.
 
+**After publishing** (scripts, tests and documentation; no image changed, no new tag)
+- Every launch mode checked live against the v5_5 stack, the desktop client included.
+- `launch.sh` and `start.sh` say a review can be taken back; `setup.sh` names the databases it actually started.
+- `start.sh --help` shows how to bring up every page at once.
+- MLflow's server settings documented and tested; a stale count of Dockerfiles corrected and now checked.
+
 ## v5_4 (5.4.0) -- 2026-09-30
 
 **Added**

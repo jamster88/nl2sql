@@ -110,6 +110,9 @@ Brings up the whole stack and opens the web interface in your browser.
   -q, --quiet        Only print problems
   -h, --help         Show this message
 
+The flags combine: ./start.sh --review --console --mlflow brings up every
+page, the web interface first and the other three in windows of their own.
+
 First run on a machine takes a few minutes: it pulls about 3 GB of images.
 Afterwards it is seconds. A checkout that ships newer images than .env pins
 runs ./setup.sh again first, which keeps the Ollama host, models and port.
@@ -699,7 +702,7 @@ EOF
     fi
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
-    $review_url                     review what people said: promote, correct, complete
+    $review_url                     review what people said: promote, correct, complete, take back
 
 EOF
     fi
@@ -725,7 +728,7 @@ elif [[ $QUIET -eq 0 ]]; then
         cat <<EOF
 
     $url                     ask questions, and say whether the answer was right
-    $review_url                     review what people said: promote, correct, complete
+    $review_url                     review what people said: promote, correct, complete, take back
 
     Promoting appends to context_questions/translated_questions.md in this
     checkout -- it shows up in \`git diff\` and is committed like any other edit.

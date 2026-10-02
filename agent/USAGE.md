@@ -217,9 +217,9 @@ still there, or one left on the last attempt, which the answer then names.
 narrative states each one.
 
 With tracing on (`MLFLOW_TRACKING_URI`, which `setup.sh` points at the
-`mlflow` service), `trace_id` names the run's trace in MLflow -- open the
-experiment at <http://localhost:5001> and filter on it -- and the CLI says
-where its traces go before it answers:
+`mlflow` service that `./launch.sh --mlflow` starts), `trace_id` names the
+run's trace in MLflow -- open the experiment at <http://localhost:5001> and
+filter on it -- and the CLI says where its traces go before it answers:
 
 ```
 [tracing] tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent

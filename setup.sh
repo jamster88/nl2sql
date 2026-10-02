@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 #
-# One-time setup for the NL2SQL RAG agent (v2).
+# One-time setup for the NL2SQL agent.
 #
 # Brings up the whole stack in one call:
 #
 #   nl2sql-postgres   the retail dataset, already inside the image
 #   nl2sql-vectordb   pgvector holding the embedded knowledge base
-#   agent             the v2 agent image, run on demand
+#   nl2sql-chunkdb    the golden question/SQL pairs and their BM25 statistics
+#   agent             the agent image, run on demand
 #
-# It pulls each image, starts both databases, writes a .env so plain compose
-# commands pick all of that up, checks that the chat and embedding models are
-# reachable, and finally proves the agent container can actually retrieve from
-# the knowledge base. When it finishes you can just run:
+# It pulls each image -- and the web, review, SQL console, MLflow and desktop
+# images when their flags ask for them -- starts the databases, writes a .env
+# so plain compose commands pick all of that up, checks that the chat and
+# embedding models are reachable, and finally proves the agent container can
+# actually retrieve from the knowledge base. When it finishes you can just run:
 #
 #     docker compose run --rm agent "your question"
 #
@@ -696,19 +698,28 @@ print("PROBE " + json.dumps({"chunks": len(kb.search("market share")),
 fi
 
 # --- Done ------------------------------------------------------------------
+# What is running is what was started above: the two retrieval stores only
+# when the knowledge base was asked for.
 cat <<EOF
 
 ==> Setup complete. Running now:
 
     nl2sql-postgres    the retail dataset
+EOF
+if [[ $WITH_RAG -eq 1 ]]; then
+    cat <<EOF
     nl2sql-vectordb    the embedded knowledge base
+    nl2sql-chunkdb     the golden pairs and their BM25 index
+EOF
+fi
+cat <<EOF
 
-    The agent runs on demand, as a third container:
+    The agent runs on demand, in a container of its own:
 
     docker compose run --rm agent "How many stores are there?"
 
     docker compose run --rm agent            # interactive session
-    docker compose down                      # stop both databases (data kept)
+    docker compose down                      # stop the databases (data kept)
 
     A question that needs the knowledge base to get right:
 

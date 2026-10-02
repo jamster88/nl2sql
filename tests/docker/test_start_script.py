@@ -464,7 +464,7 @@ def test_the_closing_lines_say_what_each_page_is_for(run_start):
     the one nobody has seen before."""
     output = run_start("--review").output
     assert "say whether the answer was right" in output
-    assert "promote, correct, complete" in output
+    assert "promote, correct, complete, take back" in output
 
 
 def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_start):
@@ -1192,6 +1192,8 @@ def test_mlflow_opens_its_page_last_in_a_window_of_its_own(run_start):
 
 
 def test_every_page_opens_in_order(run_start):
+    """The combination --help offers for everything, doing what it says."""
+    assert "./start.sh --review --console --mlflow brings up every" in run_start("--help").output
     result = run_start("--review", "--console", "--mlflow")
     assert pages(result) == [
         "http://localhost:8080", "http://localhost:8081", "http://localhost:8082", "http://localhost:5001",

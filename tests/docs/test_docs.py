@@ -447,6 +447,37 @@ def _table_row(text: str, name: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# MLflow's two services
+# ---------------------------------------------------------------------------
+
+
+def _compose_service(name: str) -> str:
+    """One service's block of docker-compose.yml, as written."""
+    text = (REPO_ROOT / "docker-compose.yml").read_text()
+    match = re.search(rf"^  {name}:\n(.*?)(?=^  [a-z]+:\n|^[a-z]+:)", text, re.MULTILINE | re.DOTALL)
+    assert match, f"docker-compose.yml has no {name} service"
+    return match.group(1)
+
+
+def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(root_readme: str):
+    """Image pins aside, which `setup.sh --mlflow` writes, every setting either
+    service takes from `.env` has a row in the README's Tracing table -- with
+    the default compose really falls back to, where that is one value."""
+    block = _compose_service("mlflowdb") + _compose_service("mlflow")
+    settings = {
+        name: default
+        for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", block)
+        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
+    }
+    assert "MLFLOW_PORT" in settings, "no settings found in the MLflow services -- the regex needs updating"
+    for name, default in sorted(settings.items()):
+        rows = _rows(root_readme, name)
+        assert rows, f"compose's MLflow services read {name}, which README.md never lists"
+        if "," not in default:
+            assert any(f"`{default}`" in row for row in rows), f"README.md never says {name} defaults to {default}"
+
+
+# ---------------------------------------------------------------------------
 # The SQL console's surface
 # ---------------------------------------------------------------------------
 

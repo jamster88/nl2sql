@@ -4,7 +4,7 @@ Loads the documents in [`knowledge/`](../knowledge), semantically chunks them,
 stores the chunks in one Postgres instance, embeds them with BGE-M3, and stores
 the vectors in a separate pgvector instance.
 
-It also loads the 45 golden question/SQL pairs in
+It also loads the golden question/SQL pairs in
 [`context_questions/translated_questions.md`](../context_questions/translated_questions.md)
 -- as a relational table rather than as chunked prose -- and embeds two of their
 columns separately, which is what the agent's ensemble retriever searches.
@@ -49,7 +49,7 @@ Each document gets its own pair of tables, named from the file:
 
 ## The golden pairs (steps 5 and 6)
 
-The 45 pairs are **not** chunked the way the `knowledge/` documents are. Every
+The pairs are **not** chunked the way the `knowledge/` documents are. Every
 pair already has exactly the same eight fields and the `##` heading is the record
 boundary, so semantic chunking has nothing to decide and would only lose
 structure. They get a real relational table instead, one column per field:
@@ -73,7 +73,7 @@ ranking is built here rather than borrowed:
 
 | Table | Holds |
 |---|---|
-| `golden_pairs` | the 45 rows, plus a generated `keywords_tsv` column |
+| `golden_pairs` | one row per pair, plus a generated `keywords_tsv` column |
 | `golden_pair_keyword_terms` | term frequency per pair, from the tsvector's positions |
 | `golden_pair_keyword_docs` | each pair's keyword length |
 | `golden_pair_keyword_stats` | document frequency and IDF per term |
@@ -223,9 +223,10 @@ To publish a database as a self-contained, multi-arch image:
 
 | Tag | Contents |
 |---|---|
-| `nl2sql-rag-vectordb:v3_1` | knowledge collections **and** both golden-pair vector tables; amd64 and arm64 |
-| `nl2sql-rag-chunkdb:v3_1` | knowledge chunks **and** `golden_pairs` with its BM25 index; amd64 and arm64 |
-| `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | the same contents, arm64 only |
+| `nl2sql-rag-vectordb:v3_2` | knowledge collections **and** both golden-pair vector tables, 48 pairs; amd64 and arm64 |
+| `nl2sql-rag-chunkdb:v3_2` | knowledge chunks **and** `golden_pairs` with its BM25 index, 48 pairs; amd64 and arm64 |
+| `nl2sql-rag-vectordb:v3_1`, `nl2sql-rag-chunkdb:v3_1` | the same, with the first 45 pairs |
+| `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | `v3_1`'s contents, arm64 only |
 | `nl2sql-rag-vectordb:v1` | knowledge collections only -- what the v2 agent searches |
 
 The script dumps the store with `pg_dumpall` -- live, since a dump reads each
@@ -253,6 +254,35 @@ schema, every table's contents, the roles, databases, `pg_hba.conf` and
 settings, a password login over the network, and the HNSW indexes -- rebuilt by
 the restore -- returning the same five nearest neighbours for every stored
 vector.
+
+`v3_2` brings the golden set up to the question document. It was made from
+`v3_1` the way the stack itself catches up -- the two golden-pair loaders,
+run in the review service's image against a copy of the published stores --
+and then published from that copy:
+
+```bash
+docker network create v32
+docker run -d --name v32-chunkdb  --network v32 mcfaddja/nl2sql-rag-chunkdb:v3_1
+docker run -d --name v32-vectordb --network v32 mcfaddja/nl2sql-rag-vectordb:v3_1
+docker run --rm --network v32 --add-host host.docker.internal:host-gateway \
+  -v "$PWD/../context_questions:/app/context_questions:ro" --entrypoint sh \
+  mcfaddja/nl2sql-review:v5_5_1 -c 'cd /app/rag &&
+    python 05_load_golden_pairs.py /app/context_questions/translated_questions.md \
+      --db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks &&
+    python 06_embed_golden_pairs.py --model bge-m3 --ollama-url http://host.docker.internal:11434 \
+      --chunk-db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks \
+      --vector-db-url postgresql://ragproc:ragproc@v32-vectordb:5432/nl2sql_vectors'
+docker stop v32-chunkdb v32-vectordb
+docker commit v32-chunkdb nl2sql-rag-chunkdb:v3_2-source
+docker commit v32-vectordb nl2sql-rag-vectordb:v3_2-source
+./publish_db_image.sh chunkdb  mcfaddja/nl2sql-rag-chunkdb:v3_2  --from nl2sql-rag-chunkdb:v3_2-source
+./publish_db_image.sh vectordb mcfaddja/nl2sql-rag-vectordb:v3_2 --from nl2sql-rag-vectordb:v3_2-source
+```
+
+The loaders wrote three new pairs and embedded only those; every knowledge
+table's rows hashed the same before and after, and the knowledge documents'
+stored file hashes match `knowledge/`. Both published architectures were then
+checked against the source as `v3_1` was against `v3`.
 
 The published image carries the data with it:
 
@@ -348,7 +378,7 @@ pip install -r rag/requirements.txt
 pytest tests/rag --run-docker
 ```
 
-281 tests: the parser against the real document, the BM25 ranking compared
+282 tests: the parser against the real document, the BM25 ranking compared
 score for score against an independent Okapi implementation, the pgvector
 storage layer, both loader scripts as command line programs, and the seven
 shell scripts on this page.
@@ -375,7 +405,7 @@ and dropped afterwards. A scratch schema would not be enough: every function
 here addresses its tables unqualified, so with `public` still on the search path
 an unqualified `TRUNCATE` in `rebuild_bm25_index` would fall through to the
 published table whenever the scratch copy did not exist yet. The published
-golden pairs and embeddings are what the v3_1 images ship, and nothing in the
+golden pairs and embeddings are what the v3_2 images ship, and nothing in the
 suite can reach them.
 
 The vector tests use synthetic unit vectors rather than calling bge-m3, so the

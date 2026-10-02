@@ -1,7 +1,8 @@
 """Parsing and storage for the golden question/SQL pairs.
 
-`context_questions/translated_questions.md` holds 45 natural-language questions
-paired with verified PostgreSQL. Unlike the documents in `knowledge/`, these are
+`context_questions/translated_questions.md` holds natural-language questions
+paired with verified PostgreSQL -- 45 when the set was first loaded, and more
+with every pair the review service promotes. Unlike the documents in `knowledge/`, these are
 not prose to be semantically chunked: every pair already has exactly the same
 eight fields, and the `##` heading boundary is the record boundary. So they get
 a real relational table rather than a `<doc>_chunks` table of free text.
@@ -16,8 +17,9 @@ Two things are built here that the knowledge pipeline has no need for:
 2. **A BM25 index over the keyword column.** Postgres ships `ts_rank`, which is
    a length-normalised tf-idf and not BM25; the ranking the ensemble asks for is
    specifically BM25, so the term statistics are materialised here and the
-   scoring function is written out in SQL. Over 45 short documents this costs
-   nothing to maintain and keeps the ranking in the database, next to the data.
+   scoring function is written out in SQL. Over a few hundred short documents
+   this costs nothing to maintain and keeps the ranking in the database, next
+   to the data.
 """
 
 from __future__ import annotations
@@ -48,9 +50,15 @@ TS_CONFIG = "english"
 DEFAULT_K1 = 1.2
 DEFAULT_B = 0.75
 
+#: A pair's id: `Q` and at least two digits. Two because the set began at
+#: `Q01`; "at least" because it outgrows two -- `Q100` follows `Q99`. The
+#: review service writes ids to this rule, and its tests hold the two together.
+PAIR_ID = r"Q\d{2,}"
+
 SUITE_RE = re.compile(r"^# (Suite .+?)\s*$", re.M)
+HEADING_RE = re.compile(rf"^## {PAIR_ID} - ", re.M)
 ENTRY_RE = re.compile(
-    r"^## (?P<pair_id>Q\d{2}) - (?P<title>.+?)\n"
+    rf"^## (?P<pair_id>{PAIR_ID}) - (?P<title>.+?)\n"
     r"\n```meta\n(?P<meta>.*?)\n```\n"
     r"\n\*\*Question:\*\* \"(?P<question>.*?)\"\n"
     r"\n\*\*Reasoning target:\*\* (?P<reasoning_target>.*?)\n"
@@ -64,8 +72,8 @@ META_KV_RE = re.compile(r"^(\w[\w.-]*):\s*(.*)$")
 
 @dataclass
 class GoldenPair:
-    pair_id: str  # Q01 .. Q45
-    chunk_id: str  # eval:q01 .. eval:q45, from the meta block
+    pair_id: str  # Q01, Q02 .. Q99, Q100 ..
+    chunk_id: str  # eval:q01 .. eval:q100 .., from the meta block
     title: str
     suite: str
     ordinal: int
@@ -159,7 +167,7 @@ def parse_document(path: Path) -> list[GoldenPair]:
             )
         )
 
-    headings = len(re.findall(r"^## Q\d{2} - ", text, re.M))
+    headings = len(HEADING_RE.findall(text))
     if headings != len(pairs):
         raise ValueError(
             f"{path.name} has {headings} pair headings but only {len(pairs)} parsed "

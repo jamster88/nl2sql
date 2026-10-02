@@ -46,6 +46,12 @@
 # recorded on the answers they judge -- and opens it at http://localhost:5001,
 # in a window of its own again.
 #
+# With --load-golden the golden question document is loaded into the stores
+# the agent takes its worked examples from, before anything is asked: the
+# images ship the set as it was when they were published, and a document that
+# has grown since -- promoted pairs committed from another machine -- is
+# otherwise only caught up by the next promotion.
+#
 # Use those two directly when you want the parts separately -- a terminal
 # session with no API, a different agent tag, no knowledge base. This script
 # is for when you want the whole thing and do not want to think about it,
@@ -60,6 +66,7 @@ WITH_REVIEW=0
 WITH_CONSOLE=0
 WITH_MLFLOW=0
 WITH_DESKTOP=0
+WITH_LOAD_GOLDEN=0
 WITH_RAG=1
 # Flags handed on. The interface itself is decided after parsing, because
 # --desktop replaces the web one rather than adding to it.
@@ -103,6 +110,10 @@ Brings up the whole stack and opens the web interface in your browser.
                      browser window of its own
       --feedback     Keep verdicts without the review interface: starts the
                      staging database only, so votes are staged for later
+      --load-golden  Load context_questions/translated_questions.md into the
+                     stores the agent's worked examples come from, so they are
+                     this checkout's golden set rather than the one the images
+                     were published with. Runs in the review service's image
       --no-browser   Start everything, but print the URLs instead of opening them
       --no-rag       Start only the retail database; the agent answers from the
                      schema alone, with neither knowledge nor worked examples
@@ -142,6 +153,9 @@ while [[ $# -gt 0 ]]; do
         # instead of it. launch.sh brings the API up for it.
         --console) WITH_CONSOLE=1; LAUNCH_ARGS+=(--console); SETUP_ARGS+=(--console); shift ;;
         --mlflow) WITH_MLFLOW=1; LAUNCH_ARGS+=(--mlflow); SETUP_ARGS+=(--mlflow); shift ;;
+        # The loaders live in the review service's image, so that is the one
+        # image this needs pinned -- and setup.sh pins it as part of --review.
+        --load-golden) WITH_LOAD_GOLDEN=1; LAUNCH_ARGS+=(--load-golden); SETUP_ARGS+=(--review); shift ;;
         # The desktop client is an interface, not an addition to one: with
         # this the web interface is not started and no browser is opened for
         # it. --review still opens the review page, which has no desktop
@@ -285,6 +299,19 @@ env_file_value() {  # env_file_value KEY -- what .env says, not the shell
     grep -E "^$1=" .env | tail -1 | cut -d= -f2- || true
 }
 
+# An agent tag that is not the one this checkout ships, in a .env this
+# checkout's own setup.sh wrote, was chosen after the checkout arrived --
+# `setup.sh --agent-tag`, or an edit -- and is kept. One an older checkout's
+# setup.sh wrote is what that checkout shipped, and is brought up to date.
+chosen_agent_tag() {  # chosen_agent_tag -- the agent tag .env pins on purpose, if it pins one
+    local shipped pinned
+    shipped=$(awk -F'"' '/^AGENT_TAG=/ {print $2; exit}' setup.sh)
+    pinned=$(env_file_value AGENT_IMAGE_TAG)
+    if [[ -n "$pinned" && "$pinned" != "$shipped" && "$(env_file_value SETUP_RELEASE)" == "$shipped" ]]; then
+        printf '%s' "$pinned"
+    fi
+}
+
 stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it is not
     local image shipped pinned
     image=$(awk -F'"' '/^AGENT_IMAGE=/ {print $2; exit}' setup.sh)
@@ -302,7 +329,7 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
     if [[ -n "${AGENT_IMAGE_TAG:-}" ]]; then
         return 0
     fi
-    if [[ "$pinned" != "$shipped" ]]; then
+    if [[ "$pinned" != "$shipped" && -z "$(chosen_agent_tag)" ]]; then
         printf 'this checkout ships %s, and .env pins %s' "$shipped" "$pinned"
     elif [[ $WITH_DESKTOP -eq 0 && -z "$(env_file_value GUI_IMAGE_NAME)" ]]; then
         printf 'the web interface is not pinned, so it would be built here from source'
@@ -314,6 +341,8 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
         printf "the SQL console's interface is not pinned, so it would be built here from source"
     elif [[ $WITH_MLFLOW -eq 1 && -z "$(env_file_value MLFLOW_IMAGE_NAME)" ]]; then
         printf "MLflow's images are not pinned, so they would be built here from source"
+    elif [[ $WITH_LOAD_GOLDEN -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
+        printf 'the review image, which loads the golden pairs, is not pinned, so it would be built here from source'
     fi
 }
 
@@ -327,6 +356,12 @@ else
         step "Fetching the images this checkout runs"
         info "$stale."
         info "./setup.sh re-pins them, and keeps the Ollama host, models and port in .env."
+        # Re-run for another reason, it keeps the agent someone chose.
+        chosen=$(chosen_agent_tag)
+        if [[ -n "$chosen" ]]; then
+            info "The agent stays at $chosen, as chosen; ./setup.sh on its own goes back."
+            SETUP_ARGS+=(--agent-tag "$chosen")
+        fi
         ./setup.sh "${SETUP_ARGS[@]}"
     fi
 fi
@@ -376,7 +411,7 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         review_ready=1
     else
         warn "the review interface never answered at $review_url."
-        warn "Check what it said: docker compose --profile reviewgui logs reviewgui"
+        warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
         warn "The web interface is up; verdicts are staged and can be reviewed later."
     fi
 fi

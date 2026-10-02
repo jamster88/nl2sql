@@ -1,6 +1,6 @@
 {
   "name": "nl2sql-review-gui",
-  "version": "5.5.0",
+  "version": "5.5.1",
   "private": true,
   "type": "module",
   "description": "Web front end for reviewing captured feedback and promoting it into the golden question set.",

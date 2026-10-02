@@ -561,3 +561,45 @@ def test_the_two_compose_files_are_separate_projects():
     root = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
     rag = yaml.safe_load((REPO_ROOT / "rag" / "docker-compose.yml").read_text())
     assert root["name"] != rag["name"]
+
+
+# ---------------------------------------------------------------------------
+# Every set of profiles a script runs or a document prints
+# ---------------------------------------------------------------------------
+
+
+def _profile_sets() -> list[str]:
+    """Each distinct `docker compose --profile ...` run by a script or shown in
+    a document, as its profile arguments. Not the changelogs: they are history,
+    and quote the commands that were broken."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "*.sh", "*.md", ":!CHANGELOG*.md"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    found = set()
+    for path in filter(None, tracked):
+        found |= set(re.findall(r"docker compose((?: --profile [a-z]+)+)", (REPO_ROOT / path).read_text()))
+    return sorted(profiles.strip() for profiles in found)
+
+
+def test_the_scripts_and_documents_name_profiles_to_check():
+    assert {"--profile api --profile gui", "--profile feedback --profile review"} <= set(_profile_sets())
+
+
+@pytest.mark.parametrize("profiles", _profile_sets())
+def test_every_set_of_profiles_named_is_a_project_compose_accepts(profiles: str, tmp_path: Path):
+    """A service whose dependencies sit behind another profile is a project
+    compose rejects outright, before it lists a log line or runs a thing:
+    `docker compose --profile reviewgui logs reviewgui`, printed by launch.sh
+    when the review interface did not come up, failed that way -- as did
+    5.5.1's `--load-golden` at first, which only a live run found, because the
+    fake docker the script tests run against accepts whatever it is given."""
+    empty_env_file = tmp_path / "empty.env"
+    empty_env_file.write_text("")
+    substitutable = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", (REPO_ROOT / "docker-compose.yml").read_text()))
+    result = subprocess.run(
+        ["docker", "compose", "--env-file", str(empty_env_file), *profiles.split(), "config", "--quiet"],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+        env={k: v for k, v in os.environ.items() if k not in substitutable},
+    )
+    assert result.returncode == 0, f"docker compose {profiles}: {result.stderr.strip()}"

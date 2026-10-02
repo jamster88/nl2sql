@@ -58,7 +58,7 @@ the one the vectors were built with. It pulls nothing, so it takes seconds.
 ==> Checking what is actually in each database
     retail dataset: 1291781 sales rows
     knowledge base: 53 embedded chunks
-    worked examples: 45 golden pairs, 45 embedded questions
+    worked examples: 48 golden pairs, 48 embedded questions
 ```
 
 `--no-rag` starts only the retail database, `--restart` recreates the
@@ -458,15 +458,16 @@ not the 2024 calendar year. Say "calendar 2024" if that is what you mean.
 
 ## When it cannot answer
 
-The agent validates every query before running it and retries up to three
-times, feeding a specific repair hint back to the model. Every kind of failure
-spends the same budget -- a parse rejection, a planner error, a runtime error,
-or the audit judging the answer unsupported -- so there is no way to loop that
-does not count. If it still cannot produce a valid query, it stops rather than
-executing anything:
+The agent validates every query before running it and, when one fails,
+writes it again with a specific repair hint -- up to seven generations in all
+(`MAX_ATTEMPTS`): one draft and six repairs. Every kind of failure spends the
+same budget -- a parse rejection, a planner error, a runtime error, a result
+the Completeness Reviewer finds short of the question, or the audit judging
+the SQL itself wrong -- so there is no way to loop that does not count. If it
+still cannot produce a valid query, it stops rather than executing anything:
 
 ```
-failed: Could not produce a valid query in 4 attempts. Last problems: ...
+failed: Could not produce a valid query in 7 attempts. Last problems: ...
 ```
 
 That is the expected outcome for questions the data cannot answer, and for
@@ -523,12 +524,13 @@ That has to match `--embed-model`.
 
 ## Stopping
 
-The agent container removes itself after each question. The database keeps
-running until you stop it:
+The agent container removes itself after each question. The three databases
+keep running until you stop them:
 
 ```bash
-docker compose stop postgres vectordb   # keeps data
+docker compose stop postgres vectordb chunkdb   # keeps data
 docker compose down                     # removes the containers, keeps data
-docker compose down -v                  # also deletes the volumes, resetting both
-                                        # databases to what the images ship
+docker compose down -v                  # also deletes their volumes, resetting the
+                                        # three databases to what the images ship
+docker compose --profile '*' down       # everything else ./start.sh started, too
 ```

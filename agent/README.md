@@ -573,7 +573,7 @@ carries the shape of the answer, not just the warning.
 
 ### The ensemble
 
-Three retrievers over the same 45 pairs, each answering a different question
+Three retrievers over the same golden pairs, each answering a different question
 about a pair, fused into one ranking:
 
 | Retriever | Searches | Where | Weight |

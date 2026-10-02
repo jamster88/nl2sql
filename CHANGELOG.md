@@ -30,6 +30,49 @@ file where a file is new; the tests a version merely extended are summarised.
 
 ---
 
+## v5_5_1 (5.5.1) -- 2026-10-01
+
+A correction to 5.5. The golden question set stopped at `Q99`: a pair id was
+exactly two digits, so the hundredth promotion was refused. It now has no
+ceiling. The agent's `--help` has said `--multi-shot` was off since both
+arrived in v3, when it has always been on. `start.sh` re-pinned an agent tag chosen with
+`setup.sh --agent-tag` on its next start, so an older agent could only be run
+without it. Everything under v5_5's *After publishing* -- the scripts' review
+text, `setup.sh`'s database list, the usage guide and quick start, and the
+tests that came with them -- ships in this release's checkout too.
+
+### Fixed
+- `rag/ragproc/golden_pairs.py`, `review/nl2sql_review/render.py`:
+  - **Before:** a pair id was `Q\d{2}`. `Q99` was the last one the loader matched, and the review service refused the hundredth promotion with "the golden set is full" rather than write a pair the loader would not see.
+  - **After:** a pair id is `Q` and at least two digits (`PAIR_ID = r"Q\d{2,}"`), so `Q100` follows `Q99`. Ids keep two digits until they need three, so every existing id, chunk id and stored row is unchanged; the columns that hold them were always `TEXT`, so neither dataset image changes.
+- `agent/nl2sql_agent/__main__.py`:
+  - **Before:** `--multi-shot` was described as "(default: off)" while `MULTI_SHOT_ENABLED` defaulted on, and `--rag` and `--examples` said "on" whatever the environment had set.
+  - **After:** each switch's help gives the default the parser really has, read from the same setting.
+- `start.sh`, `setup.sh`, `launch.sh`:
+  - **Before:** `start.sh` treated any agent tag other than the shipped one as left over from an older checkout and re-ran `setup.sh`, which pinned the shipped tag back.
+  - **After:** `setup.sh` writes `SETUP_RELEASE` -- the release it belongs to -- into `.env`. A different agent tag in a file this release wrote was chosen, and `start.sh` keeps it, passing `--agent-tag` on when it re-runs `setup.sh` for another reason; `launch.sh` says which agent is pinned instead of warning. A file an older checkout wrote is still brought up to date.
+
+### Updated
+- `review/nl2sql_review/models.py`, `app.py`, `promote.py`; `review/gui/src/api/types.ts`, `components/StatusBar.tsx` -- `/v1/meta` no longer reports `limits.max_pair_number`, the status bar no longer shows "max Q99", and the two "golden set is full" paths are gone, since nothing can reach them.
+- `agent/USAGE.md` -- the retry budget is seven generations (it said three retries and four attempts); stopping names all three databases, and `--profile '*'` for the rest.
+- `USAGE_GUIDE.md` -- a chosen older agent runs with `start.sh`; the golden set has no size limit. `review/README.md` -- the id rule. `README.md` -- the `v5_5_1` tag, pull and publish commands, and when `start.sh` leaves `.env` alone.
+- Tests: Q100 parsed by the loader, promoted after Q99 end to end and offered by `/v1/golden`; the renderer and the loader held to one answer on what a pair id is; the help text checked against the parser for each switch and setting; a chosen agent tag kept by `start.sh`, carried through a re-run of `setup.sh`, and said rather than warned by `launch.sh`, while one an older checkout wrote is still re-pinned.
+- Version 5.5.1 in every declaration; `setup.sh` pins `v5_5_1`.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_5_1` (amd64, arm64); `nl2sql-desktop-build:v5_5_1-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-02 UTC). Checked after the push: the agent and review images run 5.5.1 on both architectures, with the corrected help and `Q100` after `Q99`; the review interface's bundle no longer shows a maximum id; every desktop jar is 5.5.1 with its platform's native code; MLflow's two are their bases' layers exactly.
+
+### After publishing
+In the checkout, not in the `v5_5_1` images: the dataset images, the
+scripts, compose, tests and documentation. No app image changed.
+- `nl2sql-rag-chunkdb`, `nl2sql-rag-vectordb` `:v3_2` (amd64, arm64; 2026-10-02 UTC) -- `v3_1` with the golden set brought up to the question document: 48 pairs where `v3_1` has 45. Made by running the two golden-pair loaders in the `v5_5_1` review image against a copy of `v3_1`, then `rag/publish_db_image.sh --from` that copy. Every knowledge table hashed the same before and after, and the stored knowledge file hashes match `knowledge/`; both architectures were checked against the source table by table, with the roles, a network login and the HNSW nearest neighbours. `setup.sh` and compose's defaults pin `v3_2`.
+- `launch.sh --load-golden`, `start.sh --load-golden` -- load `context_questions/translated_questions.md` into the context store and its vectors before anything is asked: the loaders a promotion runs, in a one-off review-image container with nothing else of the review system started. `start.sh` pins the review image first when it is not, rather than letting compose build it. A failed load is a warning and the stack comes up as it was.
+- `launch.sh` -- compares the context store's golden pairs with the document's on every start, and names `--load-golden` when they differ: the images ship the set as it was when they were published, and only a promotion reloads it.
+- `launch.sh`, `start.sh` -- two commands they print when a page does not come up, `docker compose --profile reviewgui logs reviewgui` and `--profile consolegui logs consolegui`, failed outright: each service depends on one behind another profile, and compose rejects a project with a dependency left undefined. They name the profiles they need now. `tests/docker/test_compose_config.py` resolves every `docker compose --profile ...` in a tracked script or document against the real compose file; the script tests' fake `docker` accepts anything, which is how these, and `--load-golden`'s first form, passed them -- a live run found it.
+- `docker-compose.yml` -- the review service embeds with `EMBED_BASE_URL`, the agent's embedding host, where it read an `OLLAMA_URL` nothing set: with `setup.sh --embed-url`, promotions embedded against this machine while the agent queried another.
+- Tests: the load run in the review image before the stores are counted, starting nothing else, failing as a warning, and doing nothing under `--no-rag`; the store-against-document warning and its silence when they agree; `start.sh` handing the flag on and pinning the review image; the review service's embedding host and model held to the agent's.
+- `README.md`, `USAGE_GUIDE.md`, `review/README.md`, `rag/README.md` -- `--load-golden`, the `v3_2` images and how they were made; descriptions of the live golden set no longer give it a count.
+
 ## v5_5 (5.5.0) -- 2026-10-01
 
 The agent and its subagents are traced in MLflow. Each question is one trace

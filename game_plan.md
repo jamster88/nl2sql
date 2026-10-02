@@ -20,6 +20,7 @@
 * v5_5 - MLflow traces
 * v5_5_1 - more than 100 golden questions
 * v5_6 - other SQL relationships (_join, filter, measure/metric_)
+* v5_7 - more model choice flexibility (_list available models, choose models and set their capacity/strength/intelligence_) - _MIGHT MOVE THIS TO v6\_3_
 
 ## V6
 * v6 - question decomposition

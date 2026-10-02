@@ -6,6 +6,7 @@ exercised against Nl2SqlAgent construction directly).
 
 from __future__ import annotations
 
+import argparse
 import json
 
 import pytest
@@ -95,6 +96,32 @@ def test_rag_is_on_by_default(monkeypatch):
 # ---------------------------------------------------------------------------
 # format_rows
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("flag", "setting"),
+    [("--rag", "RAG_ENABLED"), ("--examples", "EXAMPLES_ENABLED"), ("--multi-shot", "MULTI_SHOT_ENABLED")],
+)
+@pytest.mark.parametrize("value", ["true", "false", None])
+def test_each_switchs_help_says_the_default_the_parser_really_has(monkeypatch, flag, setting, value):
+    """`--multi-shot` said "(default: off)" from v3 until 5.5.1, while the
+    setting behind it defaulted on from the same commit."""
+    if value is None:
+        monkeypatch.delenv(setting, raising=False)
+    else:
+        monkeypatch.setenv(setting, value)
+    parsers: list[argparse.ArgumentParser] = []
+    parse = argparse.ArgumentParser.parse_args
+
+    def keep(self, *args, **kwargs):
+        parsers.append(self)
+        return parse(self, *args, **kwargs)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", keep)
+    cli.parse_args([])
+    [action] = [a for a in parsers[0]._actions if flag in a.option_strings]
+    assert action.help.endswith(f"(default: {'on' if action.default else 'off'})")
+    assert action.default is (value != "false")
 
 
 def test_format_rows_empty():

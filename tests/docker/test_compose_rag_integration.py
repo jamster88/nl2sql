@@ -246,7 +246,7 @@ def test_the_agent_container_reaches_the_context_store(examples_probe: dict):
     # As many as the document holds: promotions through the review
     # interface reload the store, so the two grow together.
     document = (REPO_ROOT / "context_questions" / "translated_questions.md").read_text()
-    assert examples_probe["pair_count"] == len(re.findall(r"^## Q\d{2} - ", document, re.M))
+    assert examples_probe["pair_count"] == len(re.findall(r"^## Q\d{2,} - ", document, re.M))
 
 
 def test_all_three_retrieval_legs_fire_inside_the_container(examples_probe: dict):

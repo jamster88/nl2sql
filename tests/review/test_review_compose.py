@@ -216,6 +216,17 @@ def test_the_review_service_can_reach_the_stores_it_reloads(review: dict):
     assert review["depends_on"]["vectordb"]["condition"] == "service_healthy"
 
 
+@pytest.mark.parametrize("env", [{}, {"EMBED_BASE_URL": "http://gpu-box:11434", "EMBED_MODEL": "other-embedder"}])
+def test_the_review_service_embeds_where_and_with_what_the_agent_does(tmp_path_factory, env: dict):
+    """A promotion, and `launch.sh --load-golden`, embed the golden pairs the
+    agent's questions are compared against. Until 5.5.1 the host was read from
+    an `OLLAMA_URL` nothing wrote, so `setup.sh --embed-url` moved the agent's
+    embedding host and left the review service's behind."""
+    services = _compose_config(tmp_path_factory.mktemp("embed"), "agent", "feedback", "review", env=env)["services"]
+    review, agent = services["review"]["environment"], services["agent"]["environment"]
+    assert (review["OLLAMA_URL"], review["EMBED_MODEL"]) == (agent["EMBED_BASE_URL"], agent["EMBED_MODEL"])
+
+
 # ---------------------------------------------------------------------------
 # The golden question document
 # ---------------------------------------------------------------------------

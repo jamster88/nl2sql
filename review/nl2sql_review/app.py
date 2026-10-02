@@ -114,7 +114,7 @@ from .render import Draft
 from .settings import ReviewSettings
 from .store import STATES, VERDICTS, Repository, Submission
 
-__version__ = "5.5.0"
+__version__ = "5.5.1"
 
 #: What each verdict's submissions are for, in the words a refusal uses.
 #: `yes` is promoted into the golden set; the other two are fixed into the
@@ -374,23 +374,11 @@ def create_app(
             return GoldenSet(
                 pairs=[], count=0, document=config.document, error=f"cannot parse: {exc}"
             )
-        try:
-            nxt = render.next_pair_id(document)
-        except ValueError as exc:
-            nxt = ""
-            return GoldenSet(
-                pairs=[_pair_model(p) for p in pairs],
-                count=len(pairs),
-                document=config.document,
-                next_pair_id=nxt,
-                suite_in_force=render.suite_in_force(document),
-                error=str(exc),
-            )
         return GoldenSet(
             pairs=[_pair_model(p) for p in pairs],
             count=len(pairs),
             document=config.document,
-            next_pair_id=nxt,
+            next_pair_id=render.next_pair_id(document),
             suite_in_force=render.suite_in_force(document),
         )
 
@@ -512,7 +500,6 @@ def create_app(
             reload_context=config.reload_context,
             reload_vectors=config.reload_vectors,
             limits=ReviewLimits(
-                max_pair_number=render.MAX_PAIR_NUMBER,
                 reload_timeout_seconds=config.reload_timeout_seconds,
                 validate_timeout_ms=config.validate_timeout_ms,
                 validate_max_rows=config.validate_max_rows,

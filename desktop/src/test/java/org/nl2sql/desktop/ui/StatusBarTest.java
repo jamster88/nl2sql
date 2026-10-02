@@ -26,7 +26,7 @@ class StatusBarTest {
             StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
             bar.show(Fakes.meta(true));
 
-            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 5.5.0"));
+            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 5.5.1"));
             assertTrue(Nodes.says(bar.node(), "qwen3.8-256k"));
             assertTrue(Nodes.says(bar.node(), "19 tables"));
             assertTrue(Nodes.says(bar.node(), "token required"));

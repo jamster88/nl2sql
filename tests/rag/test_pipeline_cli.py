@@ -24,7 +24,7 @@ DOCUMENT = REPO_ROOT / "context_questions" / "translated_questions.md"
 #: How many pairs the golden question document holds. Read from it rather
 #: than written down as 45: the document is the live golden set, and every
 #: promotion made through the review interface grows it.
-PAIRS = len(re.findall(r"^## Q\d{2} - ", DOCUMENT.read_text(), re.M))
+PAIRS = len(re.findall(r"^## Q\d{2,} - ", DOCUMENT.read_text(), re.M))
 #: And how many suites they fall into, which the loader reports beside it.
 SUITES = len(re.findall(r"^# Suite ", DOCUMENT.read_text(), re.M))
 

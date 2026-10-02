@@ -15,6 +15,12 @@ from .router import RoutingError
 from .state import to_jsonable
 
 
+def _default(on: bool) -> str:
+    """What a switch's help says it defaults to: what it really does, which is
+    the setting, so a `.env` that turns one off is described truthfully."""
+    return f"(default: {'on' if on else 'off'})"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     settings = Settings.from_env()
     p = argparse.ArgumentParser(
@@ -37,7 +43,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--rag",
         action=argparse.BooleanOptionalAction,
         default=settings.rag_enabled,
-        help="retrieve knowledge-base context for the question (default: on)",
+        help=f"retrieve knowledge-base context for the question {_default(settings.rag_enabled)}",
     )
     p.add_argument("--vector-db-url", default=settings.vector_db_url, help="pgvector knowledge base URL")
     p.add_argument("--embed-model", default=settings.embed_model, help="embedding model for retrieval")
@@ -47,13 +53,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--examples",
         action=argparse.BooleanOptionalAction,
         default=settings.examples_enabled,
-        help="retrieve worked question/SQL pairs for the question (default: on)",
+        help=f"retrieve worked question/SQL pairs for the question {_default(settings.examples_enabled)}",
     )
     p.add_argument(
         "--multi-shot",
         action=argparse.BooleanOptionalAction,
         default=settings.multi_shot_enabled,
-        help="show the retrieved examples to the SQL generator (default: off)",
+        help=f"show the retrieved examples to the SQL generator {_default(settings.multi_shot_enabled)}",
     )
     p.add_argument("--context-db-url", default=settings.context_db_url, help="context store URL (golden pairs + BM25)")
     p.add_argument("--examples-top-k", type=int, default=settings.examples_top_k, help="worked examples handed to the model")

@@ -43,7 +43,7 @@ Either way the same containers come up:
 |---|---|
 | `nl2sql-postgres` | The retail dataset, baked into the image |
 | `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
-| `nl2sql-chunkdb` | The context store: the 45 golden pairs and their BM25 index |
+| `nl2sql-chunkdb` | The context store: the golden pairs and their BM25 index |
 | `agent` | The v4 agent, run on demand per question |
 | `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
 | `nl2sql-gui` | The web interface, and the proxy in front of the API, with `--gui` |
@@ -59,7 +59,7 @@ Either way the same containers come up:
 
 The agent, the GUI, both halves of the review system, the SQL console's
 interface, the desktop client's jar and MLflow's server and store are
-published images (`v5_5`); the rest are built or pulled by `setup.sh` as
+published images (`v5_5_1`); the rest are built or pulled by `setup.sh` as
 well. [Pulling the images](#pulling-the-images) has
 the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
 
@@ -82,6 +82,7 @@ agent tag, no knowledge base.
 ./start.sh --desktop       # the Java desktop client instead of the web one
 ./start.sh --desktop --review   # the window, and the review page in a browser
 ./start.sh --feedback      # keep verdicts, without the review interface
+./start.sh --load-golden   # load the golden question document into the stores first
 ./start.sh --console       # and the SQL console, in a window of its own
 ./start.sh --mlflow        # and MLflow, where every question is traced
 ./start.sh --review --console --mlflow   # all four pages, the last three in windows of their own
@@ -171,7 +172,7 @@ $ ./launch.sh
 ==> Checking what is actually in each database
     retail dataset: 1291781 sales rows
     knowledge base: 53 embedded chunks
-    worked examples: 45 golden pairs, 45 embedded questions
+    worked examples: 48 golden pairs, 48 embedded questions
     schema index: 20 DDL chunks (table selection needs no model call)
 
 ==> Checking the multi-agent pipeline
@@ -247,7 +248,7 @@ the model alongside the schema. That context carries what the schema cannot:
 fiscal-calendar semantics, pre-aggregated columns, and joins that fan out.
 
 **v3 also retrieves worked examples, and generates multi-shot.** A second,
-independent step searches the 45 question/SQL pairs in
+independent step searches the question/SQL pairs in
 [`context_questions/translated_questions.md`](context_questions/translated_questions.md)
 -- each verified to run against this database -- through an ensemble of three
 retrievers: question similarity (0.50), BM25 over the pairs' keywords (0.35),
@@ -341,13 +342,13 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v5_5     # the agent, the REST API and the SQL console
-docker pull mcfaddja/nl2sql-gui:v5_5       # the web interface
-docker pull mcfaddja/nl2sql-review:v5_5    # the review service
-docker pull mcfaddja/nl2sql-review-gui:v5_5  # the review interface
-docker pull mcfaddja/nl2sql-console-gui:v5_5  # the SQL console's interface
-docker pull mcfaddja/nl2sql-mlflow:v5_5    # MLflow, where every question is traced
-docker pull mcfaddja/nl2sql-mlflowdb:v5_5  # the Postgres MLflow keeps traces in
+docker pull mcfaddja/nl2sql-agent:v5_5_1     # the agent, the REST API and the SQL console
+docker pull mcfaddja/nl2sql-gui:v5_5_1       # the web interface
+docker pull mcfaddja/nl2sql-review:v5_5_1    # the review service
+docker pull mcfaddja/nl2sql-review-gui:v5_5_1  # the review interface
+docker pull mcfaddja/nl2sql-console-gui:v5_5_1  # the SQL console's interface
+docker pull mcfaddja/nl2sql-mlflow:v5_5_1    # MLflow, where every question is traced
+docker pull mcfaddja/nl2sql-mlflowdb:v5_5_1  # the Postgres MLflow keeps traces in
 ```
 
 The console has no image of its own: it is the agent's, started a third way.
@@ -359,7 +360,7 @@ and published with the release so that a release's images are one set.
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v5_5-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v5_5_1-mac-aarch64` and the four siblings
 named in [The desktop client](#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
@@ -409,9 +410,32 @@ keeps every other setting it finds there, an `API_TOKEN` or a port set by
 hand, so only the tags change. The previous file is still kept as `.env.bak`.
 
 `start.sh` leaves `.env` alone when it pins no agent image (the agent is
-built from this checkout), when it pins one from another repository, or when
-`AGENT_IMAGE_TAG` is exported for the run: those are choices rather than
-leftovers.
+built from this checkout), when it pins one from another repository, when
+`AGENT_IMAGE_TAG` is exported for the run, or -- since `v5_5_1` -- when this
+checkout's own `setup.sh` pinned an agent other than the one it ships, as
+`./setup.sh --agent-tag v5_3` does: those are choices rather than leftovers.
+`setup.sh` writes the release it belongs to into `.env` as `SETUP_RELEASE`,
+which is how the two are told apart. A chosen tag is kept even when
+`start.sh` runs `setup.sh` again for something else, such as `--review`
+asked for the first time; `./setup.sh` on its own goes back to the shipped
+one, and a newer checkout re-pins it like any other.
+
+The golden question set is the other thing a new checkout can bring. The
+context store and the vectors are images, published holding the pairs the
+document held then, and a promotion is the only thing that reloads them -- so
+pairs promoted on another machine and committed arrive in the document and
+not in the stores. `launch.sh` compares the two on every start and says so;
+`--load-golden` loads the document before anything is asked, with the two
+loaders a promotion runs, in the review service's image:
+
+```bash
+git pull
+./start.sh --load-golden
+```
+
+Both loaders are idempotent, and the embedding step embeds only pairs that
+changed, so with nothing new in the document a load changes nothing and costs
+a few seconds -- `--load-golden` is safe to leave on every start.
 
 Without the re-pin, an older `.env` brings up an agent that predates what the
 checkout expects of it -- no feedback routes before `v4_4`, so the review
@@ -432,19 +456,19 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_5 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_5 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_5 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_5 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f console/Dockerfile --push -t mcfaddja/nl2sql-console-gui:v5_5 .
+  -f console/Dockerfile --push -t mcfaddja/nl2sql-console-gui:v5_5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v5_5 .
+  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v5_5_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v5_5 .
+  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v5_5_1 .
 ```
 
 The desktop client is published along a second axis as well. Every tag is
@@ -456,7 +480,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v5_5-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v5_5_1-$platform .
 done
 ```
 
@@ -476,7 +500,7 @@ components the tag carries: `v5_1_2` is exactly 5.1.2, `v5_1` is 5.1.x and
 twenty places that say so to the same number.
 
 The database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
-(`v1_1`) and the two RAG stores (`v3_1`) version independently, because their
+(`v1_1`) and the two RAG stores (`v3_2`) version independently, because their
 *content* changes independently of the code. All three are multi-arch, and
 [`tests/docker/test_published_images.py`](tests/docker/test_published_images.py)
 asks the registry so. The RAG stores used not to be: they are published by
@@ -485,6 +509,11 @@ stopped container's data directory -- one machine's, so `v3` is arm64 only. It
 now dumps the store and restores the dump inside the image build, once per
 platform; `v3_1` is `v3` republished that way, checked table by table and
 nearest neighbour by nearest neighbour against it on both architectures.
+`v3_2` is `v3_1` with the golden set brought up to the question document --
+48 pairs where `v3_1` has 45 -- loaded by the two loaders a promotion runs,
+in the review image; every knowledge table is unchanged, checked the same
+way. A store that falls behind the document again is what
+`./start.sh --load-golden` catches up on start.
 
 The agent's version label comes from `AGENT_VERSION` in
 [`agent/Dockerfile`](agent/Dockerfile) and the GUI's from
@@ -501,7 +530,8 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. MLflow's server and store are published with the release from here on, as `nl2sql-mlflow` and `nl2sql-mlflowdb`. Of the rest only the agent image changed; the others are `v5_4`'s under a new version. Pinned -- what `setup.sh` pulls. |
+| `v5_5_1` | A correction to `v5_5`. The golden set is no longer capped at `Q99`: a pair id is `Q` and two or more digits, so the hundredth promotion is `Q100`, and the review service's `/v1/meta` no longer reports the `max_pair_number` that described the cap. The agent's `--help` gives each retrieval switch's real default (it said `--multi-shot` was off). `start.sh` keeps an agent tag chosen with `setup.sh --agent-tag` rather than re-pinning it. The web interface, the SQL console's interface, the desktop client and MLflow's two are `v5_5`'s under the new version. Pinned -- what `setup.sh` pulls. |
+| `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. MLflow's server and store are published with the release from here on, as `nl2sql-mlflow` and `nl2sql-mlflowdb`. Of the rest only the agent image changed; the others are `v5_4`'s under a new version. Pinned. |
 | `v5_4` | A judgement in the review interface can be taken back: a submission is put back to pending or deleted, and a promoted pair comes back out of the golden set, or a stored fix out of its store, with it. The agent and the console are `v5_3`'s. Pinned. |
 | `v5_3` | Adds the SQL console: the same image run as `python -m nl2sql_agent.console`, which queries the retail database as the agent's read-only role, under its timeout and plan-cost ceiling, through its validator and planner gate -- and says which gate would have refused a query, in that gate's words -- with an interface of its own, `nl2sql-console-gui`. The pipeline is `v5_2`'s. Pinned. |
 | `v5_2` | arch5.2: every model call is routed -- by its task and the complexity of the question -- to the fastest model on the Ollama host that calibration measured to be suited to it, from a catalog built by `models/build_catalog.py` and measured by `models/calibrate.py`. Repairs climb the ladder, a routed model that cannot answer falls back to `OLLAMA_MODEL`, every call is capped in tokens and time, and `/v1/meta` and the trace say which model answered. With no catalog for its host it behaves as `v5_1_2`. Pinned. |
@@ -548,15 +578,16 @@ docker pull mcfaddja/nl2sql-agent:v1
 The two retrieval databases are separate images, started for you by compose:
 
 ```bash
-docker pull mcfaddja/nl2sql-rag-vectordb:v3_1    # pgvector: knowledge + golden-pair vectors
-docker pull mcfaddja/nl2sql-rag-chunkdb:v3_1     # context store: golden pairs + BM25 statistics
+docker pull mcfaddja/nl2sql-rag-vectordb:v3_2    # pgvector: knowledge + golden-pair vectors
+docker pull mcfaddja/nl2sql-rag-chunkdb:v3_2     # context store: golden pairs + BM25 statistics
 ```
 
 | Tag | Holds |
 |---|---|
-| `nl2sql-rag-vectordb:v3_1` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 45 rows each. `linux/amd64` and `linux/arm64`; what `setup.sh` pulls |
-| `nl2sql-rag-chunkdb:v3_1` | `golden_pairs` (45 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function. `linux/amd64` and `linux/arm64`; what `setup.sh` pulls |
-| `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | The same contents, arm64 only. Pinned, and superseded by `v3_1` |
+| `nl2sql-rag-vectordb:v3_2` | The 53 knowledge chunks as in `v1`, plus `golden_pair_question_vectors` and `golden_pair_reasoning_vectors` -- 48 rows each, the golden set as the question document held it on 2026-10-01. `linux/amd64` and `linux/arm64`; what `setup.sh` pulls |
+| `nl2sql-rag-chunkdb:v3_2` | `golden_pairs` (48 rows, 8 content columns) plus the BM25 term statistics and the `golden_pairs_bm25()` ranking function. `linux/amd64` and `linux/arm64`; what `setup.sh` pulls |
+| `nl2sql-rag-vectordb:v3_1`, `nl2sql-rag-chunkdb:v3_1` | The same, with the first 45 pairs. Pinned, and superseded by `v3_2` |
+| `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | The same contents as `v3_1`, arm64 only. Pinned, and superseded by `v3_1` |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
 
 ## The web interface
@@ -698,11 +729,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v5_5-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v5_5-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v5_5-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_5-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_5-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v5_5_1-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v5_5_1-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v5_5_1-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_5_1-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_5_1-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.
@@ -735,7 +766,7 @@ where it goes depends on what it said:
 
 ### Why bother
 
-The 45 golden pairs in
+The golden pairs in
 [`context_questions/translated_questions.md`](context_questions/translated_questions.md)
 are the best-understood thing in this repository. The agent retrieves worked
 examples from them, the benchmark scores against them, and every question
@@ -1028,7 +1059,7 @@ Since v5.5, with MLflow up (`./launch.sh --mlflow`), each configuration is
 also an MLflow run holding every question's trace -- see [Tracing](#tracing).
 
 [`benchmarks/`](benchmarks) holds fifteen questions that are deliberately **not**
-the 45 golden pairs the agent retrieves from -- a benchmark drawn from those
+the golden pairs the agent retrieves from -- a benchmark drawn from those
 would measure how well it can look something up. Accuracy is **execution
 accuracy**: the SQL is run and its rows compared against reference SQL verified
 against the shipped dataset. Query text is never compared, because two correct
@@ -1403,8 +1434,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3296 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3896, including ones that build and run containers
+pytest                                          # 3341 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3955, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1413,7 +1444,7 @@ pytest --run-docker --run-node --run-java       # all 3896, including ones that 
 | [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, least privilege -- what the reader role can and cannot do, asked of a live catalog -- and the MLflow trace every run writes, read back as a tree from a fake MLflow: a span per agent named as the architecture names it, the four concurrent retrievers under their own run, a repair as a second generation, a routed call that fell back as two calls, and a server that is down, comes back, or refuses a verdict costing nothing but the trace |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, the curl-only smoke script run against it for real, and a verdict recorded on, replaced on and withdrawn from the answer's trace -- after the staging database takes it, and never instead |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the twelve tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures -- and MLflow: its two services as compose resolves them, one version across the server and both clients, and tracing against a real server started from the pinned image on a private network under the name `setup.sh` writes -- the pipeline's trace read back by MLflow's own client, verdicts, the benchmark's runs, and the agent image's own tracing client doing everything the agent asks of it |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, every set of compose profiles a script runs or a document prints resolved by the real compose file, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the twelve tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures -- and MLflow: its two services as compose resolves them, one version across the server and both clients, and tracing against a real server started from the pinned image on a private network under the name `setup.sh` writes -- the pipeline's trace read back by MLflow's own client, verdicts, the benchmark's runs, and the agent image's own tracing client doing everything the agent asks of it |
 | [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
 | [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, a judgement taken back -- a promoted pair withdrawn from a real copy of the document and checked by the loader's parser, a fix deleted with its vector, the promotion log cleared and the row handed back to the public process -- the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 155-test review GUI suite run from here |
@@ -1422,7 +1453,7 @@ pytest --run-docker --run-node --run-java       # all 3896, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 564 tests behind `--run-docker` are the ones that need a working daemon:
+The 578 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console and desktop images and run them, resolve the real
 compose file, query the four live databases, trace into a real MLflow server, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1443,7 +1474,7 @@ default run. Those three scripts' suites are most of the five minutes: each
 test runs the real script, and each of `start.sh`'s runs the real `setup.sh`
 and `launch.sh` beneath it.
 
-Twenty-eight of those 564 also need the **embedding host**: a local Ollama
+Twenty-eight of those 578 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with
@@ -1480,7 +1511,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-10,145 statements and 2,436 branches, none missed. `coverage report` fails below
+10,136 statements and 2,434 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the three web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST
@@ -1667,7 +1698,7 @@ script, by a measurement of their own:
   build` -- against fake `initdb`, `pg_ctl` and `psql`; and
   all three `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1351 of 1351**.
+  the traces mention -- **1384 of 1384**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

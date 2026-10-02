@@ -38,7 +38,7 @@ services:
   # document in knowledge/, one collection per document. The image ships the
   # embeddings inside it, the same way the retail image ships its dataset.
   vectordb:
-    image: ${VECTOR_IMAGE_NAME:-mcfaddja/nl2sql-rag-vectordb}:${VECTOR_IMAGE_TAG:-v3_1}
+    image: ${VECTOR_IMAGE_NAME:-mcfaddja/nl2sql-rag-vectordb}:${VECTOR_IMAGE_TAG:-v3_2}
     container_name: nl2sql-vectordb
     restart: unless-stopped
     stop_grace_period: 1m
@@ -60,7 +60,7 @@ services:
   # and runs the keyword half of its ensemble here; the matching vectors live in
   # vectordb above. Like that one, the image ships its data inside it.
   chunkdb:
-    image: ${CONTEXT_IMAGE_NAME:-mcfaddja/nl2sql-rag-chunkdb}:${CONTEXT_IMAGE_TAG:-v3_1}
+    image: ${CONTEXT_IMAGE_NAME:-mcfaddja/nl2sql-rag-chunkdb}:${CONTEXT_IMAGE_TAG:-v3_2}
     container_name: nl2sql-chunkdb
     restart: unless-stopped
     stop_grace_period: 1m
@@ -513,7 +513,10 @@ services:
       REVIEW_RELOAD_TIMEOUT_SECONDS: ${REVIEW_RELOAD_TIMEOUT_SECONDS:-}
       CHUNK_DB_URL: ${REVIEW_CHUNK_DB_URL:-postgresql://ragproc:ragproc@nl2sql-chunkdb:5432/nl2sql_chunks}
       VECTOR_DB_URL: ${REVIEW_VECTOR_DB_URL:-postgresql://ragproc:ragproc@nl2sql-vectordb:5432/nl2sql_vectors}
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      # The agent's embedding host and model, by the agent's names for them:
+      # a pair embedded anywhere else is a vector the agent's questions are
+      # not compared in the same space as.
+      OLLAMA_URL: ${EMBED_BASE_URL:-http://host.docker.internal:11434}
       EMBED_MODEL: ${EMBED_MODEL:-bge-m3}
       REVIEW_DOCS_ENABLED: ${REVIEW_DOCS_ENABLED:-}
       REVIEW_LOG_LEVEL: ${REVIEW_LOG_LEVEL:-}

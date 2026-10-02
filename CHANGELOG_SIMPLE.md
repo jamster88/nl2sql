@@ -6,11 +6,33 @@ each version created, updated or fixed.
 
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
-SQL console's interface and the desktop client's jar -- are released together
+SQL console's interface, the desktop client's jar and, since v5_5, MLflow's
+server and store -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v5_5 (5.5.0) -- 2026-10-01
+
+**Added**
+- MLflow tracing: every question is one trace, a span per agent with what it read and wrote, and every model call inside it with its messages, answer, tokens and route.
+- MLflow in compose, with a Postgres of its own, both published with the release: `start.sh --mlflow`, `launch.sh --mlflow` and `setup.sh --mlflow`, its interface on this machine only.
+- A verdict given in the web or desktop interface is recorded on the trace of the answer it judges.
+- The benchmark files each configuration as an MLflow run, with its questions' traces, scores and timings.
+
+**Updated**
+- `setup.sh` points the agent at MLflow in `.env`; whenever MLflow is not up the agent answers untraced.
+- The CLI's `--json` names the run's trace.
+- Version 5.5.0 in every declaration; `setup.sh` pins `v5_5`.
+- All twelve app image tags published as `v5_5`, MLflow's server and store for the first time.
+
+**After publishing** (scripts, tests and documentation; no image changed, no new tag)
+- Every launch mode checked live against the v5_5 stack, the desktop client included.
+- `launch.sh` and `start.sh` say a review can be taken back; `setup.sh` names the databases it actually started.
+- `start.sh --help` shows how to bring up every page at once.
+- MLflow's server settings documented and tested; a stale count of Dockerfiles corrected and now checked.
+- `USAGE_GUIDE.md`, a full usage guide, and `QUICKSTART.md`, a quick start; tests hold both to the scripts, the agent's flags and compose.
 
 ## v5_4 (5.4.0) -- 2026-09-30
 

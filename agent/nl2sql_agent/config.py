@@ -38,6 +38,11 @@ DEFAULT_EMBED_BASE_URL = "http://host.docker.internal:11434"
 # The vectors for those same pairs live in the pgvector store above.
 DEFAULT_CONTEXT_DB_URL = "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2sql_chunks"
 
+# The MLflow experiment every run's trace is filed under. One experiment for
+# the agent wherever it runs -- the CLI, the API, the benchmark -- so its
+# traces can be compared side by side; the trace's tags say which it was.
+DEFAULT_MLFLOW_EXPERIMENT = "nl2sql-agent"
+
 
 def _env(name: str) -> str | None:
     """An environment variable, with empty and whitespace read as unset.
@@ -254,6 +259,15 @@ class Settings:
     # question rather than reloaded after Ollama's own five minutes.
     ollama_keep_alive: str = "30m"
 
+    # --- tracing (MLflow) -------------------------------------------------
+    # Where each run's trace goes: a span per agent and per model call,
+    # under one trace per question (`tracing.py`). Empty is off, and so is a
+    # server that does not answer -- a trace is worth having and never worth
+    # an answer. Compose's is the `mlflow` service; outside it, set this.
+    mlflow_tracking_uri: str = ""
+    # The experiment the traces are filed under, created if it is missing.
+    mlflow_experiment_name: str = DEFAULT_MLFLOW_EXPERIMENT
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -319,4 +333,6 @@ class Settings:
             model_max_loaded=_env_int("MODEL_MAX_LOADED", 3),
             model_num_ctx=_env_int("MODEL_NUM_CTX", DEFAULT_MODEL_NUM_CTX),
             ollama_keep_alive=_env_str("OLLAMA_KEEP_ALIVE", "30m"),
+            mlflow_tracking_uri=_env_str("MLFLOW_TRACKING_URI", ""),
+            mlflow_experiment_name=_env_str("MLFLOW_EXPERIMENT_NAME", DEFAULT_MLFLOW_EXPERIMENT),
         )

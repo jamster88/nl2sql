@@ -41,6 +41,11 @@
 # out why an answer was wrong -- and opens it at http://localhost:8082, in a
 # window of its own for the same reason.
 #
+# With --mlflow it brings up MLflow, which traces every question from then
+# on -- a span per agent and per model call, with the verdicts people give
+# recorded on the answers they judge -- and opens it at http://localhost:5001,
+# in a window of its own again.
+#
 # Use those two directly when you want the parts separately -- a terminal
 # session with no API, a different agent tag, no knowledge base. This script
 # is for when you want the whole thing and do not want to think about it,
@@ -53,6 +58,7 @@ OPEN_BROWSER=1
 QUIET=0
 WITH_REVIEW=0
 WITH_CONSOLE=0
+WITH_MLFLOW=0
 WITH_DESKTOP=0
 WITH_RAG=1
 # Flags handed on. The interface itself is decided after parsing, because
@@ -91,6 +97,10 @@ Brings up the whole stack and opens the web interface in your browser.
                      queried as the agent's read-only role, through the
                      agent's own gates -- and open it in a browser window of
                      its own
+      --mlflow       Also bring up MLflow, which traces every question -- a
+                     span per agent and per model call -- and keeps the
+                     verdicts given on answers with them, and open it in a
+                     browser window of its own
       --feedback     Keep verdicts without the review interface: starts the
                      staging database only, so votes are staged for later
       --no-browser   Start everything, but print the URLs instead of opening them
@@ -99,6 +109,9 @@ Brings up the whole stack and opens the web interface in your browser.
       --restart      Recreate the containers instead of reusing what is running
   -q, --quiet        Only print problems
   -h, --help         Show this message
+
+The flags combine: ./start.sh --review --console --mlflow brings up every
+page, the web interface first and the other three in windows of their own.
 
 First run on a machine takes a few minutes: it pulls about 3 GB of images.
 Afterwards it is seconds. A checkout that ships newer images than .env pins
@@ -128,6 +141,7 @@ while [[ $# -gt 0 ]]; do
         # A troubleshooting tool beside whichever interface was chosen, not
         # instead of it. launch.sh brings the API up for it.
         --console) WITH_CONSOLE=1; LAUNCH_ARGS+=(--console); SETUP_ARGS+=(--console); shift ;;
+        --mlflow) WITH_MLFLOW=1; LAUNCH_ARGS+=(--mlflow); SETUP_ARGS+=(--mlflow); shift ;;
         # The desktop client is an interface, not an addition to one: with
         # this the web interface is not started and no browser is opened for
         # it. --review still opens the review page, which has no desktop
@@ -298,6 +312,8 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
         printf 'the review images are not pinned, so they would be built here from source'
     elif [[ $WITH_CONSOLE -eq 1 && -z "$(env_file_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
         printf "the SQL console's interface is not pinned, so it would be built here from source"
+    elif [[ $WITH_MLFLOW -eq 1 && -z "$(env_file_value MLFLOW_IMAGE_NAME)" ]]; then
+        printf "MLflow's images are not pinned, so they would be built here from source"
     fi
 }
 
@@ -325,6 +341,7 @@ review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
 review_url="http://localhost:${review_gui_port}"
 console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
 console_url="http://localhost:${console_gui_port}"
+mlflow_url="http://localhost:$(compose_env MLFLOW_PORT 5001)"
 
 # Healthy is not the same as answering. The container reports healthy as soon
 # as nginx is up, and nginx is up a moment before it has read its generated
@@ -375,6 +392,20 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
         warn "the SQL console never answered at $console_url."
         warn "Check what it said: docker compose --profile console --profile consolegui logs"
         warn "Everything else is up; ./launch.sh --console tries it again on its own."
+    fi
+fi
+
+# And MLflow: questions are answered whether or not it is up, so it not
+# coming up is a warning about the traces, not about the stack.
+mlflow_ready=0
+if [[ $WITH_MLFLOW -eq 1 ]]; then
+    step "Waiting for MLflow"
+    if wait_for_page "$mlflow_url"; then
+        mlflow_ready=1
+    else
+        warn "MLflow never answered at $mlflow_url."
+        warn "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb"
+        warn "Everything else is up, and answers questions untraced until it is."
     fi
 fi
 
@@ -630,14 +661,24 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
             warn "$console_url"
         fi
     fi
+    if [[ $mlflow_ready -eq 1 ]]; then
+        # Its own window too: what the agent did, beside what it answered.
+        step "Opening $mlflow_url"
+        if ! open_window "$mlflow_url"; then
+            warn "could not open MLflow. Open it yourself:"
+            warn "$mlflow_url"
+        fi
+    fi
 elif [[ $WITH_DESKTOP -eq 0 ]]; then
     step "Ready at $url"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
     [[ $console_ready -eq 1 ]] && info "SQL console at $console_url"
+    [[ $mlflow_ready -eq 1 ]] && info "MLflow at $mlflow_url"
 else
     step "The desktop client is running"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
     [[ $console_ready -eq 1 ]] && info "SQL console at $console_url"
+    [[ $mlflow_ready -eq 1 ]] && info "MLflow at $mlflow_url"
 fi
 
 # Deliberately short. launch.sh has just printed what the stack is and how
@@ -661,13 +702,19 @@ EOF
     fi
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
-    $review_url                     review what people said: promote, correct, complete
+    $review_url                     review what people said: promote, correct, complete, take back
 
 EOF
     fi
     if [[ $WITH_CONSOLE -eq 1 ]]; then
         cat <<EOF
     $console_url                     query the retail database as the agent sees it
+
+EOF
+    fi
+    if [[ $WITH_MLFLOW -eq 1 ]]; then
+        cat <<EOF
+    $mlflow_url                     every question traced, agent by agent
 
 EOF
     fi
@@ -681,7 +728,7 @@ elif [[ $QUIET -eq 0 ]]; then
         cat <<EOF
 
     $url                     ask questions, and say whether the answer was right
-    $review_url                     review what people said: promote, correct, complete
+    $review_url                     review what people said: promote, correct, complete, take back
 
     Promoting appends to context_questions/translated_questions.md in this
     checkout -- it shows up in \`git diff\` and is committed like any other edit.
@@ -704,6 +751,13 @@ EOF
         cat <<EOF
     $console_url                     query the retail database as the agent sees it
     docker compose --profile console --profile consolegui down    and the console
+
+EOF
+    fi
+    if [[ $WITH_MLFLOW -eq 1 ]]; then
+        cat <<EOF
+    $mlflow_url                     every question traced, agent by agent
+    docker compose --profile mlflow down    and MLflow
 
 EOF
     fi

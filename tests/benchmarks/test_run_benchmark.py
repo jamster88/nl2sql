@@ -389,16 +389,28 @@ def _settings():
 class _StubAgent:
     """An agent that answers every question with the same canned state."""
 
-    def __init__(self, state: dict) -> None:
+    def __init__(self, state: dict, tracer=None) -> None:
+        from nl2sql_agent.config import Settings
+        from nl2sql_agent.tracing import Tracer
+
         self._state = state
         self.asked: list[str] = []
+        self.settings = Settings()
+        # Untraced unless a test hands it a tracer: MLFLOW_TRACKING_URI unset.
+        self.tracer = tracer or Tracer(self.settings)
 
     def run(self, question: str, **kwargs) -> dict:
         self.asked.append(question)
-        return dict(self._state)
+        # As the real agent does: a trace per run, when there is a tracer
+        # that can open one, and its id on the state.
+        with self.tracer.run(question) as trace:
+            state = dict(self._state)
+            if trace is not None:
+                state["trace_id"] = trace.trace_id
+        return state
 
 
-def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None):
+def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None, tracer=None):
     """Run `main` with the agent, the database and the reference rows faked."""
     import benchmarks.run_benchmark as rb
 
@@ -416,7 +428,7 @@ def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None):
     agents: list[_StubAgent] = []
 
     def _build(settings, **kwargs):
-        agent = _StubAgent(state)
+        agent = _StubAgent(state, tracer)
         agents.append(agent)
         return agent
 

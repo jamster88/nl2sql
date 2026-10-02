@@ -7,6 +7,7 @@ import json
 import sys
 from typing import Any
 
+from . import tracing
 from .config import Settings
 from .graph import STEP_LABELS, Nl2SqlAgent
 from .llm import LlmUnavailableError
@@ -109,7 +110,8 @@ def format_rows(result: Any) -> str:
 
 
 def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> int:
-    state = agent.run(question)
+    with tracing.tagged({"nl2sql.entrypoint": "cli"}):
+        state = agent.run(question)
     if as_json:
         print(
             json.dumps(
@@ -138,6 +140,7 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
                         "audit": state.get("audit"),
                         "answer": state.get("answer"),
                         "trace": state.get("trace", []),
+                        "trace_id": state.get("trace_id", ""),
                     }
                 ),
                 indent=2,
@@ -181,14 +184,22 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     routing = agent.router.table.lines()
+    # Connected now rather than on the first question, so whether runs are
+    # traced is said before one is -- and said only when tracing was asked
+    # for: with MLFLOW_TRACKING_URI unset the CLI prints what it always has.
+    agent.tracer.ready()
     if args.question:
         if not (args.quiet or args.json):
             # One line: which models a single question may be routed to.
             print(f"[routing] {routing[0].removeprefix('model routing ')}", file=sys.stderr)
+            if agent.tracer.enabled:
+                print(f"[tracing] {agent.tracer.status}", file=sys.stderr)
         return answer(agent, " ".join(args.question), as_json=args.json, quiet=args.quiet)
 
     print(f"Connected to {settings.ollama_model} at {settings.ollama_base_url}.")
     print("\n".join(routing))
+    if agent.tracer.enabled:
+        print(f"Traces: {agent.tracer.status}")
     if settings.rag_enabled:
         print(f"Knowledge base: {settings.embed_model} embeddings against {settings.vector_db_url}")
     if settings.examples_enabled:

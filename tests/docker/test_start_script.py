@@ -464,7 +464,7 @@ def test_the_closing_lines_say_what_each_page_is_for(run_start):
     the one nobody has seen before."""
     output = run_start("--review").output
     assert "say whether the answer was right" in output
-    assert "promote, correct, complete" in output
+    assert "promote, correct, complete, take back" in output
 
 
 def test_the_closing_lines_say_that_promoting_edits_this_checkout(run_start):
@@ -1165,3 +1165,117 @@ def test_a_env_that_is_up_to_date_is_not_rewritten(run_start):
 
     assert "Fetching the images" not in result.output
     assert not (result.workdir / ".env.bak").exists()
+
+
+# ---------------------------------------------------------------------------
+# MLflow (--mlflow)
+# ---------------------------------------------------------------------------
+
+
+def test_mlflow_brings_up_mlflow_beside_the_web_interface(run_start):
+    result = run_start("--mlflow")
+
+    assert result.returncode == 0
+    assert result.called("--profile mlflow up -d mlflow")
+    assert result.called("--profile api --profile gui up -d gui")
+    assert "MLflow" not in "".join(line for line in result.output.splitlines(True) if "WARNING" in line)
+
+
+def test_mlflow_opens_its_page_last_in_a_window_of_its_own(run_start):
+    result = run_start("--mlflow")
+
+    assert pages(result) == ["http://localhost:8080", "http://localhost:5001"]
+    assert any(call.startswith("window ") and "5001" in call for call in result.calls), (
+        "MLflow was opened in a tab rather than asked for a window"
+    )
+    assert "==> Opening http://localhost:5001" in result.output
+
+
+def test_every_page_opens_in_order(run_start):
+    """The combination --help offers for everything, doing what it says."""
+    assert "./start.sh --review --console --mlflow brings up every" in run_start("--help").output
+    result = run_start("--review", "--console", "--mlflow")
+    assert pages(result) == [
+        "http://localhost:8080", "http://localhost:8081", "http://localhost:8082", "http://localhost:5001",
+    ]
+
+
+def test_mlflow_waits_for_its_page_too(run_start):
+    result = run_start("--mlflow")
+    assert "Waiting for MLflow" in result.output
+    assert result.called("curl http://localhost:5001")
+
+
+def test_an_mlflow_page_that_never_answers_does_not_take_the_stack_down(run_start):
+    result = run_start("--mlflow", env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "5001"})
+
+    assert result.returncode == 0
+    assert "MLflow never answered at http://localhost:5001." in result.output
+    assert "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb" in result.output
+    assert "Everything else is up, and answers questions untraced until it is." in result.output
+    assert pages(result) == ["http://localhost:8080"]
+
+
+def test_a_machine_that_cannot_open_mlflow_still_says_where_it_is(run_start):
+    result = run_start("--mlflow", env={
+        "FAKE_BROWSER_EXIT": "3", "FAKE_UNAME_S": "Darwin", "FAKE_OSASCRIPT_EXIT": "1"})
+
+    assert result.returncode == 0
+    assert "could not open MLflow. Open it yourself:" in result.output
+    assert "http://localhost:5001" in result.output
+
+
+def test_no_browser_prints_the_mlflow_url_rather_than_opening_it(run_start):
+    result = run_start("--mlflow", "--no-browser")
+    assert pages(result) == []
+    assert "MLflow at http://localhost:5001" in result.output
+
+
+def test_the_mlflow_port_follows_what_compose_will_publish(run_start):
+    result = run_start("--mlflow", env_file="IMAGE_NAME=x\nMLFLOW_PORT=6001\n")
+    assert pages(result)[-1] == "http://localhost:6001"
+
+
+def test_the_closing_lines_say_what_mlflow_is_for_and_how_to_stop_it(run_start):
+    output = " ".join(run_start("--mlflow").output.split())
+    assert "http://localhost:5001 every question traced, agent by agent" in output
+    assert "docker compose --profile mlflow down and MLflow" in output
+
+
+def test_desktop_and_mlflow_still_opens_the_mlflow_page(run_start):
+    """A question asked in the desktop client is traced like any other."""
+    result = run_start("--desktop", "--mlflow", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
+
+    assert result.calls_matching("java -jar")
+    assert pages(result) == ["http://localhost:5001"]
+    assert "every question traced, agent by agent" in result.output
+
+
+def test_desktop_mlflow_and_no_browser_prints_the_mlflow_url(run_start):
+    result = run_start(
+        "--desktop", "--mlflow", "--no-browser", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"}
+    )
+    assert "MLflow at http://localhost:5001" in result.output
+
+
+def test_a_first_run_with_mlflow_pulls_its_images_and_writes_where_traces_go(run_start):
+    result = run_start("--mlflow", env_file=None)
+
+    assert result.returncode == 0
+    assert result.called("pull mcfaddja/nl2sql-mlflow:")
+    assert result.called("pull mcfaddja/nl2sql-mlflowdb:")
+    env = result.env_file()
+    assert env["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
+    assert env["MLFLOW_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflow"
+    assert "MLFLOW_TRACKING_URI is not set" not in result.output
+
+
+def test_mlflow_that_was_never_pinned_is_pulled_rather_than_built(run_start):
+    """A .env from before 5.5 pins no MLflow, and compose would build both
+    images here -- a pull of MLflow's and Postgres's own -- when the
+    published ones are a pull away."""
+    result = run_start("--mlflow")
+
+    assert "MLflow's images are not pinned, so they would be built here from source" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-mlflow:{SHIPPED}")
+    assert result.env_file()["MLFLOW_DB_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflowdb"

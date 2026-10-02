@@ -527,6 +527,23 @@ def test_final_message_advertises_a_question_that_needs_the_knowledge_base(run_s
     assert "market share" in result.output
 
 
+@pytest.mark.parametrize(
+    ("flags", "running"),
+    [
+        ((), ["nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb"]),
+        (("--no-rag",), ["nl2sql-postgres"]),
+    ],
+)
+def test_final_message_lists_exactly_the_databases_it_started(run_setup, flags, running):
+    """It said two for a long time: the context store was started and never
+    named, and without retrieval it named one that was never started. The
+    substring check it replaced passed anyway -- the pull lines name them."""
+    output = run_setup(*flags).output
+    listed = output.split("Running now:")[1].split("The agent runs on demand")[0]
+    assert [line.split()[0] for line in listed.strip().splitlines()] == running
+    assert 'docker compose run --rm agent "How many stores are there?"' in output
+
+
 # ---------------------------------------------------------------------------
 # The end-to-end retrieval check
 #
@@ -580,13 +597,6 @@ def test_a_check_that_returns_no_chunks_warns(run_setup):
     assert result.returncode == 0
     assert "returned nothing" in result.output
     assert "just without retrieved context" in result.output
-
-
-def test_the_closing_message_names_all_three_containers(run_setup):
-    result = run_setup()
-    assert "nl2sql-postgres" in result.output
-    assert "nl2sql-vectordb" in result.output
-    assert 'docker compose run --rm agent "How many stores are there?"' in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -740,6 +750,59 @@ def test_setup_ends_by_saying_the_console_is_there(run_setup):
     output = run_setup().output
     assert "./launch.sh --console" in output
     assert "http://localhost:8082" in output
+
+
+# ---------------------------------------------------------------------------
+# MLflow (--mlflow)
+# ---------------------------------------------------------------------------
+
+
+def test_mlflow_pulls_and_pins_its_server_and_its_store(run_setup):
+    """Two images, as the review service and its interface are: the server
+    is no use without the store behind it."""
+    result = run_setup("--mlflow")
+
+    server, store = _shipped_tag("MLFLOW_TAG"), _shipped_tag("MLFLOW_DB_TAG")
+    pulled = [call for call in result.calls if call.startswith("pull") and "mlflow" in call]
+    assert pulled == [f"pull mcfaddja/nl2sql-mlflow:{server}", f"pull mcfaddja/nl2sql-mlflowdb:{store}"]
+    env = result.env_file()
+    assert (env["MLFLOW_IMAGE_NAME"], env["MLFLOW_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflow", server)
+    assert (env["MLFLOW_DB_IMAGE_NAME"], env["MLFLOW_DB_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflowdb", store)
+
+
+def test_nothing_about_mlflow_is_pulled_or_pinned_unless_it_was_asked_for(run_setup):
+    result = run_setup()
+    assert not [call for call in result.calls if call.startswith("pull") and "mlflow" in call]
+    assert "MLFLOW_IMAGE_NAME" not in result.env_file()
+
+
+def test_naming_an_mlflow_image_or_tag_implies_the_flag(run_setup):
+    """Written out rather than parametrized, for the reason the review
+    images' test gives."""
+    assert run_setup("--mlflow-image", "example.com/mlflow").env_file()["MLFLOW_IMAGE_NAME"] == "example.com/mlflow"
+    assert run_setup("--mlflow-tag", "v9_9").env_file()["MLFLOW_IMAGE_TAG"] == "v9_9"
+    assert run_setup("--mlflow-db-image", "example.com/store").env_file()[
+        "MLFLOW_DB_IMAGE_NAME"
+    ] == "example.com/store"
+    assert run_setup("--mlflow-db-tag", "v9_8").env_file()["MLFLOW_DB_IMAGE_TAG"] == "v9_8"
+
+
+def test_a_failed_mlflow_pull_is_not_fatal(run_setup):
+    result = run_setup("--mlflow", env={"FAKE_FAIL_PULL": "nl2sql-mlflowdb"})
+    assert result.returncode == 0
+    assert "could not pull mcfaddja/nl2sql-mlflowdb:" in result.output
+    assert "./launch.sh --mlflow will build it from source instead." in result.output
+
+
+def test_a_pinned_mlflow_stays_pinned_without_the_flag(run_setup):
+    run_setup("--mlflow")
+    assert run_setup().env_file()["MLFLOW_DB_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflowdb"
+
+
+def test_setup_ends_by_saying_mlflow_is_there(run_setup):
+    output = run_setup().output
+    assert "./launch.sh --mlflow" in output
+    assert "http://localhost:5001" in output
 
 
 # ---------------------------------------------------------------------------
@@ -953,3 +1016,39 @@ def test_the_tag_pulled_names_the_machine_this_is(run_setup, system, machine, cl
     assert result.called(
         f"pull mcfaddja/nl2sql-desktop-build:{DESKTOP_TAG}-{classifier}")
 
+
+
+# ---------------------------------------------------------------------------
+# Where traces go
+# ---------------------------------------------------------------------------
+
+
+def test_the_agent_is_pointed_at_the_mlflow_service(run_setup):
+    """Written whether or not MLflow is ever started: a run that finds no
+    server is answered untraced, as the feedback URL beside it is harmless
+    without the staging database."""
+    assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
+
+
+@pytest.mark.parametrize("chosen", ["", "http://mlflow.example.org"])
+def test_a_tracking_uri_someone_chose_is_written_back_as_it_was(run_setup, chosen):
+    """Empty is how tracing is turned off, and start.sh re-runs this script
+    on every upgrade -- writing the default over it would turn it back on."""
+    first = run_setup()
+    dotenv = first.workdir / ".env"
+    dotenv.write_text(dotenv.read_text().replace(
+        "MLFLOW_TRACKING_URI=http://nl2sql-mlflow:5000", f"MLFLOW_TRACKING_URI={chosen}"))
+
+    second = run_setup()
+    lines = (second.workdir / ".env").read_text().splitlines()
+    assert [line for line in lines if line.startswith("MLFLOW_TRACKING_URI=")] == [f"MLFLOW_TRACKING_URI={chosen}"]
+    assert "# Kept from the previous .env" not in lines
+
+
+def test_an_old_backup_is_not_where_the_tracking_uri_comes_from(run_setup):
+    """Only the file just moved aside is a source; an .env.bak lying about
+    from some earlier run is a backup."""
+    first = run_setup()
+    (first.workdir / ".env").unlink()
+    (first.workdir / ".env.bak").write_text("MLFLOW_TRACKING_URI=\n")
+    assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"

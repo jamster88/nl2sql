@@ -47,6 +47,7 @@ from ..config import Settings
 from ..graph import STEP_LABELS, Nl2SqlAgent
 from ..llm import LlmUnavailableError
 from ..supervisor import INTENT_FRAMING, describe_scope
+from ..tracing import Tracer
 from .jobs import Job, JobStore, StreamChunk
 from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable, build_sink
 from .models import (
@@ -216,6 +217,7 @@ def create_app(
     store: JobStore | None = None,
     certificate: CertificateInfo | None = None,
     feedback: FeedbackSink | None = None,
+    tracer: Tracer | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
@@ -226,7 +228,10 @@ def create_app(
     settings = settings or Settings.from_env()
     api = api_settings or ApiSettings.from_env()
     sink = feedback if feedback is not None else build_sink(api.feedback_db_url)
-    holder = AgentHolder(agent_factory or (lambda: Nl2SqlAgent(settings)))
+    # One connection to MLflow for the server: the agent traces its runs on
+    # it, and the feedback routes put verdicts on those traces.
+    tracer = tracer or Tracer(settings)
+    holder = AgentHolder(agent_factory or (lambda: Nl2SqlAgent(settings, tracer=tracer)))
 
     def default_runner(question: str, principal: str | None, on_progress) -> dict:
         # The callback goes to `run`, not to the agent: one agent answers
@@ -269,6 +274,7 @@ def create_app(
     app.state.agent = holder
     app.state.certificate = certificate
     app.state.feedback = sink
+    app.state.tracer = tracer
 
     if api.cors_origins:
         app.add_middleware(
@@ -643,6 +649,10 @@ def create_app(
             raise ApiHTTPError(
                 HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc)
             ) from exc
+        # And on the run's trace, when it was traced. After the staging
+        # database has it, because that is the record a reviewer acts on;
+        # MLflow not taking it is logged and costs the response nothing.
+        tracer.record_verdict((job.state or {}).get("trace_id"), body.verdict, comment=body.comment)
         return FeedbackModel(
             id=submission_id, job_id=job.id, verdict=body.verdict, comment=body.comment
         )
@@ -676,6 +686,11 @@ def create_app(
                 "not_found",
                 f"no feedback for job {job_id} that can still be withdrawn",
             )
+        # A verdict can outlive its job (API_JOB_TTL_SECONDS), so a job the
+        # server has forgotten is found by the id its trace is tagged with.
+        job = jobs.get(job_id)
+        trace_id = (job.state or {}).get("trace_id") if job else tracer.find_job_trace(job_id)
+        tracer.withdraw_verdict(trace_id)
         return Response(status_code=204)
 
     @app.delete(

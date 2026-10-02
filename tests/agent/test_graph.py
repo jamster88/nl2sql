@@ -48,6 +48,7 @@ def make_agent(
     contract_resources=None,
     on_progress=None,
     llm_factory=None,
+    tracer=None,
     **settings_kwargs,
 ) -> Nl2SqlAgent:
     settings = Settings(
@@ -72,6 +73,7 @@ def make_agent(
         literal_matcher=literal_matcher,
         contract_resources=contract_resources,
         on_progress=on_progress,
+        tracer=tracer,
     )
     agent.db = db
     # `Nl2SqlAgent` falls back to building its own when the argument is falsy,

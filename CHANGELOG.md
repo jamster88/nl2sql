@@ -8,8 +8,9 @@ per change.
 **Versions.** The number is the agent's: `__version__` 5.1.2 is published as
 the tag `v5_1_2`, and a tag with fewer components names a line
 (`v5_1` is 5.1.x). The app images -- `nl2sql-agent`, `nl2sql-gui`,
-`nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` and the five
-`nl2sql-desktop-build` platforms -- are released together at one number, which
+`nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui`, the five
+`nl2sql-desktop-build` platforms and, since v5_5, `nl2sql-mlflow` and
+`nl2sql-mlflowdb` -- are released together at one number, which
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds every
 declaration in the repository to. The dataset images --
 `nl2sql-retail-postgres`, `nl2sql-rag-vectordb`, `nl2sql-rag-chunkdb` --
@@ -28,6 +29,95 @@ Docker Hub's, in UTC; release dates are the repository's.
 file where a file is new; the tests a version merely extended are summarised.
 
 ---
+
+## v5_5 (5.5.0) -- 2026-10-01
+
+The agent and its subagents are traced in MLflow. Each question is one trace
+shaped like the architecture: a span per agent -- the Supervisor, the four
+retrievers, the Context Aggregator, the SQL Generator, the Static Validator
+and Planner Gate, the Safe Executor, the Completeness Reviewer, the Repair
+Agent, the Visual Formatter, the Insight Narrator and the Audit Checker --
+holding the state it read and the update it wrote, and inside each the model
+calls it made, with their messages, answers and tokens and the task, rung and
+route the Model Router chose them by. MLflow comes up in compose with
+`--mlflow`: MLflow's own server and a Postgres of its own, each a thin image
+built here and published with the release. A verdict
+given in the web or desktop interface is recorded on the trace it judges, and
+the benchmark files each configuration as an MLflow run holding its
+questions' traces. Tracing is best effort: with no server, or one that does
+not answer, the agent answers untraced and asks again thirty seconds later.
+Of the ten images v5.4 published, only the agent's changed; the others are
+v5.4's under the new version.
+
+### Created
+- `agent/nl2sql_agent/tracing.py` -- the `Tracer`: connects on first use (a health check, then the tracking URI and experiment, never importing MLflow before a server answers); a trace per run, tagged with its outcome, screening, attempts, model calls, rows, version, entrypoint and job; a span per agent and per model call; verdicts as human feedback on the trace, overridden when given again and deleted when withdrawn; a forgotten job's trace found by its tag; MLflow's HTTP retries bounded, which otherwise held the CLI's exit four minutes when the server had gone.
+- `docker/mlflow/Dockerfile` -- MLflow's own server image (`ghcr.io/mlflow/mlflow:v3.16.1-full`, the variant with a Postgres driver), labelled and nothing added: how it is served stays in compose.
+- `docker/mlflowdb/Dockerfile` -- stock Postgres for MLflow's store, labelled likewise.
+- `benchmarks/tracking.py` -- a run per configuration: its settings as parameters, accuracy overall and per category, timings per stage and rungs as metrics, the report as `benchmark.json`, and each question's trace tagged with the question and scored `benchmark_correct`.
+- `tests/fake_mlflow.py` -- the slice of MLflow the agent and the benchmark call, in memory, with and without the runs API.
+- `tests/agent/test_tracing.py`, `tests/agent/test_graph_tracing.py`, `tests/benchmarks/test_tracking.py`, `tests/docker/test_mlflow_compose.py`, and `tests/docker/test_mlflow_live.py` -- the last against a real server from the pinned image, on a private network under the name `setup.sh` writes, and through the agent image's own client.
+
+### Updated
+- `agent/nl2sql_agent/graph.py` -- `TRACE_SPANS` beside `STEP_LABELS`: each node's agent name, span type and the state it reads. `_traced` opens the agent's span, `run` opens the run's trace and puts its id on the state, and v3's table-selection call is traced.
+- `agent/nl2sql_agent/router.py` -- every model a routed call asks is a `CHAT_MODEL` span, so a fallback shows as two.
+- `agent/nl2sql_agent/state.py` -- `trace_id`.
+- `agent/nl2sql_agent/config.py` -- `MLFLOW_TRACKING_URI` (unset: nothing traced) and `MLFLOW_EXPERIMENT_NAME` (`nl2sql-agent`).
+- `agent/nl2sql_agent/api/app.py`, `api/jobs.py` -- one tracer for the server, shared by its agent and its feedback routes; each job's run tagged with the job's id; a verdict recorded on the trace after the staging database has taken it, and taken off when withdrawn.
+- `agent/nl2sql_agent/__main__.py` -- the CLI says where traces go, tags its runs, and `--json` carries `trace_id`.
+- `agent/requirements.txt` -- `mlflow-tracing==3.16.1`; `tests/requirements.txt` -- `mlflow-skinny==3.16.1`, for the benchmark's runs.
+- `benchmarks/run_benchmark.py`, `benchmarks/runner.py` -- traced when MLflow answers on the host (`http://localhost:5001` unless `MLFLOW_TRACKING_URI` says otherwise), each question's `trace_id` in the report.
+- `docker-compose.yml` -- `mlflowdb` (built from `docker/mlflowdb/Dockerfile`, its port unpublished, volume `mlflowdata`) and `mlflow` (built from `docker/mlflow/Dockerfile`, artifacts in `mlflowartifacts`, the rebinding guard given the agent's names for it, published on `127.0.0.1:5001` because macOS keeps 5000) behind the `mlflow` profile; the agent and the API forward the two settings.
+- `launch.sh --mlflow`, `start.sh --mlflow` -- start MLflow after the stack, which does not wait on it, and open it in a window of its own; warn when `.env` names no tracking server or the interface is published beyond this machine. `start.sh` re-runs `setup.sh` when MLflow is asked for and not pinned.
+- `setup.sh` -- writes `MLFLOW_TRACKING_URI=http://nl2sql-mlflow:5000` into `.env`, writing back a previous `.env`'s own value instead (empty is how tracing is turned off); `--mlflow` (and `--mlflow-image`, `--mlflow-tag`, `--mlflow-db-image`, `--mlflow-db-tag`) pulls and pins MLflow's two images.
+- `README.md` (Tracing, the container and tag tables, test counts), `agent/README.md` (Tracing (MLflow), the two settings), `agent/API.md`, `benchmarks/README.md`.
+- Version 5.5.0 in every declaration; `setup.sh` pins `v5_5`.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui` `:v5_5` (amd64, arm64); `nl2sql-desktop-build:v5_5-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-01 UTC).
+- `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_5` (amd64, arm64), their first publish (2026-10-01 UTC).
+
+### After publishing
+In the checkout, not in the `v5_5` images: the three scripts, tests and
+documentation. No image changed, so no tag was needed.
+- Every launch mode checked live against the v5_5 stack. `start.sh --review
+  --console --mlflow` brought every service up healthy, and a question asked
+  through the web interface's proxy was in MLflow as one trace of nineteen
+  spans, tagged with its job. `start.sh --desktop` took the jar from
+  `nl2sql-desktop-build:v5_5-mac-aarch64` and opened the client against the
+  API.
+- `launch.sh --review` -- the closing lines say a judgement can be taken back,
+  5.4's *Back to pending* and *Delete*; `start.sh`'s line for the review page
+  says so too.
+- `setup.sh` -- the closing lines named two databases and it starts three:
+  the context store was never named, and with `--no-rag` the vector store was
+  named and never started. They list what was started now. The header
+  comment still described the v2 agent.
+- `start.sh --help` -- the flags combine, and `--review --console --mlflow`
+  brings up every page.
+- `tests/docker/test_setup_script.py` -- the closing-message test looked for
+  two container names the pull lines print anyway, so it passed while the
+  message was wrong. A test that reads the list replaces it.
+- `tests/docker/test_mlflow_compose.py` -- `MLFLOW_WORKERS` and
+  `MLFLOW_ALLOWED_HOSTS` are set through compose by a test.
+- `tests/docs/test_docs.py` -- every setting MLflow's two services read is in
+  the README with its default. `tests/docker/test_script_coverage.py` -- the
+  README's count of shell scripts, Dockerfiles and the rest is held to
+  `git ls-files`: it said eleven Dockerfiles, and 5.5 made thirteen.
+- `README.md` -- MLflow's server settings, the command that brings up every
+  page, the file, command and test counts. `agent/README.md` -- what
+  `setup.sh` starts. `agent/USAGE.md` -- how MLflow is started.
+- `USAGE_GUIDE.md` (new) -- using every part of the stack, task by task:
+  first run against your own Ollama host, the three scripts and every flag
+  they take, where each page and port is, asking in each interface, reading
+  an answer, feedback and review, the SQL console, MLflow, the benchmark,
+  models, configuration, security, upgrading and troubleshooting.
+  `QUICKSTART.md` (new) -- from a fresh clone to a first answer. `README.md`
+  points to both.
+- `tests/docs/test_docs.py` -- the two guides are held to the scripts, the
+  agent and compose: every flag of the three scripts and the agent is in the
+  usage guide, every command either guide shows takes only flags that exist,
+  every local address is one compose publishes, every setting that moves a
+  port is named, and every section link lands on a heading.
 
 ## v5_4 (5.4.0) -- 2026-09-30
 

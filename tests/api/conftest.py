@@ -94,6 +94,7 @@ def make_client(api_settings: ApiSettings):
         settings: Settings | None = None,
         agent_factory: Callable | None = None,
         feedback=None,
+        tracer=None,
         **store_kwargs,
     ) -> TestClient:
         api = api or api_settings
@@ -111,6 +112,7 @@ def make_client(api_settings: ApiSettings):
             store=store,
             agent_factory=agent_factory,
             feedback=feedback,
+            tracer=tracer,
         )
         return TestClient(app)
 

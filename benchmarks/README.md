@@ -243,6 +243,37 @@ benchmark runs on the host while the agent normally runs inside compose, where
 the same names are service names. Set `DATABASE_URL`, `VECTOR_DB_URL`,
 `CONTEXT_DB_URL` or `EMBED_BASE_URL` to override any of them.
 
+## MLflow
+
+```bash
+./launch.sh --mlflow                      # MLflow up, at http://localhost:5001
+python benchmarks/run_benchmark.py --compare
+```
+
+With MLflow answering, each configuration the benchmark measures is an MLflow
+run of its own, named `benchmark <configuration>`, in the agent's experiment
+(`nl2sql-agent`, or `MLFLOW_EXPERIMENT_NAME`):
+
+| | |
+|---|---|
+| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had |
+| Artifact | `benchmark.json`, the report as `--json` writes it |
+| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category` and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
+
+So a wrong answer is one click from the trace that gave it -- which agent
+read what, which model wrote the SQL, what the repair said -- and two runs
+can be compared in MLflow's own run view. A run cut short, by Ctrl-C or a
+database that went away, keeps what it measured and ends as `KILLED`.
+
+It runs on the host, so MLflow is `http://localhost:5001` -- the port compose
+publishes -- unless `MLFLOW_TRACKING_URI` says otherwise; set it empty to run
+untraced with MLflow up. With nothing answering there, the benchmark runs as
+before. The runs need MLflow's `mlflow-skinny`, which
+`pip install -r tests/requirements.txt` installs; with only the agent's
+tracing client, the traces are still written, ungrouped, and the benchmark
+says so.
+
 ## Tests
 
 ```bash

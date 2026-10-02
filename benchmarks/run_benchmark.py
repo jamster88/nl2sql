@@ -35,6 +35,7 @@ if str(REPO_ROOT / "agent") not in sys.path:
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from benchmarks import tracking  # noqa: E402
 from benchmarks.questions import CATEGORIES, QUESTIONS, BenchmarkQuestion  # noqa: E402
 from benchmarks.runner import (  # noqa: E402
     CORRECT,
@@ -60,6 +61,10 @@ HOST_DEFAULTS = {
     "vector_db_url": ("VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
     "context_db_url": ("CONTEXT_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
     "embed_base_url": ("EMBED_BASE_URL", "http://localhost:11434"),
+    # The `mlflow` service's published port. Not up, and the benchmark runs
+    # untraced after one refused connection; MLFLOW_TRACKING_URI= (empty)
+    # turns tracing off even when it is up.
+    "mlflow_tracking_uri": ("MLFLOW_TRACKING_URI", "http://localhost:5001"),
 }
 
 
@@ -178,6 +183,7 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
         narrative_score=narrative_score(state),
         routes=routes_from_trace(trace),
         rung=getattr(state.get("complexity"), "rung", None),
+        trace_id=state.get("trace_id", ""),
     )
 
     if state.get("error"):
@@ -207,6 +213,7 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
 
 
 def run_configuration(args, configuration: str, questions: list[BenchmarkQuestion]) -> BenchmarkReport:
+    from nl2sql_agent import tracing
     from nl2sql_agent.database import Database
     from nl2sql_agent.graph import Nl2SqlAgent
     from nl2sql_agent.llm import LlmUnavailableError
@@ -228,12 +235,22 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
         raise SystemExit(f"error: {exc}")
 
     report = BenchmarkReport(label=configuration)
-    for question in questions:
-        print(f"  {question.id} [{question.category}] {question.question[:64]}...", flush=True)
-        result = run_question(agent, database, question, timer)
-        report.results.append(result)
-        mark = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}[result.outcome]
-        print(f"       -> {mark} in {result.wall_seconds:.1f}s", flush=True)
+    tracked = tracking.open_run(agent, configuration, questions)
+    complete = False
+    try:
+        for question in questions:
+            print(f"  {question.id} [{question.category}] {question.question[:64]}...", flush=True)
+            with tracing.tagged(tracking.question_tags(question, configuration)):
+                result = run_question(agent, database, question, timer)
+            report.results.append(result)
+            if tracked is not None:
+                tracked.score(result)
+            mark = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}[result.outcome]
+            print(f"       -> {mark} in {result.wall_seconds:.1f}s", flush=True)
+        complete = True
+    finally:
+        if tracked is not None:
+            tracked.finish(report, as_json([report]), complete=complete)
     return report
 
 
@@ -360,6 +377,7 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "narrative_score": r.narrative_score,
                         "rung": r.rung,
                         "routes": r.routes,
+                        "trace_id": r.trace_id,
                         "sql": r.sql,
                         "error": r.error,
                     }

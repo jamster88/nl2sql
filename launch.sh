@@ -21,6 +21,12 @@
 #     ./launch.sh --console
 #     open http://localhost:8082
 #
+# Or, to see what the agent did with a question -- every agent and every
+# model call it made, traced in MLflow:
+#
+#     ./launch.sh --mlflow
+#     open http://localhost:5001
+#
 # This is the every-time script. setup.sh is the first-time one: it pulls the
 # images and writes the .env that pins them. launch.sh assumes that has already
 # happened and just starts what is down, then checks that each piece actually
@@ -45,6 +51,7 @@ WITH_GUI=0
 WITH_FEEDBACK=0
 WITH_REVIEW=0
 WITH_CONSOLE=0
+WITH_MLFLOW=0
 WITH_DESKTOP=0
 RESTART=0
 QUIET=0
@@ -72,6 +79,9 @@ Usage: ./launch.sh [options]
       --console    Also start the SQL console, where the retail database is
                    queried as the agent's read-only role and through its
                    gates, to work out why an answer was wrong (implies --api)
+      --mlflow     Also start MLflow, where every question the agent answers
+                   is traced -- a span per agent and per model call -- and
+                   verdicts are recorded on the traces they judge
       --desktop    Also build the desktop client and copy the API's
                    certificate out, so the client can run on this machine
       --restart    Recreate the containers instead of reusing what is running
@@ -98,6 +108,8 @@ while [[ $# -gt 0 ]]; do
         # The console presents the certificate the API writes, so the API is
         # what it cannot start without -- and what it is troubleshooting.
         --console) WITH_CONSOLE=1; WITH_API=1; shift ;;
+        # Not --api: a question asked from a terminal is traced as well.
+        --mlflow) WITH_MLFLOW=1; shift ;;
         # The desktop client talks to the API directly rather than through a
         # proxy of its own, so that is the one thing it cannot do without.
         --desktop) WITH_DESKTOP=1; WITH_API=1; shift ;;
@@ -774,6 +786,45 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
     fi
 fi
 
+# --- Tracing ---------------------------------------------------------------
+# MLflow, and the database it keeps traces in. Last, and not before the API,
+# because nothing waits on it: the agent asks for the server on its first
+# question, and again RETRY_SECONDS after one that went untraced, so a
+# server that comes up after the API is found without restarting anything.
+mlflow_port=$(compose_env MLFLOW_PORT 5001)
+mlflow_bind=$(compose_env MLFLOW_BIND_ADDRESS 127.0.0.1)
+
+start_mlflow() {
+    docker compose --profile mlflow up -d mlflow >/dev/null 2>&1 || return 1
+    await_health nl2sql-mlflow
+}
+
+if [[ $WITH_MLFLOW -eq 1 ]]; then
+    step "Starting MLflow"
+    info "The first start fetches MLflow's image, about 370 MB."
+    if start_mlflow; then
+        info "MLflow is healthy at http://localhost:$mlflow_port"
+        if [[ -z "$(compose_env MLFLOW_TRACKING_URI "")" ]]; then
+            warn "MLFLOW_TRACKING_URI is not set, so the agent will not trace to it."
+            warn "setup.sh writes one into .env; add it there or export it before starting."
+        fi
+    else
+        warn "MLflow did not become healthy, so questions are answered untraced."
+        warn "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb"
+    fi
+    # Its interface has no login, and what it shows includes every row every
+    # question returned -- so, like the console, it is this machine's unless
+    # someone says otherwise, and saying otherwise is worth a warning.
+    case "$mlflow_bind" in
+        127.0.0.1|localhost|::1) mlflow_exposed=0 ;;
+        *) mlflow_exposed=1 ;;
+    esac
+    if [[ $mlflow_exposed -eq 1 ]]; then
+        warn "MLflow is published on $mlflow_bind with no login: anything that can"
+        warn "reach it can read every question, query and result, and delete them."
+    fi
+fi
+
 # --- Ready -----------------------------------------------------------------
 if [[ $QUIET -eq 0 ]]; then
     cat <<EOF
@@ -837,6 +888,10 @@ EOF
     translated_questions.md.bak. Fixes go to their own databases instead --
     ports $(compose_env CORRECTIONS_DB_PORT 5436) and $(compose_env COMPLETIONS_DB_PORT 5437) -- never into the golden set.
 
+    A judgement can be taken back. Under a reviewed submission, Back to
+    pending returns it to the queue and Delete removes it -- each taking
+    its pair out of the golden set, or its fix out of its store, first.
+
     docker compose --profile feedback --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
 EOF
@@ -857,6 +912,23 @@ EOF
 
     docker compose --profile console --profile consolegui logs -f console
     console/README.md explains how it is put together.
+EOF
+    fi
+    if [[ $WITH_MLFLOW -eq 1 ]]; then
+        cat <<EOF
+
+==> MLflow is up:
+
+    open http://localhost:$mlflow_port
+
+    Every question the agent answers -- from a terminal, the API or the
+    benchmark -- is a trace in the experiment $(compose_env MLFLOW_EXPERIMENT_NAME nl2sql-agent): one span per
+    agent and per model call, each with what it read and what it wrote
+    back. A verdict given in the web or desktop interface is recorded on
+    the trace it judges, and python benchmarks/run_benchmark.py files each
+    configuration it measures as a run of its own.
+
+    docker compose --profile mlflow logs -f mlflow
 EOF
     fi
     if [[ $WITH_DESKTOP -eq 1 ]]; then

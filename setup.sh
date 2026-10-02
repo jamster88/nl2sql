@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 #
-# One-time setup for the NL2SQL RAG agent (v2).
+# One-time setup for the NL2SQL agent.
 #
 # Brings up the whole stack in one call:
 #
 #   nl2sql-postgres   the retail dataset, already inside the image
 #   nl2sql-vectordb   pgvector holding the embedded knowledge base
-#   agent             the v2 agent image, run on demand
+#   nl2sql-chunkdb    the golden question/SQL pairs and their BM25 statistics
+#   agent             the agent image, run on demand
 #
-# It pulls each image, starts both databases, writes a .env so plain compose
-# commands pick all of that up, checks that the chat and embedding models are
-# reachable, and finally proves the agent container can actually retrieve from
-# the knowledge base. When it finishes you can just run:
+# It pulls each image -- and the web, review, SQL console, MLflow and desktop
+# images when their flags ask for them -- starts the databases, writes a .env
+# so plain compose commands pick all of that up, checks that the chat and
+# embedding models are reachable, and finally proves the agent container can
+# actually retrieve from the knowledge base. When it finishes you can just run:
 #
 #     docker compose run --rm agent "your question"
 #
@@ -22,24 +24,30 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1_1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v5_4"
+AGENT_TAG="v5_5"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v5_4"
+GUI_TAG="v5_5"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v5_4"
+REVIEW_TAG="v5_5"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v5_4"
+REVIEW_GUI_TAG="v5_5"
 # The SQL console's interface. The console behind it runs from the agent
 # image above, started with a different command, so this is the one image
 # --console adds.
 CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
-CONSOLE_GUI_TAG="v5_4"
+CONSOLE_GUI_TAG="v5_5"
+# MLflow, where the agent's runs are traced: its server and the Postgres it
+# keeps traces in, both published with the release. --mlflow adds them.
+MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
+MLFLOW_TAG="v5_5"
+MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
+MLFLOW_DB_TAG="v5_5"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v5_4"
+DESKTOP_TAG="v5_5"
 VECTOR_IMAGE="mcfaddja/nl2sql-rag-vectordb"
 VECTOR_TAG="v3_1"
 CONTEXT_IMAGE="mcfaddja/nl2sql-rag-chunkdb"
@@ -58,6 +66,7 @@ BUILD_AGENT=0
 WITH_GUI=0
 WITH_REVIEW=0
 WITH_CONSOLE=0
+WITH_MLFLOW=0
 WITH_DESKTOP=0
 WITH_RAG=1
 VERIFY=1
@@ -75,31 +84,39 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v5_4)
+      --agent-tag TAG    Agent image tag to pull (default: v5_5)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v5_4)
+      --gui-tag TAG      GUI image tag to pull (default: v5_5)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v5_4)
+      --review-tag TAG   Review service image tag (default: v5_5)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v5_4)
+      --review-gui-tag TAG   Review interface image tag (default: v5_5)
       --console          Also pull and pin the SQL console's interface, where
                          the retail database is queried as the agent sees it
                          (the console itself runs from the agent image)
       --console-gui-image N  SQL console interface image
                          (default: mcfaddja/nl2sql-console-gui)
-      --console-gui-tag TAG  SQL console interface image tag (default: v5_4)
+      --console-gui-tag TAG  SQL console interface image tag (default: v5_5)
+      --mlflow           Also pull and pin MLflow -- its server and the
+                         Postgres it keeps traces in -- so ./launch.sh
+                         --mlflow starts it instead of building it here
+      --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
+      --mlflow-tag TAG   MLflow server image tag (default: v5_5)
+      --mlflow-db-image N    MLflow store image
+                         (default: mcfaddja/nl2sql-mlflowdb)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v5_5)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v5_4). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v5_5). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_1)
@@ -146,6 +163,12 @@ while [[ $# -gt 0 ]]; do
         --console) WITH_CONSOLE=1; shift ;;
         --console-gui-image) CONSOLE_GUI_IMAGE="$2"; WITH_CONSOLE=1; shift 2 ;;
         --console-gui-tag) CONSOLE_GUI_TAG="$2"; WITH_CONSOLE=1; shift 2 ;;
+        # Both halves together: the server is no use without its store.
+        --mlflow) WITH_MLFLOW=1; shift ;;
+        --mlflow-image) MLFLOW_IMAGE="$2"; WITH_MLFLOW=1; shift 2 ;;
+        --mlflow-tag) MLFLOW_TAG="$2"; WITH_MLFLOW=1; shift 2 ;;
+        --mlflow-db-image) MLFLOW_DB_IMAGE="$2"; WITH_MLFLOW=1; shift 2 ;;
+        --mlflow-db-tag) MLFLOW_DB_TAG="$2"; WITH_MLFLOW=1; shift 2 ;;
         --desktop) WITH_DESKTOP=1; shift ;;
         --desktop-image) DESKTOP_IMAGE="$2"; WITH_DESKTOP=1; shift 2 ;;
         --desktop-tag) DESKTOP_TAG="$2"; WITH_DESKTOP=1; shift 2 ;;
@@ -307,6 +330,9 @@ fi
 if [[ $WITH_CONSOLE -eq 0 && -n "$(env_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
     WITH_CONSOLE=1
 fi
+if [[ $WITH_MLFLOW -eq 0 && -n "$(env_value MLFLOW_IMAGE_NAME)" ]]; then
+    WITH_MLFLOW=1
+fi
 if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
     WITH_DESKTOP=1
 fi
@@ -344,6 +370,14 @@ fi
         echo "CONSOLE_GUI_IMAGE_NAME=$CONSOLE_GUI_IMAGE"
         echo "CONSOLE_GUI_IMAGE_TAG=$CONSOLE_GUI_TAG"
     fi
+    # The same again for MLflow's two. Unpinned, compose builds both here,
+    # which is a pull of MLflow's and Postgres's own images.
+    if [[ $WITH_MLFLOW -eq 1 ]]; then
+        echo "MLFLOW_IMAGE_NAME=$MLFLOW_IMAGE"
+        echo "MLFLOW_IMAGE_TAG=$MLFLOW_TAG"
+        echo "MLFLOW_DB_IMAGE_NAME=$MLFLOW_DB_IMAGE"
+        echo "MLFLOW_DB_IMAGE_TAG=$MLFLOW_DB_TAG"
+    fi
     # Same reasoning again. Unpinned, compose resolves the desktop service to
     # a local tag with nowhere to be pulled from, and launch.sh builds the
     # jar here instead.
@@ -365,6 +399,17 @@ fi
     # submission back. The review service creates it, and resets its grants,
     # on every start -- see review/nl2sql_review/store.py.
     echo "API_FEEDBACK_DB_URL=postgresql://nl2sql_feedback_writer:\${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}@nl2sql-feedbackdb:5432/\${FEEDBACK_DB_NAME:-nl2sql_feedback}"
+    # Where the agent sends its traces: the mlflow service, which
+    # `./launch.sh --mlflow` starts. Harmless when it is not up, the same
+    # way: a run that finds no server is answered untraced, and the next is
+    # traced once one answers. A previous .env's own line is written back
+    # as it was -- another server, or nothing at all, which is how tracing
+    # is turned off -- because that line is a choice, not a default.
+    if [[ $had_env -eq 1 ]] && grep -q '^MLFLOW_TRACKING_URI=' .env.bak; then
+        grep '^MLFLOW_TRACKING_URI=' .env.bak | tail -1
+    else
+        echo "MLFLOW_TRACKING_URI=http://nl2sql-mlflow:5000"
+    fi
     if [[ -n "$OLLAMA_URL" ]]; then echo "OLLAMA_BASE_URL=$OLLAMA_URL"; fi
     if [[ -n "$OLLAMA_MODEL" ]]; then echo "OLLAMA_MODEL=$OLLAMA_MODEL"; fi
     if [[ -n "$EMBED_URL" ]]; then echo "EMBED_BASE_URL=$EMBED_URL"; fi
@@ -445,6 +490,17 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
         warn "could not pull $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (private repo, or not logged in);"
         warn "./launch.sh --console will build it from source instead."
     fi
+fi
+
+# MLflow's two, the server and its store: pulled together, as they run.
+if [[ $WITH_MLFLOW -eq 1 ]]; then
+    for pair in "$MLFLOW_IMAGE:$MLFLOW_TAG" "$MLFLOW_DB_IMAGE:$MLFLOW_DB_TAG"; do
+        step "Pulling $pair (MLflow)"
+        if ! docker pull "$pair"; then
+            warn "could not pull $pair (private repo, or not logged in);"
+            warn "./launch.sh --mlflow will build it from source instead."
+        fi
+    done
 fi
 
 # The desktop client, whose image is tagged by JavaFX platform rather than by
@@ -642,19 +698,28 @@ print("PROBE " + json.dumps({"chunks": len(kb.search("market share")),
 fi
 
 # --- Done ------------------------------------------------------------------
+# What is running is what was started above: the two retrieval stores only
+# when the knowledge base was asked for.
 cat <<EOF
 
 ==> Setup complete. Running now:
 
     nl2sql-postgres    the retail dataset
+EOF
+if [[ $WITH_RAG -eq 1 ]]; then
+    cat <<EOF
     nl2sql-vectordb    the embedded knowledge base
+    nl2sql-chunkdb     the golden pairs and their BM25 index
+EOF
+fi
+cat <<EOF
 
-    The agent runs on demand, as a third container:
+    The agent runs on demand, in a container of its own:
 
     docker compose run --rm agent "How many stores are there?"
 
     docker compose run --rm agent            # interactive session
-    docker compose down                      # stop both databases (data kept)
+    docker compose down                      # stop the databases (data kept)
 
     A question that needs the knowledge base to get right:
 
@@ -668,6 +733,11 @@ cat <<EOF
     the agent runs its own, and says which of its gates would have stopped it:
 
     ./launch.sh --console                    # http://localhost:8082
+
+    Want to see what the agent did with a question, agent by agent and
+    model call by model call? MLflow traces every one:
+
+    ./launch.sh --mlflow                     # http://localhost:5001
 
     Or connect a GUI of your own: the same image serves a REST API over TLS,
     and agent/API.md is the contract a client is written against:

@@ -413,6 +413,14 @@ Four rules are worth knowing:
   carries `feedback: true|false` so a GUI can decide whether to draw the
   buttons at all.
 
+When the run was traced (`MLFLOW_TRACKING_URI`), the verdict is also recorded
+on its MLflow trace, as human feedback named `verdict` -- after the staging
+database has taken it, and only then. Voting again overrides it there too,
+and `DELETE` takes it off, finding a job the server has forgotten by the
+`nl2sql.job_id` tag its trace carries. Nothing about the response depends on
+it: MLflow down, or not configured, costs the trace its verdict and the vote
+nothing. See [`README.md`](README.md#tracing-mlflow).
+
 ### What the server can do with it
 
 This process writes one row and can do nothing else with it. It connects as

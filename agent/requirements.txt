@@ -13,3 +13,10 @@ uvicorn==0.53.0
 # Generates and inspects the server's TLS certificate. Used instead of the
 # openssl binary, which the slim Python image does not promise to carry.
 cryptography==50.0.1
+# --- tracing (nl2sql_agent.tracing) ----------------------------------------
+# MLflow's tracing client and nothing else: the spans, the trace and the
+# verdicts recorded on it, without the tracking server, the model registry or
+# the scientific stack the full `mlflow` package brings. Only imported once a
+# server has answered, so a run with MLFLOW_TRACKING_URI unset never loads it.
+# Pinned to the server's version in docker/mlflow/Dockerfile, which a test holds.
+mlflow-tracing==3.16.1

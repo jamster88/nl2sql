@@ -32,6 +32,8 @@ DOCS = (
     "gui/README.md",
     "models/README.md",
     "console/README.md",
+    "USAGE_GUIDE.md",
+    "QUICKSTART.md",
 )
 
 
@@ -444,6 +446,126 @@ def _table_row(text: str, name: str) -> str:
         if line.startswith("|") and f"`{name}`" in line:
             return line
     raise AssertionError(f"{name} has no row in the README config table")
+
+
+# ---------------------------------------------------------------------------
+# The usage guide and the quick start
+# ---------------------------------------------------------------------------
+#
+# Both are written for someone who has never seen the scripts, so a flag that
+# does not exist, a port nothing publishes or a section link that goes nowhere
+# is the one mistake they cannot recover from on their own.
+
+GUIDES = ("USAGE_GUIDE.md", "QUICKSTART.md")
+SCRIPTS = ("start.sh", "launch.sh", "setup.sh")
+
+
+def _guide(name: str) -> str:
+    return (REPO_ROOT / name).read_text()
+
+
+def _script_flags(script: str) -> set[str]:
+    """Every option a script's parser takes, short and long."""
+    source = (REPO_ROOT / script).read_text()
+    flags = set()
+    for short, long in re.findall(r"^\s+(?:(-\w)\|)?(--[a-z-]+)\)", source, re.MULTILINE):
+        flags.update(flag for flag in (short, long) if flag)
+    assert "--help" in flags, f"no flags found in {script} -- the pattern needs updating"
+    return flags
+
+
+def _mentions(text: str, flag: str) -> bool:
+    """`--tag` is not mentioned by `--agent-tag`."""
+    return re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", text) is not None
+
+
+@pytest.mark.parametrize("script", SCRIPTS)
+def test_the_usage_guide_documents_every_script_flag(script: str):
+    guide = _guide("USAGE_GUIDE.md")
+    for flag in sorted(_script_flags(script)):
+        assert _mentions(guide, flag), f"{script} takes {flag}, which USAGE_GUIDE.md never mentions"
+
+
+def test_the_usage_guide_documents_every_agent_flag():
+    from nl2sql_agent.__main__ import parse_args
+
+    guide = _guide("USAGE_GUIDE.md")
+    for action in _parser_from(parse_args)._actions:
+        for flag in action.option_strings:
+            if flag not in ("-h", "--help"):
+                assert _mentions(guide, flag), f"the agent takes {flag}, which USAGE_GUIDE.md never mentions"
+
+
+@pytest.mark.parametrize("guide", GUIDES)
+def test_every_script_command_in_the_guides_uses_flags_the_script_takes(guide: str):
+    text = _guide(guide)
+    commands = re.findall(r"\./(start|launch|setup)\.sh((?:[ \t]+[^\s`#&|]+)*)", text)
+    assert len(commands) > 3, f"no script commands found in {guide} -- the pattern needs updating"
+    for script, arguments in commands:
+        taken = _script_flags(f"{script}.sh")
+        for flag in (word for word in arguments.split() if word.startswith("-")):
+            assert flag in taken, f"{guide} runs ./{script}.sh {flag.strip()}, which it does not take"
+
+
+@pytest.mark.parametrize("guide", GUIDES)
+def test_every_agent_command_in_the_guides_uses_flags_the_agent_takes(guide: str):
+    from nl2sql_agent.__main__ import parse_args
+
+    taken = {flag for action in _parser_from(parse_args)._actions for flag in action.option_strings}
+    commands = re.findall(r"docker compose run --rm(?:\s+-T)?\s+agent\b([^\"#|`\n]*)", _guide(guide))
+    assert commands, f"no agent commands found in {guide} -- the pattern needs updating"
+    for arguments in commands:
+        for flag in (word for word in arguments.split() if word.startswith("-")):
+            assert flag in taken, f"{guide} passes the agent {flag}, which it does not take"
+
+
+def _published_ports() -> dict[str, str]:
+    """Each port setting compose reads, and the host port it defaults to."""
+    compose = (REPO_ROOT / "docker-compose.yml").read_text()
+    return dict(re.findall(r"\$\{([A-Z_]*PORT):-(\d+)\}", compose))
+
+
+@pytest.mark.parametrize("guide", GUIDES)
+def test_every_local_address_in_the_guides_is_one_compose_publishes(guide: str):
+    published = set(_published_ports().values()) | {"11434"}  # and Ollama's own
+    addresses = set(re.findall(r"localhost:(\d+)", _guide(guide)))
+    assert addresses, f"no local addresses found in {guide}"
+    assert addresses <= published, f"{guide} points at ports nothing publishes: {sorted(addresses - published)}"
+
+
+def test_the_usage_guide_names_every_setting_that_moves_a_port():
+    guide = _guide("USAGE_GUIDE.md")
+    for setting, port in sorted(_published_ports().items()):
+        assert f"`{setting}`" in guide, f"{setting} moves port {port}, and USAGE_GUIDE.md never says so"
+
+
+def _heading_slugs(markdown: str) -> set[str]:
+    """The anchors GitHub gives a document's headings, outside code blocks."""
+    slugs, in_code = set(), False
+    for line in markdown.splitlines():
+        if line.startswith("```"):
+            in_code = not in_code
+        elif not in_code and (heading := re.match(r"#{1,6}\s+(.+)", line)):
+            slugs.add(re.sub(r"[^\w\- ]", "", heading.group(1).strip().lower()).replace(" ", "-"))
+    return slugs
+
+
+@pytest.mark.parametrize("guide", GUIDES)
+def test_every_section_link_in_the_guides_lands_on_a_heading(guide: str):
+    """The file-link check above stops at the `#`; these documents send
+    readers to sections, in themselves and in the READMEs, by the dozen."""
+    text = _guide(guide)
+    links = re.findall(r"\]\(([^)#\s]*)#([^)\s]+)\)", text)
+    assert links, f"no section links found in {guide}"
+    for path, anchor in links:
+        target = (REPO_ROOT / guide).parent / path if path else REPO_ROOT / guide
+        assert anchor in _heading_slugs(target.read_text()), f"{guide} links to {path}#{anchor}, which has no such heading"
+
+
+def test_the_readme_and_the_quick_start_point_on_to_the_guides(root_readme: str):
+    assert "[`QUICKSTART.md`](QUICKSTART.md)" in root_readme
+    assert "[`USAGE_GUIDE.md`](USAGE_GUIDE.md)" in root_readme
+    assert "](USAGE_GUIDE.md" in _guide("QUICKSTART.md")
 
 
 # ---------------------------------------------------------------------------

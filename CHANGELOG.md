@@ -106,6 +106,18 @@ documentation. No image changed, so no tag was needed.
 - `README.md` -- MLflow's server settings, the command that brings up every
   page, the file, command and test counts. `agent/README.md` -- what
   `setup.sh` starts. `agent/USAGE.md` -- how MLflow is started.
+- `USAGE_GUIDE.md` (new) -- using every part of the stack, task by task:
+  first run against your own Ollama host, the three scripts and every flag
+  they take, where each page and port is, asking in each interface, reading
+  an answer, feedback and review, the SQL console, MLflow, the benchmark,
+  models, configuration, security, upgrading and troubleshooting.
+  `QUICKSTART.md` (new) -- from a fresh clone to a first answer. `README.md`
+  points to both.
+- `tests/docs/test_docs.py` -- the two guides are held to the scripts, the
+  agent and compose: every flag of the three scripts and the agent is in the
+  usage guide, every command either guide shows takes only flags that exist,
+  every local address is one compose publishes, every setting that moves a
+  port is named, and every section link lands on a heading.
 
 ## v5_4 (5.4.0) -- 2026-09-30
 

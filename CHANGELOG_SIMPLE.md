@@ -32,6 +32,7 @@ their own and are listed under the release they shipped with. A version marked
 - `launch.sh` and `start.sh` say a review can be taken back; `setup.sh` names the databases it actually started.
 - `start.sh --help` shows how to bring up every page at once.
 - MLflow's server settings documented and tested; a stale count of Dockerfiles corrected and now checked.
+- `USAGE_GUIDE.md`, a full usage guide, and `QUICKSTART.md`, a quick start; tests hold both to the scripts, the agent's flags and compose.
 
 ## v5_4 (5.4.0) -- 2026-09-30
 

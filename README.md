@@ -1,5 +1,10 @@
 # nl2sql
 
+New here? [`QUICKSTART.md`](QUICKSTART.md) takes you from a fresh clone to a
+first answer, pointing the stack at your own Ollama host on the way.
+[`USAGE_GUIDE.md`](USAGE_GUIDE.md) covers using every part of it. This README
+is how it all works.
+
 ## Quick start
 
 ```bash
@@ -1398,8 +1403,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3280 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 3880, including ones that build and run containers
+pytest                                          # 3296 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 3896, including ones that build and run containers
 ```
 
 | Directory | Covers |

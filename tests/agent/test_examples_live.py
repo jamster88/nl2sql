@@ -41,7 +41,7 @@ DOCUMENT = Path(__file__).resolve().parent.parent.parent / "context_questions" /
 #: How many pairs the golden question document holds. Read from it rather
 #: than written down as 45: the document is the live golden set, and every
 #: promotion made through the review interface grows it.
-EXPECTED_PAIRS = len(re.findall(r"^## Q\d{2} - ", DOCUMENT.read_text(), re.M))
+EXPECTED_PAIRS = len(re.findall(r"^## Q\d{2,} - ", DOCUMENT.read_text(), re.M))
 
 
 class _Settings:

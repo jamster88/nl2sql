@@ -4,7 +4,7 @@ The important one is `document`: a *real* copy of
 `context_questions/translated_questions.md`, not a miniature stand-in. The
 whole promotion path is a bet that a rendered pair survives
 `ragproc.golden_pairs.parse_document`, and that bet is only worth anything
-against the document the loader actually reads -- 45 pairs, 25 suites, prose
+against the document the loader actually reads -- every pair, 25 suites, prose
 sections between them and a `## How to read a pair` heading that is not a
 pair and must not be counted as one.
 """
@@ -39,6 +39,14 @@ NEXT_ID = next_pair_id(REAL_DOCUMENT.read_text())
 def pair_after(pair_id: str, steps: int = 1) -> str:
     """`Q49` -> `Q50`: the id `steps` promotions after this one."""
     return f"Q{int(pair_id[1:]) + steps:02d}"
+
+
+def renumber_highest(text: str, pair_id: str) -> str:
+    """The document with its highest pair renumbered to `pair_id`: how a test
+    reaches the edge of the id space without promoting fifty pairs first."""
+    highest = f"## Q{int(NEXT_ID[1:]) - 1:02d} - "
+    assert highest in text
+    return text.replace(highest, f"## {pair_id} - ")
 
 
 @pytest.fixture

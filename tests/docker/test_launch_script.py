@@ -353,6 +353,17 @@ def test_an_env_pinning_an_older_agent_image_is_called_out(run_launch):
     assert "running the older agent" in result.output
 
 
+def test_an_agent_tag_chosen_for_this_checkout_is_said_rather_than_warned(run_launch):
+    """`setup.sh --agent-tag` on this checkout writes its own release beside
+    the tag it was given: a choice, which a warning would call a mistake."""
+    shipped = re.search(
+        r'^AGENT_TAG="([^"]+)"', (REPO_ROOT / "setup.sh").read_text(), re.MULTILINE
+    ).group(1)
+    result = run_launch(env_file=f"IMAGE_NAME=x\nAGENT_IMAGE_TAG=v5_3\nSETUP_RELEASE={shipped}\n")
+    assert f"the agent is pinned at v5_3, as chosen; this checkout ships {shipped}." in result.output
+    assert "pins the agent image" not in result.output
+
+
 def test_an_env_pinning_the_shipped_agent_image_says_nothing(run_launch):
     """Read out of setup.sh rather than written here, so bumping a release
     does not fail this test for a reason that is not a defect.
@@ -647,7 +658,7 @@ def test_a_review_service_that_never_comes_up_is_reported(run_launch):
 def test_a_review_interface_that_never_comes_up_is_reported(run_launch):
     result = run_launch("--review", env={"FAKE_REVIEW_GUI_HEALTH": "starting"}, timeout=240)
     assert "the review interface did not become healthy" in result.output
-    assert "--profile reviewgui logs reviewgui" in result.output
+    assert "--profile feedback --profile review --profile reviewgui logs reviewgui" in result.output
 
 
 def test_a_container_that_died_is_not_waited_out(run_launch):
@@ -812,7 +823,7 @@ def test_a_review_proxy_a_restart_does_not_fix_is_reported_too(run_launch):
     assert result.called("restart reviewgui")
     assert "cannot reach the review service" in result.output
     assert "Review interface is healthy" not in result.output
-    assert "docker compose --profile reviewgui logs reviewgui" in result.output
+    assert "docker compose --profile feedback --profile review --profile reviewgui logs reviewgui" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -914,7 +925,7 @@ def test_a_console_proxy_a_restart_does_not_fix_is_reported(run_launch):
 
     assert result.called("restart consolegui")
     assert "the SQL console's interface is up but cannot reach the console." in result.output
-    assert "docker compose --profile consolegui logs consolegui" in result.output
+    assert "docker compose --profile console --profile consolegui logs consolegui" in result.output
     assert "SQL console interface is healthy" not in result.output
 
 
@@ -1243,3 +1254,83 @@ def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
     assert "reach it can read every question, query and result, and delete them." in result.output
     assert "WARNING: MLflow is published" in output
 
+
+
+# ---------------------------------------------------------------------------
+# The golden pairs: the stores against the document (--load-golden)
+# ---------------------------------------------------------------------------
+#
+# The context store and the vectors are images, published holding the golden
+# set as it was then; only a promotion reloads them. So a checkout whose
+# document has grown is answered from fewer pairs than it holds until it is
+# loaded -- which is what this flag does, and what the check below says.
+
+LOAD = "--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review"
+
+
+def _golden_document(tmp_path: Path, pairs: int) -> None:
+    """A question document holding `pairs` pairs, where launch.sh reads it."""
+    folder = tmp_path / "repo" / "context_questions"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "translated_questions.md").write_text(
+        "# Golden pairs\n\n## How to read a pair\n\n# Suite 1\n\n"
+        + "".join(f"## Q{number:02d} - pair {number}\n\nbody\n\n" for number in range(1, pairs + 1))
+    )
+
+
+def test_load_golden_runs_both_loaders_in_the_review_image_before_the_stores_are_counted(run_launch):
+    result = run_launch("--load-golden")
+
+    assert result.returncode == 0
+    assert "==> Loading the golden pairs from context_questions/translated_questions.md" in result.output
+    assert "48 rows written, 0 stale rows removed" in result.output
+    assert "question         -> golden_pair_question_vectors: 0 embedded, 48 already current, 0 removed" in result.output
+    assert result.index_of(LOAD) < result.index_of("SELECT count(*) FROM golden_pairs")
+    # The script is passed to `sh -c` across several lines, which the call log
+    # records as several entries.
+    script = "\n".join(result.calls[result.index_of(LOAD):][:6])
+    assert '05_load_golden_pairs.py "$REVIEW_DOCUMENT" --db-url "$CHUNK_DB_URL"' in script
+    assert '06_embed_golden_pairs.py --chunk-db-url "$CHUNK_DB_URL"' in script
+
+
+def test_load_golden_starts_nothing_of_the_review_system(run_launch):
+    """One container, run once and removed: --no-deps keeps the staging
+    database and the fix stores, which the review service depends on, down."""
+    result = run_launch("--load-golden")
+    assert not result.called("up -d review")
+    assert not result.called("up -d feedbackdb")
+
+
+def test_without_the_flag_nothing_is_loaded(run_launch):
+    assert not run_launch().called(LOAD)
+
+
+def test_a_load_that_fails_is_a_warning_and_the_stack_comes_up_anyway(run_launch):
+    result = run_launch("--load-golden", env={"FAKE_GOLDEN_LOAD_FAILS": "1"})
+
+    assert result.returncode == 0
+    assert "the golden pairs did not load completely; the stores keep what they had. It said:" in result.output
+    assert "Could not reach Ollama" in result.output
+    assert "==> Ready." in result.output
+
+
+def test_load_golden_with_no_rag_says_there_is_nothing_to_load(run_launch):
+    result = run_launch("--load-golden", "--no-rag")
+
+    assert "--load-golden does nothing with --no-rag: there is no context store to load." in result.output
+    assert not result.called(LOAD)
+
+
+def test_a_context_store_behind_the_document_is_called_out(run_launch, tmp_path):
+    _golden_document(tmp_path, 48)
+    result = run_launch()
+
+    assert (
+        "the context store holds 45 golden pairs, and context_questions/translated_questions.md 48." in result.output
+    )
+    assert "The agent's worked examples are the store's until it is loaded: ./start.sh --load-golden" in result.output
+
+
+def test_a_context_store_that_matches_the_document_says_nothing(run_launch, tmp_path):
+    _golden_document(tmp_path, 45)
+    assert "golden pairs, and context_questions" not in run_launch().output

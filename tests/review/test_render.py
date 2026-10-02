@@ -10,10 +10,14 @@ exist.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from nl2sql_review import render
 from nl2sql_review.render import Draft
+
+from ragproc import golden_pairs as gp
 
 from .conftest import NEXT_ID
 
@@ -42,10 +46,26 @@ def test_an_empty_document_starts_at_q01():
     assert render.next_pair_id("") == "Q01"
 
 
-def test_the_golden_set_is_full_at_q99():
-    """`Q\\d{2}` is a wall, not a slope: Q100 would parse as nothing at all."""
-    with pytest.raises(ValueError, match="Q99 is the last id"):
-        render.next_pair_id("## Q99 - the last one\n")
+def test_q99_is_followed_by_q100_and_the_set_goes_on():
+    """Until 5.5.1 this was a wall: Q99 was the last id the loader matched."""
+    assert render.next_pair_id("## Q99 - the last one before three digits\n") == "Q100"
+    assert render.next_pair_id("## Q99 - a\n\n## Q100 - b\n\n## Q101 - c\n") == "Q102"
+
+
+@pytest.mark.parametrize(
+    "pair_id", ["Q01", "Q46", "Q99", "Q100", "Q1234", "Q1", "Q", "q46", "P46", "Q46a", "Q 46", "QQ46"]
+)
+def test_the_renderer_and_the_loader_agree_on_what_a_pair_id_is(pair_id):
+    """The renderer restates the loader's rule rather than importing it, so
+    an id one of them accepts and the other does not is the silent-drop this
+    module exists to prevent."""
+    loader = re.fullmatch(gp.PAIR_ID, pair_id) is not None
+    assert (render.PAIR_ID_RE.match(pair_id) is not None) == loader
+
+
+def test_the_renderer_and_the_loader_count_the_same_headings():
+    text = "## Q01 - a\n\n## Q100 - b\n\n## Q1 - not one\n\n### Q02 - nor this\n"
+    assert len(render.HEADING_RE.findall(text)) == len(gp.HEADING_RE.findall(text)) == 2
 
 
 def test_the_suite_in_force_is_the_last_heading(document):
@@ -185,8 +205,14 @@ def test_a_multi_line_title_splits_the_heading(draft):
     assert any("one line" in p for p in render.problems(draft, "Q46"))
 
 
-def test_a_pair_id_the_loader_cannot_match_is_refused(draft):
-    assert any("two-digit pair id" in p for p in render.problems(draft, "Q100"))
+@pytest.mark.parametrize("pair_id", ["Q1", "Q", "q46", "Q46a"])
+def test_a_pair_id_the_loader_cannot_match_is_refused(draft, pair_id):
+    assert any("is not a pair id" in p for p in render.problems(draft, pair_id))
+
+
+@pytest.mark.parametrize("pair_id", ["Q01", "Q99", "Q100", "Q1234"])
+def test_a_pair_id_the_loader_matches_is_not_refused(draft, pair_id):
+    assert not [p for p in render.problems(draft, pair_id) if "pair id" in p]
 
 
 @pytest.mark.parametrize("field", ["tables", "keywords"])

@@ -54,7 +54,7 @@ Because of what it can do, not what it is.
 
 This process writes `context_questions/translated_questions.md` and reloads
 the retrieval stores built from it. That file *is* the golden question set --
-the 45 verified pairs the agent retrieves worked examples from and that every
+the verified pairs the agent retrieves worked examples from and that every
 benchmark run is scored against. Giving those powers to the agent's own API
 because both happen to be FastAPI would put the benchmark inside the blast
 radius of the thing being benchmarked.
@@ -183,9 +183,11 @@ from the set.
 
 These are the loader's rules, checked before anything is written:
 
-* **`Q\d{2}` is exactly two digits**, so the set tops out at Q99. At 45 pairs
-  that is a long way off, but it is a wall rather than a slope: Q100 would
-  parse as nothing at all.
+* **A pair id is `Q` and at least two digits** (`Q\d{2,}`), so the set has
+  no ceiling: `Q99` is followed by `Q100`. Until 5.5.1 it was exactly two
+  digits, and Q99 was a wall rather than a slope -- Q100 would have parsed as
+  nothing at all, so the hundredth promotion was refused. Ids keep two digits
+  until they need three, so every existing one is unchanged.
 * **The question is delimited by a double quote followed by a newline**, so a
   question ending in one closes its own field.
 * **The SQL is fenced and the fence is not escapable**, so SQL containing a
@@ -418,6 +420,12 @@ over the Ollama host and everything else the last run chose.
 Promotion writes the `context_questions/` directory of *this checkout*,
 bind-mounted into the container. That is deliberate. Written into a
 container's own copy, the golden set would grow somewhere nobody can see.
+
+The stores are reloaded by a promotion and by nothing else, so a document
+that arrives with pairs from elsewhere -- promoted on another machine and
+committed -- is ahead of them until something loads it. `launch.sh` says when
+the two differ, and `./start.sh --load-golden` runs the same two loaders
+before anything is asked, in this service's image, without starting it.
 
 Directly:
 

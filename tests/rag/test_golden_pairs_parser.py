@@ -26,12 +26,12 @@ if str(RAG_DIR) not in sys.path:
 
 pytest.importorskip("psycopg", reason="rag/requirements.txt not installed")
 
-from ragproc.golden_pairs import GoldenPair, parse_document, parse_meta  # noqa: E402
+from ragproc.golden_pairs import HEADING_RE, GoldenPair, parse_document, parse_meta  # noqa: E402
 
 #: How many pairs the golden question document holds. Read from it rather
 #: than written down as 45: the document is the live golden set, and every
 #: promotion made through the review interface grows it.
-EXPECTED_PAIRS = len(re.findall(r"^## Q\d{2} - ", DOCUMENT.read_text(), re.M))
+EXPECTED_PAIRS = len(HEADING_RE.findall(DOCUMENT.read_text()))
 
 # The eight columns the pairs are loaded into, as the task specifies them.
 REQUIRED_FIELDS = (
@@ -163,6 +163,20 @@ def test_a_meta_block_missing_a_key_is_refused(tmp_path):
     broken.write_text(DOCUMENT.read_text().replace("keywords: gross profit", "kewords: gross profit", 1))
     with pytest.raises(ValueError, match="missing keywords"):
         parse_document(broken)
+
+
+def test_a_pair_id_outgrows_two_digits(tmp_path, pairs):
+    """Until 5.5.1 the id was exactly two digits, and a hundredth pair would
+    have been neither parsed nor counted -- silently absent. Now Q100 follows
+    Q99 like any other id, and so does whatever follows that."""
+    *_, second_last, last = (pair.pair_id for pair in pairs)
+    grown = tmp_path / "grown.md"
+    grown.write_text(
+        DOCUMENT.read_text().replace(f"## {second_last} - ", "## Q100 - ", 1).replace(f"## {last} - ", "## Q1000 - ", 1)
+    )
+    reparsed = parse_document(grown)
+    assert len(reparsed) == EXPECTED_PAIRS
+    assert [pair.pair_id for pair in reparsed[-2:]] == ["Q100", "Q1000"]
 
 
 def test_meta_blocks_parse_into_key_value_pairs():

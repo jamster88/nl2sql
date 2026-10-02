@@ -117,6 +117,15 @@ def test_default_run_writes_env_pinning_every_image(run_setup):
     assert env["RAG_ENABLED"] == "true"
 
 
+@pytest.mark.parametrize("flags", [(), ("--agent-tag", "v5_3")])
+def test_env_records_the_release_that_wrote_it_whatever_was_pinned(run_setup, flags):
+    """Not the agent's tag: the release this checkout ships, which is what
+    start.sh needs to tell a tag chosen here from one an older checkout left."""
+    env = run_setup(*flags).env_file()
+    assert env["SETUP_RELEASE"] == _shipped_tag("AGENT_TAG")
+    assert env["AGENT_IMAGE_TAG"] == (flags[1] if flags else _shipped_tag("AGENT_TAG"))
+
+
 def test_default_run_reports_dataset_and_knowledge_base_sizes(run_setup):
     result = run_setup()
     assert "194101 sales rows" in result.output

@@ -80,7 +80,7 @@ def test_every_pinned_tag_is_published_for_both_architectures_at_this_version(re
 
 
 #: The dataset images version on their own -- `retail-postgres:v1_1`,
-#: `rag-*:v3_1` -- so there is no version label to hold them to; what a pull
+#: `rag-*:v3_2` -- so there is no version label to hold them to; what a pull
 #: depends on is that the tag exists, for both architectures. The RAG stores'
 #: `v3` did not: rag/publish_db_image.sh used to tar one machine's data
 #: directory, and this is the test that would have said so.

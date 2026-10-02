@@ -17,9 +17,10 @@ the number parsed. Everything below exists to make that mismatch impossible.
 
 Three constraints in that expression are easy to miss and are checked here:
 
-* **`Q\\d{2}` is exactly two digits**, so the golden set tops out at Q99. At 45
-  pairs that is a long way off, but it is a wall rather than a slope: Q100
-  would parse as nothing at all.
+* **A pair id is `Q` and at least two digits** (`Q\\d{2,}`). It was exactly
+  two until 5.5.1, which made Q99 a wall rather than a slope: Q100 would have
+  parsed as nothing at all. Ids are written with two digits until they need
+  three, so every existing id is unchanged.
 * **The question is delimited by a double quote followed by a newline.** A
   question ending in one closes the field early.
 * **The SQL is fenced, and the fence is not escapable.** SQL containing a
@@ -41,12 +42,12 @@ META_KEYS = ("chunk_id", "type", "tables", "keywords")
 #: the surrounding prose. The loader stores it; the retriever does not read it.
 PAIR_TYPE = "golden pair"
 
-#: The ceiling `Q\d{2}` imposes. Named so the error message can cite it.
-MAX_PAIR_NUMBER = 99
-
-PAIR_ID_RE = re.compile(r"^Q(\d{2})$")
+#: A pair id as the loader's `ragproc.golden_pairs.PAIR_ID` matches it --
+#: restated, because that module is imported lazily from a configurable
+#: path, and held to it by a test.
+PAIR_ID_RE = re.compile(r"^Q(\d{2,})$")
 SUITE_RE = re.compile(r"^# (Suite .+?)\s*$", re.M)
-HEADING_RE = re.compile(r"^## Q(\d{2}) - ", re.M)
+HEADING_RE = re.compile(r"^## Q(\d{2,}) - ", re.M)
 
 #: Fields a draft must carry to become a pair, and what to call them when one
 #: is missing. Everything the loader requires is here; nothing optional is.
@@ -110,12 +111,8 @@ def problems(draft: Draft, pair_id: str = "Q46") -> list[str]:
         if not getattr(draft, name).strip():
             found.append(f"{name} is empty -- needs {description}")
 
-    match = PAIR_ID_RE.match(pair_id)
-    if not match:
-        found.append(
-            f"{pair_id!r} is not a two-digit pair id; the loader's pattern is Q\\d{{2}}, "
-            f"so the golden set cannot go past Q{MAX_PAIR_NUMBER}"
-        )
+    if not PAIR_ID_RE.match(pair_id):
+        found.append(f"{pair_id!r} is not a pair id; the loader's are Q and at least two digits")
 
     # The heading runs to end of line, so a title carrying one splits the pair.
     if "\n" in draft.title:
@@ -159,15 +156,11 @@ def next_pair_id(document: str) -> str:
     reusing its number would give two different questions the same
     `chunk_id` across the lifetime of the context store -- where the id is
     the primary key, so the newer would silently overwrite the older.
+
+    Two digits until the set needs three: `Q99` is followed by `Q100`.
     """
     numbers = [int(m.group(1)) for m in HEADING_RE.finditer(document)]
     nxt = (max(numbers) + 1) if numbers else 1
-    if nxt > MAX_PAIR_NUMBER:
-        raise ValueError(
-            f"the golden set is full: Q{MAX_PAIR_NUMBER} is the last id the loader's "
-            f"Q\\d{{2}} pattern matches. Widening it means changing ENTRY_RE and "
-            "HEADING checks in ragproc/golden_pairs.py first."
-        )
     return f"Q{nxt:02d}"
 
 

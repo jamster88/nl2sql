@@ -79,7 +79,6 @@ export function makeMeta(overrides: Partial<ReviewMeta> = {}): ReviewMeta {
     reload_context: true,
     reload_vectors: true,
     limits: {
-      max_pair_number: 99,
       reload_timeout_seconds: 600,
       validate_timeout_ms: 30000,
       validate_max_rows: 200,

@@ -1114,6 +1114,44 @@ def test_a_tag_exported_for_this_run_is_not_re_pinned_under_it(run_start):
     assert not result.called("pull mcfaddja/nl2sql-agent")
 
 
+def _chosen_env(**extra: str) -> str:
+    """What `./setup.sh --agent-tag v5_3` on this checkout writes."""
+    return _older_env(AGENT_IMAGE_TAG="v5_3", GUI_IMAGE_TAG=SHIPPED, SETUP_RELEASE=SHIPPED, **extra)
+
+
+def test_an_agent_tag_chosen_for_this_checkout_is_kept(run_start):
+    """Until 5.5.1 the next start re-pinned it, so an older agent could only
+    be run with launch.sh -- the front door undid what setup.sh was asked."""
+    result = run_start(env_file=_chosen_env())
+
+    assert result.returncode == 0
+    assert "Fetching the images" not in result.output
+    assert not result.called("pull mcfaddja/nl2sql-agent")
+    assert result.env_file()["AGENT_IMAGE_TAG"] == "v5_3"
+    assert f"the agent is pinned at v5_3, as chosen; this checkout ships {SHIPPED}." in result.output
+    assert "You are running the older agent" not in result.output
+
+
+def test_a_chosen_agent_tag_survives_a_re_run_for_another_reason(run_start):
+    result = run_start("--review", env_file=_chosen_env())
+
+    assert "the review images are not pinned" in result.output
+    assert "The agent stays at v5_3, as chosen; ./setup.sh on its own goes back." in result.output
+    assert result.called("pull mcfaddja/nl2sql-agent:v5_3")
+    written = result.env_file()
+    assert (written["AGENT_IMAGE_TAG"], written["REVIEW_IMAGE_TAG"], written["SETUP_RELEASE"]) == (
+        "v5_3", SHIPPED, SHIPPED)
+
+
+def test_a_tag_an_older_checkout_wrote_is_still_brought_up_to_date(run_start):
+    """Its setup.sh pinned what it shipped, which says nothing about choice."""
+    result = run_start(env_file=_older_env(SETUP_RELEASE="v5_1_2"))
+
+    assert f"this checkout ships {SHIPPED}, and .env pins v5_1_2" in result.output
+    assert "The agent stays at" not in result.output
+    assert (result.env_file()["AGENT_IMAGE_TAG"], result.env_file()["SETUP_RELEASE"]) == (SHIPPED, SHIPPED)
+
+
 def test_an_agent_from_another_repository_is_somebody_elses_choice(run_start):
     result = run_start(env_file=_older_env(AGENT_IMAGE_NAME="someone/their-agent"))
 
@@ -1279,3 +1317,37 @@ def test_mlflow_that_was_never_pinned_is_pulled_rather_than_built(run_start):
     assert "MLflow's images are not pinned, so they would be built here from source" in result.output
     assert result.called(f"pull mcfaddja/nl2sql-mlflow:{SHIPPED}")
     assert result.env_file()["MLFLOW_DB_IMAGE_NAME"] == "mcfaddja/nl2sql-mlflowdb"
+
+
+# ---------------------------------------------------------------------------
+# Loading the golden pairs (--load-golden)
+# ---------------------------------------------------------------------------
+
+_PINNED_FOR_REVIEW = (
+    f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
+    f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+    f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
+)
+
+
+def test_load_golden_is_handed_to_launch_sh(run_start):
+    result = run_start("--load-golden", env_file=_PINNED_FOR_REVIEW)
+
+    assert result.returncode == 0
+    assert result.called("--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review")
+    assert "Loading the golden pairs" in result.output
+    assert "Fetching the images" not in result.output
+    assert pages(result) == ["http://localhost:8080"], "the review page is --review's, not this flag's"
+
+
+def test_load_golden_pulls_the_review_image_rather_than_building_it(run_start):
+    """The loaders are in the review service's image, and an unpinned one
+    would be built here from source on first use."""
+    env_file = f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\nGUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
+    result = run_start("--load-golden", env_file=env_file)
+
+    assert "the review image, which loads the golden pairs, is not pinned, so it would be built here from source" in (
+        result.output
+    )
+    assert result.called(f"pull mcfaddja/nl2sql-review:{SHIPPED}")
+    assert result.env_file()["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"

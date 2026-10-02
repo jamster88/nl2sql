@@ -223,7 +223,6 @@ class GoldenSet(BaseModel):
 
 
 class ReviewLimits(BaseModel):
-    max_pair_number: int
     reload_timeout_seconds: float
     #: What a validation run is held to: the same kind of limits the agent's
     #: own queries have.

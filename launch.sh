@@ -53,6 +53,7 @@ WITH_REVIEW=0
 WITH_CONSOLE=0
 WITH_MLFLOW=0
 WITH_DESKTOP=0
+WITH_LOAD_GOLDEN=0
 RESTART=0
 QUIET=0
 
@@ -84,6 +85,11 @@ Usage: ./launch.sh [options]
                    verdicts are recorded on the traces they judge
       --desktop    Also build the desktop client and copy the API's
                    certificate out, so the client can run on this machine
+      --load-golden
+                   Load context_questions/translated_questions.md into the
+                   context store and its vectors before anything is asked, so
+                   the worked examples are this checkout's golden set rather
+                   than the one the images were published with
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -113,6 +119,9 @@ while [[ $# -gt 0 ]]; do
         # The desktop client talks to the API directly rather than through a
         # proxy of its own, so that is the one thing it cannot do without.
         --desktop) WITH_DESKTOP=1; WITH_API=1; shift ;;
+        # Nothing else started for it: the loaders run once, in a container
+        # of their own, against the stores started below.
+        --load-golden) WITH_LOAD_GOLDEN=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -204,6 +213,39 @@ else
     warn "The agent will fail to connect. Check: docker compose logs postgres"
 fi
 
+# --- The golden pairs ------------------------------------------------------
+# The context store and the vector store are images, published holding the
+# pairs the question document held then. A promotion reloads both; nothing
+# else does. So a document that has grown since -- pairs promoted elsewhere
+# and committed, or written by hand -- is answered from with the pairs the
+# images shipped until something loads it. --load-golden is that something:
+# the two loaders a promotion runs, run the same way, in the review service's
+# image -- the one that carries them -- against this checkout's document,
+# which compose bind-mounts into it. Both are idempotent, and the second
+# embeds only pairs that changed, so a load with nothing new changes nothing.
+GOLDEN_DOCUMENT="context_questions/translated_questions.md"
+
+load_golden() {  # load_golden -- what the loaders said; fails when either did
+    docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+        cd "$REVIEW_RAG_DIR" &&
+        python 05_load_golden_pairs.py "$REVIEW_DOCUMENT" --db-url "$CHUNK_DB_URL" &&
+        python 06_embed_golden_pairs.py --chunk-db-url "$CHUNK_DB_URL" \
+            --vector-db-url "$VECTOR_DB_URL" --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
+}
+
+if [[ $WITH_LOAD_GOLDEN -eq 1 && $WITH_RAG -eq 0 ]]; then
+    warn "--load-golden does nothing with --no-rag: there is no context store to load."
+elif [[ $WITH_LOAD_GOLDEN -eq 1 ]]; then
+    step "Loading the golden pairs from $GOLDEN_DOCUMENT"
+    if loaded=$(load_golden); then
+        # The two lines that say what changed: the rows, then each vector table.
+        while IFS= read -r line; do info "$line"; done < <(printf '%s\n' "$loaded" | grep -E 'rows written|embedded,' | sed 's/^ *//')
+    else
+        warn "the golden pairs did not load completely; the stores keep what they had. It said:"
+        while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$loaded" | tail -3)
+    fi
+fi
+
 # --- Contents --------------------------------------------------------------
 # A healthy container is not the same as a populated one. A volume created
 # before the image shipped its data comes up healthy and empty, and the only
@@ -249,6 +291,14 @@ if [[ $WITH_RAG -eq 1 ]]; then
     else
         warn "the context store holds ${pairs:-0} golden pairs and the vector store"
         warn "${vectors:-0} of their embeddings. Multi-shot needs both; it will be skipped."
+    fi
+
+    # The store against the document it was loaded from: the images ship the
+    # set as it was when they were published, and only a load catches up.
+    in_document=$(grep -cE '^## Q[0-9]{2,} - ' "$GOLDEN_DOCUMENT" 2>/dev/null || true)
+    if [[ -n "$in_document" && -n "$pairs" && "$pairs" != "$in_document" ]]; then
+        warn "the context store holds ${pairs} golden pairs, and $GOLDEN_DOCUMENT $in_document."
+        warn "The agent's worked examples are the store's until it is loaded: ./start.sh --load-golden"
     fi
 
     # The v4 Schema Retriever selects tables from this one collection instead
@@ -312,9 +362,16 @@ compose_value() {
 # script exists to catch.
 pinned_agent=$(compose_env AGENT_IMAGE_TAG "")
 expected_agent=$(awk -F'"' '/^AGENT_TAG=/ {print $2; exit}' setup.sh)
+# Unless this checkout's own setup.sh wrote that .env: then the tag was
+# chosen since -- `setup.sh --agent-tag`, or an edit -- and is said, not
+# warned about.
 if [[ -n "$pinned_agent" && -n "$expected_agent" && "$pinned_agent" != "$expected_agent" ]]; then
-    warn ".env pins the agent image at $pinned_agent, but this checkout ships $expected_agent."
-    warn "You are running the older agent. Re-run ./setup.sh, or edit AGENT_IMAGE_TAG in .env."
+    if [[ "$(compose_env SETUP_RELEASE "")" == "$expected_agent" ]]; then
+        info "the agent is pinned at $pinned_agent, as chosen; this checkout ships $expected_agent."
+    else
+        warn ".env pins the agent image at $pinned_agent, but this checkout ships $expected_agent."
+        warn "You are running the older agent. Re-run ./setup.sh, or edit AGENT_IMAGE_TAG in .env."
+    fi
 fi
 
 step "Checking the models"
@@ -715,7 +772,7 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
             info "Review interface is healthy at http://localhost:$review_gui_port"
         else
             warn "the review interface is up but cannot reach the review service."
-            warn "Check what it said: docker compose --profile reviewgui logs reviewgui"
+            warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
         fi
     else
         warn "the review interface did not become healthy."
@@ -767,7 +824,7 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
             info "SQL console interface is healthy at http://localhost:$console_gui_port"
         else
             warn "the SQL console's interface is up but cannot reach the console."
-            warn "Check what it said: docker compose --profile consolegui logs consolegui"
+            warn "Check what it said: docker compose --profile console --profile consolegui logs consolegui"
         fi
     else
         warn "the SQL console's interface did not become healthy."

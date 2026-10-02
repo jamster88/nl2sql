@@ -32,8 +32,7 @@ export function StatusBar({ meta, error, warnings }: StatusBarProps) {
             {meta.service} {meta.version}
           </span>
           <span className="status muted">
-            {meta.golden_count} golden pairs · next {meta.next_pair_id || "—"} ·
-            max Q{meta.limits.max_pair_number}
+            {meta.golden_count} golden pairs · next {meta.next_pair_id || "—"}
           </span>
           <span className="status muted">
             {counted(meta.fixes.corrections ?? 0, "correction")} ·{" "}

@@ -21,7 +21,7 @@ from nl2sql_review.render import Draft
 
 from ragproc import golden_pairs as gp
 
-from .conftest import BASE_PAIRS, NEXT_ID, pair_after
+from .conftest import BASE_PAIRS, NEXT_ID, pair_after, renumber_highest
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +118,14 @@ def test_a_document_that_cannot_be_written_is_refused(settings, draft, document,
         promotion.promote(settings, draft)
 
 
-def test_a_full_golden_set_is_refused(settings, draft, document):
-    document.write_text("## Q99 - the last one\n")
-    with pytest.raises(ValueError, match="Q99 is the last id"):
-        promotion.promote(settings, draft)
+def test_the_hundredth_pair_is_promoted_and_the_loader_sees_it(settings, draft, document):
+    """Until 5.5.1 Q99 was the last id the loader matched, and the hundredth
+    promotion was refused rather than risk a pair the loader would not see."""
+    document.write_text(renumber_highest(document.read_text(), "Q99"))
+    result = promotion.promote(settings, draft)
+    assert (result.pair_id, result.chunk_id) == ("Q100", "eval:q100")
+    pairs = gp.parse_document(document)
+    assert (len(pairs), pairs[-1].pair_id, pairs[-1].question) == (BASE_PAIRS + 1, "Q100", draft.question)
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +188,11 @@ def test_preview_reports_problems_instead_of_a_block(settings):
     assert problems
 
 
-def test_preview_reports_a_full_golden_set(settings, document):
-    document.write_text("## Q99 - the last one\n")
-    _, _, problems = promotion.preview(settings, Draft())
-    assert any("golden set is full" in p for p in problems)
+def test_preview_offers_q100_after_q99(settings, draft, document):
+    document.write_text(renumber_highest(document.read_text(), "Q99"))
+    pair_id, markdown, problems = promotion.preview(settings, draft)
+    assert (pair_id, problems) == ("Q100", [])
+    assert "## Q100 - " in markdown
 
 
 def test_preview_reports_an_unreadable_document(settings, document, draft):

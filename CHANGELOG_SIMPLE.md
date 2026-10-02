@@ -13,6 +13,26 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v5_5_1 (5.5.1) -- 2026-10-01
+
+**Fixed**
+- The golden question set stopped at Q99; it has no ceiling now, and Q100 follows Q99.
+- The agent's `--help` said `--multi-shot` was off by default; it is on, and each switch's help now says what its setting is.
+- `start.sh` re-pinned an agent version chosen with `setup.sh --agent-tag`; it keeps it now.
+
+**Updated**
+- The review interface no longer shows a maximum pair id.
+- `agent/USAGE.md`: the seven-attempt budget, and stopping all three databases.
+- Version 5.5.1 in every declaration; `setup.sh` pins `v5_5_1`.
+- All twelve app image tags published as `v5_5_1`.
+
+**After publishing** (dataset images, scripts, compose, tests and documentation; no app image changed)
+- `rag-chunkdb` and `rag-vectordb` republished as `v3_2`, holding the golden set as the document has it (48 pairs); `setup.sh` pins them.
+- `start.sh --load-golden` and `launch.sh --load-golden` load the golden question document into the stores on start.
+- `launch.sh` warns when the stores hold a different number of golden pairs from the document.
+- The review service embeds with the agent's embedding host (`EMBED_BASE_URL`).
+- Two `docker compose ... logs` commands the scripts print when a page does not come up failed outright; they work now, and every compose command the scripts run or the docs show is checked against the real compose file.
+
 ## v5_5 (5.5.0) -- 2026-10-01
 
 **Added**

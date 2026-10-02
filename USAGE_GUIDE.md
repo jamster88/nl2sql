@@ -188,6 +188,7 @@ another agent version, no knowledge base.
 ./start.sh --mlflow                       # and MLflow, in a window of its own
 ./start.sh --review --console --mlflow    # every page
 ./start.sh --feedback                     # keep verdicts, without the review interface
+./start.sh --load-golden                  # load the golden question document into the stores first
 ./start.sh --no-browser                   # start everything, and print the URLs instead
 ./start.sh --no-rag                       # the retail database only: no knowledge, no examples
 ./start.sh --restart                      # recreate the containers
@@ -222,6 +223,7 @@ without re-pinning anything:
 ./launch.sh --console                     # and the SQL console (implies --api)
 ./launch.sh --mlflow                      # and MLflow
 ./launch.sh --desktop                     # build or fetch the desktop jar, and copy the API's certificate out
+./launch.sh --load-golden                 # load the golden question document into the stores first
 ./launch.sh --no-rag                      # the retail database only
 ./launch.sh --restart                     # recreate the containers
 ./launch.sh -q                            # print only problems
@@ -230,7 +232,8 @@ without re-pinning anything:
 What it checks, every time:
 
 - each database is healthy **and populated** -- the sales rows, the
-  knowledge chunks, the golden pairs and their vectors, the schema index;
+  knowledge chunks, the golden pairs and their vectors, the schema index --
+  and the context store holds as many golden pairs as the question document;
 - the agent's read-only role exists and holds `SELECT` and nothing else, and
   `pg_trgm` is installed for matching literal values;
 - the chat model is on the chat host, and `bge-m3` on this machine;
@@ -790,7 +793,26 @@ The agent retrieves from two stores that ship as images:
   The closest are shown to the SQL Generator as worked examples.
 
 The golden set grows through the review interface: each promotion is
-appended to that document and loaded into both stores straight away.
+appended to that document and loaded into both stores straight away. It has
+no size limit -- ids run `Q01` to `Q99`, then `Q100` and on.
+
+**The stores can fall behind the document.** They ship as images holding the
+golden set as it was when they were published, and only a promotion reloads
+them. Pairs promoted on another machine and committed arrive in the document
+when you pull, and not in the stores, and the agent's worked examples are the
+stores'. `launch.sh` compares the two on every start and warns when they
+differ; `--load-golden` catches the stores up before anything is asked:
+
+```bash
+./start.sh --load-golden
+```
+
+It runs the two loaders a promotion runs -- the golden pairs into the
+context store, then their embeddings into the vector store -- in the review
+service's image, against this checkout's document. Only pairs that changed
+are embedded, so with nothing new it changes nothing and takes a few seconds.
+It needs the embedding model, like the agent; when that is down the pairs
+are loaded and their vectors are not, and `launch.sh` says so.
 
 Changing the documents in `knowledge/` means re-chunking and re-embedding
 them with the pipeline in [`rag/`](rag/README.md), which only re-embeds what
@@ -879,13 +901,17 @@ Every published version stays pinned and can be run again, for comparison
 or to step back:
 
 ```bash
-./setup.sh --agent-tag v5_3 && ./launch.sh             # one earlier agent
-./setup.sh --agent-tag v1 --no-rag && ./launch.sh --no-rag   # the original schema-only agent
+./setup.sh --agent-tag v5_3 && ./start.sh              # one earlier agent
+./setup.sh --agent-tag v1 --no-rag && ./launch.sh --no-rag  # the original schema-only agent, terminal only
 ./setup.sh                                             # back to what this checkout ships
 ```
 
-Use `launch.sh` with an older version, not `start.sh`: `start.sh` keeps
-`.env` pinned to what the checkout ships, so it would move the agent back.
+A tag chosen this way stays chosen. `start.sh` keeps it -- even when it runs
+`setup.sh` again for something else, such as `--review` asked for the first
+time -- and `launch.sh` says which agent is running rather than warning about
+it. `./setup.sh` with no `--agent-tag` goes back to the shipped version, and
+pulling a newer checkout re-pins it like everything else. An agent from
+before `v4_1` has no REST API, so only the terminal can ask it questions.
 
 [`README.md`](README.md) lists what each tag is, and
 [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what each version changed.
@@ -904,6 +930,8 @@ the first question.
 | `Ollama is running here but does not have bge-m3` / `no Ollama on this machine` | No embedding model: questions are answered without knowledge or examples | Install Ollama; `ollama pull bge-m3`. `start.sh` does both when it can |
 | `the retail database is up but has no sales rows` | An empty volume | `./setup.sh --reset` |
 | `the vector store is up but holds no embedded chunks` / `no ddl_index_embeddings` | The knowledge base volume predates its image | `./setup.sh --reset` |
+| `the context store holds N golden pairs, and context_questions/translated_questions.md M` | The question document has pairs the stores do not -- promoted elsewhere and pulled | `./start.sh --load-golden` |
+| `the golden pairs did not load completely` | A loader failed -- usually the embedding model is down -- and the stores keep what they had | Start Ollama here with `bge-m3`, then `--load-golden` again |
 | `.env pins the agent image at ..., but this checkout ships ...` | You are running an older agent than the checkout | `./start.sh`, or `./setup.sh` |
 | `model routing: ...` and a note about another host | The catalog describes a different Ollama host, so every call goes to `OLLAMA_MODEL` | Fine as it is; or build and calibrate a catalog ([Models](#models)) |
 | `the REST API container did not become healthy` | It failed to start | `docker compose --profile api logs api` |
@@ -942,6 +970,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--console` | Also the SQL console |
 | `--mlflow` | Also MLflow |
 | `--feedback` | Keep verdicts, without the review interface |
+| `--load-golden` | Load the golden question document into the stores first |
 | `--no-browser` | Print the URLs instead of opening them |
 | `--no-rag` | The retail database only |
 | `--restart` | Recreate the containers |
@@ -959,6 +988,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--console` | Also the SQL console, and the API |
 | `--mlflow` | Also MLflow |
 | `--desktop` | Build or fetch the desktop client, and copy the API's certificate out; implies `--api` |
+| `--load-golden` | Load the golden question document into the context store and its vectors before anything is asked |
 | `--no-rag` | The retail database only |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |

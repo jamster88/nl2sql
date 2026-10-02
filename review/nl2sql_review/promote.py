@@ -163,10 +163,7 @@ def preview(settings: ReviewSettings, draft: Draft) -> tuple[str, str, list[str]
     one they meant.
     """
     document = _read(settings.document_path)
-    try:
-        pair_id = render.next_pair_id(document)
-    except ValueError as exc:
-        return "", "", [str(exc)]
+    pair_id = render.next_pair_id(document)
     reasons = render.problems(draft, pair_id)
     if reasons:
         return pair_id, "", reasons

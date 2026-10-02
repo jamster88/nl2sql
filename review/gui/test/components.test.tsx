@@ -414,7 +414,7 @@ describe("StatusBar", () => {
     render(<StatusBar meta={makeMeta()} error={null} warnings={[]} />);
     expect(screen.getByText("nl2sql-review 4.3.0")).toBeInTheDocument();
     expect(
-      screen.getByText(/45 golden pairs · next Q46 · max Q99/),
+      screen.getByText("45 golden pairs · next Q46"),
     ).toBeInTheDocument();
   });
 
@@ -453,7 +453,7 @@ describe("StatusBar", () => {
         warnings={[]}
       />,
     );
-    expect(screen.getByText(/next — · max Q99/)).toBeInTheDocument();
+    expect(screen.getByText("45 golden pairs · next —")).toBeInTheDocument();
   });
 
   it("reports the reload switches, which are otherwise invisible", () => {

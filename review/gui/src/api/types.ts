@@ -168,7 +168,6 @@ export interface GoldenSet {
 }
 
 export interface ReviewLimits {
-  max_pair_number: number;
   reload_timeout_seconds: number;
   validate_timeout_ms: number;
   validate_max_rows: number;

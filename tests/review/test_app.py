@@ -20,7 +20,7 @@ from nl2sql_review.promote import Promotion, PromotionError, StepResult
 from nl2sql_review.render import Draft
 from nl2sql_review.store import STATES, Submission
 
-from .conftest import BASE_PAIRS, NEXT_ID, FakeRepository
+from .conftest import BASE_PAIRS, NEXT_ID, FakeRepository, renumber_highest
 
 
 @pytest.fixture
@@ -223,7 +223,7 @@ def test_meta_tells_a_client_everything_it_needs(client):
     assert body["golden_count"] == BASE_PAIRS
     assert body["next_pair_id"] == NEXT_ID
     assert body["authentication"] == "bearer"
-    assert body["limits"]["max_pair_number"] == 99
+    assert "max_pair_number" not in body["limits"], "the golden set has no ceiling since 5.5.1"
     assert body["counts"]["pending"] == 1
     assert body["verdicts"] == ["yes", "no", "incomplete"]
     assert body["counts_by_verdict"]["yes"]["pending"] == 1
@@ -584,14 +584,10 @@ def test_an_unreadable_golden_set_says_so_rather_than_looking_empty(make_client,
     assert "cannot read" in body["error"]
 
 
-def test_a_full_golden_set_still_lists_its_pairs(make_client, document):
-    # The highest pair renumbered to the last id the loader's pattern allows.
-    highest = f"## Q{int(NEXT_ID[1:]) - 1:02d} - "
-    document.write_text(document.read_text().replace(highest, "## Q99 - "))
+def test_after_q99_the_golden_set_offers_q100(make_client, document):
+    document.write_text(renumber_highest(document.read_text(), "Q99"))
     body = make_client().get("/v1/golden").json()
-    assert body["count"] == BASE_PAIRS
-    assert body["next_pair_id"] == ""
-    assert "golden set is full" in body["error"]
+    assert (body["count"], body["next_pair_id"], body["error"]) == (BASE_PAIRS, "Q100", None)
 
 
 def test_the_promotion_log_is_returned_without_every_pairs_full_text(client, draft):

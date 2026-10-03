@@ -174,8 +174,10 @@ def knowledge_block(knowledge: str) -> str:
 
 SNIPPET_BLOCK = (
     "SQL snippets for this database whose meaning matches the question, each one "
-    "verified to run here. Build the query from the ones that apply -- adapting "
-    "aliases, and literals to what the question asks -- and ignore the rest:\n"
+    "verified to run here. Build the query from the ones that apply and ignore the "
+    "rest. Keep each piece you use exactly as written -- its casts, NULLIFs and "
+    "join keys -- changing only the aliases, and literals to what the question "
+    "asks; a note says what the piece guards against:\n"
     "{snippets}\n\n"
 )
 

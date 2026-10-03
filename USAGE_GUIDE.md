@@ -672,7 +672,10 @@ to the SQL Generator. To add one, press **New snippet** and fill in:
 - **Applies to**: the `FROM` clause it is written over, with its aliases --
   `fact_pos_retail_sales f`, say;
 - the **SQL**: the join, the condition (without `WHERE`), the aggregate or
-  the expression.
+  the expression;
+- a **note**: where it came from, or the mistake it prevents. The SQL
+  Generator is shown it beside the SQL, so "both counts are integers, so
+  without the cast the division truncates to zero" is worth writing down.
 
 Then **Validate against the live database**. The snippet is run the way it
 would be used -- a join joined, a filter in a `WHERE`, a measure aggregated

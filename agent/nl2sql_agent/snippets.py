@@ -96,6 +96,9 @@ class Snippet:
     means: str
     applies_to: str
     sql: str
+    #: The curator's note: often the mistake the piece prevents, which is
+    #: the part a model is most likely to "simplify" away without it.
+    note: str = ""
     score: float = 0.0
     #: Cosine similarity of its meaning to the question, when it was measured.
     similarity: float | None = None
@@ -128,11 +131,15 @@ class Found:
 
 
 def render(snippet: Snippet) -> str:
-    """One snippet as the generator reads it: what it is, then where it goes.
+    """One snippet as the generator reads it: what it is, where it goes, and why.
 
     Written as the clause it is, inside the clause it belongs to, so a join
     reads as a FROM, a filter as a WHERE and a measure as a SELECT -- the
-    shape the model is about to write, rather than a description of it.
+    shape the model is about to write, rather than a description of it. The
+    note follows, because the detail it explains is the one a model drops:
+    shown `SUM(clicks)::numeric / NULLIF(SUM(impressions), 0)` without "both
+    counts are integers", a live run kept the division and lost the cast, and
+    every rate came back 0.
     """
     head = f"[{snippet.snippet_id} {snippet.kind}] {snippet.name} -- {snippet.means}"
     base = snippet.applies_to.strip()
@@ -145,7 +152,10 @@ def render(snippet: Snippet) -> str:
         body = f"SELECT {piece}\nFROM {base}"
     else:
         body = f"SELECT {piece}\nFROM {base}\nGROUP BY {piece}"
-    indented = "\n".join(f"  {line}" for line in body.splitlines())
+    lines = body.splitlines()
+    if snippet.note.strip():
+        lines.append(f"Note: {snippet.note.strip()}")
+    indented = "\n".join(f"  {line}" for line in lines)
     return f"{head}\n{indented}"
 
 
@@ -289,7 +299,7 @@ class SnippetLibrary:
         if not chosen:
             return []
         rows = conn.exec_driver_sql(
-            f"SELECT chunk_id, snippet_id, kind, name, tables, means, applies_to, sql "
+            f"SELECT chunk_id, snippet_id, kind, name, tables, means, applies_to, sql, note "
             f"FROM {TABLE} WHERE chunk_id = ANY(%s)",
             ([c[0] for c in chosen],),
         ).fetchall()
@@ -309,6 +319,7 @@ class SnippetLibrary:
                     means=row[5],
                     applies_to=row[6],
                     sql=row[7],
+                    note=row[8] or "",
                     score=score,
                     similarity=similarity,
                     keyword_score=keyword_score,

@@ -381,4 +381,7 @@ def test_the_snippet_block_carries_its_own_instruction():
     rendered = snippet_block("[S19 measure] Net sales -- Revenue.\n  SELECT SUM(f.net_sales_amt)")
     assert rendered.startswith("SQL snippets for this database whose meaning matches the question")
     assert "ignore the rest" in rendered
+    # Used as written: a cast "simplified" away turned every rate into 0.
+    assert "exactly as written -- its casts, NULLIFs and join keys" in rendered
+    assert "a note says what the piece guards against" in rendered
     assert rendered.endswith("SELECT SUM(f.net_sales_amt)\n\n")

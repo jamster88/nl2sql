@@ -44,7 +44,9 @@ measure (an aggregate) or a dimension (an expression to group by). The form
 asks for it in the order a curator thinks it: its kind and name, what it
 means, the phrases a question says it with, then the `FROM` clause it is
 written over and the SQL. *Tables* can be left empty; the service fills it
-from the SQL. The README's
+from the SQL. The *Note* is shown to the SQL Generator with the snippet,
+so it is the place for the mistake the piece prevents -- a cast, a key, a
+column that looks right and is not. The README's
 [SQL snippets and curation](../README.md#sql-snippets-and-curation) says how
 the agent finds and uses them.
 

@@ -32,6 +32,7 @@ their own and are listed under the release they shipped with. A version marked
 
 **Fixed**
 - A loader's output in the review interface ran together on one line.
+- Before release: a snippet's note is shown to the SQL Generator with its SQL, and it is told to keep each piece as written; without them, an end-to-end run dropped a cast and answered 0.
 
 ## v5_5_1 (5.5.1) -- 2026-10-01
 

@@ -783,8 +783,15 @@ measure, a filter and the join between them is the case snippets are for.
 **Shown only when their tables are in scope.** The retriever runs beside the
 other four and proposes no tables. The Context Aggregator keeps the snippets
 whose tables are all in the selected set, renders them -- kind, name,
-meaning, the `FROM` clause and the SQL -- under their own instruction after
-the knowledge block, and recomputes them when a repair widens the scope. A
+meaning, the `FROM` clause, the SQL and the curator's note -- under their own
+instruction after the knowledge block, and recomputes them when a repair
+widens the scope. The instruction says to keep a piece exactly as written,
+changing only aliases and literals, and the note is there for the same
+reason: in a live run, shown the click-through rate's
+`SUM(clicks)::numeric / NULLIF(SUM(impressions), 0)` without its note --
+"both counts are integers" -- the generator kept the division, dropped the
+cast, and every rate came back 0. With the note and the instruction it kept
+the cast. A
 snippet is a hint about tables already in play, never a reason to bring one
 in: that is the schema retriever's decision. With none in scope the block is
 empty and the prompt is byte for byte the one 5.5.1 sent.

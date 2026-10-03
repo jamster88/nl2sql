@@ -79,6 +79,26 @@ def test_each_kind_is_written_as_the_clause_it_is_inside_the_one_it_belongs_to(k
     assert lines[1:] == [f"  {line}" for line in body]
 
 
+def test_the_note_follows_the_sql_because_it_explains_the_detail_a_model_drops():
+    """The live run that found it: S26 shown without its note came back with
+    the division and without the cast, and every rate was 0."""
+    ctr = snippet(
+        snippet_id="S26",
+        name="Click-through rate",
+        means="Clicks per impression.",
+        applies_to="fact_ad_performance a",
+        sql="SUM(a.clicks_or_coupon_clips_count)::numeric / NULLIF(SUM(a.impressions_count), 0)",
+        note="Both counts are integers, so without the cast to numeric the division truncates to zero.",
+    )
+    assert render(ctr).splitlines()[1:] == [
+        "  SELECT SUM(a.clicks_or_coupon_clips_count)::numeric / NULLIF(SUM(a.impressions_count), 0)",
+        "  FROM fact_ad_performance a",
+        "  Note: Both counts are integers, so without the cast to numeric the division truncates to zero.",
+    ]
+    # No note, no line: the snippet reads as it did.
+    assert "Note:" not in render(snippet(note="  "))
+
+
 def test_the_prompt_block_keeps_the_best_snippets_that_fit_the_budget():
     first, second = snippet(snippet_id="S01"), snippet(snippet_id="S02")
     one = render(first)
@@ -168,7 +188,7 @@ class FakeStore:
 
 def _row(chunk_id: str):
     n = chunk_id.split(":")[-1].upper()
-    return (chunk_id, n, "filter", f"name {n}", "dim_date", f"means {n}", "dim_date d", "d.is_holiday")
+    return (chunk_id, n, "filter", f"name {n}", "dim_date", f"means {n}", "dim_date d", "d.is_holiday", f"note {n}")
 
 
 class FakeEmbedder:
@@ -212,7 +232,7 @@ def test_a_keyword_phrase_match_qualifies_a_snippet_and_the_scores_are_averaged(
     assert best.score == pytest.approx(0.5 * meaning(0.50) + 0.5 * words(6.0))
     assert other.score == pytest.approx(0.5 * meaning(0.42) + 0.5 * words(3.0))
     assert (best.matched, best.similarity, best.keyword_score) == ("net sales", 0.50, 6.0)
-    assert best.name == "name S19" and best.applies_to == "dim_date d"
+    assert best.name == "name S19" and best.applies_to == "dim_date d" and best.note == "note S19"
 
 
 def test_meaning_alone_qualifies_a_snippet_only_above_the_similarity_bar():

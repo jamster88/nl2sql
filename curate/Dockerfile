@@ -59,4 +59,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql curation GUI" \
       org.opencontainers.image.description="React/TypeScript interface for curating SQL snippets, golden pairs, corrections and completions" \
-      org.opencontainers.image.version="5.6.0"
+      org.opencontainers.image.version="5.6.1"

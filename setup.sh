@@ -25,34 +25,34 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1_1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v5_6"
+AGENT_TAG="v5_6_1"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v5_6"
+GUI_TAG="v5_6_1"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v5_6"
+REVIEW_TAG="v5_6_1"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v5_6"
+REVIEW_GUI_TAG="v5_6_1"
 # The curation interface: a page in front of the review service, for writing
 # SQL snippets, golden pairs and fixes directly. --curate adds it.
 CURATE_GUI_IMAGE="mcfaddja/nl2sql-curate-gui"
-CURATE_GUI_TAG="v5_6"
+CURATE_GUI_TAG="v5_6_1"
 # The SQL console's interface. The console behind it runs from the agent
 # image above, started with a different command, so this is the one image
 # --console adds.
 CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
-CONSOLE_GUI_TAG="v5_6"
+CONSOLE_GUI_TAG="v5_6_1"
 # MLflow, where the agent's runs are traced: its server and the Postgres it
 # keeps traces in, both published with the release. --mlflow adds them.
 MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
-MLFLOW_TAG="v5_6"
+MLFLOW_TAG="v5_6_1"
 MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
-MLFLOW_DB_TAG="v5_6"
+MLFLOW_DB_TAG="v5_6_1"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v5_6"
+DESKTOP_TAG="v5_6_1"
 # The release this checkout ships: the agent's tag before any flag changes
 # it. Written into .env, so start.sh can tell a tag someone chose for this
 # checkout from one an older checkout left behind.
@@ -94,45 +94,45 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v5_6)
+      --agent-tag TAG    Agent image tag to pull (default: v5_6_1)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v5_6)
+      --gui-tag TAG      GUI image tag to pull (default: v5_6_1)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v5_6)
+      --review-tag TAG   Review service image tag (default: v5_6_1)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v5_6)
+      --review-gui-tag TAG   Review interface image tag (default: v5_6_1)
       --curate           Also pull and pin the curation interface, where SQL
                          snippets, golden pairs and fixes are written directly,
                          each run against the retail database first
       --curate-gui-image N   Curation interface image
                          (default: mcfaddja/nl2sql-curate-gui)
-      --curate-gui-tag TAG   Curation interface image tag (default: v5_6)
+      --curate-gui-tag TAG   Curation interface image tag (default: v5_6_1)
       --console          Also pull and pin the SQL console's interface, where
                          the retail database is queried as the agent sees it
                          (the console itself runs from the agent image)
       --console-gui-image N  SQL console interface image
                          (default: mcfaddja/nl2sql-console-gui)
-      --console-gui-tag TAG  SQL console interface image tag (default: v5_6)
+      --console-gui-tag TAG  SQL console interface image tag (default: v5_6_1)
       --mlflow           Also pull and pin MLflow -- its server and the
                          Postgres it keeps traces in -- so ./launch.sh
                          --mlflow starts it instead of building it here
       --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
-      --mlflow-tag TAG   MLflow server image tag (default: v5_6)
+      --mlflow-tag TAG   MLflow server image tag (default: v5_6_1)
       --mlflow-db-image N    MLflow store image
                          (default: mcfaddja/nl2sql-mlflowdb)
-      --mlflow-db-tag TAG    MLflow store image tag (default: v5_6)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v5_6_1)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v5_6). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v5_6_1). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_2)

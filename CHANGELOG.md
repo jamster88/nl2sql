@@ -31,6 +31,32 @@ file where a file is new; the tests a version merely extended are summarised.
 
 ---
 
+## v5_6_1 (5.6.1) -- 2026-10-03
+
+A correction to 5.6. The narrator writes the cell a number came from into
+its sentence -- "..., as shown in row 0, column click_through_rate_pct" --
+and on a first pass leaves the claim's list of cells empty. 5.6 took the
+address out of the sentence, but with no cells nothing backed the number,
+the audit dropped every claim, and only the narrator's rewrite survived: an
+extra model call on such answers, and a table with no sentence when the
+rewrite failed too. A claim with no cells of its own is now cited by the
+address its sentence wrote. Everything under v5_6's *After publishing* --
+this fix, the scripts checked live, the documentation -- ships in this
+release.
+
+### Fixed
+- `agent/nl2sql_agent/present.py`:
+  - **Before:** a claim the narrator cited only in its own words ("as shown in row 0, column ...") had no cells; the audit found nothing behind its number and dropped it. 5.6 also told the narrator to put the address in `cells`, which it took as leaving it out of the sentence while still not filling `cells`.
+  - **After:** `written_cells` reads the address in the sentence -- rows the result has, the named column when the result has it, else the whole row -- as the claim's cells when it lists none; the address is then taken out of the sentence, and the narrator's prompt is 5.5.1's again. On the live click-through question the first pass now survives, twice in two runs, with no rewrite; benchmark questions B07 and B11 match their reference rows with the audit passing first time.
+
+### Updated
+- `tests/agent/test_present.py` -- the narrator's real first pass, word for word, cited by its sentences and surviving the audit; an address with no column, one naming a row the result lacks, and cells the narrator did list, which win.
+- `README.md` -- the `v5_6_1` tag, pull and publish commands; `CHANGELOG.md`, `CHANGELOG_SIMPLE.md`.
+- Version 5.6.1 in every declaration; `setup.sh` pins `v5_6_1`.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-curate-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_6_1` (amd64, arm64); `nl2sql-desktop-build:v5_6_1-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-03 UTC), each checked absent just before its push. Checked after: the agent runs 5.6.1 on both architectures with `written_cells` and the narrator's 5.5.1 prompt, the review service 5.6.1 with the snippet loader; every image is labelled 5.6.1 on both; every desktop jar is 5.6.1 with its own platform's native code; `tests/docker/test_published_images.py`, 19 passed. `start.sh --review --curate --console --mlflow` then found `.env` pinning `v5_6`, re-ran `setup.sh`, pulled the thirteen tags and brought every page up; the snippet store already held the document, so nothing was re-embedded. Through it the published agent answered the click-through question with its narrative passing the audit on the first pass.
+
 ## v5_6 (5.6.0) -- 2026-10-03
 
 SQL snippets: pieces of SQL that have been run against this database, each

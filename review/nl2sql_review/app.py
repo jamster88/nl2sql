@@ -141,7 +141,7 @@ from .settings import ReviewSettings
 from .snippets import SnippetDraft, SnippetMissing
 from .store import STATES, VERDICTS, Repository, Submission
 
-__version__ = "5.6.0"
+__version__ = "5.6.1"
 
 #: What each verdict's submissions are for, in the words a refusal uses.
 #: `yes` is promoted into the golden set; the other two are fixed into the

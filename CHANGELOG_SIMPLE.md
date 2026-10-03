@@ -13,6 +13,15 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v5_6_1 (5.6.1) -- 2026-10-03
+
+**Fixed**
+- A narrator that names a number's cell in its sentence and lists no cells has its claims cited by what it wrote, so they survive the audit on the first pass instead of costing a rewrite -- or the whole narrative, when the rewrite failed too.
+
+**Updated**
+- Version 5.6.1 in every declaration; `setup.sh` pins `v5_6_1`.
+- All thirteen app image tags published as `v5_6_1`.
+
 ## v5_6 (5.6.0) -- 2026-10-03
 
 **Added**

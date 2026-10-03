@@ -323,7 +323,7 @@ docker run -d --name v32-chunkdb  --network v32 mcfaddja/nl2sql-rag-chunkdb:v3_1
 docker run -d --name v32-vectordb --network v32 mcfaddja/nl2sql-rag-vectordb:v3_1
 docker run --rm --network v32 --add-host host.docker.internal:host-gateway \
   -v "$PWD/../context_questions:/app/context_questions:ro" --entrypoint sh \
-  mcfaddja/nl2sql-review:v5_6 -c 'cd /app/rag &&
+  mcfaddja/nl2sql-review:v5_6_1 -c 'cd /app/rag &&
     python 05_load_golden_pairs.py /app/context_questions/translated_questions.md \
       --db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks &&
     python 06_embed_golden_pairs.py --model bge-m3 --ollama-url http://host.docker.internal:11434 \

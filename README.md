@@ -63,7 +63,7 @@ Either way the same containers come up:
 
 The agent, the GUI, both halves of the review system, the curation
 interface, the SQL console's interface, the desktop client's jar and MLflow's
-server and store are published images (`v5_6`); the rest are built or pulled
+server and store are published images (`v5_6_1`); the rest are built or pulled
 by `setup.sh` as well -- the snippet store is a stock pgvector, filled from
 its document by `launch.sh`. [Pulling the images](#pulling-the-images) has
 the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
@@ -376,14 +376,14 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v5_6     # the agent, the REST API and the SQL console
-docker pull mcfaddja/nl2sql-gui:v5_6       # the web interface
-docker pull mcfaddja/nl2sql-review:v5_6    # the review service, and the snippet loader
-docker pull mcfaddja/nl2sql-review-gui:v5_6  # the review interface
-docker pull mcfaddja/nl2sql-curate-gui:v5_6  # the curation interface
-docker pull mcfaddja/nl2sql-console-gui:v5_6  # the SQL console's interface
-docker pull mcfaddja/nl2sql-mlflow:v5_6    # MLflow, where every question is traced
-docker pull mcfaddja/nl2sql-mlflowdb:v5_6  # the Postgres MLflow keeps traces in
+docker pull mcfaddja/nl2sql-agent:v5_6_1     # the agent, the REST API and the SQL console
+docker pull mcfaddja/nl2sql-gui:v5_6_1       # the web interface
+docker pull mcfaddja/nl2sql-review:v5_6_1    # the review service, and the snippet loader
+docker pull mcfaddja/nl2sql-review-gui:v5_6_1  # the review interface
+docker pull mcfaddja/nl2sql-curate-gui:v5_6_1  # the curation interface
+docker pull mcfaddja/nl2sql-console-gui:v5_6_1  # the SQL console's interface
+docker pull mcfaddja/nl2sql-mlflow:v5_6_1    # MLflow, where every question is traced
+docker pull mcfaddja/nl2sql-mlflowdb:v5_6_1  # the Postgres MLflow keeps traces in
 ```
 
 The console has no image of its own: it is the agent's, started a third way.
@@ -398,7 +398,7 @@ and published with the release so that a release's images are one set.
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v5_6-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v5_6_1-mac-aarch64` and the four siblings
 named in [The desktop client](#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
@@ -504,21 +504,21 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_6 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_6 .
+  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_6 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_6 .
+  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f curate/Dockerfile --push -t mcfaddja/nl2sql-curate-gui:v5_6 .
+  -f curate/Dockerfile --push -t mcfaddja/nl2sql-curate-gui:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f console/Dockerfile --push -t mcfaddja/nl2sql-console-gui:v5_6 .
+  -f console/Dockerfile --push -t mcfaddja/nl2sql-console-gui:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v5_6 .
+  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v5_6_1 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v5_6 .
+  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v5_6_1 .
 ```
 
 The desktop client is published along a second axis as well. Every tag is
@@ -530,7 +530,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v5_6-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v5_6_1-$platform .
 done
 ```
 
@@ -580,7 +580,8 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v5_6` | SQL snippets: a fifth retriever shows the SQL Generator verified joins, filters, measures and dimensions whose meaning matches the question and whose tables are in scope, from a store loaded out of `context_questions/sql_snippets.md`. A new image, `nl2sql-curate-gui`, is the curation interface: snippets, golden pairs, corrections and completions written or removed directly, each run against the retail database first. The review service carries the snippet loader and the curation routes, and runs a golden pair's SQL before promoting it. The audit no longer drops a correct claim whose sentence named the cell it came from. Pinned -- what `setup.sh` pulls. |
+| `v5_6_1` | A correction to `v5_6`: a claim the narrator cited only in its own sentence ("as shown in row 0, column ...") is cited by that address, so it survives the audit on the first pass rather than costing a rewrite, or the whole narrative when the rewrite failed too. The other images are `v5_6`'s under the new version. Pinned -- what `setup.sh` pulls. |
+| `v5_6` | SQL snippets: a fifth retriever shows the SQL Generator verified joins, filters, measures and dimensions whose meaning matches the question and whose tables are in scope, from a store loaded out of `context_questions/sql_snippets.md`. A new image, `nl2sql-curate-gui`, is the curation interface: snippets, golden pairs, corrections and completions written or removed directly, each run against the retail database first. The review service carries the snippet loader and the curation routes, and runs a golden pair's SQL before promoting it. The audit no longer drops a correct claim whose sentence named the cell it came from. Pinned. |
 | `v5_5_1` | A correction to `v5_5`. The golden set is no longer capped at `Q99`: a pair id is `Q` and two or more digits, so the hundredth promotion is `Q100`, and the review service's `/v1/meta` no longer reports the `max_pair_number` that described the cap. The agent's `--help` gives each retrieval switch's real default (it said `--multi-shot` was off). `start.sh` keeps an agent tag chosen with `setup.sh --agent-tag` rather than re-pinning it. The web interface, the SQL console's interface, the desktop client and MLflow's two are `v5_5`'s under the new version. Pinned. |
 | `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. MLflow's server and store are published with the release from here on, as `nl2sql-mlflow` and `nl2sql-mlflowdb`. Of the rest only the agent image changed; the others are `v5_4`'s under a new version. Pinned. |
 | `v5_4` | A judgement in the review interface can be taken back: a submission is put back to pending or deleted, and a promoted pair comes back out of the golden set, or a stored fix out of its store, with it. The agent and the console are `v5_3`'s. Pinned. |
@@ -780,11 +781,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v5_6-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v5_6-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v5_6-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_6-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_6-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v5_6_1-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v5_6_1-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v5_6_1-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_6_1-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v5_6_1-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.

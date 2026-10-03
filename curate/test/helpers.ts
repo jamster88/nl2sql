@@ -31,7 +31,7 @@ import type {
 export function makeMeta(overrides: Partial<ReviewMeta> = {}): ReviewMeta {
   return {
     service: "nl2sql-review",
-    version: "5.6.0",
+    version: "5.6.1",
     states: ["pending", "accepted", "rejected", "promoted", "corrected"],
     document: "/app/context_questions/translated_questions.md",
     golden_count: 48,
@@ -214,7 +214,7 @@ export function makeSubmission(overrides: Partial<SubmissionModel> = {}): Submis
     row_count: 1,
     columns: ["count"],
     comment: "",
-    agent_version: "5.6.0",
+    agent_version: "5.6.1",
     submitted_at: null,
     state: "pending",
     reviewer: "",

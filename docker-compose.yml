@@ -185,6 +185,39 @@ services:
       start_period: 20s
     profiles: ["review"]
 
+  # The snippet store: the SQL snippets of context_questions/sql_snippets.md
+  # -- joins, filters, measures and dimensions, each beside what it means --
+  # with the keyword matcher over them and an embedding of each meaning, in
+  # one Postgres with pgvector. The agent's Snippet Retriever reads it.
+  #
+  # A stock image, like the fix stores: what it holds is built from a
+  # tracked document by rag/07_load_snippets.py, which the review service
+  # runs after every write and launch.sh runs on start whenever the store is
+  # behind the document. So a fresh volume is filled on the first start, and
+  # nothing has to be published to fill it. No profile: the agent reads it.
+  snippetsdb:
+    image: ${SNIPPETS_IMAGE:-pgvector/pgvector:pg18}
+    container_name: nl2sql-snippetsdb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    environment:
+      POSTGRES_USER: ${SNIPPETS_DB_USER:-snippets}
+      POSTGRES_PASSWORD: ${SNIPPETS_DB_PASSWORD:-snippets}
+      POSTGRES_DB: ${SNIPPETS_DB_NAME:-nl2sql_snippets}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${SNIPPETS_DB_PORT:-5438}:5432"
+    volumes:
+      - snippetsdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${SNIPPETS_DB_USER:-snippets} -d ${SNIPPETS_DB_NAME:-nl2sql_snippets}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   agent:
     build:
       context: .
@@ -196,6 +229,8 @@ services:
       vectordb:
         condition: service_healthy
       chunkdb:
+        condition: service_healthy
+      snippetsdb:
         condition: service_healthy
     environment: &agent-environment
       # The read-only role, not the owner: the agent only ever SELECTs.
@@ -222,6 +257,12 @@ services:
       # Replay the retrieved pairs as exemplar turns in front of the question.
       MULTI_SHOT_ENABLED: ${MULTI_SHOT_ENABLED:-true}
       EXAMPLES_RERANK: ${EXAMPLES_RERANK:-mmr}
+      # --- v5.6 SQL snippets --------------------------------------------
+      # Read as the role rag/07_load_snippets.py creates, which can SELECT
+      # and nothing else; the review service, which loads the store, holds
+      # the owner.
+      SNIPPETS_ENABLED: ${SNIPPETS_ENABLED:-true}
+      SNIPPET_DB_URL: postgresql+psycopg://${SNIPPETS_READER_USER:-snippets_reader}:${SNIPPETS_READER_PASSWORD:-snippets_reader}@snippetsdb:5432/${SNIPPETS_DB_NAME:-nl2sql_snippets}
       # --- v4 multi-agent pipeline ------------------------------------
       # Each stage the architecture makes optional is a flag, so an
       # ablation is an environment change rather than a code change
@@ -276,6 +317,10 @@ services:
       EXAMPLES_RERANK_LAMBDA: ${EXAMPLES_RERANK_LAMBDA:-}
       EXAMPLES_GROUNDING_WEIGHT: ${EXAMPLES_GROUNDING_WEIGHT:-}
       EXAMPLES_MAX_CONTEXT_CHARS: ${EXAMPLES_MAX_CONTEXT_CHARS:-}
+      SNIPPETS_TOP_K: ${SNIPPETS_TOP_K:-}
+      SNIPPETS_MIN_SCORE: ${SNIPPETS_MIN_SCORE:-}
+      SNIPPETS_MIN_SIMILARITY: ${SNIPPETS_MIN_SIMILARITY:-}
+      SNIPPETS_MAX_CONTEXT_CHARS: ${SNIPPETS_MAX_CONTEXT_CHARS:-}
       EXAMPLE_WEIGHT_QUESTION: ${EXAMPLE_WEIGHT_QUESTION:-}
       EXAMPLE_WEIGHT_KEYWORDS: ${EXAMPLE_WEIGHT_KEYWORDS:-}
       EXAMPLE_WEIGHT_REASONING: ${EXAMPLE_WEIGHT_REASONING:-}
@@ -331,6 +376,8 @@ services:
       vectordb:
         condition: service_healthy
       chunkdb:
+        condition: service_healthy
+      snippetsdb:
         condition: service_healthy
     environment:
       <<: *agent-environment
@@ -477,6 +524,9 @@ services:
         condition: service_healthy
       completionsdb:
         condition: service_healthy
+      # And a snippet is written into its document and loaded here.
+      snippetsdb:
+        condition: service_healthy
     environment:
       REVIEW_HOST: ${REVIEW_HOST:-0.0.0.0}
       REVIEW_PORT: ${REVIEW_PORT:-8444}
@@ -513,6 +563,15 @@ services:
       REVIEW_RELOAD_TIMEOUT_SECONDS: ${REVIEW_RELOAD_TIMEOUT_SECONDS:-}
       CHUNK_DB_URL: ${REVIEW_CHUNK_DB_URL:-postgresql://ragproc:ragproc@nl2sql-chunkdb:5432/nl2sql_chunks}
       VECTOR_DB_URL: ${REVIEW_VECTOR_DB_URL:-postgresql://ragproc:ragproc@nl2sql-vectordb:5432/nl2sql_vectors}
+      # --- SQL snippets (5.6) -----------------------------------------
+      # Written into their document -- bind-mounted with the golden one,
+      # below -- then loaded into the snippet store as its owner. The loader
+      # (re)creates the agent's read-only role with this name and password.
+      REVIEW_SNIPPETS_DOCUMENT: ${REVIEW_SNIPPETS_DOCUMENT:-/app/context_questions/sql_snippets.md}
+      SNIPPETS_DB_URL: ${REVIEW_SNIPPETS_DB_URL:-postgresql://${SNIPPETS_DB_USER:-snippets}:${SNIPPETS_DB_PASSWORD:-snippets}@nl2sql-snippetsdb:5432/${SNIPPETS_DB_NAME:-nl2sql_snippets}}
+      SNIPPETS_READER_USER: ${SNIPPETS_READER_USER:-snippets_reader}
+      SNIPPETS_READER_PASSWORD: ${SNIPPETS_READER_PASSWORD:-snippets_reader}
+      REVIEW_RELOAD_SNIPPETS: ${REVIEW_RELOAD_SNIPPETS:-}
       # The agent's embedding host and model, by the agent's names for them:
       # a pair embedded anywhere else is a vector the agent's questions are
       # not compared in the same space as.
@@ -588,6 +647,44 @@ services:
     volumes:
       - apitls:/etc/nl2sql/tls:ro
     profiles: ["reviewgui"]
+
+  # The curation interface: a fourth React/TypeScript single page, for
+  # writing what the agent learns from directly -- SQL snippets, golden
+  # pairs, corrections and completions -- each run against the retail
+  # database before it is saved. Served by its own nginx, which proxies the
+  # review service: the one process with those powers, so this page has no
+  # backend of its own.
+  #
+  # Its own container and npm project, like the review interface: an entry
+  # point in another project would be served by that project's image.
+  curategui:
+    build:
+      context: .
+      dockerfile: curate/Dockerfile
+    image: ${CURATE_GUI_IMAGE_NAME:-nl2sql-curate-gui}:${CURATE_GUI_IMAGE_TAG:-latest}
+    container_name: nl2sql-curate-gui
+    restart: unless-stopped
+    depends_on:
+      review:
+        condition: service_healthy
+    environment:
+      CURATE_GUI_PORT: ${CURATE_GUI_PORT:-8083}
+      # nl2sql-review rather than review: the certificate is issued for that
+      # name and proxy_ssl_name has to match something it covers.
+      CURATE_UPSTREAM: ${CURATE_GUI_UPSTREAM:-https://nl2sql-review:8444}
+      CURATE_SSL_NAME: ${CURATE_GUI_SSL_NAME:-nl2sql-review}
+      CURATE_CACERT: ${CURATE_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      # Longer than a save takes: a golden pair runs both RAG loaders.
+      CURATE_READ_TIMEOUT: ${CURATE_GUI_READ_TIMEOUT:-900s}
+      CURATE_GUI_RESOLVER: ${CURATE_GUI_RESOLVER:-127.0.0.11}
+      # The review service's token, held here so the curator's browser never
+      # sees it. It can rewrite the golden set and the snippets.
+      CURATE_TOKEN: ${REVIEW_TOKEN:-}
+    ports:
+      - "${CURATE_GUI_PORT:-8083}:${CURATE_GUI_PORT:-8083}"
+    volumes:
+      - apitls:/etc/nl2sql/tls:ro
+    profiles: ["curategui"]
 
   # The SQL console: the retail database as the agent sees it, for working
   # out why an answer was wrong.
@@ -855,6 +952,10 @@ volumes:
     # Reviewed corrections of wrong answers, and their embeddings.
   completionsdata:
     # Reviewed completions of incomplete answers, and their embeddings.
+  snippetsdata:
+    # The SQL snippets the agent is shown, and their embeddings. Built from
+    # context_questions/sql_snippets.md, so losing it loses nothing: the next
+    # start loads it again.
   mlflowdata:
     # MLflow's tracking store: experiments, runs, traces and their verdicts.
   mlflowartifacts:

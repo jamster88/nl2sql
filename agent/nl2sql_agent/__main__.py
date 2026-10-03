@@ -63,6 +63,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--context-db-url", default=settings.context_db_url, help="context store URL (golden pairs + BM25)")
     p.add_argument("--examples-top-k", type=int, default=settings.examples_top_k, help="worked examples handed to the model")
+    p.add_argument(
+        "--snippets",
+        action=argparse.BooleanOptionalAction,
+        default=settings.snippets_enabled,
+        help=f"retrieve verified SQL snippets -- joins, filters, measures -- for the question {_default(settings.snippets_enabled)}",
+    )
+    p.add_argument("--snippet-db-url", default=settings.snippet_db_url, help="snippet store URL")
+    p.add_argument("--snippets-top-k", type=int, default=settings.snippets_top_k, help="snippets shown to the model, at most")
     p.add_argument("--json", action="store_true", help="emit the full result as JSON")
     p.add_argument("--quiet", action="store_true", help="only print the final answer")
     return p.parse_args(argv)
@@ -86,6 +94,9 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     settings.multi_shot_enabled = args.multi_shot
     settings.context_db_url = args.context_db_url
     settings.examples_top_k = args.examples_top_k
+    settings.snippets_enabled = args.snippets
+    settings.snippet_db_url = args.snippet_db_url
+    settings.snippets_top_k = args.snippets_top_k
     return settings
 
 
@@ -129,6 +140,7 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
                         "answer_contract": state.get("answer_contract"),
                         "knowledge_chunks": state.get("knowledge_chunks", []),
                         "example_pairs": state.get("example_pairs", []),
+                        "snippet_hits": state.get("snippet_hits", []),
                         "literal_map": state.get("literal_map", []),
                         "retrieval_errors": state.get("retrieval_errors", {}),
                         "selected_tables": state.get("selected_tables", []),
@@ -215,6 +227,11 @@ def main(argv: list[str] | None = None) -> int:
             f"(question {settings.example_weight_question:g} / "
             f"keywords {settings.example_weight_keywords:g} / "
             f"reasoning {settings.example_weight_reasoning:g}), {shown}"
+        )
+    if settings.snippets_enabled:
+        print(
+            f"SQL snippets: by keyword phrase and by meaning over {settings.snippet_db_url}, "
+            f"up to {settings.snippets_top_k} shown when their tables are in scope"
         )
     print("Ask a question, or Ctrl-D to exit.")
     while True:

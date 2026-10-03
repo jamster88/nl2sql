@@ -17,43 +17,9 @@ from fastapi.testclient import TestClient
 
 from nl2sql_review.app import __version__, create_app, seed_draft
 from nl2sql_review.promote import Promotion, PromotionError, StepResult
-from nl2sql_review.render import Draft
 from nl2sql_review.store import STATES, Submission
 
-from .conftest import BASE_PAIRS, NEXT_ID, FakeRepository, renumber_highest
-
-
-@pytest.fixture
-def pinged() -> list[str]:
-    return []
-
-
-@pytest.fixture
-def make_client(settings, repository, fix_stores, validator, pinged):
-    def build(**overrides):
-        app = create_app(
-            settings=overrides.pop("settings", settings),
-            repository=overrides.pop("repository", repository),
-            fix_stores=overrides.pop("fix_stores", fix_stores),
-            validator=overrides.pop("validator", validator),
-            embedder_factory=overrides.pop("embedder_factory", lambda: "an embedder"),
-            retail_pinger=overrides.pop("retail_pinger", lambda: pinged.append("retail")),
-            **overrides,
-        )
-        client = TestClient(app, raise_server_exceptions=False)
-        client.headers.update({"Authorization": "Bearer test-token"})
-        return client
-
-    return build
-
-
-@pytest.fixture
-def client(make_client):
-    return make_client()
-
-
-def complete(draft: Draft) -> dict:
-    return draft.as_dict()
+from .conftest import BASE_PAIRS, NEXT_ID, FakeRepository, complete, renumber_highest
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +34,8 @@ def test_the_root_names_every_endpoint(client):
         "meta", "submissions", "submission", "preview", "promote",
         "validate", "fix", "fixes", "reopen", "delete",
         "golden", "promotions", "health", "readiness",
+        # 5.6: curation, without a submission
+        "golden_add", "golden_remove", "fix_add", "fix_remove", "snippets", "snippet", "schema",
     }
 
 
@@ -83,6 +51,7 @@ def test_readiness_checks_the_database_the_document_and_the_write(client):
     assert set(body["checks"]) == {
         "staging_database", "golden_document", "document_writable",
         "retail_database", "corrections_store", "completions_store",
+        "snippets_document", "snippets_store",
     }
     assert f"{BASE_PAIRS} pairs, next is {NEXT_ID}" in body["checks"]["golden_document"]["detail"]
 
@@ -616,6 +585,11 @@ def test_the_openapi_document_describes_every_route(client):
         "/v1/submissions/{submission_id}/promote", "/v1/golden", "/v1/promotions",
         "/v1/submissions/{submission_id}/validate", "/v1/submissions/{submission_id}/fix",
         "/v1/submissions/{submission_id}/reopen", "/v1/fixes/{kind}",
+        # 5.6: curation, without a submission
+        "/v1/golden/validate", "/v1/golden/preview", "/v1/golden/{pair_id}",
+        "/v1/fixes/{kind}/validate", "/v1/fixes/{kind}/{fix_id}",
+        "/v1/snippets", "/v1/snippets/validate", "/v1/snippets/preview", "/v1/snippets/{snippet_id}",
+        "/v1/schema",
     }
 
 

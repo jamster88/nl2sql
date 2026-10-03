@@ -328,6 +328,35 @@ def get_by_job(conn: psycopg.Connection, job_id: str) -> Submission | None:
     return _row_to_submission(row) if row else None
 
 
+def get_by_outcome(conn: psycopg.Connection, outcome_id: str) -> Submission | None:
+    """The submission a golden pair or a fix came from, if one did.
+
+    `promoted_pair_id` holds a promoted submission's pair id and a corrected
+    one's fix id, so one lookup answers "did the review queue produce this?"
+    for both -- which is what decides whether taking it out from the curation
+    interface has a submission to put back in the queue.
+    """
+    row = conn.execute(
+        sql.SQL(
+            "SELECT * FROM {} WHERE promoted_pair_id = %s AND state IN ('promoted', 'corrected') "
+            "ORDER BY reviewed_at DESC NULLS LAST LIMIT 1"
+        ).format(sql.Identifier(SUBMISSIONS)),
+        (outcome_id,),
+    ).fetchone()
+    return _row_to_submission(row) if row else None
+
+
+def outcomes(conn: psycopg.Connection) -> dict[str, str]:
+    """Every pair id and fix id the queue produced -> the submission that did."""
+    rows = conn.execute(
+        sql.SQL(
+            "SELECT promoted_pair_id, id FROM {} "
+            "WHERE state IN ('promoted', 'corrected') AND promoted_pair_id IS NOT NULL"
+        ).format(sql.Identifier(SUBMISSIONS))
+    ).fetchall()
+    return {row["promoted_pair_id"]: row["id"] for row in rows}
+
+
 def listing(
     conn: psycopg.Connection,
     *,
@@ -588,6 +617,14 @@ class Repository:
     def get_by_job(self, job_id: str) -> Submission | None:
         with connection(self.url) as conn:
             return get_by_job(conn, job_id)
+
+    def get_by_outcome(self, outcome_id: str) -> Submission | None:
+        with connection(self.url) as conn:
+            return get_by_outcome(conn, outcome_id)
+
+    def outcomes(self) -> dict[str, str]:
+        with connection(self.url) as conn:
+            return outcomes(conn)
 
     def listing(self, **kwargs: Any) -> list[Submission]:
         with connection(self.url) as conn:

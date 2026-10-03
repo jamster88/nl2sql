@@ -6,12 +6,32 @@ each version created, updated or fixed.
 
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
-SQL console's interface, the desktop client's jar and, since v5_5, MLflow's
-server and store -- are released together
+SQL console's interface, the desktop client's jar, since v5_5 MLflow's
+server and store, and since v5_6 the curation interface -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v5_6 (5.6.0) -- 2026-10-03
+
+**Added**
+- SQL snippets: joins, filters, measures and dimensions, each run against the database and written beside what it means, in `context_questions/sql_snippets.md` (32 to start).
+- The snippet store (`snippetsdb`) and its loader, `rag/07_load_snippets.py`; `launch.sh` loads it whenever the document has changed.
+- A fifth retriever in the agent: snippets found by keyword phrase and by meaning, shown to the SQL Generator when their tables are in scope (`--snippets`, `SNIPPETS_*`).
+- The curation interface (port 8083, `start.sh --curate`): write SQL snippets, golden pairs, corrections and completions directly, each run against the retail database before it can be saved, or remove them.
+- The review service's curation routes, and `/v1/schema`.
+- The benchmark's fourth configuration, `snippets`, now its default.
+- `arch_v5_6`, the architecture with the Snippet Retriever.
+
+**Updated**
+- Promotion runs the golden SQL against the database first; SQL that fails or returns no rows is refused.
+- A fix can be stored without a submission, and removing a pair or a fix that came from one reopens it.
+- `setup.sh` pins the review service whenever retrieval is on, since it carries the snippet loader.
+- Version 5.6.0 in every declaration; `setup.sh` pins `v5_6`, nine app tags with the curation interface's.
+
+**Fixed**
+- A loader's output in the review interface ran together on one line.
 
 ## v5_5_1 (5.5.1) -- 2026-10-01
 

@@ -4,13 +4,14 @@
 #
 # Brings up the whole stack in one call:
 #
-#   nl2sql-postgres   the retail dataset, already inside the image
-#   nl2sql-vectordb   pgvector holding the embedded knowledge base
-#   nl2sql-chunkdb    the golden question/SQL pairs and their BM25 statistics
-#   agent             the agent image, run on demand
+#   nl2sql-postgres    the retail dataset, already inside the image
+#   nl2sql-vectordb    pgvector holding the embedded knowledge base
+#   nl2sql-chunkdb     the golden question/SQL pairs and their BM25 statistics
+#   nl2sql-snippetsdb  the SQL snippets, loaded from context_questions/
+#   agent              the agent image, run on demand
 #
-# It pulls each image -- and the web, review, SQL console, MLflow and desktop
-# images when their flags ask for them -- starts the databases, writes a .env
+# It pulls each image -- and the web, review, curation, SQL console, MLflow and
+# desktop images when their flags ask for them -- starts the databases, writes a .env
 # so plain compose commands pick all of that up, checks that the chat and
 # embedding models are reachable, and finally proves the agent container can
 # actually retrieve from the knowledge base. When it finishes you can just run:
@@ -24,30 +25,34 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1_1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v5_5_1"
+AGENT_TAG="v5_6"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v5_5_1"
+GUI_TAG="v5_6"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v5_5_1"
+REVIEW_TAG="v5_6"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v5_5_1"
+REVIEW_GUI_TAG="v5_6"
+# The curation interface: a page in front of the review service, for writing
+# SQL snippets, golden pairs and fixes directly. --curate adds it.
+CURATE_GUI_IMAGE="mcfaddja/nl2sql-curate-gui"
+CURATE_GUI_TAG="v5_6"
 # The SQL console's interface. The console behind it runs from the agent
 # image above, started with a different command, so this is the one image
 # --console adds.
 CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
-CONSOLE_GUI_TAG="v5_5_1"
+CONSOLE_GUI_TAG="v5_6"
 # MLflow, where the agent's runs are traced: its server and the Postgres it
 # keeps traces in, both published with the release. --mlflow adds them.
 MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
-MLFLOW_TAG="v5_5_1"
+MLFLOW_TAG="v5_6"
 MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
-MLFLOW_DB_TAG="v5_5_1"
+MLFLOW_DB_TAG="v5_6"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v5_5_1"
+DESKTOP_TAG="v5_6"
 # The release this checkout ships: the agent's tag before any flag changes
 # it. Written into .env, so start.sh can tell a tag someone chose for this
 # checkout from one an older checkout left behind.
@@ -69,6 +74,7 @@ BUILD_AGENT=0
 # from this checkout instead, which is slower but needs no registry.
 WITH_GUI=0
 WITH_REVIEW=0
+WITH_CURATE=0
 WITH_CONSOLE=0
 WITH_MLFLOW=0
 WITH_DESKTOP=0
@@ -88,39 +94,45 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v5_5_1)
+      --agent-tag TAG    Agent image tag to pull (default: v5_6)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v5_5_1)
+      --gui-tag TAG      GUI image tag to pull (default: v5_6)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v5_5_1)
+      --review-tag TAG   Review service image tag (default: v5_6)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v5_5_1)
+      --review-gui-tag TAG   Review interface image tag (default: v5_6)
+      --curate           Also pull and pin the curation interface, where SQL
+                         snippets, golden pairs and fixes are written directly,
+                         each run against the retail database first
+      --curate-gui-image N   Curation interface image
+                         (default: mcfaddja/nl2sql-curate-gui)
+      --curate-gui-tag TAG   Curation interface image tag (default: v5_6)
       --console          Also pull and pin the SQL console's interface, where
                          the retail database is queried as the agent sees it
                          (the console itself runs from the agent image)
       --console-gui-image N  SQL console interface image
                          (default: mcfaddja/nl2sql-console-gui)
-      --console-gui-tag TAG  SQL console interface image tag (default: v5_5_1)
+      --console-gui-tag TAG  SQL console interface image tag (default: v5_6)
       --mlflow           Also pull and pin MLflow -- its server and the
                          Postgres it keeps traces in -- so ./launch.sh
                          --mlflow starts it instead of building it here
       --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
-      --mlflow-tag TAG   MLflow server image tag (default: v5_5_1)
+      --mlflow-tag TAG   MLflow server image tag (default: v5_6)
       --mlflow-db-image N    MLflow store image
                          (default: mcfaddja/nl2sql-mlflowdb)
-      --mlflow-db-tag TAG    MLflow store image tag (default: v5_5_1)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v5_6)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v5_5_1). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v5_6). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_2)
@@ -162,6 +174,11 @@ while [[ $# -gt 0 ]]; do
         --review-tag) REVIEW_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-gui-image) REVIEW_GUI_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-gui-tag) REVIEW_GUI_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
+        # Its own page, not the review interface's: a curator writing
+        # snippets needs neither the queue nor the page people vote in.
+        --curate) WITH_CURATE=1; shift ;;
+        --curate-gui-image) CURATE_GUI_IMAGE="$2"; WITH_CURATE=1; shift 2 ;;
+        --curate-gui-tag) CURATE_GUI_TAG="$2"; WITH_CURATE=1; shift 2 ;;
         # Not --gui as well: the console is for troubleshooting the agent's
         # answers, and those come from a terminal as often as from a page.
         --console) WITH_CONSOLE=1; shift ;;
@@ -328,8 +345,20 @@ carry POSTGRES_PORT POSTGRES_PORT
 if [[ $WITH_GUI -eq 0 && -n "$(env_value GUI_IMAGE_NAME)" ]]; then
     WITH_GUI=1
 fi
-if [[ $WITH_REVIEW -eq 0 && -n "$(env_value REVIEW_IMAGE_NAME)" ]]; then
+# By the review interface's pin, not the service's: since 5.6 the service is
+# pinned whenever retrieval is on, because it carries the snippet loader.
+if [[ $WITH_REVIEW -eq 0 && -n "$(env_value REVIEW_GUI_IMAGE_NAME)" ]]; then
     WITH_REVIEW=1
+fi
+if [[ $WITH_CURATE -eq 0 && -n "$(env_value CURATE_GUI_IMAGE_NAME)" ]]; then
+    WITH_CURATE=1
+fi
+# The review service's image: for its own pages, and -- with retrieval on --
+# because it carries the loader that fills the snippet store from its
+# document, which launch.sh runs on start and this script at its end.
+WITH_REVIEW_SERVICE=0
+if [[ $WITH_REVIEW -eq 1 || $WITH_CURATE -eq 1 || $WITH_RAG -eq 1 ]]; then
+    WITH_REVIEW_SERVICE=1
 fi
 if [[ $WITH_CONSOLE -eq 0 && -n "$(env_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
     WITH_CONSOLE=1
@@ -364,12 +393,19 @@ fi
         echo "GUI_IMAGE_TAG=$GUI_TAG"
     fi
     # Same reasoning as the GUI above: pinned only when it was asked for, so
-    # compose does not go looking for an image nobody wanted.
-    if [[ $WITH_REVIEW -eq 1 ]]; then
+    # compose does not go looking for an image nobody wanted -- except that
+    # the review service is wanted whenever retrieval is on, for its loader.
+    if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then
         echo "REVIEW_IMAGE_NAME=$REVIEW_IMAGE"
         echo "REVIEW_IMAGE_TAG=$REVIEW_TAG"
+    fi
+    if [[ $WITH_REVIEW -eq 1 ]]; then
         echo "REVIEW_GUI_IMAGE_NAME=$REVIEW_GUI_IMAGE"
         echo "REVIEW_GUI_IMAGE_TAG=$REVIEW_GUI_TAG"
+    fi
+    if [[ $WITH_CURATE -eq 1 ]]; then
+        echo "CURATE_GUI_IMAGE_NAME=$CURATE_GUI_IMAGE"
+        echo "CURATE_GUI_IMAGE_TAG=$CURATE_GUI_TAG"
     fi
     # And again. The console itself needs no pin of its own: it is the
     # agent's image, pinned above.
@@ -476,17 +512,30 @@ if [[ $WITH_GUI -eq 1 ]]; then
     fi
 fi
 
-# The review service and its interface. Two images rather than one because
-# they are two containers: a Python service that can rewrite the golden
-# question set, and an nginx serving a page that talks to it.
+# The review service and its interfaces: a Python service that can rewrite
+# the golden question set and the snippets, and nginx pages that talk to it.
+# The service comes first and on its own, because it is also what loads the
+# snippet store.
+if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then
+    step "Pulling $REVIEW_IMAGE:$REVIEW_TAG (the review service, which loads the SQL snippets)"
+    if ! docker pull "$REVIEW_IMAGE:$REVIEW_TAG"; then
+        warn "could not pull $REVIEW_IMAGE:$REVIEW_TAG (private repo, or not logged in);"
+        warn "compose will build it from source the first time it is needed."
+    fi
+fi
 if [[ $WITH_REVIEW -eq 1 ]]; then
-    for pair in "$REVIEW_IMAGE:$REVIEW_TAG" "$REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG"; do
-        step "Pulling $pair (feedback review)"
-        if ! docker pull "$pair"; then
-            warn "could not pull $pair (private repo, or not logged in);"
-            warn "./launch.sh --review will build it from source instead."
-        fi
-    done
+    step "Pulling $REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG (feedback review)"
+    if ! docker pull "$REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG"; then
+        warn "could not pull $REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG (private repo, or not logged in);"
+        warn "./launch.sh --review will build it from source instead."
+    fi
+fi
+if [[ $WITH_CURATE -eq 1 ]]; then
+    step "Pulling $CURATE_GUI_IMAGE:$CURATE_GUI_TAG (the curation interface)"
+    if ! docker pull "$CURATE_GUI_IMAGE:$CURATE_GUI_TAG"; then
+        warn "could not pull $CURATE_GUI_IMAGE:$CURATE_GUI_TAG (private repo, or not logged in);"
+        warn "./launch.sh --curate will build it from source instead."
+    fi
 fi
 
 # The SQL console's interface. One image: the console behind it is the
@@ -608,6 +657,34 @@ if [[ $WITH_RAG -eq 1 ]]; then
     fi
 fi
 
+# --- The SQL snippets --------------------------------------------------------
+# The one store no image ships: it is built from context_questions/
+# sql_snippets.md, so it is loaded here, after the images and before the
+# models are checked -- by the loader in the review service's image, which
+# needs the embedding model for the meanings and loads the rows without it.
+if [[ $WITH_RAG -eq 1 ]]; then
+    step "Starting the snippet store, and loading the SQL snippets into it"
+    docker compose up -d snippetsdb
+
+    info "waiting for the snippet store to become healthy..."
+    for _ in $(seq 1 60); do
+        sstatus=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-snippetsdb 2>/dev/null || echo starting)
+        [[ "$sstatus" == "healthy" ]] && break
+        sleep 2
+    done
+    [[ "${sstatus:-}" == "healthy" ]] || die "the snippet store did not become healthy. Check 'docker compose logs snippetsdb'."
+
+    if loaded=$(docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+        cd "$REVIEW_RAG_DIR" &&
+        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL" \
+            --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1); then
+        while IFS= read -r line; do info "$line"; done < <(printf '%s\n' "$loaded" | grep -E 'rows written|vectors ->' | sed 's/^ *//')
+    else
+        warn "the SQL snippets did not load completely; ./launch.sh tries again on every start. It said:"
+        while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$loaded" | tail -3)
+    fi
+fi
+
 # --- Ollama ----------------------------------------------------------------
 step "Checking Ollama"
 
@@ -717,6 +794,7 @@ if [[ $WITH_RAG -eq 1 ]]; then
     cat <<EOF
     nl2sql-vectordb    the embedded knowledge base
     nl2sql-chunkdb     the golden pairs and their BM25 index
+    nl2sql-snippetsdb  the SQL snippets the generator is shown
 EOF
 fi
 cat <<EOF
@@ -735,6 +813,12 @@ cat <<EOF
     Rather use a browser? There is a web interface:
 
     ./launch.sh --gui                        # http://localhost:8080
+
+    Teaching it this database's pieces -- how two tables join, what a phrase
+    filters to, how a measure is calculated? The curation interface writes
+    SQL snippets, golden pairs and fixes, each run on the database first:
+
+    ./launch.sh --curate                     # http://localhost:8083
 
     Working out why an answer was wrong? The SQL console runs a query the way
     the agent runs its own, and says which of its gates would have stopped it:

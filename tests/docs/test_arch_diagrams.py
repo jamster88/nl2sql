@@ -35,12 +35,14 @@ COMPLETENESS_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "completeness.py"
 CORRECTIONS_PY = REPO_ROOT / "review" / "nl2sql_review" / "corrections.py"
 # v5.2's: the Model Router (arch5.2).
 ROUTER_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "router.py"
+# v5.6's: the Snippet Retriever.
+SNIPPETS_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "snippets.py"
 
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
 V4, V5, V5_1 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg", DIAGRAMS / "arch_v5_1.svg"
-V5_2 = DIAGRAMS / "arch_v5_2.svg"
-ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2]
-IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2"]
+V5_2, V5_6 = DIAGRAMS / "arch_v5_2.svg", DIAGRAMS / "arch_v5_6.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2, V5_6]
+IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2", "v5_6"]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
@@ -64,6 +66,9 @@ V4_ADDS = {
 # v5 is back to the incremental rule: v4 plus one node, the Completeness
 # Reviewer between execution and presentation.
 REVIEW_NODE = "review"
+
+# v5.6 is incremental again: v5.2 plus a fifth retriever.
+SNIPPETS_NODE = "retrieve_snippets"
 
 
 def graph_nodes() -> set[str]:
@@ -103,8 +108,14 @@ def this_tree_is_v5_2() -> bool:
     return ROUTER_PY.exists()
 
 
+def this_tree_is_v5_6() -> bool:
+    return SNIPPETS_PY.exists()
+
+
 def diagram_for_this_tree() -> Path:
     """The diagram that is supposed to describe the code actually checked out."""
+    if this_tree_is_v5_6():
+        return V5_6
     if this_tree_is_v5_2():
         return V5_2
     if this_tree_is_v5_1():
@@ -189,6 +200,25 @@ def test_v5_2_changes_no_agent_node():
     assert diagram_nodes(V5_2) == diagram_nodes(V5_1)
 
 
+def test_v5_6_is_v5_2_plus_the_snippet_retriever():
+    """A fifth branch of the Stage 1 superstep, and nothing else renamed."""
+    assert diagram_nodes(V5_6) == diagram_nodes(V5_2) | {SNIPPETS_NODE}
+
+
+def test_v5_6_draws_the_snippets_and_the_curation_page():
+    text = V5_6.read_text()
+    for name in ("nl2sql-snippetsdb", "SQL snippets", "Golden pairs", "Corrections &amp; completions"):
+        assert f">{name}</text>" in text, name
+    assert "What v5.6 adds: SQL snippets" in text
+    for tag in ("keeps the snippets whose tables are in scope", "+ snippet block"):
+        assert tag in text, tag
+
+
+def test_the_snippet_node_is_present_exactly_when_the_module_is():
+    node_drawn = SNIPPETS_NODE in diagram_nodes(diagram_for_this_tree())
+    assert node_drawn is this_tree_is_v5_6()
+
+
 def test_v5_2_draws_the_router():
     text = V5_2.read_text()
     for name in ("Ollama — chat models, routed", "models/catalog.json"):
@@ -264,7 +294,7 @@ def generator():
     "name,builder",
     [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
      ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
-     ("arch_v5_2.svg", "build_v5_2")],
+     ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6")],
     ids=IDS,
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
@@ -286,6 +316,7 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v5() == generator.build_v5()
     assert generator.build_v5_1() == generator.build_v5_1()
     assert generator.build_v5_2() == generator.build_v5_2()
+    assert generator.build_v5_6() == generator.build_v5_6()
 
 
 @pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)

@@ -171,6 +171,7 @@ export function makeFixResult(overrides: Partial<FixResultModel> = {}): FixResul
       reviewer: "ada",
       review_note: "",
       agent_version: "5.0.0",
+      source: "review",
       created_at: "2026-09-26T10:00:00Z",
       embedded: true,
     },

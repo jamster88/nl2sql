@@ -64,6 +64,11 @@ REVIEW_GUI_ENVSH = "review/gui/10-nl2sql-review-config.envsh"
 #: that runs SQL. Driven in tests/console/test_console_project.py.
 CONSOLE_GUI_ENVSH = "console/10-nl2sql-console-config.envsh"
 
+#: The curation interface's equivalent (5.6): the review interface's two
+#: decisions, for the page that writes SQL snippets and golden pairs. Driven
+#: in tests/curate/test_curate_project.py.
+CURATE_GUI_ENVSH = "curate/10-nl2sql-curate-config.envsh"
+
 SMOKE = "docker/apitest/smoke.sh"
 
 #: Runs once, inside `docker build`, to bake a populated cluster into the
@@ -76,16 +81,17 @@ INIT_DB = "docker/init_db.sh"
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, INIT_DB)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
 #: sandbox is in tests/rag/, the GUI's start-up script is driven from
-#: tests/gui/, the review interface's from tests/review/, and the console
-#: interface's from tests/console/.
+#: tests/gui/, the review interface's from tests/review/, the console
+#: interface's from tests/console/, and the curation interface's from
+#: tests/curate/.
 TEST_FILES = [
     path
-    for directory in ("docker", "api", "rag", "gui", "review", "console")
+    for directory in ("docker", "api", "rag", "gui", "review", "console", "curate")
     for path in (REPO_ROOT / "tests" / directory).glob("test_*.py")
 ]
 TEST_SOURCES = "".join(path.read_text() for path in TEST_FILES)
@@ -526,6 +532,7 @@ DOCKERFILES = {
     "review/Dockerfile": ("tests/review/test_review_image.py",),
     "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
     "console/Dockerfile": ("tests/console/test_console_project.py",),
+    "curate/Dockerfile": ("tests/curate/test_curate_project.py",),
     "docker/mlflow/Dockerfile": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
     "docker/mlflowdb/Dockerfile": ("tests/docker/test_mlflow_compose.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
@@ -541,6 +548,7 @@ COMPOSE_FILES = {
         "tests/docker/test_gui_compose.py",
         "tests/review/test_review_compose.py",
         "tests/console/test_console_compose.py",
+        "tests/curate/test_curate_compose.py",
     ),
     "rag/docker-compose.yml": ("tests/rag/test_rag_images.py",),
 }
@@ -557,6 +565,7 @@ COMPOSE_SERVICES = {
         "postgres": ("tests/docker/test_compose_config.py",),
         "vectordb": ("tests/docker/test_compose_config.py",),
         "chunkdb": ("tests/docker/test_compose_config.py",),
+        "snippetsdb": ("tests/curate/test_curate_compose.py",),
         "feedbackdb": ("tests/review/test_review_compose.py",),
         "correctionsdb": ("tests/review/test_review_compose.py",),
         "completionsdb": ("tests/review/test_review_compose.py",),
@@ -565,6 +574,7 @@ COMPOSE_SERVICES = {
         "gui": ("tests/docker/test_gui_compose.py",),
         "review": ("tests/review/test_review_compose.py",),
         "reviewgui": ("tests/review/test_review_compose.py",),
+        "curategui": ("tests/curate/test_curate_compose.py",),
         "apitest": ("tests/docker/test_api_compose.py",),
         "console": ("tests/console/test_console_compose.py",),
         "consolegui": ("tests/console/test_console_compose.py",),

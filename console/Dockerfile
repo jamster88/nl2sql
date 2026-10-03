@@ -63,4 +63,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql SQL console GUI" \
       org.opencontainers.image.description="React/TypeScript interface for querying the retail database through the agent's gates" \
-      org.opencontainers.image.version="5.5.1"
+      org.opencontainers.image.version="5.6.0"

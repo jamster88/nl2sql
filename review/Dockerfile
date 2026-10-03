@@ -1,5 +1,6 @@
 # The review service: FastAPI over the staging database, plus the ability to
-# rewrite the golden question document and reload the stores built from it.
+# rewrite the golden question document and the SQL snippet document, and
+# reload the stores built from them.
 #
 # This image carries `rag/` and its dependencies, which the agent image does
 # not. That is the whole reason it is a separate image rather than another
@@ -25,15 +26,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY review/nl2sql_review/ ./nl2sql_review/
 
 # The loaders, and the package they import. Promotion runs these as scripts
-# from /app/rag, which is REVIEW_RAG_DIR's default.
+# from /app/rag, which is REVIEW_RAG_DIR's default -- and so does writing a
+# SQL snippet, and the stack's start when the snippet store is behind its
+# document (launch.sh runs 07 in a one-off container of this image).
 COPY rag/ragproc/ ./rag/ragproc/
-COPY rag/05_load_golden_pairs.py rag/06_embed_golden_pairs.py ./rag/
+COPY rag/05_load_golden_pairs.py rag/06_embed_golden_pairs.py rag/07_load_snippets.py ./rag/
 
 # The golden question document. Bind-mounted over in compose so a promotion
 # writes the working tree's copy rather than a copy inside a container that
 # disappears with it -- the file in the image is the fallback, and a
 # promotion against it is a promotion nobody will ever see in git.
-COPY context_questions/translated_questions.md ./context_questions/
+COPY context_questions/translated_questions.md context_questions/sql_snippets.md ./context_questions/
 
 # Where the agent API's certificate is expected to appear, mounted read-only
 # from the volume that API writes it into. This service presents that
@@ -42,7 +45,7 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8444
 
-ARG REVIEW_VERSION=5.5.1
+ARG REVIEW_VERSION=5.6.0
 ENV REVIEW_VERSION=${REVIEW_VERSION}
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \

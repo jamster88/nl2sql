@@ -46,6 +46,11 @@
 # recorded on the answers they judge -- and opens it at http://localhost:5001,
 # in a window of its own again.
 #
+# With --curate it brings up the curation interface, where the agent's SQL
+# snippets, golden pairs, corrections and completions are written directly --
+# each run against the retail database before it is saved -- and opens it at
+# http://localhost:8083, in a window of its own as well.
+#
 # With --load-golden the golden question document is loaded into the stores
 # the agent takes its worked examples from, before anything is asked: the
 # images ship the set as it was when they were published, and a document that
@@ -65,6 +70,7 @@ QUIET=0
 WITH_REVIEW=0
 WITH_CONSOLE=0
 WITH_MLFLOW=0
+WITH_CURATE=0
 WITH_DESKTOP=0
 WITH_LOAD_GOLDEN=0
 WITH_RAG=1
@@ -108,12 +114,17 @@ Brings up the whole stack and opens the web interface in your browser.
                      span per agent and per model call -- and keeps the
                      verdicts given on answers with them, and open it in a
                      browser window of its own
+      --curate       Also bring up the curation interface -- SQL snippets,
+                     golden pairs, corrections and completions, written
+                     directly and run against the retail database first --
+                     and open it in a browser window of its own
       --feedback     Keep verdicts without the review interface: starts the
                      staging database only, so votes are staged for later
       --load-golden  Load context_questions/translated_questions.md into the
                      stores the agent's worked examples come from, so they are
                      this checkout's golden set rather than the one the images
-                     were published with. Runs in the review service's image
+                     were published with. Runs in the review service's image,
+                     which also loads the SQL snippets on every start
       --no-browser   Start everything, but print the URLs instead of opening them
       --no-rag       Start only the retail database; the agent answers from the
                      schema alone, with neither knowledge nor worked examples
@@ -121,8 +132,8 @@ Brings up the whole stack and opens the web interface in your browser.
   -q, --quiet        Only print problems
   -h, --help         Show this message
 
-The flags combine: ./start.sh --review --console --mlflow brings up every
-page, the web interface first and the other three in windows of their own.
+The flags combine: ./start.sh --review --curate --console --mlflow brings up
+every page, the web interface first and the other four in windows of their own.
 
 First run on a machine takes a few minutes: it pulls about 3 GB of images.
 Afterwards it is seconds. A checkout that ships newer images than .env pins
@@ -132,10 +143,10 @@ Docker is started if its daemon is not running (Docker Desktop, on macOS or
 Linux), and so is the Ollama on this machine when the embedding model is
 served from here; that Ollama is given the embedding model if it lacks it.
 
-Set BROWSER to choose what opens the pages. Without it the review page and
-the console are opened in windows of their own by Safari, Firefox, Chrome
-and the browsers built on Chromium; macOS asks once before a terminal may
-ask Safari.
+Set BROWSER to choose what opens the pages. Without it the review, curation
+and console pages are opened in windows of their own by Safari, Firefox,
+Chrome and the browsers built on Chromium; macOS asks once before a terminal
+may ask Safari.
 
 ./setup.sh and ./launch.sh are the same steps with the parts separated.
 EOF
@@ -153,9 +164,10 @@ while [[ $# -gt 0 ]]; do
         # instead of it. launch.sh brings the API up for it.
         --console) WITH_CONSOLE=1; LAUNCH_ARGS+=(--console); SETUP_ARGS+=(--console); shift ;;
         --mlflow) WITH_MLFLOW=1; LAUNCH_ARGS+=(--mlflow); SETUP_ARGS+=(--mlflow); shift ;;
-        # The loaders live in the review service's image, so that is the one
-        # image this needs pinned -- and setup.sh pins it as part of --review.
-        --load-golden) WITH_LOAD_GOLDEN=1; LAUNCH_ARGS+=(--load-golden); SETUP_ARGS+=(--review); shift ;;
+        --curate) WITH_CURATE=1; LAUNCH_ARGS+=(--curate); SETUP_ARGS+=(--curate); shift ;;
+        # The loaders live in the review service's image, which setup.sh pins
+        # whenever retrieval is on: it also loads the SQL snippets.
+        --load-golden) WITH_LOAD_GOLDEN=1; LAUNCH_ARGS+=(--load-golden); shift ;;
         # The desktop client is an interface, not an addition to one: with
         # this the web interface is not started and no browser is opened for
         # it. --review still opens the review page, which has no desktop
@@ -335,14 +347,16 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
         printf 'the web interface is not pinned, so it would be built here from source'
     elif [[ $WITH_DESKTOP -eq 1 && -z "$(env_file_value DESKTOP_IMAGE_NAME)" ]]; then
         printf "the desktop client is not pinned, so its jar would be built here from source"
-    elif [[ $WITH_REVIEW -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
-        printf 'the review images are not pinned, so they would be built here from source'
+    elif [[ $WITH_REVIEW -eq 1 && -z "$(env_file_value REVIEW_GUI_IMAGE_NAME)" ]]; then
+        printf 'the review interface is not pinned, so it would be built here from source'
+    elif [[ $WITH_CURATE -eq 1 && -z "$(env_file_value CURATE_GUI_IMAGE_NAME)" ]]; then
+        printf 'the curation interface is not pinned, so it would be built here from source'
     elif [[ $WITH_CONSOLE -eq 1 && -z "$(env_file_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
         printf "the SQL console's interface is not pinned, so it would be built here from source"
     elif [[ $WITH_MLFLOW -eq 1 && -z "$(env_file_value MLFLOW_IMAGE_NAME)" ]]; then
         printf "MLflow's images are not pinned, so they would be built here from source"
-    elif [[ $WITH_LOAD_GOLDEN -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
-        printf 'the review image, which loads the golden pairs, is not pinned, so it would be built here from source'
+    elif [[ $WITH_RAG -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
+        printf 'the review image, which loads the SQL snippets and the golden pairs, is not pinned, so it would be built here from source'
     fi
 }
 
@@ -376,6 +390,7 @@ review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
 review_url="http://localhost:${review_gui_port}"
 console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
 console_url="http://localhost:${console_gui_port}"
+curate_url="http://localhost:$(compose_env CURATE_GUI_PORT 8083)"
 mlflow_url="http://localhost:$(compose_env MLFLOW_PORT 5001)"
 
 # Healthy is not the same as answering. The container reports healthy as soon
@@ -413,6 +428,20 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         warn "the review interface never answered at $review_url."
         warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
         warn "The web interface is up; verdicts are staged and can be reviewed later."
+    fi
+fi
+
+# The curation page likewise: the agent answers whether or not anyone is
+# curating, so it not coming up is a warning about that page alone.
+curate_ready=0
+if [[ $WITH_CURATE -eq 1 ]]; then
+    step "Waiting for the curation interface"
+    if wait_for_page "$curate_url"; then
+        curate_ready=1
+    else
+        warn "the curation interface never answered at $curate_url."
+        warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
+        warn "Everything else is up; ./launch.sh --curate tries it again on its own."
     fi
 fi
 
@@ -687,6 +716,14 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
             warn "$review_url"
         fi
     fi
+    if [[ $curate_ready -eq 1 ]]; then
+        # Its own window: curating is a job of its own, like reviewing.
+        step "Opening $curate_url"
+        if ! open_window "$curate_url"; then
+            warn "could not open the curation interface. Open it yourself:"
+            warn "$curate_url"
+        fi
+    fi
     if [[ $console_ready -eq 1 ]]; then
         # Its own window as well: it is where someone works out what went
         # wrong, next to -- not inside -- the page where it went wrong.
@@ -707,11 +744,13 @@ if [[ $OPEN_BROWSER -eq 1 ]]; then
 elif [[ $WITH_DESKTOP -eq 0 ]]; then
     step "Ready at $url"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
+    [[ $curate_ready -eq 1 ]] && info "Curation interface at $curate_url"
     [[ $console_ready -eq 1 ]] && info "SQL console at $console_url"
     [[ $mlflow_ready -eq 1 ]] && info "MLflow at $mlflow_url"
 else
     step "The desktop client is running"
     [[ $review_ready -eq 1 ]] && info "Review interface at $review_url"
+    [[ $curate_ready -eq 1 ]] && info "Curation interface at $curate_url"
     [[ $console_ready -eq 1 ]] && info "SQL console at $console_url"
     [[ $mlflow_ready -eq 1 ]] && info "MLflow at $mlflow_url"
 fi
@@ -738,6 +777,12 @@ EOF
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
     $review_url                     review what people said: promote, correct, complete, take back
+
+EOF
+    fi
+    if [[ $WITH_CURATE -eq 1 ]]; then
+        cat <<EOF
+    $curate_url                     write snippets, golden pairs and fixes, each run first
 
 EOF
     fi
@@ -779,6 +824,13 @@ EOF
 
     $url
     docker compose --profile api --profile gui down    stop everything
+
+EOF
+    fi
+    if [[ $WITH_CURATE -eq 1 ]]; then
+        cat <<EOF
+    $curate_url                     write snippets, golden pairs and fixes, each run first
+    docker compose --profile feedback --profile review --profile curategui down    and the curation page
 
 EOF
     fi

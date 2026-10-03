@@ -99,7 +99,7 @@ def test_the_api_reads_the_database_as_the_reader_role_like_everything_else(api:
 
 
 def test_the_api_waits_for_every_database(api: dict):
-    assert set(api["depends_on"]) == {"postgres", "vectordb", "chunkdb"}
+    assert set(api["depends_on"]) == {"postgres", "vectordb", "chunkdb", "snippetsdb"}
     assert all(d["condition"] == "service_healthy" for d in api["depends_on"].values())
 
 

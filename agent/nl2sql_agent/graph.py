@@ -4,8 +4,9 @@ Four stages, one shared state object (`state.py`), one retry loop:
 
     supervise ─┬─ retrieve_schema ──┐
                ├─ retrieve_literals ┤
-               ├─ retrieve_knowledge┤► aggregate ─► generate_sql
-               └─ retrieve_examples ┘                   │
+               ├─ retrieve_knowledge┤
+               ├─ retrieve_examples ┤► aggregate ─► generate_sql
+               └─ retrieve_snippets ┘                   │
                                                         ▼
         give_up ◄── repair ◄─────────────────────  validate_static
                       ▲   │                             │ pass
@@ -18,7 +19,7 @@ Four stages, one shared state object (`state.py`), one retry loop:
 
 What changed from v3 and why, in one line each:
 
-* **Stage 1 fans out.** The four retrievers are independent given the
+* **Stage 1 fans out.** The retrievers are independent given the
   question, so they are branches of one superstep and the aggregator is the
   fan-in. Retrieval is 0.1% of runtime either way; this is for clarity.
 * **No model call selects tables.** The Schema Retriever searches the DDL
@@ -47,6 +48,11 @@ What changed from v3 and why, in one line each:
   Context Aggregator scores how hard the generator's task is. A repair
   climbs the ladder; nothing descends. The trace names the model that
   answered each call and why it was asked.
+* **A query is built from verified pieces (v5.6).** A fifth retriever finds
+  the SQL snippets -- joins, filters, measures, dimensions, each run against
+  this database and curated beside what it means -- that match the
+  question, and the aggregator hands the generator the ones whose tables
+  are in scope. No model call; see `snippets.py`.
 
 Every stage the architecture makes optional is a setting, so an ablation is
 an environment change rather than a code change.
@@ -79,11 +85,13 @@ from .prompts import (
     example_messages,
     knowledge_block,
     literal_block,
+    snippet_block,
     task_block,
 )
 from .retrieval import KnowledgeBase, build_embedder
 from .router import ClientFactory, RoutedModel, Router, build_table, listed_models, load_catalog
 from .schema_retrieval import DDL_COLLECTION, SchemaRetriever
+from .snippets import SnippetLibrary, format_snippets, usable
 from .state import (
     AUDIT,
     PLANNER,
@@ -114,7 +122,7 @@ log = logging.getLogger(__name__)
 #: through the same agent, and an instance attribute would send one caller's
 #: progress to another caller's stream. A context variable is per-run, and
 #: LangGraph copies the context into the threads it fans stage 1 out across,
-#: so the four concurrent retrievers report to the right run too.
+#: so the concurrent retrievers report to the right run too.
 _progress: ContextVar[ProgressFn | None] = ContextVar("nl2sql_progress", default=None)
 
 #: LangGraph stops a run that exceeds this many supersteps. The loop is up to
@@ -145,6 +153,7 @@ STEP_LABELS = {
     "retrieve_literals": "literals",
     "retrieve_knowledge": "knowledge",
     "retrieve_examples": "examples",
+    "retrieve_snippets": "snippets",
     "aggregate": "schema",
     "generate_sql": "sql",
     "validate_static": "validation",
@@ -177,10 +186,11 @@ TRACE_SPANS = {
     "retrieve_literals": ("Literal Matcher", "RETRIEVER", ("question",)),
     "retrieve_knowledge": ("Knowledge Retriever", "RETRIEVER", ("question",)),
     "retrieve_examples": ("Example Retriever", "RETRIEVER", ("question",)),
+    "retrieve_snippets": ("Snippet Retriever", "RETRIEVER", ("question",)),
     "aggregate": (
         "Context Aggregator",
         "TASK",
-        ("answer_contract", "schema_tables", "knowledge_tables", "example_tables"),
+        ("answer_contract", "schema_tables", "knowledge_tables", "example_tables", "snippet_hits"),
     ),
     "generate_sql": ("SQL Generator", "AGENT", ("question", "attempts", "generation_rung", "issues")),
     "validate_static": ("Static Validator", "GUARDRAIL", ("sql", "selected_tables")),
@@ -207,6 +217,7 @@ class Nl2SqlAgent:
         llm_factory: ClientFactory | None = None,
         knowledge_base: KnowledgeBase | None = None,
         example_library: GoldenPairLibrary | None = None,
+        snippet_library: SnippetLibrary | None = None,
         schema_retriever: SchemaRetriever | None = None,
         literal_matcher: LiteralMatcher | None = None,
         contract_resources: ContractResources | None = None,
@@ -230,6 +241,7 @@ class Nl2SqlAgent:
         self.router = self._build_router(settings, injected=llm is not None, factory=llm_factory)
         self.knowledge_base = knowledge_base or self._build_knowledge_base(settings)
         self.example_library = example_library or self._build_example_library(settings)
+        self.snippet_library = snippet_library or self._build_snippet_library(settings)
         self.schema_retriever = schema_retriever or self._build_schema_retriever(settings)
         self._literal_matcher = literal_matcher
         self._literal_catalog_built = literal_matcher is not None
@@ -237,7 +249,12 @@ class Nl2SqlAgent:
         self._contract = contract_resources
         self._contract_lock = threading.Lock()
         self.tools = build_tools(
-            self.db, self.llm, settings, self.knowledge_base, self.example_library
+            self.db,
+            self.llm,
+            settings,
+            self.knowledge_base,
+            self.example_library,
+            self.snippet_library,
         )
         self._on_progress = on_progress or (lambda step, detail: None)
         self._graph = self._build_graph()
@@ -309,6 +326,19 @@ class Nl2SqlAgent:
             rerank_k=settings.examples_rerank_k,
             rerank_lambda=settings.examples_rerank_lambda,
             grounding_weight=settings.examples_grounding_weight,
+        )
+
+    @staticmethod
+    def _build_snippet_library(settings: Settings) -> SnippetLibrary | None:
+        """The SQL snippets, searched by keyword phrase and by meaning (v5.6)."""
+        if not settings.snippets_enabled:
+            return None
+        return SnippetLibrary(
+            settings.snippet_db_url,
+            build_embedder(settings),
+            top_k=settings.snippets_top_k,
+            min_score=settings.snippets_min_score,
+            min_similarity=settings.snippets_min_similarity,
         )
 
     def _build_schema_retriever(self, settings: Settings) -> SchemaRetriever | None:
@@ -456,6 +486,7 @@ class Nl2SqlAgent:
         graph.add_node("retrieve_literals", self._traced("retrieve_literals", self._retrieve_literals))
         graph.add_node("retrieve_knowledge", self._traced("retrieve_knowledge", self._retrieve_knowledge))
         graph.add_node("retrieve_examples", self._traced("retrieve_examples", self._retrieve_examples))
+        graph.add_node("retrieve_snippets", self._traced("retrieve_snippets", self._retrieve_snippets))
         graph.add_node("aggregate", self._traced("aggregate", self._aggregate))
         graph.add_node("generate_sql", self._traced("generate_sql", self._generate_sql))
         graph.add_node("validate_static", self._traced("validate_static", self._validate_static))
@@ -474,11 +505,12 @@ class Nl2SqlAgent:
             "retrieve_literals",
             "retrieve_knowledge",
             "retrieve_examples",
+            "retrieve_snippets",
         ]
 
         graph.add_edge(START, "supervise")
         # The Supervisor either stops the run before any retrieval, or opens
-        # all four retrieval branches at once.
+        # every retrieval branch at once.
         graph.add_conditional_edges(
             "supervise", self._route_after_supervisor, ["refuse", *retrievers]
         )
@@ -576,6 +608,7 @@ class Nl2SqlAgent:
             "retrieve_literals",
             "retrieve_knowledge",
             "retrieve_examples",
+            "retrieve_snippets",
         ]
 
     def _refuse(self, state: AgentState) -> dict:
@@ -686,6 +719,32 @@ class Nl2SqlAgent:
             _DETAIL: ", ".join(f"{p['pair_id']} ({p['score']:.3f})" for p in pairs),
         }
 
+    def _retrieve_snippets(self, state: AgentState) -> dict:
+        """Verified SQL pieces whose meaning matches the question. No model call."""
+        retrieved = self.tools["search_snippets"].invoke({"question": state["question"]})
+        if retrieved["error"]:
+            return {
+                "snippets": [],
+                "snippet_hits": [],
+                "retrieval_errors": {"snippets": retrieved["error"]},
+                _DETAIL: f"skipped: {retrieved['error']}",
+            }
+        update: dict[str, Any] = {
+            "snippets": retrieved["snippets"],
+            "snippet_hits": retrieved["hits"],
+        }
+        if retrieved["warning"]:
+            # The keyword half answered; say why the meaning half did not.
+            update["retrieval_errors"] = {"snippets": retrieved["warning"]}
+        found = ", ".join(f"{h['snippet_id']} {h['kind']} ({h['score']:.3f})" for h in retrieved["hits"])
+        update[_DETAIL] = found or "none matched"
+        return update
+
+    def _snippet_context(self, state: AgentState, tables: list[str]) -> tuple[str, int]:
+        """The snippets the generator is shown, and how many: those over tables in scope."""
+        shown = usable(list(state.get("snippets", [])), tables)
+        return format_snippets(shown, self.settings.snippets_max_context_chars), len(shown)
+
     def _aggregate(self, state: AgentState) -> dict:
         """The fan-in: one table set, foreign-key closed, capped, described.
 
@@ -734,13 +793,18 @@ class Nl2SqlAgent:
         detail = ", ".join(tables)
         if bridges:
             detail += f" (+{len(bridges)} bridge: {', '.join(bridges)})"
-        return {
+        update: dict[str, Any] = {
             "selected_tables": tables,
             "schema": schema,
             "complexity": scored,
             "generation_rung": scored.rung,
-            _DETAIL: f"{detail}; {scored.rung} (score {scored.score})",
         }
+        found = len(state.get("snippets", []))
+        if found:
+            update["snippet_context"], shown = self._snippet_context(state, tables)
+            detail += f"; {shown} of {found} snippet(s) in scope"
+        update[_DETAIL] = f"{detail}; {scored.rung} (score {scored.score})"
+        return update
 
     # --- stage 2: synthesis -------------------------------------------------
 
@@ -758,6 +822,7 @@ class Nl2SqlAgent:
             dialect=self.db.dialect,
             schema=state.get("schema", ""),
             knowledge=knowledge_block(state.get("knowledge", "")),
+            snippets=snippet_block(state.get("snippet_context", "")),
             literals=literal_block(render_literal_map(state.get("literal_map", []))),
             task=task_block(supervisor.intent_framing(state.get("intent", ""))),
             contract=contract_block(answer_contract.render_contract(state.get("answer_contract"))),
@@ -908,11 +973,15 @@ class Nl2SqlAgent:
         if not extra:
             return {}
         tables = selected + extra
-        return {
+        widened = {
             "selected_tables": tables,
             "schema": self.tools["get_schema_and_data"].invoke({"tables": tables}),
             _DETAIL: f"{reviewer.describe(report)} (scope +{', '.join(extra)})",
         }
+        # A wider scope can make a snippet usable that was not before.
+        if state.get("snippets"):
+            widened["snippet_context"], _ = self._snippet_context(state, tables)
+        return widened
 
     def _route_after_review(self, state: AgentState) -> str:
         return "repair" if state.get("issues") else "present"

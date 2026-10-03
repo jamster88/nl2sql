@@ -50,11 +50,11 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
 
     assert code == 0
     [run] = mlflow.runs.values()
-    assert run["name"] == "benchmark multi-shot"
+    assert run["name"] == "benchmark snippets"
     assert run["status"] == "FINISHED"
     assert run["tags"]["nl2sql.entrypoint"] == "benchmark"
     assert run["params"] == {
-        "configuration": "multi-shot",
+        "configuration": "snippets",
         "model": agents[0].settings.ollama_model,
         "model_routing": True,
         "max_attempts": 7,
@@ -64,7 +64,7 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
     assert run["metrics"]["questions"] == 2
     # The report as --json would write it, beside the numbers.
     [document] = run["artifacts"].values()
-    assert document["configurations"][0]["label"] == "multi-shot"
+    assert document["configurations"][0]["label"] == "snippets"
     assert [r["id"] for r in document["configurations"][0]["results"]] == ["B01", "B02"]
 
 
@@ -76,7 +76,7 @@ def test_each_question_is_a_trace_in_the_run_tagged_and_judged(monkeypatch, caps
     trace = mlflow.only_trace()
     assert trace.run_id == run_id
     assert trace.tags["nl2sql.entrypoint"] == "benchmark"
-    assert trace.tags["benchmark.configuration"] == "multi-shot"
+    assert trace.tags["benchmark.configuration"] == "snippets"
     assert trace.tags["benchmark.question_id"] == "B01"
     assert trace.tags["benchmark.category"] == by_id("B01").category
     [score] = trace.assessments
@@ -91,7 +91,7 @@ def test_compare_files_each_configuration_as_a_run_of_its_own(monkeypatch, capsy
     _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--compare"], tracer=tracer_on(mlflow))
 
     assert [r["name"] for r in mlflow.runs.values()] == [
-        "benchmark schema-only", "benchmark knowledge", "benchmark multi-shot",
+        "benchmark schema-only", "benchmark knowledge", "benchmark multi-shot", "benchmark snippets",
     ]
     assert {t.run_id for t in mlflow.traces.values()} == set(mlflow.runs)
 

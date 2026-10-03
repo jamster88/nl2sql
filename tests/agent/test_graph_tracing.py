@@ -2,7 +2,7 @@
 
 The trace is the architecture drawn from a real run: a span per agent, named
 as the architecture names it, and inside each the model calls it made. These
-tests read that tree back and hold it to the run it records -- the four
+tests read that tree back and hold it to the run it records -- the five
 retrievers under the run although they ran on other threads, a repair as a
 second generation, a routed call that fell back as two calls -- and to the
 state's own trace entries, which come from the same wrapper and must agree.
@@ -26,7 +26,9 @@ from .conftest import FakeDatabase
 from .test_graph import TABLES, make_agent, scripted
 from .test_graph_routing import ANCHOR, Down
 
-RETRIEVERS = ["Schema Retriever", "Literal Matcher", "Knowledge Retriever", "Example Retriever"]
+RETRIEVERS = [
+    "Schema Retriever", "Literal Matcher", "Knowledge Retriever", "Example Retriever", "Snippet Retriever",
+]
 
 
 def traced(**settings) -> tuple[Tracer, FakeMlflow]:
@@ -60,10 +62,10 @@ def test_a_question_is_one_trace_with_a_span_per_agent_and_each_model_call_insid
     trace = client.only_trace()
     assert state["trace_id"] == trace.root.trace_id
     names = [span.name for span in trace.root.children]
-    # The four retrievers run concurrently, so only their set is fixed; every
+    # The retrievers run concurrently, so only their set is fixed; every
     # other agent is in the order the graph ran it.
-    assert set(names[1:5]) == set(RETRIEVERS)
-    assert [names[0], *names[5:]] == [
+    assert set(names[1:6]) == set(RETRIEVERS)
+    assert [names[0], *names[6:]] == [
         "Supervisor", "Context Aggregator", "SQL Generator", "Static Validator", "Planner Gate",
         "Safe Executor", "Completeness Reviewer", "Visual Formatter", "Insight Narrator",
         "Audit Checker", "Answer",

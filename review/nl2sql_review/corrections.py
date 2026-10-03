@@ -29,6 +29,12 @@ time, rather than left for a batch job to backfill.
 The embedding is best-effort in the way the golden set's reload is. The
 record is the fact; a save whose embedding host is down still stores it, and
 the next save that can reach the host embeds everything still missing.
+
+Since 5.6 a fix can also be written straight into a store, from the curation
+interface, with no submission behind it: a question somebody knows the agent
+gets wrong, and the query it should write. Its `submission_id` is NULL and
+its `source` says `curated` rather than `review`, and it is held to the same
+rule as any other fix -- only a query that ran is stored.
 """
 
 from __future__ import annotations
@@ -72,6 +78,9 @@ COMPLETIONS = Kind(
     verdict="incomplete", slug="completions", label="correct but incomplete", prefix="I"
 )
 
+#: Where a fix came from: a reviewed submission, or the curation interface.
+SOURCES = ("review", "curated")
+
 #: verdict -> the store its answers are fixed into. A `yes` is in neither:
 #: it goes into the golden set.
 KINDS = {kind.verdict: kind for kind in (CORRECTIONS, COMPLETIONS)}
@@ -100,7 +109,9 @@ class Fix:
     """One stored fix: the question, the incorrect answer, the correct answer."""
 
     fix_id: str
-    submission_id: str
+    #: None for a fix written in the curation interface, which no submission
+    #: produced.
+    submission_id: str | None
     job_id: str
     question: str
     incorrect_sql: str = ""
@@ -117,6 +128,7 @@ class Fix:
     reviewer: str = ""
     review_note: str = ""
     agent_version: str = ""
+    source: str = "review"
     created_at: datetime | None = None
     #: Whether its question has a current vector. Read, never written.
     embedded: bool = False
@@ -145,6 +157,7 @@ FIX_COLUMNS = (
     "reviewer",
     "review_note",
     "agent_version",
+    "source",
 )
 _JSON_COLUMNS = {"incorrect_columns", "corrected_columns", "corrected_rows"}
 
@@ -224,6 +237,18 @@ def ensure_schema(conn: psycopg.Connection, kind: Kind) -> None:
             """
         ).format(sql.Identifier(kind.table))
     )
+    # 5.6: a curated fix has no submission. Re-applied on every start, so a
+    # store created by 5.1-5.5 is widened in place; UNIQUE still holds for
+    # every submission, since NULLs are distinct.
+    conn.execute(
+        sql.SQL("ALTER TABLE {} ALTER COLUMN submission_id DROP NOT NULL").format(sql.Identifier(kind.table))
+    )
+    conn.execute(sql.SQL("ALTER TABLE {} ALTER COLUMN job_id SET DEFAULT ''").format(sql.Identifier(kind.table)))
+    conn.execute(
+        sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'review'").format(
+            sql.Identifier(kind.table)
+        )
+    )
     conn.commit()
 
 
@@ -293,7 +318,7 @@ def save(conn: psycopg.Connection, kind: Kind, fix: Fix) -> Fix:
     conn.execute(
         sql.SQL("LOCK TABLE {} IN SHARE ROW EXCLUSIVE MODE").format(sql.Identifier(kind.table))
     )
-    existing = find_by_submission(conn, kind, fix.submission_id)
+    existing = find_by_submission(conn, kind, fix.submission_id) if fix.submission_id else None
     if existing is not None:
         conn.rollback()
         raise AlreadyFixed(fix.submission_id, existing)
@@ -328,6 +353,23 @@ def delete_by_submission(conn: psycopg.Connection, kind: Kind, submission_id: st
     row = conn.execute(
         sql.SQL("DELETE FROM {} WHERE submission_id = %s RETURNING *").format(sql.Identifier(kind.table)),
         (submission_id,),
+    ).fetchone()
+    conn.commit()
+    return Fix(**dict(row)) if row else None
+
+
+def get(conn: psycopg.Connection, kind: Kind, fix_id: str) -> Fix | None:
+    row = conn.execute(
+        sql.SQL("SELECT * FROM {} WHERE fix_id = %s").format(sql.Identifier(kind.table)), (fix_id,)
+    ).fetchone()
+    return Fix(**dict(row)) if row else None
+
+
+def delete_by_id(conn: psycopg.Connection, kind: Kind, fix_id: str) -> Fix | None:
+    """Take one fix out by its own id, with its vector; None when it is not there."""
+    row = conn.execute(
+        sql.SQL("DELETE FROM {} WHERE fix_id = %s RETURNING *").format(sql.Identifier(kind.table)),
+        (fix_id,),
     ).fetchone()
     conn.commit()
     return Fix(**dict(row)) if row else None
@@ -464,6 +506,14 @@ class FixStore:
     def find_by_submission(self, submission_id: str) -> str | None:
         with connection(self.url) as conn:
             return find_by_submission(conn, self.kind, submission_id)
+
+    def get(self, fix_id: str) -> Fix | None:
+        with connection(self.url) as conn:
+            return get(conn, self.kind, fix_id)
+
+    def delete_by_id(self, fix_id: str) -> Fix | None:
+        with connection(self.url) as conn:
+            return delete_by_id(conn, self.kind, fix_id)
 
     def listing(self, limit: int = 50) -> list[Fix]:
         with connection(self.url) as conn:

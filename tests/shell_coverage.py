@@ -59,6 +59,9 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # And the SQL console interface's: a page that runs SQL, so the same
     # empty-token case matters as much.
     "console/10-nl2sql-console-config.envsh": ("tests/console/test_console_project.py",),
+    # And the curation interface's: the review token again, for the page
+    # that writes the snippets and the golden set.
+    "curate/10-nl2sql-curate-config.envsh": ("tests/curate/test_curate_project.py",),
     # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
     # running it for real would mean building the dataset image.
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),

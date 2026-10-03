@@ -131,7 +131,7 @@ def test_a_question_is_one_trace_shaped_like_the_architecture(server, mlflow_cli
     agents = [(name, kind) for depth, name, kind in tree if depth == 1]
     assert ("Supervisor", "AGENT") in agents and ("Answer", "TASK") in agents
     assert {name for name, kind in agents if kind == "RETRIEVER"} == {
-        "Schema Retriever", "Literal Matcher", "Knowledge Retriever", "Example Retriever",
+        "Schema Retriever", "Literal Matcher", "Knowledge Retriever", "Example Retriever", "Snippet Retriever",
     }
     calls = [name for depth, name, kind in tree if depth == 2 and kind == "CHAT_MODEL"]
     assert len(calls) == sum(e.model_calls for e in state["trace"])

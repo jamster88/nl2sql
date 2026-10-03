@@ -284,3 +284,37 @@ def test_an_empty_experiment_name_is_the_default_one_rather_than_no_name(monkeyp
     experiment called "" is not one MLflow will create."""
     monkeypatch.setenv("MLFLOW_EXPERIMENT_NAME", "")
     assert Settings.from_env().mlflow_experiment_name == "nl2sql-agent"
+
+
+
+def test_snippets_are_on_and_read_as_a_reader_role_by_default(monkeypatch):
+    """The store's owner is the loader's; the agent's URL names the role the
+    loader creates, which can SELECT and nothing else."""
+    from sqlalchemy.engine import make_url
+
+    from nl2sql_agent.config import DEFAULT_SNIPPET_DB_URL
+
+    for var in ("SNIPPETS_ENABLED", "SNIPPET_DB_URL", "SNIPPETS_TOP_K", "SNIPPETS_MIN_SCORE",
+                "SNIPPETS_MIN_SIMILARITY", "SNIPPETS_MAX_CONTEXT_CHARS"):
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings.from_env()
+    assert settings.snippets_enabled is True
+    assert settings.snippet_db_url == DEFAULT_SNIPPET_DB_URL
+    url = make_url(DEFAULT_SNIPPET_DB_URL)
+    assert (url.username, url.host, url.database) == ("snippets_reader", "snippetsdb", "nl2sql_snippets")
+    assert (settings.snippets_top_k, settings.snippets_min_score) == (5, 0.35)
+    assert (settings.snippets_min_similarity, settings.snippets_max_context_chars) == (0.62, 4000)
+
+
+def test_every_snippet_setting_is_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("SNIPPETS_ENABLED", "false")
+    monkeypatch.setenv("SNIPPET_DB_URL", "postgresql+psycopg://r:r@elsewhere/s")
+    monkeypatch.setenv("SNIPPETS_TOP_K", "3")
+    monkeypatch.setenv("SNIPPETS_MIN_SCORE", "0.5")
+    monkeypatch.setenv("SNIPPETS_MIN_SIMILARITY", "0.7")
+    monkeypatch.setenv("SNIPPETS_MAX_CONTEXT_CHARS", "999")
+    settings = Settings.from_env()
+    assert settings.snippets_enabled is False
+    assert settings.snippet_db_url == "postgresql+psycopg://r:r@elsewhere/s"
+    assert (settings.snippets_top_k, settings.snippets_min_score) == (3, 0.5)
+    assert (settings.snippets_min_similarity, settings.snippets_max_context_chars) == (0.7, 999)

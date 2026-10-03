@@ -59,24 +59,38 @@ def test_a_category_can_be_run_on_its_own():
 # ---------------------------------------------------------------------------
 
 
-def test_the_three_configurations_differ_only_in_what_retrieval_is_on():
+def test_the_four_configurations_differ_only_in_what_retrieval_is_on():
     """That is what makes a difference between two rows attributable. If they
     differed in the model or the database too, the comparison would mean nothing.
     """
-    assert set(run_benchmark.CONFIGURATIONS) == {"schema-only", "knowledge", "multi-shot"}
+    assert set(run_benchmark.CONFIGURATIONS) == {"schema-only", "knowledge", "multi-shot", "snippets"}
     keys = [set(c) for c in run_benchmark.CONFIGURATIONS.values()]
     assert all(k == keys[0] for k in keys)
-    assert keys[0] == {"rag_enabled", "examples_enabled", "multi_shot_enabled"}
+    assert keys[0] == {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled"}
 
 
 def test_each_configuration_adds_one_stage_to_the_one_before():
-    schema, knowledge, multi = (
+    schema, knowledge, multi, snippets = (
         run_benchmark.CONFIGURATIONS[name]
-        for name in ("schema-only", "knowledge", "multi-shot")
+        for name in ("schema-only", "knowledge", "multi-shot", "snippets")
     )
     assert not any(schema.values())
     assert knowledge["rag_enabled"] and not knowledge["examples_enabled"]
-    assert all(multi.values())
+    assert not knowledge["snippets_enabled"]
+    assert multi["examples_enabled"] and multi["multi_shot_enabled"] and not multi["snippets_enabled"]
+    assert all(snippets.values())
+
+
+def test_every_retrieval_switch_the_agent_has_is_set_by_each_configuration():
+    """A switch left out is the agent's default in every row -- on -- and the
+    schema-only row quietly stops being schema-only."""
+    from nl2sql_agent.config import Settings
+
+    switches = {name for name in vars(Settings()) if name.endswith("_enabled")}
+    retrieval = {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled"}
+    assert retrieval <= switches
+    for configuration in run_benchmark.CONFIGURATIONS.values():
+        assert set(configuration) == retrieval
 
 
 def test_building_settings_applies_the_configuration_and_the_overrides():
@@ -100,7 +114,15 @@ def test_a_host_default_gives_way_to_the_environment(monkeypatch):
 
 
 def test_the_default_configuration_is_the_full_agent():
-    assert run_benchmark.parse_args([]).config == "multi-shot"
+    assert run_benchmark.parse_args([]).config == "snippets"
+    assert all(run_benchmark.CONFIGURATIONS["snippets"].values())
+
+
+def test_the_snippet_store_is_found_on_its_published_port(monkeypatch):
+    monkeypatch.delenv("SNIPPET_DB_URL", raising=False)
+    settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "snippets")
+    assert settings.snippet_db_url.endswith("@localhost:5438/nl2sql_snippets")
+    assert settings.snippets_enabled is True
 
 
 # ---------------------------------------------------------------------------
@@ -316,11 +338,11 @@ def test_an_unrouted_report_has_no_routing_section(capsys):
 def test_the_comparison_table_lists_every_configuration(capsys):
     reports = [
         BenchmarkReport(label=name, results=[result("B01", "schema", CORRECT, 1.0)])
-        for name in ("schema-only", "knowledge", "multi-shot")
+        for name in ("schema-only", "knowledge", "multi-shot", "snippets")
     ]
     run_benchmark.print_comparison(reports)
     out = capsys.readouterr().out
-    for name in ("schema-only", "knowledge", "multi-shot"):
+    for name in ("schema-only", "knowledge", "multi-shot", "snippets"):
         assert name in out
 
 
@@ -493,9 +515,9 @@ def test_comparing_configurations_runs_each_one_and_prints_the_table(monkeypatch
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert len(agents) == 3, "one agent per configuration"
+    assert len(agents) == 4, "one agent per configuration"
     assert "comparison" in out
-    for configuration in ("schema-only", "knowledge", "multi-shot"):
+    for configuration in ("schema-only", "knowledge", "multi-shot", "snippets"):
         assert configuration in out
 
 

@@ -575,6 +575,11 @@ textarea.input {
   color: var(--text-muted);
 }
 
+/* A loader's own words, one line each as it printed them. */
+.steps .muted {
+  white-space: pre-line;
+}
+
 /* --- status bar ------------------------------------------------------- */
 
 .statusbar {

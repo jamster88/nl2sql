@@ -38,6 +38,12 @@ DEFAULT_EMBED_BASE_URL = "http://host.docker.internal:11434"
 # The vectors for those same pairs live in the pgvector store above.
 DEFAULT_CONTEXT_DB_URL = "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2sql_chunks"
 
+# The snippet store: the SQL snippets of context_questions/sql_snippets.md --
+# joins, filters, measures, dimensions -- with an embedding of what each
+# means. Read as a role that can SELECT and nothing else, which the loader
+# (rag/07_load_snippets.py) creates.
+DEFAULT_SNIPPET_DB_URL = "postgresql+psycopg://snippets_reader:snippets_reader@snippetsdb:5432/nl2sql_snippets"
+
 # The MLflow experiment every run's trace is filed under. One experiment for
 # the agent wherever it runs -- the CLI, the API, the benchmark -- so its
 # traces can be compared side by side; the trace's tags say which it was.
@@ -165,6 +171,24 @@ class Settings:
     # not an experiment. Retrieval stays a separate switch so the examples can
     # still be inspected with multi-shot off.
     multi_shot_enabled: bool = True
+
+    # --- SQL snippets ----------------------------------------------------
+    # Verified pieces of SQL beside what they mean -- a join's keys, what a
+    # phrase filters to, how a measure is calculated -- retrieved by keyword
+    # phrase and by meaning, and shown to the generator when every table
+    # they use is in scope. Best-effort like the rest of retrieval.
+    snippets_enabled: bool = True
+    snippet_db_url: str = DEFAULT_SNIPPET_DB_URL
+    # At most this many shown. A question combines a few -- a measure, a
+    # filter, the join between them -- and more than that is noise.
+    snippets_top_k: int = 5
+    # The combined keyword-and-meaning score a snippet must reach, 0..1.
+    snippets_min_score: float = 0.35
+    # The cosine similarity at which a snippet qualifies on meaning alone,
+    # with none of its keyword phrases in the question. High on purpose: a
+    # question is rarely that close to one snippet by meaning.
+    snippets_min_similarity: float = 0.62
+    snippets_max_context_chars: int = 4000
 
     sample_rows: int = 3
     max_rows: int = 50
@@ -302,6 +326,12 @@ class Settings:
             examples_grounding_weight=_env_float("EXAMPLES_GROUNDING_WEIGHT", 0.25),
             examples_max_context_chars=_env_int("EXAMPLES_MAX_CONTEXT_CHARS", 8000),
             multi_shot_enabled=_env_bool("MULTI_SHOT_ENABLED", True),
+            snippets_enabled=_env_bool("SNIPPETS_ENABLED", True),
+            snippet_db_url=_env_str("SNIPPET_DB_URL", DEFAULT_SNIPPET_DB_URL),
+            snippets_top_k=_env_int("SNIPPETS_TOP_K", 5),
+            snippets_min_score=_env_float("SNIPPETS_MIN_SCORE", 0.35),
+            snippets_min_similarity=_env_float("SNIPPETS_MIN_SIMILARITY", 0.62),
+            snippets_max_context_chars=_env_int("SNIPPETS_MAX_CONTEXT_CHARS", 4000),
             sample_rows=_env_int("SAMPLE_ROWS", 3),
             max_rows=_env_int("MAX_ROWS", 50),
             statement_timeout_ms=_env_int("STATEMENT_TIMEOUT_MS", 30000),

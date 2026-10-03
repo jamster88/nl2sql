@@ -19,6 +19,9 @@ review/gui/coverage
 console/node_modules
 console/dist
 console/coverage
+curate/node_modules
+curate/dist
+curate/coverage
 
 # The desktop client's build output: a jar of about ten megabytes, built from
 # the sources beside it.

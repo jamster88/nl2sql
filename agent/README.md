@@ -30,6 +30,11 @@ contract is [`API.md`](API.md); how it is built is
 the verdict of each of the agent's gates beside the rows -- see
 [The SQL console](#the-sql-console).
 
+**v5.6 adds SQL snippets.** A fifth retriever finds the verified pieces of
+SQL a question's answer is built from -- a join, a filter, a measure, a
+dimension, each beside what it means -- and the generator is shown the ones
+whose tables are in scope. See [SQL snippets (v5.6)](#sql-snippets-v56).
+
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
 
@@ -87,10 +92,10 @@ below -- with the catalog made by
 supervise --+-- retrieve_schema ----+
             |-- retrieve_literals --|
             |-- retrieve_knowledge -+--> aggregate --> generate_sql
-            +-- retrieve_examples --+                       |
-            |                                               v
-            +--> refuse                              validate_static
-                                                            | pass
+            |-- retrieve_examples --|                       |
+            +-- retrieve_snippets --+                       v
+            |                                        validate_static
+            +--> refuse                                     | pass
    give_up <-- repair <------------------------------+      v
                  ^   |                               |  planner_gate --> execute_query
                  |   +-- attempts < max --> generate_sql                      |
@@ -108,7 +113,8 @@ supervise --+-- retrieve_schema ----+
 | 1. Context | `retrieve_literals` | Phrases in the question resolved to real values | -- |
 | 1. Context | `retrieve_knowledge` | Business rules and data-dictionary chunks | -- |
 | 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
-| 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described | -- |
+| 1. Context | `retrieve_snippets` | SQL snippets -- joins, filters, measures, dimensions -- found by keyword phrase and by meaning (v5.6) | -- |
+| 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described; the snippets over those tables | -- |
 | 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
 | 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope | -- |
 | 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
@@ -121,7 +127,7 @@ supervise --+-- retrieve_schema ----+
 | 4. Present | `audit` | Verifies every number against those cells, and that every assumption is stated | -- |
 | 4. Present | `finish` | Renders the markdown answer | -- |
 
-The four Stage 1 retrievers are branches of one LangGraph superstep, so they
+The five Stage 1 retrievers are branches of one LangGraph superstep, so they
 run concurrently and `aggregate` is the fan-in. Each is best-effort: one that
 cannot reach its store records why in `retrieval_errors` and the run continues
 without it. With all of them down the pipeline degrades to schema-only, which
@@ -181,6 +187,7 @@ invoked at fixed points:
 |---|---|---|
 | `search_knowledge` | `retrieve_knowledge` | The business-rule and data-dictionary collections |
 | `search_examples` | `retrieve_examples` | The golden pairs, through the three-retriever ensemble |
+| `search_snippets` | `retrieve_snippets` | The SQL snippets, by keyword phrase and by meaning |
 | `get_schema_and_data` | `aggregate` | Columns, types, keys, comments and sample rows |
 | `describe_all_tables` | `retrieve_schema`, only under `SCHEMA_RETRIEVAL=llm` | The whole catalog, for v3's table-selection call |
 | `execute_query` | -- | Retained for callers outside the graph; the graph executes through `Database` directly so it can pass a principal |
@@ -538,6 +545,12 @@ Every setting is an environment variable with a CLI override:
 | `EXAMPLES_RERANK_LAMBDA` | -- | 0.5 |
 | `EXAMPLES_GROUNDING_WEIGHT` | -- | 0.25 |
 | `EXAMPLES_MAX_CONTEXT_CHARS` | -- | 8000 |
+| `SNIPPETS_ENABLED` | `--snippets` / `--no-snippets` | on |
+| `SNIPPET_DB_URL` | `--snippet-db-url` | the compose snippetsdb, as the read-only `snippets_reader` role |
+| `SNIPPETS_TOP_K` | `--snippets-top-k` | 5 |
+| `SNIPPETS_MIN_SCORE` | -- | 0.35, the combined score a snippet must reach |
+| `SNIPPETS_MIN_SIMILARITY` | -- | 0.62, the cosine similarity at which meaning alone qualifies a snippet |
+| `SNIPPETS_MAX_CONTEXT_CHARS` | -- | 4000 |
 
 Any Ollama model and host works:
 
@@ -724,6 +737,63 @@ the embedding host -- and all three surface as `ExamplesUnavailableError`, which
 `state.examples_error`. A run without examples is a v2 run; a run without either
 retrieval is a v1 run.
 
+
+## SQL snippets (v5.6)
+
+The knowledge base says how the database works and the golden pairs show
+whole questions answered. A snippet is the piece in between: one join, one
+filter, one measure or one dimension, written as SQL that ran against this
+database, beside what it means in a question's words. "Store brands" is
+`p.is_private_label`; "transactions" is `COUNT(DISTINCT f.basket_id)`; sales
+reach the fiscal calendar through `f.sales_date_key`, not the date itself.
+They are curated in
+[`context_questions/sql_snippets.md`](../context_questions/sql_snippets.md)
+and loaded by [`rag/07_load_snippets.py`](../rag/07_load_snippets.py) into a
+store of their own, which the agent reads as `snippets_reader`, a role that
+can only `SELECT`. The code is
+[`nl2sql_agent/snippets.py`](nl2sql_agent/snippets.py).
+
+**Two signals, because each misses what the other finds.**
+
+| Signal | Searches | Finds |
+|---|---|---|
+| keywords | the phrases a curator listed, and the snippet's name, matched in the store | "private label" when the question says it |
+| meaning | an embedding of what each snippet means (pgvector, cosine) | "spend per trip" for average basket value |
+
+A keyword phrase matches when every one of its words is in the question, in
+any order and inflection, once the stopwords are gone, so "stores" alone
+does not reach the store-brand snippet the way a bag of words would. A match
+weighs the IDF of its words, summed. Each signal is put on a fixed 0..1
+scale: keywords as `1 - exp(-weight / 3)`, so a word one snippet in thirty
+uses counts about 0.64 and a two-word phrase of them about 0.87; meaning
+between a cosine of 0.35 (unrelated) and 0.65 (as close as a question gets to
+one snippet). The two are averaged. A snippet qualifies when a phrase
+matched or when its meaning alone reaches `SNIPPETS_MIN_SIMILARITY`. It is
+kept when the average reaches `SNIPPETS_MIN_SCORE`, and at most
+`SNIPPETS_TOP_K` are kept, best first.
+
+Neither scale is relative to the question's best candidate, for opposite
+reasons. A relative meaning scale would call the nearest of several
+unrelated snippets a perfect match. A relative keyword scale did worse in
+practice: in "What was our click-through rate by channel on weekends in
+fiscal year 2025?", the long phrase "click-through rate" pushed an exact
+"weekends" and "fiscal year" below the bar. A question that combines a
+measure, a filter and the join between them is the case snippets are for.
+
+**Shown only when their tables are in scope.** The retriever runs beside the
+other four and proposes no tables. The Context Aggregator keeps the snippets
+whose tables are all in the selected set, renders them -- kind, name,
+meaning, the `FROM` clause and the SQL -- under their own instruction after
+the knowledge block, and recomputes them when a repair widens the scope. A
+snippet is a hint about tables already in play, never a reason to bring one
+in: that is the schema retriever's decision. With none in scope the block is
+empty and the prompt is byte for byte the one 5.5.1 sent.
+
+**Degradation.** The keyword half needs only the store; the meaning half
+needs the embedding host too. With the host down the keyword half still
+answers and the trace says why meaning sat out. With the store down,
+`search_snippets` returns an empty list and a reason, recorded in
+`retrieval_errors` like any other retriever's. `--no-snippets` turns it off.
 
 ## Safety
 

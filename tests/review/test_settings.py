@@ -43,6 +43,11 @@ ENVIRONMENT = {
     "VECTOR_DB_URL": "postgresql://v/db",
     "OLLAMA_URL": "http://ollama:11434",
     "EMBED_MODEL": "nomic",
+    "REVIEW_SNIPPETS_DOCUMENT": "/snippets.md",
+    "SNIPPETS_DB_URL": "postgresql://s/db",
+    "SNIPPETS_READER_USER": "reader",
+    "SNIPPETS_READER_PASSWORD": "rpw",
+    "REVIEW_RELOAD_SNIPPETS": "false",
     "REVIEW_DOCS_ENABLED": "false",
     "REVIEW_LOG_LEVEL": "debug",
 }
@@ -152,6 +157,18 @@ def test_embedding_without_loading_is_reported_as_the_mistake_it_is():
 def test_storing_fixes_without_their_vectors_is_reported():
     notes = ReviewSettings(embed_fixes=False).warnings()
     assert any("REVIEW_EMBED_FIXES is off" in note for note in notes)
+
+
+def test_writing_snippets_without_loading_them_is_reported():
+    notes = ReviewSettings(reload_snippets=False).warnings()
+    assert any("REVIEW_RELOAD_SNIPPETS is off" in note and "07_load_snippets.py" in note for note in notes)
+
+
+def test_the_snippet_document_and_store_default_to_the_compose_layout():
+    settings = ReviewSettings()
+    assert str(settings.snippets_document_path) == "/app/context_questions/sql_snippets.md"
+    assert settings.snippets_db_url.endswith(":5438/nl2sql_snippets")
+    assert (settings.snippets_reader_user, settings.snippets_reader_password) == ("snippets_reader",) * 2
 
 
 def test_a_well_configured_service_warns_about_nothing(tmp_path):

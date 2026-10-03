@@ -5,7 +5,7 @@ Fifteen questions, scored on **accuracy first and speed second**.
 ```bash
 ./launch.sh                               # the stack has to be up
 python benchmarks/run_benchmark.py        # the full agent
-python benchmarks/run_benchmark.py --compare   # schema-only vs knowledge vs multi-shot
+python benchmarks/run_benchmark.py --compare   # schema-only vs knowledge vs multi-shot vs snippets
 ```
 
 ## What is measured
@@ -216,15 +216,20 @@ at is visible there. `--json` carries both, and each question's routes.
 
 ## Comparing configurations
 
-`--compare` runs the same questions through three configurations that differ
+`--compare` runs the same questions through four configurations that differ
 **only** in what retrieval is switched on, so a difference between two rows is
 attributable to that stage and nothing else:
 
-| | Knowledge base | Worked examples | Equivalent to |
-|---|---|---|---|
-| `schema-only` | off | off | v1 |
-| `knowledge` | on | off | v2 |
-| `multi-shot` | on | on | v3 |
+| | Knowledge base | Worked examples | SQL snippets | Equivalent to |
+|---|---|---|---|---|
+| `schema-only` | off | off | off | v1 |
+| `knowledge` | on | off | off | v2 |
+| `multi-shot` | on | on | off | v3 to v5.5 |
+| `snippets` | on | on | on | v5.6, the agent as it ships, and the default |
+
+The snippet store is found on its published port, `localhost:5438`, unless
+`SNIPPET_DB_URL` says otherwise. The measurements below predate the
+`snippets` configuration.
 
 ## Options
 
@@ -241,7 +246,7 @@ It exits non-zero when anything was not correct, so CI can gate on it.
 The database URLs default to the **published ports on localhost**, because the
 benchmark runs on the host while the agent normally runs inside compose, where
 the same names are service names. Set `DATABASE_URL`, `VECTOR_DB_URL`,
-`CONTEXT_DB_URL` or `EMBED_BASE_URL` to override any of them.
+`CONTEXT_DB_URL`, `SNIPPET_DB_URL` or `EMBED_BASE_URL` to override any of them.
 
 ## MLflow
 

@@ -300,7 +300,7 @@ class TraceEntry:
 
 
 # --- reducers ---------------------------------------------------------------
-# Stage 1's four retrievers are branches of one LangGraph superstep, so they
+# Stage 1's five retrievers are branches of one LangGraph superstep, so they
 # return their updates concurrently. A key two branches both write needs a
 # reducer or the graph refuses the update; a key only one branch writes does
 # not. Only these two are shared: every retriever may record a failure, and
@@ -345,6 +345,13 @@ class AgentState(TypedDict, total=False):
     example_shots: list[Shot]
     example_tables: list[str]
     example_pairs: list[dict[str, Any]]
+    #: The Snippet Retriever's finds (v5.6): verified joins, filters, measures
+    #: and dimensions, beside the summaries the trace and --json show.
+    snippets: list[Any]
+    snippet_hits: list[dict[str, Any]]
+    #: The ones whose tables are all in scope, as the generator reads them --
+    #: written by the Context Aggregator, which is where scope is decided.
+    snippet_context: str
     schema_tables: list[str]  # what the Schema Retriever alone proposed
     retrieval_errors: Annotated[dict[str, str], merge_errors]
     #: The generator's task, scored by the Context Aggregator (arch5.2).
@@ -411,6 +418,9 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "example_shots": [],
         "example_tables": [],
         "example_pairs": [],
+        "snippets": [],
+        "snippet_hits": [],
+        "snippet_context": "",
         "schema_tables": [],
         "retrieval_errors": {},
         "complexity": Complexity(),

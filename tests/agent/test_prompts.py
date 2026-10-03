@@ -18,6 +18,7 @@ from nl2sql_agent.prompts import (
     example_messages,
     knowledge_block,
     literal_block,
+    snippet_block,
     task_block,
 )
 
@@ -357,3 +358,27 @@ def test_the_supervisor_prompt_asks_for_the_contracts_three_fields():
     text = render(SUPERVISOR_PROMPT.format_messages(domain="d", question="q")).lower()
     assert "entities" in text and "measure" in text and "period" in text
     assert "write none" in text
+
+
+# ---------------------------------------------------------------------------
+# v5.6: the snippet block
+# ---------------------------------------------------------------------------
+
+
+def test_the_snippet_block_renders_nothing_when_no_snippet_applies():
+    """And the template defaults it empty, so a caller that predates it
+    renders the prompt it always did."""
+    assert snippet_block("") == ""
+    assert snippet_block("  \n ") == ""
+    messages = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge="", literals="", task="", examples=[],
+        question="q", feedback="",
+    )
+    assert "snippets" not in messages[-1].content
+
+
+def test_the_snippet_block_carries_its_own_instruction():
+    rendered = snippet_block("[S19 measure] Net sales -- Revenue.\n  SELECT SUM(f.net_sales_amt)")
+    assert rendered.startswith("SQL snippets for this database whose meaning matches the question")
+    assert "ignore the rest" in rendered
+    assert rendered.endswith("SELECT SUM(f.net_sales_amt)\n\n")

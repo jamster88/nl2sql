@@ -82,6 +82,15 @@ def test_retrieval_flags_map_onto_settings():
     assert settings.rag_top_k == 6
 
 
+def test_snippet_flags_map_onto_settings():
+    settings = cli.settings_from_args(
+        cli.parse_args(["--no-snippets", "--snippet-db-url", "postgresql+psycopg://r@h/s", "--snippets-top-k", "2"])
+    )
+    assert settings.snippets_enabled is False
+    assert settings.snippet_db_url == "postgresql+psycopg://r@h/s"
+    assert settings.snippets_top_k == 2
+
+
 def test_no_rag_flag_disables_retrieval():
     settings = cli.settings_from_args(cli.parse_args(["--no-rag", "q"]))
     assert settings.rag_enabled is False
@@ -100,7 +109,12 @@ def test_rag_is_on_by_default(monkeypatch):
 
 @pytest.mark.parametrize(
     ("flag", "setting"),
-    [("--rag", "RAG_ENABLED"), ("--examples", "EXAMPLES_ENABLED"), ("--multi-shot", "MULTI_SHOT_ENABLED")],
+    [
+        ("--rag", "RAG_ENABLED"),
+        ("--examples", "EXAMPLES_ENABLED"),
+        ("--multi-shot", "MULTI_SHOT_ENABLED"),
+        ("--snippets", "SNIPPETS_ENABLED"),
+    ],
 )
 @pytest.mark.parametrize("value", ["true", "false", None])
 def test_each_switchs_help_says_the_default_the_parser_really_has(monkeypatch, flag, setting, value):
@@ -187,9 +201,10 @@ def test_answer_json_mode_emits_full_state_and_error_flag(capsys):
     # Retrieval provenance travels with the answer, so a result can be traced
     # back to the chunks that shaped it.
     assert payload["knowledge_chunks"][0]["chunk_id"] == "biz:1"
-    # v3 carried a single retrieval_error; v4 has four retrievers that fail
+    # v3 carried a single retrieval_error; v4 has retrievers that fail
     # independently, so the provenance is a dict keyed by which one.
     assert payload["retrieval_errors"] == {}
+    assert payload["snippet_hits"] == []
     # arch5: what a complete answer was held to, and what it assumed.
     assert payload["answer_contract"] is None
     assert payload["completeness"] is None
@@ -326,6 +341,19 @@ def test_interactive_mode_names_the_example_store_only_when_examples_are_on(monk
     out = capsys.readouterr().out
     assert "Worked examples:" not in out
     assert "Ctrl-D to exit" in out
+
+
+def test_interactive_mode_names_the_snippet_store_only_when_snippets_are_on(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
+
+    cli.main(["--snippets-top-k", "4"])
+    out = capsys.readouterr().out
+    assert "SQL snippets: by keyword phrase and by meaning" in out
+    assert "up to 4 shown when their tables are in scope" in out
+
+    cli.main(["--no-snippets"])
+    assert "SQL snippets:" not in capsys.readouterr().out
 
 
 def test_interactive_mode_answers_each_question_and_skips_blank_input(monkeypatch, capsys):

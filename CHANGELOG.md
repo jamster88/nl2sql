@@ -57,6 +57,15 @@ release.
 ### Published
 - `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-curate-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_6_1` (amd64, arm64); `nl2sql-desktop-build:v5_6_1-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-03 UTC), each checked absent just before its push. Checked after: the agent runs 5.6.1 on both architectures with `written_cells` and the narrator's 5.5.1 prompt, the review service 5.6.1 with the snippet loader; every image is labelled 5.6.1 on both; every desktop jar is 5.6.1 with its own platform's native code; `tests/docker/test_published_images.py`, 19 passed. `start.sh --review --curate --console --mlflow` then found `.env` pinning `v5_6`, re-ran `setup.sh`, pulled the thirteen tags and brought every page up; the snippet store already held the document, so nothing was re-embedded. Through it the published agent answered the click-through question with its narrative passing the audit on the first pass.
 
+### After publishing
+In the checkout, not in the `v5_6_1` images: a coverage and relevance audit
+of the tests, and the documentation it found wanting. No image changed.
+- Coverage held: 100% of the Python, statements and branches, with the tests themselves measured as well -- what they leave unexecuted is skips, failure messages and the canary a formula must never call; all four web interfaces at 100%; the desktop client under JaCoCo; every shell script and nginx fragment at 100% by the shell measurement.
+- `tests/curate/test_curate_compose.py` -- the snippet store's own settings (owner, password, database, port, image) set through compose and found in the store, the review service's owner URL and the agent's reader URL; the review service pointed at another store; and every setting of the curation page set by its compose name and found under the name nginx reads. Ten of 5.6's compose settings had been exercised by nothing.
+- `tests/docs/test_docs.py` -- every setting the snippet store and the curation page read has a documented row with its default; every setting the review service reads has a row in `review/README.md`, which found two, `REVIEW_DOCS_ENABLED` and `REVIEW_LOG_LEVEL`, with none since they were added; `rag/README.md`'s count of database-backed tests is read. `tests/docs/test_versions.py` -- the README's "twenty-four places" and "thirteen tags" are counted from the declarations and `setup.sh`.
+- Removed: the fake `docker`'s `FAKE_GOLDEN_EMBEDDED`, a switch no test set; two `--help` tests for the curation flags, which `test_every_parsed_flag_appears_in_the_usage_text` already asks of every flag; an unused import and a second import of the same module in two older test files.
+- `README.md` -- the snippet store's settings, five retrievers in the trace sketch, test counts; `review/README.md` -- the two settings; `USAGE_GUIDE.md`, `agent/USAGE.md`, `benchmarks/README.md` -- four databases, not three, and the snippet store among those `setup.sh` starts and `docker compose stop` names; five Stage 1 retrievers since v5.6.
+
 ## v5_6 (5.6.0) -- 2026-10-03
 
 SQL snippets: pieces of SQL that have been run against this database, each

@@ -22,6 +22,9 @@ their own and are listed under the release they shipped with. A version marked
 - Version 5.6.1 in every declaration; `setup.sh` pins `v5_6_1`.
 - All thirteen app image tags published as `v5_6_1`.
 
+**After publishing** (tests and documentation; no image changed)
+- A coverage and relevance audit: still 100% everywhere; the snippet store's and the curation page's compose settings are exercised and documented with their defaults; two review settings documented; a fake switch nobody set and two duplicate tests removed.
+
 ## v5_6 (5.6.0) -- 2026-10-03
 
 **Added**

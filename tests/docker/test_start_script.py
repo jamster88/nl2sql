@@ -1426,8 +1426,3 @@ def test_desktop_and_curate_still_opens_the_curation_page(run_start):
     assert "write snippets, golden pairs and fixes, each run first" in result.output
     quiet = run_start("--desktop", "--curate", "--no-browser", env_file=_PINNED_FOR_CURATION, env=env)
     assert "Curation interface at http://localhost:8083" in quiet.output
-
-
-def test_the_help_offers_the_curation_interface(run_start):
-    output = run_start("--help").output
-    assert "--curate" in output and "written" in output

@@ -186,8 +186,8 @@ every retry, and the useful number is the total.
 
 For a v3 run the harness times the gaps between the agent's progress callbacks:
 the graph calls back as each node finishes, so the gap is that node's duration.
-The v4 pipeline breaks that assumption. Its four Stage 1 retrievers are branches
-of one superstep and run concurrently, so the gap after one of them is not its
+The v4 pipeline breaks that assumption. Its Stage 1 retrievers -- four in v4,
+five since v5.6 -- are branches of one superstep and run concurrently, so the gap after one of them is not its
 duration.
 
 So each v4 node times itself and reports the result in `state["trace"]`, and the

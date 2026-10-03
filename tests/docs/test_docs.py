@@ -599,6 +599,31 @@ def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(r
             assert any(f"`{default}`" in row for row in rows), f"README.md never says {name} defaults to {default}"
 
 
+def _documented_with_defaults(service: str, readme: str, document: str) -> None:
+    """Every setting a compose service takes from `.env`, image pins aside,
+    has a row in `document` -- with the default compose falls back to, where
+    that is one value."""
+    settings = {
+        name: default
+        for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", _compose_service(service))
+        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
+    }
+    assert settings, f"no settings found in {service} -- the regex needs updating"
+    for name, default in sorted(settings.items()):
+        rows = _rows(readme, name)
+        assert rows, f"compose's {service} reads {name}, which {document} never lists"
+        if default and "," not in default:
+            assert any(f"`{default}`" in row for row in rows), f"{document} never says {name} defaults to {default}"
+
+
+def test_every_setting_the_snippet_store_reads_is_documented_with_its_default(root_readme: str):
+    _documented_with_defaults("snippetsdb", root_readme, "README.md")
+
+
+def test_every_setting_the_curation_page_reads_is_documented_with_its_default():
+    _documented_with_defaults("curategui", (REPO_ROOT / "curate" / "README.md").read_text(), "curate/README.md")
+
+
 # ---------------------------------------------------------------------------
 # The SQL console's surface
 # ---------------------------------------------------------------------------
@@ -611,6 +636,17 @@ def console_readme() -> str:
 
 def _rows(doc: str, name: str) -> list[str]:
     return [line for line in doc.splitlines() if line.startswith("|") and f"`{name}`" in line]
+
+
+def test_every_review_setting_is_documented():
+    """The console's rule, for the service that can rewrite the golden set and
+    the snippets: two of its settings had no row until this test asked."""
+    source = (REPO_ROOT / "review" / "nl2sql_review" / "settings.py").read_text()
+    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    assert len(names) > 20, "the review service's settings were not found -- the regex needs updating"
+    readme = (REPO_ROOT / "review" / "README.md").read_text()
+    for name in sorted(names):
+        assert _rows(readme, name), f"{name} is read by the review service but has no row in review/README.md"
 
 
 def test_every_console_setting_is_documented(console_readme: str):
@@ -875,3 +911,5 @@ def test_the_rag_readme_quotes_the_real_number_of_rag_tests():
     text = (REPO_ROOT / "rag" / "README.md").read_text()
     quoted = int(re.search(r"pytest tests/rag --run-docker\n```\n\n(\d+) tests:", text).group(1))
     assert quoted == _collected("--run-docker", "tests/rag")
+    behind = int(re.search(r"(\d+) of them need a database", text).group(1))
+    assert behind == _collected("--run-docker", "-m", "docker", "tests/rag")

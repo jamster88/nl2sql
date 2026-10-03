@@ -1147,11 +1147,5 @@ def test_without_retrieval_no_snippet_store_is_started(run_setup):
     assert not result.called("07_load_snippets.py")
 
 
-def test_the_help_offers_the_curation_interface(run_setup):
-    output = run_setup("--help").output
-    for flag in ("--curate ", "--curate-gui-image", "--curate-gui-tag"):
-        assert flag in output, flag
-
-
 def test_the_closing_lines_point_at_the_curation_interface(run_setup):
     assert "./launch.sh --curate                     # http://localhost:8083" in run_setup().output

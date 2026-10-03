@@ -98,6 +98,35 @@ def test_a_lockfile_is_listed_for_every_npm_project():
     assert _tracked("*package-lock.json") == set(LOCKFILES)
 
 
+_NUMBER_WORDS = {
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
+    "twenty": 20, "twenty-two": 22, "twenty-four": 24, "twenty-six": 26, "twenty-eight": 28,
+}
+
+
+def _said(pattern: str) -> int:
+    """The number word before `pattern` in README.md, as a number."""
+    readme = " ".join((REPO_ROOT / "README.md").read_text().split())
+    match = re.search(rf"\b([a-z-]+) {pattern}", readme)
+    assert match, f"README.md no longer says how many {pattern}"
+    assert match.group(1) in _NUMBER_WORDS, f"README.md says {match.group(1)!r} {pattern}, which is not a count"
+    return _NUMBER_WORDS[match.group(1)]
+
+
+def test_the_readme_counts_the_places_a_release_moves_and_the_tags_it_publishes():
+    """Two number words that track code and that nothing read: the README
+    still said "twenty places" after 5.6's curation interface made it
+    twenty-four, and only a read-through noticed. Every lockfile says the
+    version twice; the desktop image is a tag per platform."""
+    assert _said("places that say so to the same number") == len(DECLARATIONS) + 2 * len(LOCKFILES)
+    setup_sh = (REPO_ROOT / "setup.sh").read_text()
+    release = re.search(r'^AGENT_TAG="([^"]+)"', setup_sh, re.MULTILINE).group(1)
+    families = re.findall(rf'^(\w+)_TAG="{release}"', setup_sh, re.MULTILINE)
+    platforms = 5  # mac-aarch64, mac, linux, linux-aarch64, win
+    assert "DESKTOP" in families
+    assert _said("tags `setup.sh` pins") == len(families) - 1 + platforms
+
+
 def test_the_published_tags_are_this_version():
     """`setup.sh` pins nine tags and they all move together. A tag is the
     version with dots turned into underscores, truncated to however many

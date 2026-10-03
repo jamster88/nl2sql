@@ -64,6 +64,36 @@ def test_the_snippet_store_has_a_port_of_its_own(services: dict):
             assert "5438" not in ports, name
 
 
+def test_the_stores_own_settings_reach_the_store_its_owner_and_its_reader(tmp_path_factory):
+    """Every name compose reads for the store, set at once: the role and
+    database the store is created with are the ones the review service loads
+    it as and the agent reads from, and the port and image move with them."""
+    config = _compose_config(
+        tmp_path_factory.mktemp("store"), *EVERY,
+        env={
+            "SNIPPETS_DB_USER": "owner", "SNIPPETS_DB_PASSWORD": "pw", "SNIPPETS_DB_NAME": "snips",
+            "SNIPPETS_DB_PORT": "6438", "SNIPPETS_IMAGE": "example/pgvector:test",
+        },
+    )
+    store, review, agent = (config["services"][name] for name in ("snippetsdb", "review", "agent"))
+    assert {k: store["environment"][k] for k in ("POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DB")} == {
+        "POSTGRES_USER": "owner", "POSTGRES_PASSWORD": "pw", "POSTGRES_DB": "snips",
+    }
+    assert store["healthcheck"]["test"][-1] == "pg_isready -U owner -d snips"
+    assert [p["published"] for p in store["ports"]] == ["6438"]
+    assert store["image"] == "example/pgvector:test"
+    assert review["environment"]["SNIPPETS_DB_URL"] == "postgresql://owner:pw@nl2sql-snippetsdb:5432/snips"
+    assert agent["environment"]["SNIPPET_DB_URL"].endswith("@snippetsdb:5432/snips")
+
+
+def test_the_review_service_can_be_pointed_at_another_store(tmp_path_factory):
+    config = _compose_config(
+        tmp_path_factory.mktemp("elsewhere"), *EVERY,
+        env={"REVIEW_SNIPPETS_DB_URL": "postgresql://o:p@elsewhere:5432/s"},
+    )
+    assert config["services"]["review"]["environment"]["SNIPPETS_DB_URL"] == "postgresql://o:p@elsewhere:5432/s"
+
+
 @pytest.mark.parametrize("service", ["agent", "api", "review"])
 def test_everything_that_reads_or_loads_it_waits_for_it(services: dict, service: str):
     assert services[service]["depends_on"]["snippetsdb"]["condition"] == "service_healthy"
@@ -152,6 +182,32 @@ def _proxy_variables() -> set[str]:
     gui = REPO_ROOT / "curate"
     sources = (gui / "nginx.conf.template").read_text() + (gui / "10-nl2sql-curate-config.envsh").read_text()
     return set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {"CURATE_AUTH_HEADER", "NGINX_CURATE_UPSTREAM_TLS_CONF"}
+
+
+def test_each_setting_of_the_page_is_set_by_the_name_compose_documents(tmp_path_factory):
+    """The names in `.env` are not the names nginx reads -- `CURATE_GUI_UPSTREAM`
+    becomes `CURATE_UPSTREAM` -- so each is set here, all at once, and found
+    where the page reads it."""
+    config = _compose_config(
+        tmp_path_factory.mktemp("page"), *EVERY,
+        env={
+            "CURATE_GUI_PORT": "9083", "CURATE_GUI_UPSTREAM": "https://elsewhere:9444",
+            "CURATE_GUI_SSL_NAME": "elsewhere", "CURATE_GUI_CACERT": "/certs/other.crt",
+            "CURATE_GUI_READ_TIMEOUT": "60s", "CURATE_GUI_RESOLVER": "10.0.0.2",
+            "CURATE_GUI_IMAGE_NAME": "example/curate", "CURATE_GUI_IMAGE_TAG": "test",
+        },
+    )
+    page = config["services"]["curategui"]
+    assert {k: page["environment"][k] for k in (
+        "CURATE_GUI_PORT", "CURATE_UPSTREAM", "CURATE_SSL_NAME", "CURATE_CACERT",
+        "CURATE_READ_TIMEOUT", "CURATE_GUI_RESOLVER",
+    )} == {
+        "CURATE_GUI_PORT": "9083", "CURATE_UPSTREAM": "https://elsewhere:9444",
+        "CURATE_SSL_NAME": "elsewhere", "CURATE_CACERT": "/certs/other.crt",
+        "CURATE_READ_TIMEOUT": "60s", "CURATE_GUI_RESOLVER": "10.0.0.2",
+    }
+    assert [(p["published"], p["target"]) for p in page["ports"]] == [("9083", 9083)]
+    assert page["image"] == "example/curate:test"
 
 
 def test_every_setting_the_proxy_reads_can_be_set_through_compose_and_nothing_else_is(curategui: dict):

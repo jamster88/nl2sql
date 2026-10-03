@@ -579,6 +579,8 @@ The error envelope is the agent API's, so one client parses both:
 | `REVIEW_TLS_ENABLED` | `true` | Serve HTTPS |
 | `REVIEW_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | PEM certificate |
 | `REVIEW_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | PEM private key |
+| `REVIEW_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc`; `false` leaves only `/openapi.json` |
+| `REVIEW_LOG_LEVEL` | `info` | uvicorn's log level |
 
 This service **presents the certificate the agent API generates** and never
 writes one of its own. A second copy of the certificate code would be 250

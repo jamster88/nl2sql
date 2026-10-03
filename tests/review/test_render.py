@@ -266,8 +266,6 @@ def test_extra_meta_that_is_not_a_mapping_is_ignored():
 # Removing (5.4)
 # ---------------------------------------------------------------------------
 
-from ragproc import golden_pairs as gp  # noqa: E402
-
 from .conftest import pair_after  # noqa: E402
 
 

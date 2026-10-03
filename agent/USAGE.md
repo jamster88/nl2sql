@@ -551,13 +551,14 @@ That has to match `--embed-model`.
 
 ## Stopping
 
-The agent container removes itself after each question. The three databases
+The agent container removes itself after each question. The four databases
 keep running until you stop them:
 
 ```bash
-docker compose stop postgres vectordb chunkdb   # keeps data
+docker compose stop postgres vectordb chunkdb snippetsdb   # keeps data
 docker compose down                     # removes the containers, keeps data
 docker compose down -v                  # also deletes their volumes, resetting the
-                                        # three databases to what the images ship
+                                        # databases to what the images ship, and the
+                                        # snippet store to empty until the next start
 docker compose --profile '*' down       # everything else ./start.sh started, too
 ```

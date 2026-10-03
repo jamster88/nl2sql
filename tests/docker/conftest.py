@@ -198,8 +198,8 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
         fi
         if [[ "$*" == *"--entrypoint sh review"* ]]; then
             # launch.sh --load-golden: the two golden-pair loaders, run in the
-            # review service's image. What they print, as the real ones do;
-            # FAKE_GOLDEN_EMBEDDED is how many pairs each vector table took.
+            # review service's image. What they print, as the real ones do,
+            # for a document the stores already hold.
             printf '%s\n' "/app/context_questions/translated_questions.md -> golden_pairs: 48 pairs across 25 suites" \
                 "  48 rows written, 0 stale rows removed" \
                 "  BM25 over english lexemes: 48 documents, 412 distinct terms, avg keyword length 6.1 (k1=1.2, b=0.75)"
@@ -207,10 +207,9 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
                 echo "error: Could not reach Ollama at http://host.docker.internal:11434" >&2
                 exit 1
             fi
-            embedded="${FAKE_GOLDEN_EMBEDDED:-0}"
             printf '%s\n' "48 golden pairs in the context store" "embedding with ollama:bge-m3 (1024 dimensions)" \
-                "  question         -> golden_pair_question_vectors: $embedded embedded, $((48 - embedded)) already current, 0 removed" \
-                "  reasoning_target -> golden_pair_reasoning_vectors: $embedded embedded, $((48 - embedded)) already current, 0 removed"
+                "  question         -> golden_pair_question_vectors: 0 embedded, 48 already current, 0 removed" \
+                "  reasoning_target -> golden_pair_reasoning_vectors: 0 embedded, 48 already current, 0 removed"
             exit 0
         fi
         if [[ "$*" == *" logs "* || "$*" == *" logs" ]]; then

@@ -1008,6 +1008,15 @@ pair's SQL must also return rows, because in the golden set an empty result
 reads as a failure, and since 5.6 a promotion out of the review queue is held
 to the same rule. A snippet's SQL must use the tables it says it does.
 
+The store reads these from `.env`, like the rest of the stack:
+
+| Setting | Default | |
+|---|---|---|
+| `SNIPPETS_DB_PORT` | `5438` | The host port of the snippet store |
+| `SNIPPETS_DB_USER`, `SNIPPETS_DB_PASSWORD`, `SNIPPETS_DB_NAME` | `snippets`, `snippets`, `nl2sql_snippets` | The store's owner and database: what the store is created with, and what the review service loads it as |
+| `SNIPPETS_READER_USER`, `SNIPPETS_READER_PASSWORD` | `snippets_reader` | The read-only role the loader creates and the agent reads as |
+| `SNIPPETS_IMAGE` | `pgvector/pgvector:pg18` | The store's image: stock pgvector, since what it holds comes from the document |
+
 Snippets and golden pairs are written into the documents in this checkout, so
 they show up in `git diff` and are committed by a person. Fixes are rows in
 their stores, as they are when a review produces them.
@@ -1076,11 +1085,11 @@ the Model Router chose it by.
 nl2sql                      AGENT       the question in, the answer out
   Supervisor                AGENT
     qwen3.8-256k:latest     CHAT_MODEL  the screening call
-  Schema Retriever          RETRIEVER   the four retrievers, which ran
+  Schema Retriever          RETRIEVER   the five retrievers, which ran
   Literal Matcher           RETRIEVER   concurrently, under the run that
   Knowledge Retriever       RETRIEVER   asked for them
   Example Retriever         RETRIEVER
-  Snippet Retriever         RETRIEVER   (v5.6: five, with the snippets)
+  Snippet Retriever         RETRIEVER
   Context Aggregator        TASK
   SQL Generator             AGENT
     <model>                 CHAT_MODEL  a routed call that fell back is two
@@ -1596,8 +1605,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3658 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 4357, including ones that build and run containers
+pytest                                          # 3660 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 4362, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1616,7 +1625,7 @@ pytest --run-docker --run-node --run-java       # all 4357, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 653 tests behind `--run-docker` are the ones that need a working daemon:
+The 656 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console and desktop images and run them, resolve the real
 compose file, query the live databases, trace into a real MLflow server, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
@@ -1637,7 +1646,7 @@ default run. Those three scripts' suites are most of the five minutes: each
 test runs the real script, and each of `start.sh`'s runs the real `setup.sh`
 and `launch.sh` beneath it.
 
-Twenty-eight of those 653 also need the **embedding host**: a local Ollama
+Twenty-eight of those 656 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with

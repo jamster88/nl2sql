@@ -11,7 +11,6 @@ No database and no embedding model: the parser is pure text.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 

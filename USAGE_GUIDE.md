@@ -134,7 +134,8 @@ cd nl2sql
 ```
 
 `setup.sh` pulls the images, pins their tags in a `.env` file, starts the
-three databases, checks that both models are reachable, and finishes by
+four databases -- loading the SQL snippets into the last -- checks that both
+models are reachable, and finishes by
 proving the agent container can retrieve from the knowledge base:
 
 ```

@@ -438,6 +438,57 @@ def _indexed_table(result: QueryResult, *, max_rows: int) -> str:
     return "\n".join(lines)
 
 
+# A cell address the narrator wrote into its sentence -- "..., as shown in
+# row 0, column ctr", "(rows 1 and 2)". On a live run it did that on its
+# first pass for every claim, and left `cells` empty: the address went into
+# the prose instead of the field. The audit then found no cell behind the
+# number and dropped every claim, and before that it read the row index as a
+# figure nothing backs. So the address is read as the citation it is, when
+# the claim has none of its own, and then taken out of the sentence, which a
+# reader -- who never sees the row column -- should not have to read.
+_ROW_REF = r"rows?\s+#?\d+(?:\s*(?:,|and|to|through|-|\u2013)\s*#?\d+)*"
+_COLUMN_REF = (
+    r"(?:(?:,\s*|\s+)(?:(?:in|under)\s+)?(?:the\s+)?columns?\s+[`'\"]?(?P<column>[A-Za-z_][\w$]*)[`'\"]?)?"
+)
+_CITATION_CLAUSE = re.compile(
+    rf",?\s*(?:(?:as\s+)?(?:shown|seen|listed|reported|given|recorded|stated)\s+)?"
+    rf"(?:in|at|from|on|per|according\s+to)\s+(?:the\s+)?(?P<rows>{_ROW_REF}){_COLUMN_REF}",
+    re.IGNORECASE,
+)
+_CITATION_PAREN = re.compile(
+    rf"\s*\((?:(?:see|per|from|in)\s+)?(?:the\s+)?(?P<rows>{_ROW_REF}){_COLUMN_REF}\s*\)", re.IGNORECASE
+)
+
+
+def written_cells(text: str, result: QueryResult) -> list[tuple[int, str]]:
+    """The cells a sentence names in its own words, as `cells` would hold them.
+
+    Only rows the result has. A column the address names is taken when the
+    result has it; an address with no column, or one it does not have, cites
+    the whole row -- which is what the audit reads a cited row as anyway.
+    """
+    columns = {c.lower(): c for c in result.columns}
+    cells: list[tuple[int, str]] = []
+    for pattern in (_CITATION_PAREN, _CITATION_CLAUSE):
+        for match in pattern.finditer(text):
+            named = columns.get((match.group("column") or "").lower())
+            for digits in re.findall(r"\d+", match.group("rows")):
+                row = int(digits)
+                if row < result.row_count:
+                    for column in [named] if named else list(result.columns):
+                        if (row, column) not in cells:
+                            cells.append((row, column))
+    return cells
+
+
+def strip_cell_citations(text: str) -> str:
+    """The sentence without the cell addresses written into it."""
+    cleaned = _CITATION_CLAUSE.sub("", _CITATION_PAREN.sub("", text))
+    cleaned = re.sub(r"\s+([.,;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r",([.;:!?])", r"\1", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 def _clean_formula(formula: str | None) -> str | None:
     text = (formula or "").strip()
     # Models write "null"/"none"/"n/a" into an optional string field often
@@ -479,16 +530,21 @@ def narrate(
     narration = llm.with_structured_output(Narrative).invoke(messages)
     if narration is None:
         return []
-    return [
-        Claim(
-            text=(claim.text or "").strip(),
-            value=claim.value,
-            cells=[(int(ref.row), ref.column) for ref in claim.cells],
-            formula=_clean_formula(claim.formula),
-        )
-        for claim in narration.claims
-        if (claim.text or "").strip()
-    ]
+    claims = []
+    for claim in narration.claims:
+        written = claim.text or ""
+        text = strip_cell_citations(written)
+        if text:
+            cited = [(int(ref.row), ref.column) for ref in claim.cells]
+            claims.append(
+                Claim(
+                    text=text,
+                    value=claim.value,
+                    cells=cited or written_cells(written, result),
+                    formula=_clean_formula(claim.formula),
+                )
+            )
+    return claims
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +663,7 @@ _NUMBER_TOKEN = re.compile(r"(?<![\w.])(-?\d[\d,]*(?:\.\d+)?)")
 _ORDINAL_SUFFIX = re.compile(r"(st|nd|rd|th)\b", re.IGNORECASE)
 _COUNT_PHRASE = re.compile(r"\b(?:top|bottom|first|last)\s+(\d+)\b", re.IGNORECASE)
 _DATE_LIKE = re.compile(r"\d{4}-\d{2}(?:-\d{2})?|\d{1,2}/\d{1,2}/\d{2,4}")
+_ROW_ADDRESS = re.compile(rf"\b{_ROW_REF}", re.IGNORECASE)
 
 
 def _as_number(value: Any) -> float | None:
@@ -694,6 +751,14 @@ def _stray_numbers(
     text = claim.text or ""
     skip = _exempt_spans(text)
     counted = {m.start(1) for m in _COUNT_PHRASE.finditer(text)}
+    # "Row 0 shows ..." names a row; the index is an address, not a figure,
+    # as long as it is a row the result has.
+    addressed = {
+        m.start(1) + address.start()
+        for address in _ROW_ADDRESS.finditer(text)
+        for m in re.finditer(r"(\d+)", address.group())
+        if int(m.group(1)) < result.row_count
+    }
     backing = (
         _backing_numbers(claim, result)
         + _question_numbers(question)
@@ -709,6 +774,8 @@ def _stray_numbers(
         if _ORDINAL_SUFFIX.match(text[end : end + 3]):
             continue
         if start in counted and spoken <= result.row_count:
+            continue
+        if start in addressed:
             continue
         if spoken.is_integer() and _YEAR_RANGE[0] <= spoken <= _YEAR_RANGE[1]:
             continue

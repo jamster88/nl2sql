@@ -47,8 +47,10 @@ from nl2sql_agent.present import (
     render_answer,
     render_table,
     states_assumption,
+    strip_cell_citations,
     surviving_claims,
     tagged_sensitive_columns,
+    written_cells,
 )
 from nl2sql_agent.state import AUDIT, AuditReport, Claim, CompletenessReport, MissingColumn, QueryResult
 
@@ -258,6 +260,130 @@ def test_narrate_returns_claims_addressed_by_row_and_column():
     assert [c.text for c in claims] == ["Dairy & Eggs ran a 31.4% gross margin."]
     assert claims[0].cells == [(0, "gross_margin_pct")]
     assert claims[0].value == 31.4
+
+
+def ad_channels() -> QueryResult:
+    """The live run that found it: click-through rate by channel, weekends of FY2025."""
+    return QueryResult(
+        columns=["channel_type", "click_through_rate_pct"],
+        rows=[
+            ["Digital Mailer", Decimal("0.0728")],
+            ["In-App Push", Decimal("0.0594")],
+            ["Paid Social", Decimal("0.0324")],
+            ["Website Banner", Decimal("0.0288")],
+            ["Print Flyer", Decimal("0.0184")],
+        ],
+    )
+
+
+#: The three claims that run's narrator returned, word for word. Every one was
+#: right, and the audit dropped all three for "says 0," / "4," / "1,".
+LIVE_CLAIMS = [
+    ("The Digital Mailer channel had the highest click-through rate at 0.0728, "
+     "as shown in row 0, column click_through_rate_pct.", 0),
+    ("The Print Flyer channel had the lowest click-through rate at 0.0184, "
+     "as shown in row 4, column click_through_rate_pct.", 4),
+    ("The In-App Push channel had a click-through rate of 0.0594, "
+     "as shown in row 1, column click_through_rate_pct.", 1),
+]
+
+
+def test_a_cell_address_written_into_a_sentence_is_taken_out_and_the_claim_survives():
+    llm = ScriptedLLM(narration=Narrative(claims=[
+        NarratedClaim(text=text, value=None, cells=[CellRef(row=row, column="click_through_rate_pct")])
+        for text, row in LIVE_CLAIMS
+    ]))
+    claims = narrate(llm, "What was our click-through rate by ad channel on weekends in fiscal year 2025?", ad_channels())
+    assert [c.text for c in claims] == [
+        "The Digital Mailer channel had the highest click-through rate at 0.0728.",
+        "The Print Flyer channel had the lowest click-through rate at 0.0184.",
+        "The In-App Push channel had a click-through rate of 0.0594.",
+    ]
+    assert audit(claims, ad_channels()).unsupported_claims == []
+
+
+@pytest.mark.parametrize(
+    "written,read",
+    [
+        ("Paid Social reached 0.0324 (row 2, column click_through_rate_pct).", "Paid Social reached 0.0324."),
+        ("Paid Social reached 0.0324 (see rows 2 and 3).", "Paid Social reached 0.0324."),
+        ("Paid Social reached 0.0324, according to row 2.", "Paid Social reached 0.0324."),
+        ("Paid Social reached 0.0324 in row 2 under the column `ctr`.", "Paid Social reached 0.0324."),
+        ("Paid Social reached 0.0324, as seen in Row #2, and led the rest.", "Paid Social reached 0.0324, and led the rest."),
+    ],
+)
+def test_each_way_of_writing_an_address_into_a_sentence_is_taken_out(written, read):
+    assert strip_cell_citations(written) == read
+
+
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "The query returned 5 rows.",
+        "The top 3 rows are all digital channels.",
+        "Print Flyer trails at 0.0184, a row of its own.",
+    ],
+)
+def test_a_sentence_that_cites_no_cell_is_left_as_it_was(sentence):
+    assert strip_cell_citations(sentence) == sentence
+
+
+def test_a_claim_that_was_only_an_address_or_nothing_is_no_claim():
+    llm = ScriptedLLM(narration=Narrative(claims=[
+        NarratedClaim(text="(row 0, column click_through_rate_pct)", cells=[CellRef(row=0, column="channel_type")]),
+        NarratedClaim(text="   ", cells=[]),
+        NarratedClaim(text="Digital Mailer leads.", cells=[CellRef(row=0, column="channel_type")]),
+    ]))
+    assert [c.text for c in narrate(llm, "q", ad_channels())] == ["Digital Mailer leads."]
+
+
+def test_a_row_the_result_has_is_an_address_and_one_it_lacks_is_a_figure():
+    """What the stripping misses, the audit still does not hold against a
+    correct claim -- but only for a row that exists."""
+    named = Claim(text="Row 0 shows Digital Mailer at 0.0728.", cells=[(0, "click_through_rate_pct")])
+    assert audit([named], ad_channels()).unsupported_claims == []
+    invented = Claim(text="Row 9 shows Digital Mailer at 0.0728.", cells=[(0, "click_through_rate_pct")])
+    assert "says 9" in check_claim(invented, ad_channels())
+
+
+def test_a_first_pass_that_wrote_its_cells_into_the_sentence_is_cited_by_them():
+    """What the narrator really did on its first pass, every claim of it: the
+    address in the prose, `cells` empty. Read as the citation it is, the
+    claims survive on the first pass instead of costing a rewrite."""
+    llm = ScriptedLLM(narration=Narrative(claims=[
+        NarratedClaim(text=text, value=None, cells=[]) for text, _ in LIVE_CLAIMS
+    ]))
+    claims = narrate(llm, "q", ad_channels())
+    assert [c.cells for c in claims] == [
+        [(0, "click_through_rate_pct")], [(4, "click_through_rate_pct")], [(1, "click_through_rate_pct")],
+    ]
+    assert audit(claims, ad_channels()).unsupported_claims == []
+
+
+def test_an_address_with_no_column_cites_its_row_and_a_row_the_result_lacks_cites_nothing():
+    result = ad_channels()
+    assert written_cells("Paid Social reached 0.0324 (see row 2).", result) == [
+        (2, "channel_type"), (2, "click_through_rate_pct"),
+    ]
+    assert written_cells("Paid Social reached 0.0324, in row 2, column CTR.", result) == [
+        (2, "channel_type"), (2, "click_through_rate_pct"),
+    ]
+    assert written_cells("Rows 1 and 9 (rows 1 and 9, column channel_type).", result) == [(1, "channel_type")]
+    assert written_cells("Paid Social reached 0.0324.", result) == []
+    # "(in row 2 ...)" is a parenthesis and a clause at once: one citation, not two.
+    assert written_cells("Paid Social reached 0.0324 (in row 2, column channel_type).", result) == [
+        (2, "channel_type"),
+    ]
+
+
+def test_cells_the_narrator_listed_are_kept_over_the_address_in_its_sentence():
+    llm = ScriptedLLM(narration=Narrative(claims=[NarratedClaim(
+        text="Paid Social reached 0.0324, as shown in row 0, column channel_type.",
+        cells=[CellRef(row=2, column="click_through_rate_pct")],
+    )]))
+    [claim] = narrate(llm, "q", ad_channels())
+    assert claim.cells == [(2, "click_through_rate_pct")]
+    assert claim.text == "Paid Social reached 0.0324."
 
 
 def test_narrate_shows_the_question_the_rows_and_the_chart():

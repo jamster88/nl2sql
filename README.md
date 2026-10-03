@@ -580,7 +580,7 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v5_6` | SQL snippets: a fifth retriever shows the SQL Generator verified joins, filters, measures and dimensions whose meaning matches the question and whose tables are in scope, from a store loaded out of `context_questions/sql_snippets.md`. A new image, `nl2sql-curate-gui`, is the curation interface: snippets, golden pairs, corrections and completions written or removed directly, each run against the retail database first. The review service carries the snippet loader and the curation routes, and runs a golden pair's SQL before promoting it. Pinned -- what `setup.sh` pulls. |
+| `v5_6` | SQL snippets: a fifth retriever shows the SQL Generator verified joins, filters, measures and dimensions whose meaning matches the question and whose tables are in scope, from a store loaded out of `context_questions/sql_snippets.md`. A new image, `nl2sql-curate-gui`, is the curation interface: snippets, golden pairs, corrections and completions written or removed directly, each run against the retail database first. The review service carries the snippet loader and the curation routes, and runs a golden pair's SQL before promoting it. The audit no longer drops a correct claim whose sentence named the cell it came from. Pinned -- what `setup.sh` pulls. |
 | `v5_5_1` | A correction to `v5_5`. The golden set is no longer capped at `Q99`: a pair id is `Q` and two or more digits, so the hundredth promotion is `Q100`, and the review service's `/v1/meta` no longer reports the `max_pair_number` that described the cap. The agent's `--help` gives each retrieval switch's real default (it said `--multi-shot` was off). `start.sh` keeps an agent tag chosen with `setup.sh --agent-tag` rather than re-pinning it. The web interface, the SQL console's interface, the desktop client and MLflow's two are `v5_5`'s under the new version. Pinned. |
 | `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. MLflow's server and store are published with the release from here on, as `nl2sql-mlflow` and `nl2sql-mlflowdb`. Of the rest only the agent image changed; the others are `v5_4`'s under a new version. Pinned. |
 | `v5_4` | A judgement in the review interface can be taken back: a submission is put back to pending or deleted, and a promoted pair comes back out of the golden set, or a stored fix out of its store, with it. The agent and the console are `v5_3`'s. Pinned. |
@@ -1595,8 +1595,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3644 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 4343, including ones that build and run containers
+pytest                                          # 3658 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 4357, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1673,7 +1673,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-11,357 statements and 2,712 branches, none missed. `coverage report` fails below
+11,390 statements and 2,730 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
 a number, the way the four web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST

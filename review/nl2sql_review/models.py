@@ -208,6 +208,12 @@ class GoldenPairModel(BaseModel):
     question: str
     tables: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
+    reasoning_target: str = ""
+    sql_code: str = ""
+    result: str = ""
+    #: The submission it was promoted from, when the review queue produced
+    #: it: taking the pair out puts that submission back in the queue.
+    submission_id: str | None = None
 
 
 class GoldenSet(BaseModel):
@@ -276,8 +282,9 @@ class FixModel(BaseModel):
     """One stored fix: the question, the incorrect answer and the correct one."""
 
     fix_id: str
-    submission_id: str
-    job_id: str
+    #: None for a fix written in the curation interface.
+    submission_id: str | None = None
+    job_id: str = ""
     question: str
     incorrect_sql: str = ""
     incorrect_answer: str = ""
@@ -293,6 +300,9 @@ class FixModel(BaseModel):
     reviewer: str = ""
     review_note: str = ""
     agent_version: str = ""
+    #: `review` for a fix made from a submission, `curated` for one written
+    #: straight into the store.
+    source: str = "review"
     created_at: datetime | None = None
     embedded: bool = False
 
@@ -349,6 +359,200 @@ class UndoModel(BaseModel):
     submission: SubmissionModel
     #: None when it had produced nothing: it was pending, accepted or rejected.
     withdrawn: WithdrawalModel | None = None
+
+
+# ---------------------------------------------------------------------------
+# Curation (5.6): golden pairs, fixes and SQL snippets written directly
+# ---------------------------------------------------------------------------
+
+
+class GoldenResultModel(BaseModel):
+    """A golden pair added in the curation interface: its SQL's run, then the write."""
+
+    promotion: PromotionModel
+    validation: ValidationModel
+
+
+class GoldenRemovalModel(BaseModel):
+    """A pair taken out of the golden set, and the submission that went back.
+
+    `submission` is set when the review queue had produced the pair: it is
+    reopened -- back to pending, the pair as its draft -- so the queue never
+    claims a pair the golden set no longer holds.
+    """
+
+    pair_id: str
+    withdrawal: WithdrawalModel
+    submission: SubmissionModel | None = None
+
+
+class CuratedFixValidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sql: str = Field(max_length=20000)
+    #: The query the agent wrote, when the curator has it: a fix has to differ.
+    incorrect_sql: str = Field(default="", max_length=20000)
+
+
+class CuratedFixRequest(BaseModel):
+    """A fix with no submission behind it. The SQL is validated here again."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=2000)
+    sql: str = Field(max_length=20000)
+    incorrect_sql: str = Field(default="", max_length=20000)
+    review_note: str = Field(default="", max_length=4000)
+
+
+class CuratedFixResultModel(BaseModel):
+    kind: FixKind
+    fix: FixModel
+    validation: ValidationModel
+    embedded: bool = False
+    embed_detail: str = ""
+
+
+class FixRemovalModel(BaseModel):
+    """A fix taken out of its store, and the submission that went back, if any."""
+
+    kind: FixKind
+    fix_id: str
+    found: bool
+    fix: FixModel | None = None
+    submission: SubmissionModel | None = None
+
+
+SnippetKind = Literal["join", "filter", "measure", "dimension"]
+
+
+class SnippetDraftModel(BaseModel):
+    """A snippet as the curation form holds it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(default="", max_length=200)
+    kind: str = Field(default="", max_length=20)
+    tables: str = Field(default="", max_length=1000)
+    keywords: str = Field(default="", max_length=2000)
+    means: str = Field(default="", max_length=2000)
+    applies_to: str = Field(default="", max_length=4000)
+    sql: str = Field(default="", max_length=8000)
+    note: str = Field(default="", max_length=2000)
+
+
+class SnippetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    draft: SnippetDraftModel
+
+
+class SnippetPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    draft: SnippetDraftModel
+    #: The snippet being changed; absent for a new one.
+    snippet_id: str | None = Field(default=None, max_length=20)
+
+
+class SnippetPreviewModel(BaseModel):
+    snippet_id: str = ""
+    markdown: str = ""
+    valid: bool = False
+    problems: list[str] = Field(default_factory=list)
+
+
+class SnippetValidationModel(BaseModel):
+    """What running the snippet inside its probe query showed.
+
+    `valid` decides; the warnings -- a join that multiplies or drops rows, a
+    filter that matches nothing or everything -- are for the curator.
+    """
+
+    kind: str
+    valid: bool
+    problems: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    probe_sql: str = ""
+    applies_to: str = ""
+    sql: str = ""
+    columns: list[str] = Field(default_factory=list)
+    rows: list[list[Any]] = Field(default_factory=list)
+    rows_before: int | None = None
+    rows_after: int | None = None
+    tables: list[str] = Field(default_factory=list)
+    plan_cost: float | None = None
+    elapsed_ms: float = 0.0
+
+
+class SnippetModel(BaseModel):
+    """A snippet as the document holds it."""
+
+    snippet_id: str
+    chunk_id: str
+    name: str
+    kind: str
+    tables: list[str] = Field(default_factory=list)
+    keywords: list[str] = Field(default_factory=list)
+    means: str = ""
+    applies_to: str = ""
+    sql: str = ""
+    note: str = ""
+
+
+class SnippetStoreModel(BaseModel):
+    """What the snippet store holds, beside the document it was loaded from.
+
+    `current` is the store holding exactly this document, embedded: what the
+    stack's start compares, and what a write's reload is meant to make true.
+    """
+
+    reachable: bool = False
+    snippets: int = 0
+    embedded: int = 0
+    current: bool = False
+    detail: str = ""
+
+
+class SnippetSet(BaseModel):
+    snippets: list[SnippetModel]
+    count: int
+    document: str = ""
+    next_snippet_id: str = ""
+    kinds: list[str] = Field(default_factory=list)
+    store: SnippetStoreModel = Field(default_factory=SnippetStoreModel)
+    error: str | None = None
+
+
+class SnippetResultModel(BaseModel):
+    """What adding, changing or removing a snippet did -- the reload included."""
+
+    action: Literal["added", "changed", "removed"]
+    snippet_id: str
+    chunk_id: str
+    markdown: str = ""
+    document: str = ""
+    backup: str = ""
+    snippets_before: int = 0
+    snippets_after: int = 0
+    reloaded: bool = False
+    steps: list[StepModel] = Field(default_factory=list)
+    validation: SnippetValidationModel | None = None
+
+
+class SchemaColumn(BaseModel):
+    name: str
+    type: str
+
+
+class SchemaTable(BaseModel):
+    name: str
+    columns: list[SchemaColumn] = Field(default_factory=list)
+
+
+class SchemaModel(BaseModel):
+    """The retail tables and columns, as the role a snippet is validated as sees them."""
+
+    tables: list[SchemaTable] = Field(default_factory=list)
+    error: str | None = None
 
 
 class ReviewMeta(BaseModel):

@@ -29,9 +29,11 @@ from .conftest import (
     FakeDatabase,
     FakeGoldenPairLibrary,
     FakeKnowledgeBase,
+    FakeSnippetLibrary,
     ScriptedLLM,
     make_chunk,
     make_pair,
+    make_snippet,
 )
 
 TABLES = ["dim_store", "dim_product", "fact_pos_retail_sales"]
@@ -43,6 +45,7 @@ def make_agent(
     knowledge_base: FakeKnowledgeBase | None = None,
     example_library: FakeGoldenPairLibrary | None = None,
     *,
+    snippet_library: FakeSnippetLibrary | None = "unset",  # type: ignore[assignment]
     schema_retriever: SchemaRetriever | None = "unset",  # type: ignore[assignment]
     literal_matcher=None,
     contract_resources=None,
@@ -63,12 +66,17 @@ def make_agent(
             db,
             foreign_keys=lambda: [],
         )
+    if snippet_library == "unset":
+        # Finds nothing: every test that is not about snippets sees the
+        # prompt it saw before there were any.
+        snippet_library = FakeSnippetLibrary()
     agent = Nl2SqlAgent(
         settings,
         llm=llm,
         llm_factory=llm_factory,
         knowledge_base=knowledge_base,
         example_library=example_library,
+        snippet_library=snippet_library,
         schema_retriever=schema_retriever,
         literal_matcher=literal_matcher,
         contract_resources=contract_resources,
@@ -82,7 +90,8 @@ def make_agent(
     agent.schema_retriever = schema_retriever
     if schema_retriever is not None:
         schema_retriever._database = db
-    agent.tools = build_tools(db, llm, settings, knowledge_base, example_library)
+    agent.snippet_library = snippet_library
+    agent.tools = build_tools(db, llm, settings, knowledge_base, example_library, snippet_library)
     return agent
 
 
@@ -182,7 +191,7 @@ def test_every_node_that_ran_reports_its_own_cost():
 # ---------------------------------------------------------------------------
 
 
-def test_all_four_retrievers_contribute_to_one_table_set():
+def test_the_retrievers_contribute_to_one_table_set():
     db = FakeDatabase(tables=TABLES + ["dim_promotion"])
     kb = FakeKnowledgeBase(chunks=[make_chunk(meta={"table": "dim_promotion"})])
     lib = FakeGoldenPairLibrary(pairs=[make_pair(tables="dim_product")])
@@ -612,6 +621,11 @@ def test_disabling_retrieval_builds_no_stores_at_all():
     assert agent.knowledge_base is None
     assert agent.example_library is None
     assert agent.schema_retriever is None
+    # The snippets are their own switch: SQL pieces, not knowledge prose.
+    assert agent.snippet_library is not None
+    assert Nl2SqlAgent(
+        Settings(database_url=settings.database_url, snippets_enabled=False), llm=ScriptedLLM()
+    ).snippet_library is None
 
 
 def test_the_schema_retriever_is_not_built_for_the_llm_ablation():
@@ -1190,3 +1204,100 @@ def test_every_node_has_a_progress_label_and_every_label_a_node():
     assert nodes == set(STEP_LABELS)
     assert step_label("review") == "completeness"
     assert step_label("not_a_node") == "not_a_node"
+
+
+# ---------------------------------------------------------------------------
+# SQL snippets (v5.6): verified pieces, shown when their tables are in scope
+# ---------------------------------------------------------------------------
+
+
+def test_a_snippet_over_tables_in_scope_reaches_the_generator(progress_log):
+    from nl2sql_agent.prompts import SNIPPET_BLOCK
+    from nl2sql_agent.snippets import render
+
+    found = make_snippet()
+    llm = scripted(["SELECT SUM(f.net_sales_amt) AS n FROM fact_pos_retail_sales f"])
+    state = make_agent(
+        FakeDatabase(tables=TABLES), llm, snippet_library=FakeSnippetLibrary([found]), on_progress=progress_log
+    ).run("total net sales")
+
+    human = llm.plain_invocations[0][-1].content
+    assert SNIPPET_BLOCK.format(snippets=render(found)) in human
+    # Between the knowledge block and the question, like the literals.
+    assert human.index("SQL snippets for this database") < human.index("Question: total net sales")
+    assert state["snippet_hits"] == [
+        {"snippet_id": "S19", "kind": "measure", "name": "Net sales", "tables": ["fact_pos_retail_sales"],
+         "score": 0.8, "similarity": 0.55, "found_by": "keywords: net sales; meaning 0.550"}
+    ]
+    details = dict(progress_log.log)
+    assert details["retrieve_snippets"] == "S19 measure (0.800)"
+    assert "; 1 of 1 snippet(s) in scope;" in details["aggregate"]
+
+
+def test_a_snippet_over_a_table_out_of_scope_is_not_shown():
+    """The static validator refuses a table that was not selected, so a
+    snippet over one could only send the generator into that refusal."""
+    join = make_snippet(snippet_id="S05", kind="join", tables="fact_ad_performance, dim_ad_channel")
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    state = make_agent(FakeDatabase(tables=TABLES), llm, snippet_library=FakeSnippetLibrary([join])).run("q")
+
+    assert "SQL snippets" not in llm.plain_invocations[0][-1].content
+    assert state["snippet_context"] == ""
+    assert "; 0 of 1 snippet(s) in scope;" in [e.detail for e in state["trace"] if e.node == "aggregate"][0]
+    # The snippets propose no tables of their own.
+    assert "fact_ad_performance" not in state["selected_tables"]
+
+
+def test_a_question_no_snippet_matches_is_asked_as_it_was_before_snippets(progress_log):
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    make_agent(FakeDatabase(tables=TABLES), llm, on_progress=progress_log).run("How many stores are there?")
+    assert "SQL snippets" not in llm.plain_invocations[0][-1].content
+    details = dict(progress_log.log)
+    assert details["retrieve_snippets"] == "none matched"
+    assert "snippet" not in details["aggregate"]
+
+
+def test_an_unreachable_snippet_store_is_recorded_and_skipped():
+    library = FakeSnippetLibrary(error="snippet store unreachable")
+    state = make_agent(
+        FakeDatabase(tables=TABLES), scripted(["SELECT 1 AS n FROM dim_store"]), snippet_library=library
+    ).run("q")
+    assert state["retrieval_errors"]["snippets"] == "snippet store unreachable"
+    assert [e.detail for e in state["trace"] if e.node == "retrieve_snippets"] == ["skipped: snippet store unreachable"]
+    assert state["result"] is not None
+
+
+def test_snippets_found_by_keyword_alone_are_shown_and_the_missing_half_is_recorded():
+    library = FakeSnippetLibrary([make_snippet(similarity=None)], warning="meaning skipped: no embedder")
+    llm = scripted(["SELECT 1 AS n FROM dim_store"])
+    state = make_agent(FakeDatabase(tables=TABLES), llm, snippet_library=library).run("net sales")
+    assert state["retrieval_errors"]["snippets"] == "meaning skipped: no embedder"
+    assert "[S19 measure] Net sales" in llm.plain_invocations[0][-1].content
+
+
+def test_switched_off_the_snippets_are_reported_disabled_like_the_other_retrievers():
+    state = make_agent(
+        FakeDatabase(tables=TABLES), scripted(["SELECT 1 AS n FROM dim_store"]), snippet_library=None
+    ).run("q")
+    assert state["retrieval_errors"]["snippets"] == "snippets are disabled"
+
+
+def test_widening_the_scope_can_make_a_snippet_usable_for_the_next_draft():
+    vendor = DbRows(columns=["vendor_key"], rows=[(7,)], truncated=False)
+    named = DbRows(columns=["vendor_key", "vendor_name"], rows=[(7, "Acme Dairy")], truncated=False)
+    db = FakeDatabase(tables=[*TABLES, "dim_vendor"], run_select_result=[vendor, named])
+    llm = ScriptedLLM(
+        sql_responses=["SELECT 7 AS vendor_key FROM dim_store",
+                       "SELECT v.vendor_key, v.vendor_name FROM dim_vendor v"],
+        screening=Screening(verdict="proceed", intent="lookup"),
+    )
+    vendors = make_snippet(snippet_id="S40", kind="dimension", name="Vendor", tables="dim_vendor",
+                           applies_to="dim_vendor v", sql="v.vendor_name")
+    state = make_agent(
+        db, llm, contract_resources=resources(), narrate_enabled=False,
+        snippet_library=FakeSnippetLibrary([vendors]),
+    ).run("which vendor supplies Dairy & Eggs?")
+
+    assert "[S40 dimension] Vendor" not in llm.plain_invocations[0][-1].content
+    assert "[S40 dimension] Vendor" in llm.plain_invocations[1][-1].content
+    assert "[S40 dimension] Vendor" in state["snippet_context"]

@@ -155,6 +155,11 @@ export interface GoldenPairModel {
   question: string;
   tables: string[];
   keywords: string[];
+  reasoning_target: string;
+  sql_code: string;
+  result: string;
+  /** The submission it was promoted from; null for a pair written by hand. */
+  submission_id: string | null;
 }
 
 export interface GoldenSet {
@@ -209,7 +214,8 @@ export interface FixRequest {
 /** One stored fix: the question, the incorrect answer and the correct one. */
 export interface FixModel {
   fix_id: string;
-  submission_id: string;
+  /** Null for a fix written in the curation interface (5.6). */
+  submission_id: string | null;
   job_id: string;
   question: string;
   incorrect_sql: string;
@@ -226,6 +232,8 @@ export interface FixModel {
   reviewer: string;
   review_note: string;
   agent_version: string;
+  /** `review` for a fix made here, `curated` for one written in the curation interface. */
+  source: string;
   created_at: string | null;
   embedded: boolean;
 }

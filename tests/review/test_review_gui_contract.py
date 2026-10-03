@@ -81,7 +81,14 @@ def _union_members(text: str, name: str) -> set[str]:
 
 
 def test_every_wire_model_has_a_typescript_interface():
-    """A model the GUI has no type for is a model the GUI cannot render."""
+    """A model no GUI has a type for is a model no GUI can render.
+
+    Since 5.6 the review service has two pages: this one, for the queue, and
+    the curation page, for writing directly. A model either mirrors counts --
+    `tests/curate/test_curate_gui_contract.py` checks the curation page's.
+    """
+    from tests.curate.test_curate_gui_contract import MIRRORED as CURATE_MIRRORED
+
     wire = {
         name
         for name, value in vars(models).items()
@@ -93,9 +100,9 @@ def test_every_wire_model_has_a_typescript_interface():
         # `dict[str, Any]` and cannot be compared field for field against it.
         and name != "ApiError"
     }
-    assert wire - set(MIRRORED) == set(), (
-        "these wire models have no entry in MIRRORED, so nothing checks that "
-        "review/gui/src/api/types.ts knows about them"
+    assert wire - set(MIRRORED) - set(CURATE_MIRRORED) == set(), (
+        "these wire models are in neither MIRRORED, so nothing checks that "
+        "review/gui/src/api/types.ts or curate/src/api/types.ts knows about them"
     )
 
 

@@ -73,6 +73,14 @@ def test_the_loaders_are_in_the_image(dockerfile: str):
     assert "rag/ragproc/" in dockerfile
     assert "05_load_golden_pairs.py" in dockerfile
     assert "06_embed_golden_pairs.py" in dockerfile
+    # 5.6: writing a snippet, and the stack's start, load the snippet store.
+    assert "07_load_snippets.py" in dockerfile
+
+
+def test_the_loader_a_snippet_write_runs_is_the_one_the_image_carries(dockerfile: str):
+    from nl2sql_review.snippets import LOADER
+
+    assert f"rag/{LOADER}" in dockerfile
 
 
 def test_the_loaders_land_where_the_settings_look_for_them(dockerfile: str):
@@ -93,6 +101,13 @@ def test_the_question_document_is_in_the_image_as_a_fallback(dockerfile: str):
     """
     assert "context_questions/translated_questions.md" in dockerfile
     assert "bind-mounted" in dockerfile.lower()
+
+
+def test_the_snippet_document_is_in_the_image_where_the_settings_look(dockerfile: str):
+    from nl2sql_review.settings import DEFAULT_SNIPPETS_DOCUMENT
+
+    assert "context_questions/sql_snippets.md" in dockerfile
+    assert DEFAULT_SNIPPETS_DOCUMENT == "/app/context_questions/sql_snippets.md"
 
 
 def test_it_expects_the_certificate_the_api_writes(dockerfile: str):

@@ -1,4 +1,4 @@
-"""The tools the pipeline calls: catalog and schema reads, and the two
+"""The tools the pipeline calls: catalog and schema reads, and the three
 retrievers.
 
 v4 removed the `validate_sql` tool that lived here. It wrapped a model call
@@ -26,6 +26,7 @@ from .database import Database
 from .examples import ExamplesUnavailableError, GoldenPairLibrary, format_examples
 from .examples import tables_mentioned as example_tables
 from .retrieval import KnowledgeBase, KnowledgeUnavailableError, format_chunks, tables_mentioned
+from .snippets import SnippetLibrary, SnippetsUnavailableError
 
 
 class TableSelection(BaseModel):
@@ -40,6 +41,7 @@ def build_tools(
     settings: Settings,
     knowledge_base: KnowledgeBase | None = None,
     example_library: GoldenPairLibrary | None = None,
+    snippet_library: SnippetLibrary | None = None,
 ) -> dict[str, BaseTool]:
     @tool
     def describe_all_tables() -> str:
@@ -115,6 +117,36 @@ def build_tools(
         }
 
     @tool
+    def search_snippets(question: str) -> dict[str, Any]:
+        """Retrieve verified SQL snippets -- joins, filters, measures -- for a question."""
+        empty: dict[str, Any] = {"snippets": [], "hits": [], "warning": None, "error": None}
+        if snippet_library is None:
+            return {**empty, "error": "snippets are disabled"}
+        try:
+            result = snippet_library.find(question, settings.snippets_top_k)
+        except SnippetsUnavailableError as exc:
+            return {**empty, "error": str(exc)}
+        found = result.snippets
+        return {
+            "snippets": found,
+            # Summaries for tracing and --json: small, and safe to log.
+            "hits": [
+                {
+                    "snippet_id": s.snippet_id,
+                    "kind": s.kind,
+                    "name": s.name,
+                    "tables": s.table_list,
+                    "score": round(s.score, 5),
+                    "similarity": None if s.similarity is None else round(s.similarity, 5),
+                    "found_by": s.found_by,
+                }
+                for s in found
+            ],
+            "warning": result.warning,
+            "error": None,
+        }
+
+    @tool
     def execute_query(sql: str) -> dict[str, Any]:
         """Run a read-only query and return its rows as structured output."""
         result = db.run_select(sql)
@@ -130,5 +162,6 @@ def build_tools(
         "get_schema_and_data": get_schema_and_data,
         "search_knowledge": search_knowledge,
         "search_examples": search_examples,
+        "search_snippets": search_snippets,
         "execute_query": execute_query,
     }

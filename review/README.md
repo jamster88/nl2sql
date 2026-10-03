@@ -13,7 +13,12 @@ turning into:
 | **Wrong** (`no`) | Wrong → corrections | the question, the wrong answer, and a corrected query that ran | `nl2sql-correctionsdb`: records + RAG |
 | **Correct but incomplete** (`incomplete`) | Correct but incomplete → completions | the question, the incomplete answer, and a completed query that ran | `nl2sql-completionsdb`: records + RAG |
 
-Two processes and four databases:
+Since 5.6 it is also the backend of a second page, the
+[curation interface](../curate/README.md), which writes the same golden set
+and fix stores directly, without a submission -- and the SQL snippets, which
+no verdict produces at all. See [Curation](#curation).
+
+Two processes and four databases, and the snippet store:
 
 ```
 browser ──nginx──▶ agent API   POST /v1/questions/{id}/feedback
@@ -28,8 +33,12 @@ reviewer ──nginx──▶ review service ──owner──────┘
                        │
                        ├─ validate ─ nl2sql_reader, READ ONLY ─▶ postgres (retail)
                        │
-                       └─ fix (wrong) ────────▶ correctionsdb   sql_corrections + _vectors
-                          fix (incomplete) ───▶ completionsdb   sql_completions + _vectors
+                       ├─ fix (wrong) ────────▶ correctionsdb   sql_corrections + _vectors
+                       │  fix (incomplete) ───▶ completionsdb   sql_completions + _vectors
+                       │
+curator ──nginx──▶ (the same service)
+                       └─ snippet ────────────▶ context_questions/sql_snippets.md
+                                                └─▶ 07_load_snippets ─▶ snippetsdb
 ```
 
 ## Contents
@@ -40,6 +49,7 @@ reviewer ──nginx──▶ review service ──owner──────┘
 - [Promotion](#promotion)
 - [Fixing a wrong or incomplete answer](#fixing-a-wrong-or-incomplete-answer)
 - [Changing your mind](#changing-your-mind)
+- [Curation](#curation)
 - [Running it](#running-it)
 - [Endpoints](#endpoints)
 - [Configuration](#configuration)
@@ -156,17 +166,23 @@ approves it, and the BM25 index fills up with keywords nobody chose.
 
 Promoting then does this, in this order:
 
-1. **Validate** the draft against the loader's format rules.
-2. **Render and append** the pair, in memory.
-3. **Parse the result with the loader's own parser** -- the actual
+1. **Run the SQL** against the live retail database, as `nl2sql_reader`,
+   read-only, exactly as a fix is validated (since 5.6). It must run and it
+   must return rows -- in the golden set an empty result reads as a failure
+   -- or the promotion is refused with `not_valid` and the database's
+   reason. The pair is written with the SQL as it was run, without a
+   trailing `;`.
+2. **Validate** the draft against the loader's format rules.
+3. **Render and append** the pair, in memory.
+4. **Parse the result with the loader's own parser** -- the actual
    `ragproc.golden_pairs.parse_document`, on the actual new document --
    and check that it yields exactly one more pair and that every field of
    the new one came back the way it went in.
-4. **Write atomically**: a temporary file in the same directory, then
+5. **Write atomically**: a temporary file in the same directory, then
    `os.replace`, keeping the previous version as `.md.bak`.
-5. **Reload** the context store and the vectors.
+6. **Reload** the context store and the vectors.
 
-Step 3 is the one that matters. `ENTRY_RE` is a single regular expression
+Step 4 is the one that matters. `ENTRY_RE` is a single regular expression
 over the whole file and it fails in the worst possible way: a pair that does
 not match it is not *reported* as malformed, it is simply not seen. The only
 thing that notices is a count of `## Q..` headings disagreeing with the
@@ -175,7 +191,7 @@ into a refused promotion.
 
 Both versions are parsed, not just the new one, because the count has to go
 up by exactly one. A rendering bug that broke an existing pair while adding a
-valid new one would otherwise pass -- and step 5 of the loader *deletes* rows
+valid new one would otherwise pass -- and the loader *deletes* rows
 for pairs it no longer sees, so that bug would quietly drop a golden question
 from the set.
 
@@ -388,6 +404,49 @@ Two consequences worth knowing:
   voted can change their vote again, exactly as they could before anyone
   looked at it.
 
+## Curation
+
+The curation interface writes three things directly, each through routes of
+its own, and each run against the live retail database before it is kept:
+
+| | Add | Remove |
+| --- | --- | --- |
+| A golden pair | `POST /v1/golden`: the draft's SQL is run (it must return rows), then the pair goes through steps 2-6 of [Promotion](#promotion), with no submission behind it | `DELETE /v1/golden/{pair_id}`: withdrawn from the document as a reopened promotion's pair is, both stores reloaded. A pair the review queue produced reopens its submission |
+| A fix | `POST /v1/fixes/{kind}`: validated as a reviewer's fix is, and refused when it is the agent's query unchanged; stored with `source` = `curated`, no submission, and its question embedded | `DELETE /v1/fixes/{kind}/{fix_id}`: the fix and its vector. A fix the review queue produced reopens its submission |
+| A SQL snippet | `POST /v1/snippets` (and `PUT /v1/snippets/{id}` to change one): run inside its probe query, written into the snippet document, and the store loaded | `DELETE /v1/snippets/{id}`: out of the document and, on the load, out of the store |
+
+Each add has a `validate` route that runs the SQL and writes nothing, and
+golden pairs and snippets a `preview` that renders the markdown they would
+add. A fix's `validate` takes the agent's query too, when there is one: a fix
+identical to it is no fix.
+
+**Snippets** are kept the way the golden pairs are: in a tracked document,
+`context_questions/sql_snippets.md`, bind-mounted from the checkout and
+committed by a person, from which the store is built. A write renders the
+snippet, parses the whole new document with the loader's own parser
+(`ragproc.snippets.parse_text`), and checks that every snippet but the one
+being written came back unchanged and that one exactly as it went in. Only
+then is the document written -- atomically, the previous version kept as
+`.md.bak` -- and `07_load_snippets.py` run against the store as its owner.
+The loader (re)creates the agent's read-only role, `snippets_reader`, with
+the name and password the service is given, embeds only the meanings that
+changed, and records the document's hash, which is how `launch.sh` and
+`/readyz` know the store holds this document.
+
+A snippet is validated as the kind it is -- how each is run, and what counts
+as a warning rather than a refusal, is in
+[`curate/README.md`](../curate/README.md#nothing-is-saved-that-has-not-run)
+-- after static checks of the text, and its SQL must use the tables it
+lists. A snippet listing none has them filled in from the SQL.
+
+**Removing what a submission produced reopens it.** The queue and the stores
+never disagree: a pair or a fix taken out here puts its submission back to
+pending, with the draft or the corrected query it had, exactly as
+*Back to pending* in the review interface does in the other direction.
+
+`GET /v1/schema` lists the retail tables and columns as `nl2sql_reader` sees
+them, for the snippet form's table picker.
+
 ## Running it
 
 ```bash
@@ -441,7 +500,7 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | --- | --- | --- | --- |
 | `GET` | `/` | no | Service banner and where everything is |
 | `GET` | `/healthz` | no | The process is alive |
-| `GET` | `/readyz` | no | Staging database, retail database and both fix stores reachable; document readable *and writable* |
+| `GET` | `/readyz` | no | Staging database, retail database and both fix stores reachable; document readable *and writable*; the snippet document parses, and whether the store holds it |
 | `GET` | `/openapi.json` | no | The schema |
 | `GET` | `/docs` | no | The same thing, browsable |
 | `GET` | `/v1/meta` | yes | States, verdicts, golden count, next pair id, queue counts (overall and per verdict), fix counts per store, warnings |
@@ -457,10 +516,24 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `GET` | `/v1/fixes/{kind}` | yes | `corrections` or `completions`: what the store holds, newest first. `?limit=` |
 | `GET` | `/v1/golden` | yes | The set as the document holds it |
 | `GET` | `/v1/promotions` | yes | What has been promoted, newest first |
+| `POST` | `/v1/golden/validate` | yes | Run a pair's SQL against the live retail database |
+| `POST` | `/v1/golden/preview` | yes | The markdown a hand-written pair would add, without writing |
+| `POST` | `/v1/golden` | yes | Validate a hand-written pair's SQL, then write it into the golden set |
+| `DELETE` | `/v1/golden/{pair_id}` | yes | Take a pair out of the golden set, reopening the submission it came from |
+| `POST` | `/v1/fixes/{kind}/validate` | yes | Run a fix's SQL against the live retail database |
+| `POST` | `/v1/fixes/{kind}` | yes | Validate a fix with no submission behind it, then store it. `X-Reviewer` names who |
+| `DELETE` | `/v1/fixes/{kind}/{fix_id}` | yes | Take a fix out of its store, reopening the submission it came from |
+| `GET` | `/v1/snippets` | yes | The snippets as their document holds them, the next id, and what the store holds |
+| `POST` | `/v1/snippets/validate` | yes | Run a snippet inside its probe query |
+| `POST` | `/v1/snippets/preview` | yes | The section a snippet would write, without writing |
+| `POST` | `/v1/snippets` | yes | Validate a snippet, write it into its document, and load the store |
+| `PUT` | `/v1/snippets/{id}` | yes | The same, for a change to one |
+| `DELETE` | `/v1/snippets/{id}` | yes | Take a snippet out of its document, and out of the store |
+| `GET` | `/v1/schema` | yes | The retail tables and columns, as the read-only role sees them |
 
-`promote`, `fix`, `reopen` and `DELETE` are the only calls with a
-consequence outside this service's staging database, and none of them is a
-field on a `PATCH`. That is what stops a form which saves as you type from
+`promote`, `fix`, `reopen` and `DELETE`, and the curation routes' `POST`,
+`PUT` and `DELETE`, are the only calls with a consequence outside this
+service's staging database, and none of them is a field on a `PATCH`. That is what stops a form which saves as you type from
 writing the golden question set or a fix store, or taking anything out of
 either. `validate` is a POST too, but it changes nothing: its transaction is
 read-only and rolled back.
@@ -489,8 +562,9 @@ The error envelope is the agent API's, so one client parses both:
 | `rejected` | 409 | Accept it before promoting or fixing it |
 | `wrong_workflow` | 409 | Promoting a wrong or incomplete answer, or validating or fixing a correct one |
 | `not_promotable` | 422 | The draft cannot become a pair. Every reason, not the first |
-| `not_valid` | 422 | The corrected query did not pass validation. Every reason, not the first |
+| `not_valid` | 422 | The query -- a corrected query, a golden pair's, or a snippet -- did not pass validation. Every reason, not the first |
 | `not_withdrawable` | 422 | Taking the pair out would leave a document the loader cannot read, or change another pair. Nothing was changed |
+| `not_writable` | 422 | A snippet change would leave a document the loader cannot read, or change another snippet. Nothing was changed |
 | `unavailable` | 503 | A fix store could not be written or read. Nothing was changed |
 
 ## Configuration
@@ -505,6 +579,8 @@ The error envelope is the agent API's, so one client parses both:
 | `REVIEW_TLS_ENABLED` | `true` | Serve HTTPS |
 | `REVIEW_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | PEM certificate |
 | `REVIEW_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | PEM private key |
+| `REVIEW_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc`; `false` leaves only `/openapi.json` |
+| `REVIEW_LOG_LEVEL` | `info` | uvicorn's log level |
 
 This service **presents the certificate the agent API generates** and never
 writes one of its own. A second copy of the certificate code would be 250
@@ -570,6 +646,23 @@ each as `REVIEW_RETAIL_DB_URL`, `REVIEW_CORRECTIONS_DB_URL` and
 `REVIEW_COMPLETIONS_DB_URL`. `REVIEW_EMBED_FIXES=false` stores records
 without their vectors -- the start-up banner, `/readyz` and `/v1/meta` all
 warn that nothing will be retrievable from them until they are embedded.
+
+### SQL snippets
+
+| Variable | Default | What |
+| --- | --- | --- |
+| `REVIEW_SNIPPETS_DOCUMENT` | `/app/context_questions/sql_snippets.md` | The snippet document |
+| `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5438/nl2sql_snippets` | The snippet store, as its owner |
+| `SNIPPETS_READER_USER` / `SNIPPETS_READER_PASSWORD` | `snippets_reader` / `snippets_reader` | The read-only role the loader (re)creates for the agent |
+| `REVIEW_RELOAD_SNIPPETS` | `true` | Run `07_load_snippets.py` after writing |
+
+Snippets are validated with `RETAIL_DB_URL` and the two limits above, and
+embedded with `OLLAMA_URL` / `EMBED_MODEL`. Compose takes the store's URL as
+`REVIEW_SNIPPETS_DB_URL`, built from `SNIPPETS_DB_USER`,
+`SNIPPETS_DB_PASSWORD` and `SNIPPETS_DB_NAME` by default, which are the
+store container's own; the reader's name and password are the agent's too.
+`REVIEW_RELOAD_SNIPPETS=false` writes the document and leaves the store
+behind it, and `/readyz` and the start-up banner say so.
 
 ## The interface
 

@@ -9,8 +9,9 @@ per change.
 the tag `v5_1_2`, and a tag with fewer components names a line
 (`v5_1` is 5.1.x). The app images -- `nl2sql-agent`, `nl2sql-gui`,
 `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui`, the five
-`nl2sql-desktop-build` platforms and, since v5_5, `nl2sql-mlflow` and
-`nl2sql-mlflowdb` -- are released together at one number, which
+`nl2sql-desktop-build` platforms, since v5_5 `nl2sql-mlflow` and
+`nl2sql-mlflowdb`, and since v5_6 `nl2sql-curate-gui` -- are released
+together at one number, which
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds every
 declaration in the repository to. The dataset images --
 `nl2sql-retail-postgres`, `nl2sql-rag-vectordb`, `nl2sql-rag-chunkdb` --
@@ -29,6 +30,115 @@ Docker Hub's, in UTC; release dates are the repository's.
 file where a file is new; the tests a version merely extended are summarised.
 
 ---
+
+## v5_6_1 (5.6.1) -- 2026-10-03
+
+A correction to 5.6. The narrator writes the cell a number came from into
+its sentence -- "..., as shown in row 0, column click_through_rate_pct" --
+and on a first pass leaves the claim's list of cells empty. 5.6 took the
+address out of the sentence, but with no cells nothing backed the number,
+the audit dropped every claim, and only the narrator's rewrite survived: an
+extra model call on such answers, and a table with no sentence when the
+rewrite failed too. A claim with no cells of its own is now cited by the
+address its sentence wrote. Everything under v5_6's *After publishing* --
+this fix, the scripts checked live, the documentation -- ships in this
+release.
+
+### Fixed
+- `agent/nl2sql_agent/present.py`:
+  - **Before:** a claim the narrator cited only in its own words ("as shown in row 0, column ...") had no cells; the audit found nothing behind its number and dropped it. 5.6 also told the narrator to put the address in `cells`, which it took as leaving it out of the sentence while still not filling `cells`.
+  - **After:** `written_cells` reads the address in the sentence -- rows the result has, the named column when the result has it, else the whole row -- as the claim's cells when it lists none; the address is then taken out of the sentence, and the narrator's prompt is 5.5.1's again. On the live click-through question the first pass now survives, twice in two runs, with no rewrite; benchmark questions B07 and B11 match their reference rows with the audit passing first time.
+
+### Updated
+- `tests/agent/test_present.py` -- the narrator's real first pass, word for word, cited by its sentences and surviving the audit; an address with no column, one naming a row the result lacks, and cells the narrator did list, which win.
+- `README.md` -- the `v5_6_1` tag, pull and publish commands; `CHANGELOG.md`, `CHANGELOG_SIMPLE.md`.
+- Version 5.6.1 in every declaration; `setup.sh` pins `v5_6_1`.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-curate-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_6_1` (amd64, arm64); `nl2sql-desktop-build:v5_6_1-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-03 UTC), each checked absent just before its push. Checked after: the agent runs 5.6.1 on both architectures with `written_cells` and the narrator's 5.5.1 prompt, the review service 5.6.1 with the snippet loader; every image is labelled 5.6.1 on both; every desktop jar is 5.6.1 with its own platform's native code; `tests/docker/test_published_images.py`, 19 passed. `start.sh --review --curate --console --mlflow` then found `.env` pinning `v5_6`, re-ran `setup.sh`, pulled the thirteen tags and brought every page up; the snippet store already held the document, so nothing was re-embedded. Through it the published agent answered the click-through question with its narrative passing the audit on the first pass.
+
+### After publishing
+In the checkout, not in the `v5_6_1` images: a coverage and relevance audit
+of the tests, and the documentation it found wanting. No image changed.
+- Coverage held: 100% of the Python, statements and branches, with the tests themselves measured as well -- what they leave unexecuted is skips, failure messages and the canary a formula must never call; all four web interfaces at 100%; the desktop client under JaCoCo; every shell script and nginx fragment at 100% by the shell measurement.
+- `tests/curate/test_curate_compose.py` -- the snippet store's own settings (owner, password, database, port, image) set through compose and found in the store, the review service's owner URL and the agent's reader URL; the review service pointed at another store; and every setting of the curation page set by its compose name and found under the name nginx reads. Ten of 5.6's compose settings had been exercised by nothing.
+- `tests/docs/test_docs.py` -- every setting the snippet store and the curation page read has a documented row with its default; every setting the review service reads has a row in `review/README.md`, which found two, `REVIEW_DOCS_ENABLED` and `REVIEW_LOG_LEVEL`, with none since they were added; `rag/README.md`'s count of database-backed tests is read. `tests/docs/test_versions.py` -- the README's "twenty-four places" and "thirteen tags" are counted from the declarations and `setup.sh`.
+- Removed: the fake `docker`'s `FAKE_GOLDEN_EMBEDDED`, a switch no test set; two `--help` tests for the curation flags, which `test_every_parsed_flag_appears_in_the_usage_text` already asks of every flag; an unused import and a second import of the same module in two older test files.
+- `README.md` -- the snippet store's settings, five retrievers in the trace sketch, test counts; `review/README.md` -- the two settings; `USAGE_GUIDE.md`, `agent/USAGE.md`, `benchmarks/README.md` -- four databases, not three, and the snippet store among those `setup.sh` starts and `docker compose stop` names; five Stage 1 retrievers since v5.6.
+
+## v5_6 (5.6.0) -- 2026-10-03
+
+SQL snippets: pieces of SQL that have been run against this database, each
+beside what it means in a question's words. A snippet is a join (how two
+tables meet, and what the join is for), a filter ("store brands" is
+`p.is_private_label`), a measure (how net sales or the average basket is
+calculated) or a dimension (a fiscal quarter labelled the way people say
+it). They are curated in a tracked document,
+`context_questions/sql_snippets.md`, which ships 32 of them, and loaded into
+a store of their own. That store is a fifth retriever for the agent,
+separate from the knowledge base, the golden pairs and the fix stores. Each
+question's snippets are found by keyword phrase and by meaning, and the SQL
+Generator sees those whose tables are all in scope. A fourth web interface,
+the curation interface, writes snippets, golden pairs, corrections and
+completions directly, without a submission. Each one is run against the
+retail database before it can be saved. Promotion from the review queue
+runs the golden SQL first as well. Thirteen tags were published, the
+curation interface's for the first time.
+
+### Created
+- `context_questions/sql_snippets.md` -- the snippet document: 32 snippets (8 joins, 10 filters, 10 measures, 4 dimensions), each with its kind, tables, keyword phrases, meaning, the FROM clause it applies to, its SQL and a note. Every one was run against the retail database, and the counts in the notes are what it returned.
+- `rag/ragproc/snippets.py` -- the document's strict parser (a snippet that does not parse is an error, not skipped); the store's three tables (`sql_snippets`, `sql_snippet_vectors`, `sql_snippet_source`); the keyword matcher `sql_snippets_keyword_match()`, in SQL, which matches each keyword and the name as a phrase whose words must all be in the question, weighted by IDF; the read-only role; and the document hash a complete load records.
+- `rag/07_load_snippets.py` -- loads the document into the store, removes snippets no longer in it, (re)creates the agent's `snippets_reader` role with SELECT and nothing else, and embeds only the meanings that changed, so a load with nothing new needs no embedding host. A failed embed exits non-zero and records no hash, so the next start loads again.
+- `agent/nl2sql_agent/snippets.py` -- `SnippetLibrary`: candidates from the keyword matcher and the 20 nearest meanings; a snippet qualifies on a matched phrase or on meaning alone at cosine 0.62. It is kept when the average of the two signals, each on a fixed 0..1 scale, reaches 0.35, and at most five are kept. An embedding host that is down costs the meaning half and says so; an unreachable store costs the snippets.
+- `review/nl2sql_review/snippet_validation.py` -- a snippet is run the way it would be used: a join as `SELECT * FROM <applies to> <join>`, with row counts before and after so a fan-out or dropped rows is a warning; a filter in a `WHERE`, warning when it matches nothing or everything; a measure as one aggregate row; a dimension under `GROUP BY`. Static checks run first (no `;`, comments or fences; balanced parentheses and quotes; a join starts with `JOIN`). The probes run as `nl2sql_reader` in a read-only transaction under a timeout, and the tables the SQL uses are held to the ones the snippet lists.
+- `review/nl2sql_review/snippets.py` -- adds, changes and removes snippets in the document and reloads the store. Every write is parsed back with the loader's own parser, compared field by field, and kept as `.bak` beside the document.
+- `curate/` -- the curation interface (`nl2sql-curate-gui`, port 8083): React and TypeScript behind nginx, a page in front of the review service like the review interface, with three tabs. *SQL snippets*: browse by kind, search, edit, validate, preview the markdown, add, save, remove. *Golden pairs*: add a pair no feedback produced, or remove one, which reopens the submission it came from. *Corrections & completions*: write a fix for a question directly, or remove one. Nothing can be saved until the exact text has passed against the database. 81 vitest tests at 100% coverage.
+- `arch_diagrams/arch_v5_6.{svg,png,tif}` -- v5.2 with the Snippet Retriever, the snippet store in the deployment and the curation interface beside the review one.
+- Tests: `tests/agent/test_snippets.py`; `tests/rag/test_snippets_parser.py`, `tests/rag/test_snippets_store.py` (the matcher, the loader and the reader role in a real pgvector); `tests/review/test_snippet_validation.py` (each kind against the live retail database), `tests/review/test_snippets.py`, `tests/review/test_curation.py`; `tests/curate/` (the interface's types against the service's models, the nginx start-up script, the project and the compose wiring both ways, and its own suite run from here).
+
+### Updated
+- `agent/nl2sql_agent/graph.py` -- a fifth Stage 1 node, `retrieve_snippets` ("Snippet Retriever", a retriever span), beside the other four. The Context Aggregator keeps the snippets whose tables are all in the selected set, and widening the scope after a repair recomputes them. Snippets propose no tables.
+- `agent/nl2sql_agent/prompts.py` -- the generator's prompt has a snippets block after the knowledge and before the literals, with its own instruction. With no snippet in scope it is empty, and the prompt is byte for byte 5.5.1's.
+- `agent/nl2sql_agent/tools.py` -- `search_snippets`. `state.py` -- `snippets`, `snippet_hits`, `snippet_context`.
+- `agent/nl2sql_agent/config.py` -- `SNIPPETS_ENABLED` (on), `SNIPPET_DB_URL` (the reader role), `SNIPPETS_TOP_K` (5), `SNIPPETS_MIN_SCORE` (0.35), `SNIPPETS_MIN_SIMILARITY` (0.62) and `SNIPPETS_MAX_CONTEXT_CHARS` (4000). `__main__.py` -- `--snippets/--no-snippets`, `--snippet-db-url`, `--snippets-top-k`; `--json` carries `snippet_hits`.
+- `review/nl2sql_review/app.py` -- the curation routes: `POST /v1/golden/validate`, `/v1/golden/preview` and `/v1/golden`; `DELETE /v1/golden/{pair_id}`; `POST /v1/fixes/{kind}/validate` and `/v1/fixes/{kind}`; `DELETE /v1/fixes/{kind}/{fix_id}`; `GET`/`POST /v1/snippets`, `POST /v1/snippets/validate` and `/v1/snippets/preview`, `PUT`/`DELETE /v1/snippets/{id}`; `GET /v1/schema`. Readiness checks the snippet document and whether the store holds it.
+- `review/nl2sql_review/app.py` -- promotion runs the golden SQL against the retail database before it writes anything: it must run and return rows, and the pair carries the SQL as it was run, with any trailing `;` removed. A query that fails is refused with the database's reason.
+- `review/nl2sql_review/corrections.py` -- a fix can be stored without a submission (`source` is `review` or `curated`; the columns are widened on start, so stored fixes are untouched). A fix can be read and deleted by id. Removing a golden pair or a fix that came from a submission puts the submission back to pending.
+- `review/nl2sql_review/settings.py` -- `REVIEW_SNIPPETS_DOCUMENT`, `SNIPPETS_DB_URL`, `SNIPPETS_READER_USER`, `SNIPPETS_READER_PASSWORD`, `REVIEW_RELOAD_SNIPPETS`. `review/Dockerfile` -- carries the loader and the document.
+- `review/gui/src/api/types.ts` -- the golden pair and fix models as the service now returns them.
+- `docker-compose.yml` -- `snippetsdb` (stock `pgvector/pgvector:pg18`, port 5438, volume `snippetsdata`), which the agent and the API depend on and read as `snippets_reader`; the review service writes it as the owner; `curategui` behind the `curategui` profile.
+- `launch.sh` -- starts and waits on the snippet store with the other two. It compares the document's hash with the one the last complete load recorded, both taken inside the store's container, and when they differ it runs the loader in the review service's image. A review image from before 5.6 is named as the reason it cannot. It reports what the store holds, and warns when it holds none. `--curate` starts the review service, the two fix stores and the curation interface, without the review interface.
+- `setup.sh` -- pins the review service's image whenever retrieval is on, because it carries the loader, and loads the snippets at the end. The two interfaces are pinned only with their own flags: `--curate` (and `--curate-gui-image`, `--curate-gui-tag`) for the curation interface. A re-run keeps each interface the last run pinned.
+- `start.sh --curate` -- opens the curation interface in a window of its own. `.env` is re-pinned when the review interface or the curation interface was asked for and is not pinned, or when retrieval is on and the review service is not. `--load-golden` no longer brings in the review interface's pin.
+- `benchmarks/run_benchmark.py` -- a fourth configuration, `snippets` (multi-shot plus the snippet store), which is now the default because it is the agent as it ships. The other three turn snippets off, so each row still adds exactly one stage. The store is found on its published port.
+- `arch_diagrams/generate.py` -- `build_v5_6`; the earlier diagrams are unchanged.
+- `tests/docker/test_published_images.py` -- asks Docker Hub about the curation interface's tag too. Its list of images was written by hand and counted, which is how the new image was missing from it; it is now held to every image `setup.sh` pins at the release's tag. `tests/docker/conftest.py` -- every switch the fake `docker` gained for the snippet store is set by a test.
+- `README.md` (SQL snippets and curation, the container, tag and diagram tables, the publish commands, test and file counts), `USAGE_GUIDE.md` (Curating what it learns from, `--curate` for each script, the snippet store's port, the troubleshooting rows), `QUICKSTART.md`, `agent/README.md` (SQL snippets (v5.6), the node, the tool, the six settings), `agent/USAGE.md`, `review/README.md` (Curation, the routes, promotion's first step, the snippet settings), `rag/README.md` (step 7), `benchmarks/README.md`; `curate/README.md` (new).
+- Version 5.6.0 in every declaration, `curate/` included -- twenty-four places, with each lockfile counted twice; `setup.sh` pins `v5_6`, and `CURATE_GUI_TAG` is the ninth tag it pins.
+
+### Fixed
+- `agent/nl2sql_agent/present.py` -- an answer whose narrator wrote the cell it read into the sentence ("... at 0.0728, as shown in row 0, column click_through_rate_pct") lost that claim: the audit read the row number as a figure no cell backs and dropped it, and on the end-to-end click-through question it dropped all three, with and without snippets, leaving a table and no sentence. The narrator is now told the address goes in `cells`, never in the sentence; an address it writes anyway is taken out of the sentence before the audit reads it, so the reader never sees one; and a number that addresses a row the result has ("Row 0 shows ...") is an address to the audit, not a figure -- a row it does not have still fails the claim. The three claims from that run are a test, word for word, and all three now survive.
+- `review/gui/src/styles.css` -- a loader's output in the outcome of a promotion or withdrawal ran together on one line ("... 0 stale rows removed role ..."); each line it printed is its own line now. The curation interface shares the fix.
+- `agent/nl2sql_agent/snippets.py`, `prompts.py` (before release) -- asked end to end through the chat model, "What was our click-through rate by ad channel on weekends in fiscal year 2025?" came back 0 for every channel. The generator had been shown S26, `SUM(a.clicks_or_coupon_clips_count)::numeric / NULLIF(SUM(a.impressions_count), 0)`, and kept the division without the cast; without snippets it wrote `100.0 * ...` and was right. A snippet's note -- here "both counts are integers, so without the cast to numeric the division truncates to zero" -- is now shown under its SQL, and the instruction says to keep each piece exactly as written, casts and `NULLIF`s included, changing only aliases and literals. Asked again, twice, it kept the cast and every rate matched a reference query written by hand.
+- `rag/ragproc/snippets.py` (before release) -- the document hash is taken over the file's bytes, as `sha256sum` takes it in `launch.sh`, not over the text Python reads, which turns a CRLF checkout's line endings into LF and would never match.
+
+### Checked live, before publishing
+- The loader in the built review image, run exactly as `launch.sh` runs it, against an empty pgvector: 32 rows, 32 meanings, the reader role, and a recorded hash equal to `sha256sum` of the document taken in the store's container. Run again with the embedding host unreachable, it changed nothing and embedded nothing.
+- The agent image reading the store as `snippets_reader`: a write is refused with "permission denied".
+- The curation interface image in front of the review service image, on a private network, against the live retail database: a filter snippet validated (32 of 200 products), added as S33, embedded, found first by the agent's search for a question about it, and removed, leaving the document byte for byte as it was. Also a golden pair refused for a missing column, added once fixed and removed again, and a correction added without a submission, embedded, and removed with its vector.
+- End to end through the chat model, with the stack's own `.env` read by compose, the built agent image, and a snippet store loaded by the built review image on the compose network: "What were our net sales by state in fiscal year 2025?" (benchmark B14) was shown S09, S01, S19 and S03, all four in scope, and its eight rows match the benchmark's reference. B14 is also golden pair Q47 word for word, as B03 is Q46, so the worked example alone could have answered it; the click-through question above, which no pair covers, is the one that showed what the snippets do.
+- Retrieval over the fifteen benchmark questions against the loaded store: thirteen are shown snippets, every one about what the question asks; the two bare count questions are shown none. A question that combined a measure with two filters lost both filters when keyword strength was scored relative to the question's best phrase. It is scored by its own weight now (`KEYWORD_SCALE`), and the case is a test.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v5_6` (amd64, arm64); `nl2sql-curate-gui:v5_6` (amd64, arm64), its first publish; `nl2sql-desktop-build:v5_6-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-03 UTC). Each tag was checked absent just before its push. Checked after: the agent and review images run 5.6.0 on both architectures, the agent with the snippet retriever and the audit fix, the review service with the loader and the snippet document; the review and curation interfaces' bundles carry their fixes; every desktop jar is 5.6.0 with its own platform's native code; `tests/docker/test_published_images.py`, 19 passed.
+
+### After publishing
+In the checkout, not in the `v5_6` images: one agent change, the scripts
+run live, and documentation. A correction to the published agent would be a
+new patch tag, not a re-push of `v5_6`.
+- `agent/nl2sql_agent/present.py` -- the published fix took the address out of the sentence and stopped the audit holding a row number against a claim, and told the narrator to put the address in `cells`. Asked again through the published agent, the click-through question's first pass still lost all three claims and only the rewrite survived. Its trace shows why: on a first pass the narrator writes the address into the sentence *instead of* into `cells`, which it leaves empty -- with or without that instruction, and as it did before 5.6 -- so no cell backed the number. A claim with no cells of its own is now cited by the address its sentence wrote (`written_cells`: only rows the result has; a named column if the result has it, else the whole row), and the instruction is gone, so the narrator's prompt is 5.5.1's again. Asked twice more, the first pass survived both times with no rewrite; benchmark questions B07 and B11 matched their reference rows with the audit passing first time.
+- `start.sh --review --curate --console --mlflow`, run live against the published images: `.env` pinned 5.5.1, so it re-ran `setup.sh`, which kept the Ollama host, models and port, pulled all thirteen `v5_6` tags, and loaded the 32 snippets into the snippet store with the `v5_6` review image. `launch.sh` then found the store's hash equal to the document's and loaded nothing, counted 32 snippets and 32 meanings, and every page answered: the web interface, review, curation, the SQL console and MLflow. The published agent answered the click-through question correctly, narrative included.
+- `README.md`, `CHANGELOG.md`, `CHANGELOG_SIMPLE.md` -- the release as published, and this section.
 
 ## v5_5_1 (5.5.1) -- 2026-10-01
 

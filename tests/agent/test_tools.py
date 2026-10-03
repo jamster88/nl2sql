@@ -8,7 +8,7 @@ from nl2sql_agent.config import Settings
 from nl2sql_agent.database import QueryResult
 from nl2sql_agent.tools import build_tools
 
-from .conftest import FakeDatabase, FakeKnowledgeBase, make_chunk
+from .conftest import FakeDatabase, FakeKnowledgeBase, FakeSnippetLibrary, make_chunk, make_snippet
 
 
 def test_describe_all_tables_delegates_to_the_database(fake_db, scripted_llm):
@@ -75,3 +75,22 @@ def test_execute_query_shapes_the_result(scripted_llm):
         "truncated": True,
     }
     assert db.run_select_calls == ["SELECT a, b FROM t"]
+
+
+def test_search_snippets_returns_the_snippets_and_small_summaries(fake_db, scripted_llm):
+    library = FakeSnippetLibrary([make_snippet()], warning="meaning skipped: x")
+    tools = build_tools(fake_db, scripted_llm, Settings(snippets_top_k=2), snippet_library=library)
+    result = tools["search_snippets"].invoke({"question": "net sales"})
+    assert [s.snippet_id for s in result["snippets"]] == ["S19"]
+    assert result["hits"][0]["found_by"] == "keywords: net sales; meaning 0.550"
+    assert (result["warning"], result["error"]) == ("meaning skipped: x", None)
+    assert library.find_calls == [("net sales", 2)]
+
+
+def test_search_snippets_reports_an_unreachable_store_and_a_missing_library(fake_db, scripted_llm):
+    down = build_tools(fake_db, scripted_llm, Settings(), snippet_library=FakeSnippetLibrary(error="refused"))
+    assert down["search_snippets"].invoke({"question": "q"}) == {
+        "snippets": [], "hits": [], "warning": None, "error": "refused"
+    }
+    off = build_tools(fake_db, scripted_llm, Settings())
+    assert off["search_snippets"].invoke({"question": "q"})["error"] == "snippets are disabled"

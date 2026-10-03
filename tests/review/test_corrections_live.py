@@ -289,3 +289,60 @@ def test_a_deleted_fix_can_be_saved_again(store):
 @pytest.mark.docker
 def test_deleting_what_the_store_does_not_hold_is_none(store):
     assert store.delete("never-fixed") is None
+
+
+# ---------------------------------------------------------------------------
+# 5.6: fixes written straight into a store, with no submission behind them
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.docker
+def test_curated_fixes_have_no_submission_and_any_number_of_them_can_be_stored(store):
+    """NULL is distinct under UNIQUE, so the one-fix-per-submission rule
+    still holds for submissions and does not limit curated fixes to one."""
+    first = store.save(fix(None, question="top 10 SKUs", job_id="", source="curated"))
+    second = store.save(fix(None, question="which vendor supplies dairy", job_id="", source="curated"))
+    held = {f.fix_id: f for f in store.listing()}
+    assert {held[first.fix_id].source, held[second.fix_id].source} == {"curated"}
+    assert held[first.fix_id].submission_id is None
+    reviewed = store.save(fix("sub-1"))
+    assert store.get(reviewed.fix_id).source == "review"
+
+
+@pytest.mark.docker
+def test_a_fix_is_read_and_removed_by_its_own_id_with_its_vector(store):
+    curated = store.save(fix(None, question="top 10 SKUs by net sales", job_id="", source="curated"))
+    store.save(fix("sub-2", question="which vendor supplies dairy"))
+    embedder = WordEmbedder()
+    store.embed_pending(embedder)
+
+    assert store.get(curated.fix_id).question == "top 10 SKUs by net sales"
+    assert store.delete_by_id(curated.fix_id).fix_id == curated.fix_id
+    assert store.get(curated.fix_id) is None and store.delete_by_id(curated.fix_id) is None
+    hits = store.search(embedder.embed(["top SKUs by net sales"])[0], limit=5)
+    assert [hit["question"] for hit in hits] == ["which vendor supplies dairy"]
+
+
+@pytest.mark.docker
+def test_a_store_from_before_curated_fixes_is_widened_in_place(store):
+    """5.1-5.5 created `submission_id NOT NULL` and no `source`; the next
+    start's setup relaxes the one and adds the other, keeping every row."""
+    import psycopg
+
+    table = store.kind.table
+    with psycopg.connect(store.url) as conn:
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN source")
+        conn.execute(f"ALTER TABLE {table} ALTER COLUMN submission_id SET NOT NULL")
+        conn.execute(
+            f"INSERT INTO {table} (fix_id, submission_id, job_id, question, corrected_sql) "
+            f"VALUES ('{store.kind.prefix}0001', 'old', 'job-old', 'q', 'SELECT 1')"
+        )
+        conn.commit()
+        with pytest.raises(psycopg.errors.NotNullViolation):
+            conn.execute(f"INSERT INTO {table} (fix_id, job_id, question, corrected_sql) VALUES ('X', 'j', 'q', 'SELECT 1')")
+        conn.rollback()
+
+    store.setup()
+
+    assert store.get(f"{store.kind.prefix}0001").source == "review"
+    assert store.save(fix(None, job_id="", source="curated")).fix_id == f"{store.kind.prefix}0002"

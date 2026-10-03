@@ -539,7 +539,7 @@ def test_final_message_advertises_a_question_that_needs_the_knowledge_base(run_s
 @pytest.mark.parametrize(
     ("flags", "running"),
     [
-        ((), ["nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb"]),
+        ((), ["nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb", "nl2sql-snippetsdb"]),
         (("--no-rag",), ["nl2sql-postgres"]),
     ],
 )
@@ -673,9 +673,18 @@ def test_review_pins_all_four_names_in_the_env_file(run_setup):
     assert env["REVIEW_GUI_IMAGE_TAG"] == _shipped_tag("REVIEW_GUI_TAG")
 
 
-def test_nothing_about_review_is_pinned_unless_it_was_asked_for(run_setup):
-    """Pinning an image nobody wanted makes compose go looking for it."""
+def test_no_review_page_is_pinned_unless_it_was_asked_for(run_setup):
+    """Pinning an image nobody wanted makes compose go looking for it. The
+    review *service* is wanted with retrieval on, since 5.6: it carries the
+    loader that fills the snippet store. Its pages are not."""
     env = run_setup().env_file()
+    assert env.get("REVIEW_IMAGE_NAME") == "mcfaddja/nl2sql-review"
+    assert "REVIEW_GUI_IMAGE_NAME" not in env
+    assert "CURATE_GUI_IMAGE_NAME" not in env
+
+
+def test_without_retrieval_nothing_about_review_is_pinned(run_setup):
+    env = run_setup("--no-rag").env_file()
     assert "REVIEW_IMAGE_NAME" not in env
     assert "REVIEW_GUI_IMAGE_NAME" not in env
 
@@ -882,7 +891,8 @@ def test_nothing_is_carried_over_on_a_first_run(run_setup):
     env = run_setup().env_file()
     assert "OLLAMA_BASE_URL" not in env
     assert "GUI_IMAGE_NAME" not in env
-    assert "REVIEW_IMAGE_NAME" not in env
+    assert "REVIEW_GUI_IMAGE_NAME" not in env
+    assert "CURATE_GUI_IMAGE_NAME" not in env
 
 
 def test_settings_added_by_hand_survive_a_re_run(run_setup):
@@ -1061,3 +1071,81 @@ def test_an_old_backup_is_not_where_the_tracking_uri_comes_from(run_setup):
     (first.workdir / ".env").unlink()
     (first.workdir / ".env.bak").write_text("MLFLOW_TRACKING_URI=\n")
     assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
+
+
+
+# ---------------------------------------------------------------------------
+# v5.6: the curation interface, and the snippet store setup.sh fills
+# ---------------------------------------------------------------------------
+
+
+def test_curate_pulls_and_pins_its_page_and_the_service_behind_it(run_setup):
+    result = run_setup("--curate", "--no-rag")
+    env = result.env_file()
+    assert env.get("CURATE_GUI_IMAGE_NAME") == "mcfaddja/nl2sql-curate-gui"
+    assert env.get("REVIEW_IMAGE_NAME") == "mcfaddja/nl2sql-review"
+    assert "REVIEW_GUI_IMAGE_NAME" not in env
+    assert result.called("pull mcfaddja/nl2sql-curate-gui:")
+    assert result.called("pull mcfaddja/nl2sql-review:")
+    assert not result.called("pull mcfaddja/nl2sql-review-gui:")
+
+
+def test_naming_the_curation_image_or_tag_implies_the_flag(run_setup):
+    image = run_setup("--curate-gui-image", "me/curate").env_file()
+    assert image.get("CURATE_GUI_IMAGE_NAME") == "me/curate"
+    tag = run_setup("--curate-gui-tag", "dev").env_file()
+    assert tag.get("CURATE_GUI_IMAGE_TAG") == "dev"
+
+
+def test_a_curation_page_that_will_not_pull_is_built_later(run_setup):
+    result = run_setup("--curate", env={"FAKE_FAIL_PULL": "nl2sql-curate-gui"})
+    assert result.returncode == 0
+    assert "./launch.sh --curate will build it from source instead." in result.output
+
+
+def test_a_review_service_that_will_not_pull_is_built_when_first_needed(run_setup):
+    result = run_setup(env={"FAKE_FAIL_PULL": "mcfaddja/nl2sql-review:"})
+    assert result.returncode == 0
+    assert "compose will build it from source the first time it is needed." in result.output
+
+
+def test_a_rerun_keeps_the_curation_page_and_does_not_mistake_the_service_pin_for_the_review_page(run_setup):
+    first = run_setup("--curate")
+    assert "CURATE_GUI_IMAGE_NAME" in first.env_file()
+    again = run_setup()
+    env = again.env_file()
+    assert env.get("CURATE_GUI_IMAGE_NAME") == "mcfaddja/nl2sql-curate-gui"
+    assert "REVIEW_GUI_IMAGE_NAME" not in env
+
+
+def test_the_snippet_store_is_started_and_loaded_from_the_document(run_setup):
+    result = run_setup()
+    assert result.called("up -d snippetsdb")
+    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-snippetsdb")
+    assert result.called("--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review")
+    assert result.called("07_load_snippets.py")
+    assert "32 rows written, 0 stale rows removed" in result.output
+    assert "vectors -> sql_snippet_vectors: 32 embedded, 0 already current" in result.output
+
+
+def test_a_snippet_load_that_fails_is_a_warning_not_a_failed_setup(run_setup):
+    result = run_setup(env={"FAKE_SNIPPETS_LOAD_FAILS": "1"})
+    assert result.returncode == 0
+    assert "the SQL snippets did not load completely; ./launch.sh tries again on every start." in result.output
+    assert "searchable by keyword" in result.output
+
+
+def test_a_snippet_store_that_never_comes_up_stops_setup(run_setup):
+    result = run_setup(env={"FAKE_SNIPPETS_HEALTH": "starting"}, timeout=240)
+    assert result.returncode != 0
+    assert "the snippet store did not become healthy" in result.output
+
+
+def test_without_retrieval_no_snippet_store_is_started(run_setup):
+    result = run_setup("--no-rag")
+    assert not result.called("snippetsdb")
+    assert not result.called("07_load_snippets.py")
+
+
+def test_the_closing_lines_point_at_the_curation_interface(run_setup):
+    assert "./launch.sh --curate                     # http://localhost:8083" in run_setup().output

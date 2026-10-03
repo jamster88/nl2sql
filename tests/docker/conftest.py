@@ -109,6 +109,12 @@ case "$1" in
             echo "${FAKE_MLFLOW_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-mlflow* ]]; then
             echo "${FAKE_MLFLOW_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-snippetsdb* ]]; then
+            echo "${FAKE_SNIPPETS_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-curate-gui* && "$*" == *Running* ]]; then
+            echo "${FAKE_CURATE_GUI_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-curate-gui* ]]; then
+            echo "${FAKE_CURATE_GUI_HEALTH:-healthy}"
         else
             echo "${FAKE_PG_HEALTH:-healthy}"
         fi
@@ -169,10 +175,31 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
             printf '%s\n' "$routing"
             exit 0
         fi
+        if [[ "$*" == *"--entrypoint sh review"* && "$*" == *07_load_snippets* ]]; then
+            # launch.sh catching the snippet store up with its document: the
+            # snippet loader, run in the review service's image, saying what
+            # the real one says. FAKE_SNIPPETS_LOAD_FAILS is an embedding
+            # host that is down; FAKE_SNIPPETS_OLD_IMAGE a review image from
+            # before there was a loader to run.
+            if [[ -n "${FAKE_SNIPPETS_OLD_IMAGE:-}" ]]; then
+                echo "python: can't open file '/app/rag/07_load_snippets.py': [Errno 2] No such file or directory" >&2
+                exit 2
+            fi
+            printf '%s\n' "/app/context_questions/sql_snippets.md -> sql_snippets: 32 snippets (8 join, 10 filter, 10 measure, 4 dimension)" \
+                "  32 rows written, 0 stale rows removed" \
+                "  role snippets_reader can read the store and write nothing"
+            if [[ -n "${FAKE_SNIPPETS_LOAD_FAILS:-}" ]]; then
+                printf '%s\n' "  vectors -> sql_snippet_vectors: FAILED: Cannot reach Ollama at http://host.docker.internal:11434" \
+                    "  the rows are loaded and searchable by keyword; the next load embeds them"
+                exit 1
+            fi
+            printf '%s\n' "  vectors -> sql_snippet_vectors: ${FAKE_SNIPPETS_EMBEDDED:-32} embedded, $((32 - ${FAKE_SNIPPETS_EMBEDDED:-32})) already current"
+            exit 0
+        fi
         if [[ "$*" == *"--entrypoint sh review"* ]]; then
             # launch.sh --load-golden: the two golden-pair loaders, run in the
-            # review service's image. What they print, as the real ones do;
-            # FAKE_GOLDEN_EMBEDDED is how many pairs each vector table took.
+            # review service's image. What they print, as the real ones do,
+            # for a document the stores already hold.
             printf '%s\n' "/app/context_questions/translated_questions.md -> golden_pairs: 48 pairs across 25 suites" \
                 "  48 rows written, 0 stale rows removed" \
                 "  BM25 over english lexemes: 48 documents, 412 distinct terms, avg keyword length 6.1 (k1=1.2, b=0.75)"
@@ -180,10 +207,9 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
                 echo "error: Could not reach Ollama at http://host.docker.internal:11434" >&2
                 exit 1
             fi
-            embedded="${FAKE_GOLDEN_EMBEDDED:-0}"
             printf '%s\n' "48 golden pairs in the context store" "embedding with ollama:bge-m3 (1024 dimensions)" \
-                "  question         -> golden_pair_question_vectors: $embedded embedded, $((48 - embedded)) already current, 0 removed" \
-                "  reasoning_target -> golden_pair_reasoning_vectors: $embedded embedded, $((48 - embedded)) already current, 0 removed"
+                "  question         -> golden_pair_question_vectors: 0 embedded, 48 already current, 0 removed" \
+                "  reasoning_target -> golden_pair_reasoning_vectors: 0 embedded, 48 already current, 0 removed"
             exit 0
         fi
         if [[ "$*" == *" logs "* || "$*" == *" logs" ]]; then
@@ -209,7 +235,18 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
             exec)
                 # Ordered most specific first: several of these run against the
                 # same service and are told apart only by the SQL.
-                if [[ "$*" == *"pg_extension"* ]]; then
+                if [[ "$*" == *"snippetsdb sha256sum"* ]]; then
+                    # The document's hash, taken in the store's own container.
+                    echo "${FAKE_SNIPPETS_DOC_HASH-5ca1ab1e}  -"
+                elif [[ "$*" == *sql_snippet_source* ]]; then
+                    # What the store says it was loaded from: by default the
+                    # document as it is, so a start has nothing to load.
+                    echo "${FAKE_SNIPPETS_LOADED_HASH-5ca1ab1e}"
+                elif [[ "$*" == *sql_snippet_vectors* ]]; then
+                    echo "${FAKE_SNIPPET_VECTORS-32}"
+                elif [[ "$*" == *sql_snippets* ]]; then
+                    echo "${FAKE_SNIPPET_COUNT-32}"
+                elif [[ "$*" == *"pg_extension"* ]]; then
                     echo "${FAKE_TRGM_INSTALLED-1}"
                 elif [[ "$*" == *"role_table_grants"* ]]; then
                     echo "${FAKE_READER_EXTRA_GRANTS-0}"
@@ -492,6 +529,12 @@ class SetupRun:
         raise AssertionError(f"no call matching {fragment!r} in:\n" + "\n".join(self.calls))
 
 
+def _copy_snippet_document(workdir: Path) -> None:
+    """launch.sh compares the snippet store with this document on every start."""
+    (workdir / "context_questions").mkdir(exist_ok=True)
+    shutil.copy(REPO_ROOT / "context_questions" / "sql_snippets.md", workdir / "context_questions" / "sql_snippets.md")
+
+
 def _copy_reader_role_sql(workdir: Path) -> None:
     """Both scripts pipe docker/reader_role.sql into the (fake) container."""
     (workdir / "docker").mkdir()
@@ -593,6 +636,7 @@ def run_launch(tmp_path: Path):
         shutil.copy(REPO_ROOT / name, workdir / name)
         os.chmod(workdir / name, 0o755)
     _copy_reader_role_sql(workdir)
+    _copy_snippet_document(workdir)
     _make_desktop_sources(workdir)
 
     bin_dir = tmp_path / "bin"
@@ -675,6 +719,7 @@ def run_start(tmp_path: Path):
         shutil.copy(REPO_ROOT / name, workdir / name)
         os.chmod(workdir / name, 0o755)
     _copy_reader_role_sql(workdir)
+    _copy_snippet_document(workdir)
     _make_desktop_sources(workdir)
 
     bin_dir = tmp_path / "bin"
@@ -720,6 +765,9 @@ def run_start(tmp_path: Path):
         f"AGENT_IMAGE_TAG={shipped}\n"
         "GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
         f"GUI_IMAGE_TAG={shipped}\n"
+        # Pinned whenever retrieval is on, since 5.6: it loads the snippets.
+        "REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\n"
+        f"REVIEW_IMAGE_TAG={shipped}\n"
         "VECTOR_IMAGE_NAME=mcfaddja/nl2sql-rag-vectordb\n"
         "VECTOR_IMAGE_TAG=v3\n"
         "CONTEXT_IMAGE_NAME=mcfaddja/nl2sql-rag-chunkdb\n"

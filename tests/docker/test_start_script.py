@@ -617,6 +617,7 @@ def test_a_pinned_console_is_not_fetched_again(run_start):
     env_file = (
         f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
         f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+        f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
         f"CONSOLE_GUI_IMAGE_NAME=mcfaddja/nl2sql-console-gui\nCONSOLE_GUI_IMAGE_TAG={SHIPPED}\n"
     )
     result = run_start("--console", env_file=env_file)
@@ -1073,6 +1074,8 @@ def _older_env(**extra: str) -> str:
         "AGENT_IMAGE_TAG": "v5_1_2",
         "GUI_IMAGE_NAME": "mcfaddja/nl2sql-gui",
         "GUI_IMAGE_TAG": "v5_1_2",
+        "REVIEW_IMAGE_NAME": "mcfaddja/nl2sql-review",
+        "REVIEW_IMAGE_TAG": "v5_1_2",
         "RAG_ENABLED": "true",
         **extra,
     }
@@ -1135,7 +1138,7 @@ def test_an_agent_tag_chosen_for_this_checkout_is_kept(run_start):
 def test_a_chosen_agent_tag_survives_a_re_run_for_another_reason(run_start):
     result = run_start("--review", env_file=_chosen_env())
 
-    assert "the review images are not pinned" in result.output
+    assert "the review interface is not pinned" in result.output
     assert "The agent stays at v5_3, as chosen; ./setup.sh on its own goes back." in result.output
     assert result.called("pull mcfaddja/nl2sql-agent:v5_3")
     written = result.env_file()
@@ -1188,9 +1191,9 @@ def test_a_desktop_client_that_was_never_pinned_is_pulled_rather_than_built(run_
 def test_review_images_that_were_never_pinned_are_pulled_rather_than_built(run_start):
     result = run_start("--review")
 
-    assert "the review images are not pinned" in result.output
-    assert result.called(f"pull mcfaddja/nl2sql-review:{SHIPPED}")
-    assert result.env_file()["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
+    assert "the review interface is not pinned" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-review-gui:{SHIPPED}")
+    assert result.env_file()["REVIEW_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-review-gui"
 
 
 def test_a_env_that_is_up_to_date_is_not_rewritten(run_start):
@@ -1198,6 +1201,7 @@ def test_a_env_that_is_up_to_date_is_not_rewritten(run_start):
         f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
         f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
         f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
+        f"REVIEW_GUI_IMAGE_NAME=mcfaddja/nl2sql-review-gui\nREVIEW_GUI_IMAGE_TAG={SHIPPED}\n"
     )
     result = run_start("--review", env_file=env_file)
 
@@ -1231,10 +1235,11 @@ def test_mlflow_opens_its_page_last_in_a_window_of_its_own(run_start):
 
 def test_every_page_opens_in_order(run_start):
     """The combination --help offers for everything, doing what it says."""
-    assert "./start.sh --review --console --mlflow brings up every" in run_start("--help").output
-    result = run_start("--review", "--console", "--mlflow")
+    assert "./start.sh --review --curate --console --mlflow brings up" in run_start("--help").output
+    result = run_start("--review", "--curate", "--console", "--mlflow")
     assert pages(result) == [
-        "http://localhost:8080", "http://localhost:8081", "http://localhost:8082", "http://localhost:5001",
+        "http://localhost:8080", "http://localhost:8081", "http://localhost:8083", "http://localhost:8082",
+        "http://localhost:5001",
     ]
 
 
@@ -1340,14 +1345,84 @@ def test_load_golden_is_handed_to_launch_sh(run_start):
     assert pages(result) == ["http://localhost:8080"], "the review page is --review's, not this flag's"
 
 
-def test_load_golden_pulls_the_review_image_rather_than_building_it(run_start):
-    """The loaders are in the review service's image, and an unpinned one
+def test_the_review_image_is_pulled_rather_than_built_whenever_retrieval_is_on(run_start):
+    """The loaders are in the review service's image -- the snippets' on
+    every start, the golden pairs' with --load-golden -- and an unpinned one
     would be built here from source on first use."""
     env_file = f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\nGUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
-    result = run_start("--load-golden", env_file=env_file)
+    result = run_start(env_file=env_file)
 
-    assert "the review image, which loads the golden pairs, is not pinned, so it would be built here from source" in (
-        result.output
+    assert (
+        "the review image, which loads the SQL snippets and the golden pairs, is not pinned, so it would be built "
+        "here from source" in result.output
     )
     assert result.called(f"pull mcfaddja/nl2sql-review:{SHIPPED}")
     assert result.env_file()["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
+
+
+# ---------------------------------------------------------------------------
+# The curation interface (--curate)
+# ---------------------------------------------------------------------------
+
+_PINNED_FOR_CURATION = (
+    f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
+    f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+    f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
+    f"CURATE_GUI_IMAGE_NAME=mcfaddja/nl2sql-curate-gui\nCURATE_GUI_IMAGE_TAG={SHIPPED}\n"
+)
+
+
+def test_curate_is_handed_to_both_scripts_and_opens_its_page_in_a_window(run_start):
+    result = run_start("--curate", env_file=_PINNED_FOR_CURATION)
+
+    assert result.returncode == 0
+    assert "Fetching the images" not in result.output
+    assert result.called("--profile feedback --profile review --profile curategui up -d curategui")
+    assert "Waiting for the curation interface" in result.output
+    assert pages(result) == ["http://localhost:8080", "http://localhost:8083"]
+    assert [call for call in result.calls if call.startswith("window ")]
+    assert "==> Opening http://localhost:8083" in result.output
+
+
+def test_a_curation_page_that_was_never_pinned_is_pulled_rather_than_built(run_start):
+    result = run_start("--curate")
+    assert "the curation interface is not pinned, so it would be built here from source" in result.output
+    assert result.called(f"pull mcfaddja/nl2sql-curate-gui:{SHIPPED}")
+    assert result.env_file()["CURATE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-curate-gui"
+
+
+def test_a_curation_page_that_never_answers_does_not_take_the_stack_down(run_start):
+    result = run_start("--curate", env_file=_PINNED_FOR_CURATION, env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "8083"})
+
+    assert result.returncode == 0
+    assert "the curation interface never answered at http://localhost:8083." in result.output
+    assert "--profile feedback --profile review --profile curategui logs curategui" in result.output
+    assert "Everything else is up; ./launch.sh --curate tries it again on its own." in result.output
+    assert pages(result) == ["http://localhost:8080"]
+
+
+def test_a_machine_that_cannot_open_the_curation_page_still_says_where_it_is(run_start):
+    result = run_start("--curate", env_file=_PINNED_FOR_CURATION, env={
+        "FAKE_BROWSER_EXIT": "3", "FAKE_UNAME_S": "Darwin", "FAKE_OSASCRIPT_EXIT": "1"})
+    assert "could not open the curation interface. Open it yourself:" in result.output
+
+
+def test_no_browser_prints_the_curation_url(run_start):
+    result = run_start("--curate", "--no-browser", env_file=_PINNED_FOR_CURATION)
+    assert pages(result) == []
+    assert "Curation interface at http://localhost:8083" in result.output
+
+
+def test_the_closing_lines_say_what_curation_is_for_and_how_to_stop_it(run_start):
+    output = " ".join(run_start("--curate", env_file=_PINNED_FOR_CURATION).output.split())
+    assert "http://localhost:8083 write snippets, golden pairs and fixes, each run first" in output
+    assert "docker compose --profile feedback --profile review --profile curategui down and the curation page" in output
+
+
+def test_desktop_and_curate_still_opens_the_curation_page(run_start):
+    env = {"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"}
+    result = run_start("--desktop", "--curate", env_file=_PINNED_FOR_CURATION, env=env)
+    assert pages(result) == ["http://localhost:8083"]
+    assert "write snippets, golden pairs and fixes, each run first" in result.output
+    quiet = run_start("--desktop", "--curate", "--no-browser", env_file=_PINNED_FOR_CURATION, env=env)
+    assert "Curation interface at http://localhost:8083" in quiet.output

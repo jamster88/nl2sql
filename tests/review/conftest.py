@@ -15,17 +15,23 @@ import shutil
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from dataclasses import replace
 
+from nl2sql_review import snippets as snippets_module
+from nl2sql_review.app import create_app
 from nl2sql_review.corrections import COMPLETIONS, CORRECTIONS, AlreadyFixed, EmbedResult, Kind
 from nl2sql_review.render import HEADING_RE, Draft, next_pair_id
 from nl2sql_review.settings import ReviewSettings
+from nl2sql_review.snippet_validation import SnippetValidation
+from nl2sql_review.snippets import SnippetDraft
 from nl2sql_review.store import Submission
 from nl2sql_review.validation import Validation, clean
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 REAL_DOCUMENT = ROOT / "context_questions" / "translated_questions.md"
+REAL_SNIPPETS = ROOT / "context_questions" / "sql_snippets.md"
 
 #: The golden set as the copied document holds it when a test starts: how
 #: many pairs, and the id the next promotion takes. Derived rather than
@@ -58,18 +64,29 @@ def document(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def settings(document: Path) -> ReviewSettings:
-    """Pointed at the copy, with both loaders off.
+def snippet_document(tmp_path: Path) -> Path:
+    """A writable copy of the real snippet document, beside the golden one."""
+    target = tmp_path / "sql_snippets.md"
+    shutil.copy(REAL_SNIPPETS, target)
+    return target
 
-    Off because they need a context store, a vector store and an embedding
-    host. The tests that care about the loaders being *invoked* fake them;
-    the ones here care about what is written to the document.
+
+@pytest.fixture
+def settings(document: Path, snippet_document: Path) -> ReviewSettings:
+    """Pointed at the copies, with every loader off.
+
+    Off because they need a context store, a vector store, a snippet store
+    and an embedding host. The tests that care about the loaders being
+    *invoked* fake them; the ones here care about what is written.
     """
     return ReviewSettings(
         document=str(document),
         rag_dir=str(ROOT / "rag"),
         reload_context=False,
         reload_vectors=False,
+        snippets_document=str(snippet_document),
+        snippets_db_url="postgresql://snippets:secret@nowhere:5432/nl2sql_snippets",
+        reload_snippets=False,
         token="test-token",
     )
 
@@ -133,6 +150,7 @@ class FakeRepository:
         self.promotion_log: list[dict] = []
         self.pings = 0
         self.fail_ping: Exception | None = None
+        self.fail_outcome: Exception | None = None
 
     def ping(self) -> None:
         self.pings += 1
@@ -141,6 +159,27 @@ class FakeRepository:
 
     def get(self, submission_id):
         return self.submissions.get(submission_id)
+
+    def get_by_outcome(self, outcome_id):
+        if self.fail_outcome is not None:
+            raise self.fail_outcome
+        return next(
+            (
+                s
+                for s in self.submissions.values()
+                if s.promoted_pair_id == outcome_id and s.state in ("promoted", "corrected")
+            ),
+            None,
+        )
+
+    def outcomes(self):
+        if self.fail_outcome is not None:
+            raise self.fail_outcome
+        return {
+            s.promoted_pair_id: s.id
+            for s in self.submissions.values()
+            if s.promoted_pair_id and s.state in ("promoted", "corrected")
+        }
 
     def listing(self, *, state=None, verdict=None, limit=50, offset=0):
         found = list(self.submissions.values())
@@ -252,6 +291,7 @@ class FakeFixStore:
         self.fail_count: Exception | None = None
         self.fail_listing: Exception | None = None
         self.fail_delete: Exception | None = None
+        self.fail_get: Exception | None = None
         self.already: str | None = None
         self.embed_result = EmbedResult(embedded=1, pending=0, ran=True)
 
@@ -277,6 +317,19 @@ class FakeFixStore:
         if self.fail_delete is not None:
             raise self.fail_delete
         found = next((fix for fix in self.saved if fix.submission_id == submission_id), None)
+        if found is not None:
+            self.saved.remove(found)
+        return found
+
+    def get(self, fix_id):
+        if self.fail_get is not None:
+            raise self.fail_get
+        return next((fix for fix in self.saved if fix.fix_id == fix_id), None)
+
+    def delete_by_id(self, fix_id):
+        if self.fail_delete is not None:
+            raise self.fail_delete
+        found = next((fix for fix in self.saved if fix.fix_id == fix_id), None)
         if found is not None:
             self.saved.remove(found)
         return found
@@ -338,3 +391,106 @@ def wrong_submission() -> Submission:
         comment="no names",
         agent_version="5.0.0",
     )
+
+
+class FakeSnippetValidator:
+    """Stands in for running a snippet inside its probe query."""
+
+    def __init__(self, result: SnippetValidation | None = None) -> None:
+        self.calls: list[tuple[str, str, str]] = []
+        self.result = result
+
+    def __call__(self, kind: str, applies_to: str, sql: str) -> SnippetValidation:
+        self.calls.append((kind, applies_to, sql))
+        if self.result is not None:
+            return replace(self.result, kind=kind, applies_to=applies_to, sql=sql)
+        tables = [t for t in ("fact_pos_retail_sales", "dim_date", "dim_product") if t in f"{applies_to} {sql}"]
+        return SnippetValidation(
+            kind=kind, valid=True, applies_to=applies_to, sql=sql, probe_sql=f"SELECT {sql}",
+            columns=["value"], rows=[["12136500.40"]], tables=tables, elapsed_ms=2.0,
+        )
+
+
+class FakeSnippetBook:
+    """The real document operations, over a copy, with the store faked.
+
+    Writing the document is what the routes are about and is done for real;
+    the store needs a database, and what it reports is set by the test.
+    """
+
+    def __init__(self) -> None:
+        self.status = {"reachable": True, "snippets": 32, "embedded": 32, "current": True, "detail": "current"}
+        self.status_calls: list[tuple[str, str]] = []
+        self.listing = snippets_module.listing
+        self.preview = snippets_module.preview
+        self.add = snippets_module.add
+        self.change = snippets_module.change
+        self.delete = snippets_module.delete
+
+    def store_status(self, url: str, digest: str) -> dict:
+        self.status_calls.append((url, digest))
+        return dict(self.status)
+
+
+@pytest.fixture
+def snippet_validator() -> FakeSnippetValidator:
+    return FakeSnippetValidator()
+
+
+@pytest.fixture
+def snippet_book() -> FakeSnippetBook:
+    return FakeSnippetBook()
+
+
+@pytest.fixture
+def snippet_draft() -> SnippetDraft:
+    return SnippetDraft(
+        name="Holiday sales",
+        kind="filter",
+        tables="fact_pos_retail_sales, dim_date",
+        keywords="holiday sales, sales on public holidays",
+        means="Restricts sales to the days the calendar marks as holidays.",
+        applies_to="fact_pos_retail_sales f JOIN dim_date d ON d.date_key = f.sales_date_key",
+        sql="d.is_holiday",
+    )
+
+
+# ---------------------------------------------------------------------------
+# The service over HTTP: test_app.py and test_curation.py both drive it
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pinged() -> list[str]:
+    return []
+
+
+@pytest.fixture
+def make_client(settings, repository, fix_stores, validator, pinged, snippet_validator, snippet_book):
+    def build(**overrides):
+        app = create_app(
+            settings=overrides.pop("settings", settings),
+            repository=overrides.pop("repository", repository),
+            fix_stores=overrides.pop("fix_stores", fix_stores),
+            validator=overrides.pop("validator", validator),
+            embedder_factory=overrides.pop("embedder_factory", lambda: "an embedder"),
+            retail_pinger=overrides.pop("retail_pinger", lambda: pinged.append("retail")),
+            snippet_validator=overrides.pop("snippet_validator", snippet_validator),
+            snippet_book=overrides.pop("snippet_book", snippet_book),
+            schema_reader=overrides.pop("schema_reader", lambda: [{"name": "dim_date", "columns": [{"name": "date_key", "type": "integer"}]}]),
+            **overrides,
+        )
+        client = TestClient(app, raise_server_exceptions=False)
+        client.headers.update({"Authorization": "Bearer test-token"})
+        return client
+
+    return build
+
+
+@pytest.fixture
+def client(make_client):
+    return make_client()
+
+
+def complete(draft: Draft) -> dict:
+    return draft.as_dict()

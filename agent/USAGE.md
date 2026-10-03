@@ -393,6 +393,33 @@ examples are skipped and the run continues:
 [examples] skipped: Could not read golden_pairs from the context store: ...
 ```
 
+## SQL snippets
+
+The agent also retrieves **SQL snippets** (v5.6): verified pieces of SQL from
+[`../context_questions/sql_snippets.md`](../context_questions/sql_snippets.md)
+-- how two tables join, what a phrase filters to, how a measure is calculated
+-- each beside what it means. They are found by the phrases a question uses
+and by meaning, and the SQL Generator is shown the ones whose tables are in
+scope. The `[snippets]` progress line names what was found, and the
+`[schema]` line, after the tables, how many of them were in scope:
+
+```
+[snippets] S19 measure (0.530), S09 filter (0.520), S01 join (0.510)
+```
+
+Useful flags:
+
+```bash
+docker compose run --rm agent --no-snippets "..."        # skip them
+docker compose run --rm agent --snippets-top-k 3 "..."   # fewer, at most
+docker compose run --rm agent --json "..." | jq .snippet_hits
+```
+
+If the snippet store is unreachable the snippets are skipped and the run
+continues; if the embedding host is, they are found by phrase alone and the
+trace says so. They are written and changed in the
+[curation interface](../curate/README.md) (`./start.sh --curate`).
+
 ## Choosing a model or host
 
 ```bash
@@ -524,13 +551,14 @@ That has to match `--embed-model`.
 
 ## Stopping
 
-The agent container removes itself after each question. The three databases
+The agent container removes itself after each question. The four databases
 keep running until you stop them:
 
 ```bash
-docker compose stop postgres vectordb chunkdb   # keeps data
+docker compose stop postgres vectordb chunkdb snippetsdb   # keeps data
 docker compose down                     # removes the containers, keeps data
 docker compose down -v                  # also deletes their volumes, resetting the
-                                        # three databases to what the images ship
+                                        # databases to what the images ship, and the
+                                        # snippet store to empty until the next start
 docker compose --profile '*' down       # everything else ./start.sh started, too
 ```

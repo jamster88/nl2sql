@@ -9,6 +9,11 @@ It also loads the golden question/SQL pairs in
 -- as a relational table rather than as chunked prose -- and embeds two of their
 columns separately, which is what the agent's ensemble retriever searches.
 
+And it loads the SQL snippets in
+[`context_questions/sql_snippets.md`](../context_questions/sql_snippets.md)
+-- joins, filters, measures and dimensions, each beside what it means --
+into a store of their own (step 7, since 5.6).
+
 ```bash
 ./run_all.sh          # everything, from nothing to a queryable vector store
 ./run_update.sh       # after editing a document: re-chunk and re-embed only what changed
@@ -16,12 +21,14 @@ columns separately, which is what the agent's ensemble retriever searches.
 
 python 05_load_golden_pairs.py     # golden pairs -> context store, with a BM25 index
 python 06_embed_golden_pairs.py    # their question and reasoning columns -> pgvector
+python 07_load_snippets.py         # the SQL snippets -> their own store, with their meanings embedded
 ```
 
-Both databases stay off port 5432 so they never collide with the retail
-testing database: the chunk store is on **5433**, the vector store on **5434**.
+The databases stay off port 5432 so they never collide with the retail
+testing database: the chunk store is on **5433**, the vector store on
+**5434**, and the snippet store on **5438**.
 
-## The six steps
+## The seven steps
 
 | Step | File | What it does |
 |---|---|---|
@@ -31,6 +38,7 @@ testing database: the chunk store is on **5433**, the vector store on **5434**.
 | 4 | `04_embed_document.py` | Reads chunks, embeds them, writes vectors to pgvector |
 | 5 | `05_load_golden_pairs.py` | Parses the golden pairs into a table and builds a BM25 index over their keywords |
 | 6 | `06_embed_golden_pairs.py` | Embeds the `question` and `reasoning_target` columns into two separate pgvector tables |
+| 7 | `07_load_snippets.py` | Loads the SQL snippets into their store, embeds what each means, and creates the agent's read-only role |
 | -- | `run_all.sh`, `run_update.sh`, `start_rag_db.sh` | Orchestration |
 
 Steps 2 and 4 take document names as arguments and work on any markdown file,
@@ -129,6 +137,54 @@ embedding with ollama:bge-m3 (1024 dimensions)
   reasoning_target -> golden_pair_reasoning_vectors: 1 embedded, 44 already current, 0 removed
 ```
 
+
+## The SQL snippets (step 7)
+
+```bash
+python 07_load_snippets.py
+python 07_load_snippets.py --dry-run
+python 07_load_snippets.py --probe "net sales by department in fiscal 2024"
+```
+
+A snippet is one piece of SQL -- a join, a filter, a measure or a
+dimension -- with the phrases a question says it with, what it means, and
+the `FROM` clause it is written over. Like the golden pairs, each is a
+record with fixed fields, so it gets a table rather than chunks; unlike them,
+it lives in a store of its own, `nl2sql_snippets` on 5438, which is stock
+`pgvector/pgvector:pg18` rather than a published image. It is built from the
+document on start, so there is nothing to publish.
+
+One script rather than two, because it is one store:
+
+| Table | Holds |
+|---|---|
+| `sql_snippets` | One row per snippet: its id, kind, name, tables, keywords, meaning, `FROM` clause, SQL, note and content hash |
+| `sql_snippet_vectors` | An embedding of each snippet's name, meaning and keywords, with an HNSW index; deleted with its snippet |
+| `sql_snippet_source` | The document's hash and how many snippets were embedded with which model, written only after a complete load |
+
+and `sql_snippets_keyword_match(question)`, a SQL function that matches each
+keyword and the name as a phrase -- every one of its words in the question,
+by the `english` text search configuration -- and weighs a match by the IDF
+of its words. The agent calls it; it is in the database so the ranking can be
+read and tested with `psql` alone.
+
+The parser is strict in the golden pairs' way: a snippet missing a field, of
+an unknown kind, or with an id used twice fails the load rather than being
+skipped, and the count of `## Snn` headings is checked against what parsed.
+Re-running is safe: rows are upserted, snippets no longer in the document are
+removed with their vectors, and only a snippet whose content or model changed
+is embedded again, so a load with nothing new needs no embedding host. The
+source record is written last, and only when every snippet has a current
+vector, so a load the embedding host interrupted is one the next start
+finishes. `launch.sh` compares that record's hash with the document's own,
+both taken inside the store's container, to decide whether to load at all.
+
+The loader also (re)creates the role the agent reads the store as --
+`snippets_reader` unless `SNIPPETS_READER_USER` says otherwise -- with
+`CONNECT`, `USAGE` on the schema and `SELECT` on its tables, now and as they
+are created, and nothing else; the matcher runs as any function does, with
+the caller's rights. What the role can and cannot do is asked of a live store
+by `tests/rag/test_snippets_store.py`, a write included.
 
 ## How the chunking works
 
@@ -258,7 +314,8 @@ vector.
 `v3_2` brings the golden set up to the question document. It was made from
 `v3_1` the way the stack itself catches up -- the two golden-pair loaders,
 run in the review service's image against a copy of the published stores --
-and then published from that copy:
+and then published from that copy. It was made with 5.5.1's review image;
+every review image since carries the same two loaders:
 
 ```bash
 docker network create v32
@@ -266,7 +323,7 @@ docker run -d --name v32-chunkdb  --network v32 mcfaddja/nl2sql-rag-chunkdb:v3_1
 docker run -d --name v32-vectordb --network v32 mcfaddja/nl2sql-rag-vectordb:v3_1
 docker run --rm --network v32 --add-host host.docker.internal:host-gateway \
   -v "$PWD/../context_questions:/app/context_questions:ro" --entrypoint sh \
-  mcfaddja/nl2sql-review:v5_5_1 -c 'cd /app/rag &&
+  mcfaddja/nl2sql-review:v5_6_1 -c 'cd /app/rag &&
     python 05_load_golden_pairs.py /app/context_questions/translated_questions.md \
       --db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks &&
     python 06_embed_golden_pairs.py --model bge-m3 --ollama-url http://host.docker.internal:11434 \
@@ -364,6 +421,8 @@ Every setting is an environment variable with a CLI override:
 | `MIN_CHUNK_TOKENS` | 40 |
 | `CHUNK_THRESHOLD_PERCENTILE` | 60 |
 | `CHUNK_DB_PORT` / `VECTOR_DB_PORT` | 5433 / 5434 |
+| `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5438/nl2sql_snippets`, for `07_load_snippets.py` |
+| `SNIPPETS_READER_USER` / `SNIPPETS_READER_PASSWORD` | `snippets_reader` / `snippets_reader`, the role it creates |
 
 ## Setup
 
@@ -378,10 +437,13 @@ pip install -r rag/requirements.txt
 pytest tests/rag --run-docker
 ```
 
-282 tests: the parser against the real document, the BM25 ranking compared
+322 tests: the parser against the real document, the BM25 ranking compared
 score for score against an independent Okapi implementation, the pgvector
-storage layer, both loader scripts as command line programs, and the seven
-shell scripts on this page.
+storage layer, all three loader scripts as command line programs, the snippet
+document's parser and the snippet store -- the phrase matcher's ranking, the
+loader's incremental embedding and its source record, and what the reader
+role can and cannot do, asked of a live pgvector -- and the seven shell
+scripts on this page. 80 of them need a database, behind `--run-docker`.
 
 Those last ones are run rather than read. Each gets a throwaway copy of `rag/`
 with a fake `docker` on PATH that records every call and returns scripted

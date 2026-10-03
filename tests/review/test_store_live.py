@@ -649,3 +649,25 @@ def test_deleting_takes_the_promotion_log_with_it(repo, sink):
 
 def test_reopening_a_submission_that_is_not_there_is_none(repo):
     assert repo.reopen("not-a-submission") is None
+
+
+def test_the_submission_behind_a_pair_or_a_fix_is_found_by_its_id(repo, sink):
+    """What the curation interface asks before taking a pair or a fix out:
+    did the review queue produce it, and which submission goes back."""
+    good, wrong, open_ = capture(), capture(verdict="no"), capture()
+    for item in (good, wrong, open_):
+        sink.record(item)
+    promoted = repo.get_by_job(good.job_id)
+    repo.mark_promoted(
+        promoted.id, pair_id="Q90", chunk_id="eval:q90", suite="", title="t",
+        markdown="## Q90 - t\n", reviewer="", reloaded=False, reload_detail="",
+    )
+    corrected = repo.get_by_job(wrong.job_id)
+    repo.mark_corrected(corrected.id, fix_id="W0007", reviewer="", review_note="")
+
+    assert repo.get_by_outcome("Q90").id == promoted.id
+    assert repo.get_by_outcome("W0007").id == corrected.id
+    assert repo.get_by_outcome("Q91") is None
+    assert repo.outcomes() == {"Q90": promoted.id, "W0007": corrected.id}
+    repo.reopen(promoted.id)
+    assert repo.get_by_outcome("Q90") is None and "Q90" not in repo.outcomes()

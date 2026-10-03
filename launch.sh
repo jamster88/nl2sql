@@ -27,11 +27,20 @@
 #     ./launch.sh --mlflow
 #     open http://localhost:5001
 #
+# Or, to write what the agent learns from directly -- SQL snippets, golden
+# pairs, corrections and completions, each run against the retail database
+# before it is saved:
+#
+#     ./launch.sh --curate
+#     open http://localhost:8083
+#
 # This is the every-time script. setup.sh is the first-time one: it pulls the
 # images and writes the .env that pins them. launch.sh assumes that has already
 # happened and just starts what is down, then checks that each piece actually
 # holds what the agent expects -- the dataset, the knowledge base, the golden
-# pairs, both models -- and which models its calls will be routed to.
+# pairs, the SQL snippets, both models -- and which models its calls will be
+# routed to. The snippet store is the one it fills itself: it is built from a
+# tracked document, and loaded on start whenever it is behind it.
 #
 # The distinction matters because the failures are different. Setup fails when
 # an image will not pull; launch fails when a container is up but empty, when
@@ -52,6 +61,7 @@ WITH_FEEDBACK=0
 WITH_REVIEW=0
 WITH_CONSOLE=0
 WITH_MLFLOW=0
+WITH_CURATE=0
 WITH_DESKTOP=0
 WITH_LOAD_GOLDEN=0
 RESTART=0
@@ -83,6 +93,11 @@ Usage: ./launch.sh [options]
       --mlflow     Also start MLflow, where every question the agent answers
                    is traced -- a span per agent and per model call -- and
                    verdicts are recorded on the traces they judge
+      --curate     Also start the curation interface, where SQL snippets,
+                   golden pairs, corrections and completions are written
+                   directly -- each run against the retail database before
+                   it is saved -- and the review service behind it (implies
+                   --feedback)
       --desktop    Also build the desktop client and copy the API's
                    certificate out, so the client can run on this machine
       --load-golden
@@ -116,6 +131,10 @@ while [[ $# -gt 0 ]]; do
         --console) WITH_CONSOLE=1; WITH_API=1; shift ;;
         # Not --api: a question asked from a terminal is traced as well.
         --mlflow) WITH_MLFLOW=1; shift ;;
+        # The review service is its backend, and that needs the staging
+        # database and the certificate the API writes -- what --review needs,
+        # without the review interface itself.
+        --curate) WITH_CURATE=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
         # The desktop client talks to the API directly rather than through a
         # proxy of its own, so that is the one thing it cannot do without.
         --desktop) WITH_DESKTOP=1; WITH_API=1; shift ;;
@@ -142,7 +161,7 @@ if [[ ! -f .env ]]; then
 fi
 
 SERVICES=(postgres)
-[[ $WITH_RAG -eq 1 ]] && SERVICES+=(vectordb chunkdb)
+[[ $WITH_RAG -eq 1 ]] && SERVICES+=(vectordb chunkdb snippetsdb)
 
 # --- Start -----------------------------------------------------------------
 step "Starting ${#SERVICES[@]} service(s): ${SERVICES[*]}"
@@ -202,6 +221,8 @@ if [[ $WITH_RAG -eq 1 ]]; then
     info "nl2sql-vectordb is healthy"
     wait_healthy nl2sql-chunkdb
     info "nl2sql-chunkdb is healthy"
+    wait_healthy nl2sql-snippetsdb
+    info "nl2sql-snippetsdb is healthy"
 fi
 
 step "Making sure the agent's read-only role exists"
@@ -243,6 +264,48 @@ elif [[ $WITH_LOAD_GOLDEN -eq 1 ]]; then
     else
         warn "the golden pairs did not load completely; the stores keep what they had. It said:"
         while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$loaded" | tail -3)
+    fi
+fi
+
+# --- The SQL snippets ------------------------------------------------------
+# The one store this script fills. The golden pairs ship inside published
+# images; the snippets do not -- the store is a stock pgvector, built from
+# context_questions/sql_snippets.md by rag/07_load_snippets.py -- so a fresh
+# volume would hold none, and a document edited since the last load would be
+# answered from what the store held then. Every start compares the two: the
+# hash the last complete load recorded, against the document's own, both
+# taken inside the store's container so this needs nothing on the host. They
+# differ, and the loader runs, in the review service's image -- the one that
+# carries it -- and embeds only what changed.
+SNIPPETS_DOCUMENT="context_questions/sql_snippets.md"
+
+snippets_query() {  # snippets_query SQL -- one value out of the snippet store, or nothing
+    docker compose exec -T snippetsdb psql -U "$(compose_env SNIPPETS_DB_USER snippets)" \
+        -d "$(compose_env SNIPPETS_DB_NAME nl2sql_snippets)" -tAc "$1" 2>/dev/null | tr -d '[:space:]' || true
+}
+
+load_snippets() {  # load_snippets -- what the loader said; fails when it did
+    docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+        cd "$REVIEW_RAG_DIR" &&
+        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL" \
+            --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
+}
+
+if [[ $WITH_RAG -eq 1 && -f "$SNIPPETS_DOCUMENT" ]]; then
+    in_document=$(docker compose exec -T snippetsdb sha256sum < "$SNIPPETS_DOCUMENT" 2>/dev/null | cut -d' ' -f1 || true)
+    in_store=$(snippets_query "SELECT document_hash FROM sql_snippet_source")
+    if [[ -n "$in_document" && "$in_document" != "$in_store" ]]; then
+        step "Loading the SQL snippets from $SNIPPETS_DOCUMENT"
+        info "the snippet store is behind the document; the agent is shown what the store holds"
+        if loaded=$(load_snippets); then
+            while IFS= read -r line; do info "$line"; done < <(printf '%s\n' "$loaded" | grep -E 'rows written|vectors ->' | sed 's/^ *//')
+        elif printf '%s' "$loaded" | grep -q "07_load_snippets.py'"; then
+            warn "the pinned review image predates SQL snippets, so it cannot load them."
+            warn "./setup.sh pulls the image this checkout ships; ./start.sh does it for you."
+        else
+            warn "the SQL snippets did not load completely; the agent is shown what the store holds. It said:"
+            while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$loaded" | tail -3)
+        fi
     fi
 fi
 
@@ -299,6 +362,16 @@ if [[ $WITH_RAG -eq 1 ]]; then
     if [[ -n "$in_document" && -n "$pairs" && "$pairs" != "$in_document" ]]; then
         warn "the context store holds ${pairs} golden pairs, and $GOLDEN_DOCUMENT $in_document."
         warn "The agent's worked examples are the store's until it is loaded: ./start.sh --load-golden"
+    fi
+
+    # The v5.6 Snippet Retriever's store, after the load above had its chance.
+    snippet_rows=$(snippets_query "SELECT count(*) FROM sql_snippets")
+    snippet_vectors=$(snippets_query "SELECT count(*) FROM sql_snippet_vectors")
+    if [[ -n "$snippet_rows" && "$snippet_rows" != "0" ]]; then
+        info "SQL snippets: $snippet_rows snippets, ${snippet_vectors:-0} embedded meanings"
+    else
+        warn "the snippet store holds no SQL snippets, so the generator is shown none."
+        warn "It is loaded from $SNIPPETS_DOCUMENT on start; check the review image can run."
     fi
 
     # The v4 Schema Retriever selects tables from this one collection instead
@@ -742,7 +815,9 @@ if [[ $WITH_FEEDBACK -eq 1 ]]; then
     fi
 fi
 
-if [[ $WITH_REVIEW -eq 1 ]]; then
+# The review service is the curation interface's backend as well, so either
+# page brings it up -- and the two stores it writes fixes into.
+if [[ $WITH_REVIEW -eq 1 || $WITH_CURATE -eq 1 ]]; then
     step "Starting the corrections and completions stores"
     if start_fixstores; then
         info "Corrections store is healthy on port $(compose_env CORRECTIONS_DB_PORT 5436)"
@@ -764,7 +839,9 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         warn "the review service did not become healthy."
         warn "Check what it said: docker compose --profile feedback --profile review logs review"
     fi
+fi
 
+if [[ $WITH_REVIEW -eq 1 ]]; then
     step "Starting the review interface"
     if start_reviewgui; then
         if repair_proxy reviewgui nl2sql-review-gui "$review_gui_port" \
@@ -777,6 +854,34 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
     else
         warn "the review interface did not become healthy."
         warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
+    fi
+fi
+
+# --- The curation interface ------------------------------------------------
+# A page in front of the review service, as the review interface is: the same
+# service, the same token, a different job -- writing snippets, golden pairs
+# and fixes directly rather than working through a queue.
+curate_gui_port=$(compose_env CURATE_GUI_PORT 8083)
+
+start_curategui() {
+    docker compose --profile feedback --profile review --profile curategui \
+        up -d curategui >/dev/null 2>&1 || return 1
+    await_health nl2sql-curate-gui
+}
+
+if [[ $WITH_CURATE -eq 1 ]]; then
+    step "Starting the curation interface"
+    if start_curategui; then
+        if repair_proxy curategui nl2sql-curate-gui "$curate_gui_port" \
+            --profile feedback --profile review --profile curategui; then
+            info "Curation interface is healthy at http://localhost:$curate_gui_port"
+        else
+            warn "the curation interface is up but cannot reach the review service."
+            warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
+        fi
+    else
+        warn "the curation interface did not become healthy."
+        warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
     fi
 fi
 
@@ -951,6 +1056,33 @@ EOF
 
     docker compose --profile feedback --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
+EOF
+    fi
+    if [[ $WITH_CURATE -eq 1 ]]; then
+        cat <<EOF
+
+==> The curation interface is up:
+
+    open http://localhost:$curate_gui_port
+
+    Three tabs, each written directly rather than out of the review queue,
+    and each run against the live retail database before it can be saved:
+
+      SQL snippets             a join, a filter, a measure or a dimension,
+                               and what it means; the agent's SQL generator
+                               is shown the ones a question means.
+      Golden pairs             add a pair no feedback produced, or take one
+                               out -- reopening the submission it came from.
+      Corrections & completions
+                               a question the agent gets wrong, and the query
+                               it should write.
+
+    Snippets are written into context_questions/sql_snippets.md and golden
+    pairs into translated_questions.md in this checkout -- both show up in
+    \`git diff\` -- and the stores built from them are reloaded on save.
+
+    docker compose --profile feedback --profile review --profile curategui logs -f review
+    curate/README.md explains how it is put together.
 EOF
     fi
     if [[ $WITH_CONSOLE -eq 1 ]]; then

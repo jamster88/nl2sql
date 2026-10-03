@@ -10,4 +10,4 @@ FROM postgres:18
 
 LABEL org.opencontainers.image.title="nl2sql MLflow store" \
       org.opencontainers.image.description="Postgres holding MLflow's experiments, runs, traces and verdicts for the nl2sql agent" \
-      org.opencontainers.image.version="5.5.1"
+      org.opencontainers.image.version="5.6.1"

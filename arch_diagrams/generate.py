@@ -58,6 +58,10 @@ ORANGE = "#c25b00"
 # The success green v1-v3 use as a literal. Named because v4 draws an arrow in
 # it, and an arrowhead needs a marker declared for its colour.
 GREEN = "#2e7d4f"
+# v5.6's accent, for the SQL snippets and the curation page. A blue-cyan:
+# bluer than v2's teal, greener than the database blue, and nothing else here
+# sits between them.
+CYAN = "#0b7a9e"
 
 SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace"
@@ -1689,6 +1693,77 @@ def build_v5_2():
     return _build_v5(review=True, routing=True)
 
 
+def build_v5_6():
+    return _build_v5(review=True, routing=True, snippets=True)
+
+
+# --- v5.6: SQL snippets, and the curation page ------------------------------
+
+SNIPPETSDB_V56 = {"name": "nl2sql-snippetsdb", "color": CYAN,
+                  "desc": "pgvector. The SQL snippets of context_questions/sql_snippets.md -- "
+                          "joins, filters, measures, dimensions -- with a keyword matcher over "
+                          "their phrases and an embedding of each meaning. Read as a role that "
+                          "can SELECT and nothing else.",
+                  "link": "← keyword phrases + cosine, as snippets_reader"}
+
+V56_FAN = V4_FAN[:3] + [
+    {**V4_FAN[3], "tag": "pgvector + BM25 · golden pairs"},
+    {"name": "retrieve_snippets", "color": CYAN, "tag": "phrases + pgvector",
+     "does": "The verified pieces a query is built from: a snippet qualifies when one of its "
+             "keyword phrases is in the question, or its meaning alone is close; the two signals "
+             "are averaged and at most five kept. No model call."},
+]
+
+V56_ADDED = ("A fifth retriever, beside the four, for the pieces a query is built from rather "
+             "than whole questions: SQL snippets -- how two tables join, what a phrase filters "
+             "to, how a measure is calculated, what a period is called -- each run against the "
+             "retail database before it was written down and curated beside what it means. A "
+             "snippet is matched by its keyword phrases (every word of a phrase in the question, "
+             "rare words weighing more) and by the cosine of its meaning, and the aggregator shows "
+             "the generator only those whose every table is in scope: the static validator would "
+             "refuse the others. They propose no tables of their own. With none matching, the "
+             "prompt is v5.2's byte for byte.")
+
+FAN_WHY_V56 = ("The five retrievers are independent given the question, so they are branches of "
+               "one superstep rather than five steps: one conditional edge returns all five names, "
+               "LangGraph runs them together, and aggregate is the fan-in that waits for all of "
+               "them. The shape is for clarity and for testability, not for speed -- retrieval is "
+               "about 0.1% of a run. Retrieval stays best-effort. A retriever that cannot reach "
+               "its store writes to state.retrieval_errors and the run continues without it; the "
+               "snippets lose only their meaning half when the embedding host is down, and with "
+               "every store down the pipeline degrades to schema-only, which is v1.")
+
+V56_TAGS = {
+    "aggregate": "keeps the snippets whose tables are in scope",
+    "generate_sql": "+ snippet block",
+}
+
+REVIEW_HUB_V56 = {"name": "nl2sql-review",
+                  "desc": "The review service, behind its own token: the only process that writes "
+                          "the golden set, the fix stores and the snippets. Two pages in front of it "
+                          "-- the review queue, and since v5.6 the curation page -- and everything "
+                          "either writes is run on the retail database first, and again on save."}
+
+SNIPPETS_DOC_V56 = {"name": "SQL snippets", "color": CYAN,
+                    "desc": "context_questions/sql_snippets.md, rewritten in the checkout by kind "
+                            "and loaded into nl2sql-snippetsdb by 07_load_snippets.py -- after every "
+                            "write, and on start when the store is behind it.",
+                    "link": "← add, change, remove"}
+
+V56_PANES = [
+    {"name": "SQL snippets", "color": CYAN, "tag": "→ snippet document + store",
+     "does": "Write a join, a filter, a measure or a dimension and what it means; it is run inside "
+             "a probe query -- the join joined, the filter filtering -- with its fan-out or its "
+             "matches counted, then written and loaded."},
+    {"name": "Golden pairs", "color": GREEN, "tag": "→ golden set",
+     "does": "Add a pair no feedback produced, or take one out -- reopening the submission it "
+             "came from. Its SQL has to run and return rows before it is written."},
+    {"name": "Corrections & completions", "color": RED, "tag": "→ fix stores",
+     "does": "Store a question the agent gets wrong, and the query it should write, with no "
+             "submission behind it; or take a fix out, reopening its submission if it had one."},
+]
+
+
 # --- v5.2: model routing ----------------------------------------------------
 
 OLLAMA_CHAT_V52 = {"name": "Ollama — chat models, routed", "color": PURPLE,
@@ -1785,9 +1860,14 @@ V51_RULE = ("Only a query that runs is stored. The reviewer validates it -- one 
             "SQL, and then one to help write it, come next.")
 
 
-def _build_v5(review: bool = False, routing: bool = False):
+def _build_v5(review: bool = False, routing: bool = False, snippets: bool = False):
     parts, y = [], 56
-    if routing:
+    if snippets:
+        parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                     f'font-weight="700" fill="{INK}">NL2SQL Agent v5.6 '
+                     f'<tspan fill="{MUTED}" font-weight="400">— and the pieces a query is '
+                     f'built from</tspan></text>')
+    elif routing:
         parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
                      f'font-weight="700" fill="{INK}">NL2SQL Agent v5.2 '
                      f'<tspan fill="{MUTED}" font-weight="400">— every model call routed by how '
@@ -1816,6 +1896,10 @@ def _build_v5(review: bool = False, routing: bool = False):
         intro += (" v5.2 adds no node either: it routes each of those model calls to the "
                   "model its task, at its complexity, was measured to be suited to -- marked "
                   "in purple on each step that calls one.")
+    if snippets:
+        intro += (" v5.6 adds a fifth retriever, in cyan: verified SQL snippets beside what they "
+                  "mean, shown to the generator when a question means them -- and a curation "
+                  "page, at the foot, where they are written.")
     blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
     parts.append(blk); y += h + 26
 
@@ -1823,7 +1907,8 @@ def _build_v5(review: bool = False, routing: bool = False):
                             "desc": "python -m nl2sql_agent, or the same image serving the REST "
                                     "API. The label map and the fiscal calendar are read from "
                                     "the catalog once per process, like the literal catalog."},
-                        [PG_V5, VECTORDB_V4, CHUNKDB],
+                        [PG_V5, VECTORDB_V4, CHUNKDB, SNIPPETSDB_V56] if snippets
+                        else [PG_V5, VECTORDB_V4, CHUNKDB],
                         [OLLAMA_CHAT_V52, OLLAMA_EMBED_V4, CATALOG_V52] if routing
                         else [OLLAMA_CHAT_V5, OLLAMA_EMBED_V4])
     parts.append(svg); y += h + 18
@@ -1833,6 +1918,10 @@ def _build_v5(review: bool = False, routing: bool = False):
                       x=MARGIN, w=CONTENT_R - MARGIN); parts.append(svg); y += h + 18
     if routing:
         svg, h = note_row(y, "What v5.2 adds: model routing", V52_ADDED, color=PURPLE, x=MARGIN,
+                          w=CONTENT_R - MARGIN, dashed=False)
+        parts.append(svg); y += h + 18
+    if snippets:
+        svg, h = note_row(y, "What v5.6 adds: SQL snippets", V56_ADDED, color=CYAN, x=MARGIN,
                           w=CONTENT_R - MARGIN, dashed=False)
         parts.append(svg); y += h + 18
     y += 18
@@ -1853,12 +1942,15 @@ def _build_v5(review: bool = False, routing: bool = False):
          "does": "Answer with the scope sentence, the refusal, or the clarifying question, and "
                  "stop. No retrieval, no SQL, no database access. → END",
          "tag": "terminal · exit 0", "why": REFUSE_WHY},
-        {"id": "retrievers", "kind": "fan", "n": 2, "boxes": V4_FAN, "accent": MAGENTA,
-         "caption": "all four read the question and nothing else — LangGraph joins them "
-                    "at aggregate"},
+        {"id": "retrievers", "kind": "fan", "n": 2, "boxes": V56_FAN if snippets else V4_FAN,
+         "accent": MAGENTA,
+         "caption": ("all five read the question and nothing else — LangGraph joins them "
+                     "at aggregate") if snippets else
+                    ("all four read the question and nothing else — LangGraph joins them "
+                     "at aggregate")},
         {"id": "fan_note", "kind": "note", "color": MAGENTA, "w": STEP_W,
          "title": "Stage 1 fans out — and what a store being down costs",
-         "body": FAN_WHY},
+         "body": FAN_WHY_V56 if snippets else FAN_WHY},
         {"id": "aggregate", "kind": "step", "n": 3, "name": "aggregate",
          "badge": "changed in v5", "badge_color": ORANGE, "accent": ORANGE,
          "does": "The fan-in. The contract's tables first — the dimension a label comes from, "
@@ -1951,6 +2043,11 @@ def _build_v5(review: bool = False, routing: bool = False):
             if row["id"] in V52_TAGS:
                 row["tags"] = row["tags"] + [(V52_TAGS[row["id"]], PURPLE)]
                 row["wrap_tags"] = True
+    if snippets:
+        for row in rows:
+            if row["id"] in V56_TAGS:
+                row["tags"] = row["tags"] + [(V56_TAGS[row["id"]], CYAN)]
+                row["wrap_tags"] = True
     svg, h, nodes = pipeline(
         y, rows,
         retry_label="retry &#183; one shared attempts budget",
@@ -1963,13 +2060,20 @@ def _build_v5(review: bool = False, routing: bool = False):
     parts.append(svg); y += h + 34
     svg, h = outcomes(y, OUTCOMES_V5, OUT_NOTE_V5); parts.append(svg); y += h + 26
     if review:
-        svg, h = deployment(y, REVIEW_HUB, [FEEDBACKDB_V51, RETAIL_READER_V51, GOLDEN_V51],
+        svg, h = deployment(y, REVIEW_HUB_V56 if snippets else REVIEW_HUB,
+                            [FEEDBACKDB_V51, RETAIL_READER_V51, GOLDEN_V51]
+                            + ([SNIPPETS_DOC_V56] if snippets else []),
                             [CORRECTIONSDB_V51, COMPLETIONSDB_V51, EMBED_V51],
-                            title="after the answer — the review side (v5.1)")
+                            title=("after the answer — the review and curation side (v5.1, v5.6)"
+                                   if snippets else "after the answer — the review side (v5.1)"))
         parts.append(svg); y += h + 22
         svg, h = panes_row(y, "one pane per verdict — what the user said decides where it can go",
                            V51_PANES)
         parts.append(svg); y += h + 18
+        if snippets:
+            svg, h = panes_row(y, "the curation page (v5.6) — written directly, run first",
+                               V56_PANES)
+            parts.append(svg); y += h + 18
         svg, h = note_row(y, "Only SQL that runs is stored", V51_RULE, color=RED, x=MARGIN,
                           w=CONTENT_R - MARGIN, dashed=False)
         parts.append(svg); y += h + 26
@@ -1978,8 +2082,14 @@ def _build_v5(review: bool = False, routing: bool = False):
                         ("solid", "audit passes — finish", GREEN),
                         ("pill", "model call", PURPLE), ("pill", "database access", BLUE),
                         ("pill", "new or changed in v5", ORANGE),
-                        ("pill", "v4's pipeline", MAGENTA)])
+                        ("pill", "v4's pipeline", MAGENTA)]
+                    + ([("pill", "new in v5.6", CYAN)] if snippets else []))
     parts.append(svg); y += h
+    if snippets:
+        return document("NL2SQL Agent v5.6 architecture",
+                        "Multi-agent pipeline with a completeness check, human review, model "
+                        "routing and SQL snippets",
+                        "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE, CYAN))
     if routing:
         return document("NL2SQL Agent v5.2 architecture",
                         "Multi-agent pipeline with a completeness check, human review and model routing",
@@ -1996,7 +2106,7 @@ def _build_v5(review: bool = False, routing: bool = False):
 DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
             ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"),
             ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
-            ("arch_v5_2.svg", "build_v5_2"))
+            ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6"))
 
 
 def main(output_dir: Path | None = None) -> None:

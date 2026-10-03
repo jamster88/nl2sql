@@ -6,12 +6,53 @@ each version created, updated or fixed.
 
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
-SQL console's interface, the desktop client's jar and, since v5_5, MLflow's
-server and store -- are released together
+SQL console's interface, the desktop client's jar, since v5_5 MLflow's
+server and store, and since v5_6 the curation interface -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v5_6_1 (5.6.1) -- 2026-10-03
+
+**Fixed**
+- A narrator that names a number's cell in its sentence and lists no cells has its claims cited by what it wrote, so they survive the audit on the first pass instead of costing a rewrite -- or the whole narrative, when the rewrite failed too.
+
+**Updated**
+- Version 5.6.1 in every declaration; `setup.sh` pins `v5_6_1`.
+- All thirteen app image tags published as `v5_6_1`.
+
+**After publishing** (tests and documentation; no image changed)
+- A coverage and relevance audit: still 100% everywhere; the snippet store's and the curation page's compose settings are exercised and documented with their defaults; two review settings documented; a fake switch nobody set and two duplicate tests removed.
+
+## v5_6 (5.6.0) -- 2026-10-03
+
+**Added**
+- SQL snippets: joins, filters, measures and dimensions, each run against the database and written beside what it means, in `context_questions/sql_snippets.md` (32 to start).
+- The snippet store (`snippetsdb`) and its loader, `rag/07_load_snippets.py`; `launch.sh` loads it whenever the document has changed.
+- A fifth retriever in the agent: snippets found by keyword phrase and by meaning, shown to the SQL Generator when their tables are in scope (`--snippets`, `SNIPPETS_*`).
+- The curation interface (port 8083, `start.sh --curate`): write SQL snippets, golden pairs, corrections and completions directly, each run against the retail database before it can be saved, or remove them.
+- The review service's curation routes, and `/v1/schema`.
+- The benchmark's fourth configuration, `snippets`, now its default.
+- `arch_v5_6`, the architecture with the Snippet Retriever.
+
+**Updated**
+- Promotion runs the golden SQL against the database first; SQL that fails or returns no rows is refused.
+- A fix can be stored without a submission, and removing a pair or a fix that came from one reopens it.
+- `setup.sh` pins the review service whenever retrieval is on, since it carries the snippet loader.
+- Version 5.6.0 in every declaration; `setup.sh` pins `v5_6`, nine app tags with the curation interface's.
+
+**Fixed**
+- A correct claim whose sentence named the cell it came from ("as shown in row 0, column ...") was dropped by the audit, which read the row number as a figure; on some answers that left no sentence at all. The address is kept out of the sentence now, and a row number is not held against a claim.
+- A loader's output in the review interface ran together on one line.
+- Before release: a snippet's note is shown to the SQL Generator with its SQL, and it is told to keep each piece as written; without them, an end-to-end run dropped a cast and answered 0.
+
+**Published**
+- All thirteen app image tags as `v5_6`, the curation interface (`nl2sql-curate-gui`) for the first time.
+
+**After publishing** (the checkout, not the `v5_6` images)
+- A narrator that writes the cell it read into its sentence and lists no cells has its claims cited by what it wrote, so they survive the audit the first time; the narrator's prompt is 5.5.1's again.
+- `start.sh` checked live against the published images: it re-pins an older `.env`, pulls the thirteen tags, loads the snippets, and brings every page up.
 
 ## v5_5_1 (5.5.1) -- 2026-10-01
 

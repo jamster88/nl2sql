@@ -418,7 +418,12 @@ def _reload(settings: ReviewSettings) -> list[StepResult]:
 
 
 def _run_loader(
-    settings: ReviewSettings, script: str, args: list[str], *, enabled: bool
+    settings: ReviewSettings,
+    script: str,
+    args: list[str],
+    *,
+    enabled: bool,
+    env: dict[str, str] | None = None,
 ) -> StepResult:
     name = script.split("_", 1)[-1].removesuffix(".py")
     if not enabled:
@@ -436,6 +441,7 @@ def _run_loader(
             text=True,
             timeout=settings.reload_timeout_seconds,
             check=False,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return StepResult(

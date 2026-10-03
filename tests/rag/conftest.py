@@ -34,6 +34,11 @@ CHUNK_DB_URL = os.environ.get(
 VECTOR_DB_URL = os.environ.get(
     "TEST_VECTOR_DB_URL", "postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors"
 )
+#: The snippet store, as its owner -- the compose service on its published
+#: port. Like the two above, tests only ever touch a throwaway database in it.
+SNIPPETS_DB_URL = os.environ.get(
+    "TEST_SNIPPETS_DB_URL", "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
+)
 
 
 def _with_database(url: str, name: str) -> str:
@@ -90,6 +95,31 @@ def vector_conn():
 
     # gv.connect() installs the vector extension, which a fresh database needs.
     yield from _scratch_database(VECTOR_DB_URL, gv.connect)
+
+
+@pytest.fixture
+def snippet_store():
+    """A throwaway database in the snippet store, and a role name of its own.
+
+    Roles are per cluster, not per database, so the reader role a load
+    creates gets a unique name here -- a test must never reset the password
+    of the `snippets_reader` the running agent connects as. It is dropped
+    after the database, which takes the role's grants with it.
+    """
+    from ragproc import snippets as sn
+
+    role = f"t_reader_{uuid.uuid4().hex[:10]}"
+    scratch = _scratch_database(SNIPPETS_DB_URL, sn.connect)
+    conn = next(scratch)
+    try:
+        yield conn, role
+    finally:
+        for _ in scratch:  # runs the drop
+            pass
+        import psycopg
+
+        with psycopg.connect(SNIPPETS_DB_URL, autocommit=True) as admin:
+            admin.execute(f'DROP ROLE IF EXISTS "{role}"')
 
 
 @pytest.fixture(scope="session")

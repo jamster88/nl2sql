@@ -48,6 +48,14 @@ DEFAULT_RETAIL_DB_URL = "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432
 DEFAULT_CORRECTIONS_DB_URL = "postgresql://corrections:corrections@localhost:5436/nl2sql_corrections"
 DEFAULT_COMPLETIONS_DB_URL = "postgresql://completions:completions@localhost:5437/nl2sql_completions"
 
+#: The SQL snippets' source of truth, as the golden question document is the
+#: golden pairs': written here, then loaded into the snippet store.
+DEFAULT_SNIPPETS_DOCUMENT = "/app/context_questions/sql_snippets.md"
+
+#: The snippet store, as its owner: the loader creates its tables and the
+#: read-only role the agent connects as.
+DEFAULT_SNIPPETS_DB_URL = "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
+
 #: The certificate the agent API generates, as this service sees it. The
 #: same volume, mounted read-only: this process presents that certificate
 #: and never writes one.
@@ -171,6 +179,21 @@ class ReviewSettings:
     ollama_url: str = "http://localhost:11434"
     embed_model: str = "bge-m3"
 
+    # --- SQL snippets ----------------------------------------------------
+    # Joins, filters, measures and dimensions beside what they mean, written
+    # by the curation interface: validated against the retail database, then
+    # written into their document, then loaded into their store by
+    # `07_load_snippets.py` -- the order a promotion follows.
+    snippets_document: str = DEFAULT_SNIPPETS_DOCUMENT
+    snippets_db_url: str = DEFAULT_SNIPPETS_DB_URL
+    #: The role the loader (re)creates for the agent, and its password: the
+    #: agent's SNIPPET_DB_URL names the same two.
+    snippets_reader_user: str = "snippets_reader"
+    snippets_reader_password: str = "snippets_reader"
+    #: Run the loader after writing the document. Off, a snippet is in the
+    #: source of truth and not yet in the store the agent reads.
+    reload_snippets: bool = True
+
     # --- Presentation ----------------------------------------------------
     docs_enabled: bool = True
     log_level: str = "info"
@@ -212,6 +235,11 @@ class ReviewSettings:
             ),
             ollama_url=_env_str("OLLAMA_URL", "http://localhost:11434"),
             embed_model=_env_str("EMBED_MODEL", "bge-m3"),
+            snippets_document=_env_str("REVIEW_SNIPPETS_DOCUMENT", DEFAULT_SNIPPETS_DOCUMENT),
+            snippets_db_url=_env_str("SNIPPETS_DB_URL", DEFAULT_SNIPPETS_DB_URL),
+            snippets_reader_user=_env_str("SNIPPETS_READER_USER", "snippets_reader"),
+            snippets_reader_password=_env_str("SNIPPETS_READER_PASSWORD", "snippets_reader"),
+            reload_snippets=_env_bool("REVIEW_RELOAD_SNIPPETS", True),
             docs_enabled=_env_bool("REVIEW_DOCS_ENABLED", True),
             log_level=_env_str("REVIEW_LOG_LEVEL", "info"),
             source="environment",
@@ -230,6 +258,10 @@ class ReviewSettings:
     @property
     def document_path(self) -> Path:
         return Path(self.document)
+
+    @property
+    def snippets_document_path(self) -> Path:
+        return Path(self.snippets_document)
 
     @property
     def certificate_present(self) -> bool:
@@ -281,6 +313,12 @@ class ReviewSettings:
                 "REVIEW_EMBED_FIXES is off: corrections and completions are stored "
                 "without their vectors, so nothing can retrieve them until a save "
                 "with embedding on catches them up."
+            )
+        if not self.reload_snippets:
+            notes.append(
+                "REVIEW_RELOAD_SNIPPETS is off: a snippet is written to its document "
+                "but not loaded, so the agent will not be shown it until someone runs "
+                "rag/07_load_snippets.py -- or the stack is next started."
             )
         if not self.reload_context:
             notes.append(

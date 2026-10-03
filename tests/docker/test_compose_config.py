@@ -103,7 +103,7 @@ def test_the_scripts_read_the_agents_settings_from_real_compose(script: str):
 
 def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
     assert set(agent_profile_config["services"]) == {
-        "postgres", "vectordb", "chunkdb", "agent"
+        "postgres", "vectordb", "chunkdb", "snippetsdb", "agent"
     }
 
 
@@ -357,7 +357,7 @@ def test_the_agent_is_pointed_at_the_context_store(agent_profile_config: dict):
 
 def test_the_agent_waits_for_every_database_to_be_healthy(agent_profile_config: dict):
     depends = agent_profile_config["services"]["agent"]["depends_on"]
-    assert set(depends) == {"postgres", "vectordb", "chunkdb"}
+    assert set(depends) == {"postgres", "vectordb", "chunkdb", "snippetsdb"}
     assert all(d["condition"] == "service_healthy" for d in depends.values())
 
 

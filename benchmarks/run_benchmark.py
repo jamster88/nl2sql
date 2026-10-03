@@ -2,7 +2,7 @@
 """Run the benchmark: 15 questions, scored on accuracy then on speed.
 
     python benchmarks/run_benchmark.py
-    python benchmarks/run_benchmark.py --compare          # v1 vs v2 vs v3
+    python benchmarks/run_benchmark.py --compare          # v1 vs v2 vs v3 vs v5.6
     python benchmarks/run_benchmark.py --only B07 B08
     python benchmarks/run_benchmark.py --json out.json
 
@@ -11,13 +11,14 @@ against reference SQL whose answer was verified against the shipped dataset.
 Speed is reported per question and per pipeline stage, because "slow" and "slow
 in generate_sql" call for different fixes.
 
-`--compare` runs the same questions through three configurations that differ
+`--compare` runs the same questions through four configurations that differ
 only in what retrieval is switched on, which is the measurement the whole
 project is for:
 
     schema-only   no knowledge, no examples          (v1 behaviour)
     knowledge     knowledge base, no examples        (v2 behaviour)
     multi-shot    knowledge + reranked examples      (v3 behaviour)
+    snippets      all of that + SQL snippets         (v5.6, the default)
 """
 
 from __future__ import annotations
@@ -60,6 +61,9 @@ HOST_DEFAULTS = {
     "database_url": ("DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"),
     "vector_db_url": ("VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
     "context_db_url": ("CONTEXT_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
+    "snippet_db_url": (
+        "SNIPPET_DB_URL", "postgresql+psycopg://snippets_reader:snippets_reader@localhost:5438/nl2sql_snippets",
+    ),
     "embed_base_url": ("EMBED_BASE_URL", "http://localhost:11434"),
     # The `mlflow` service's published port. Not up, and the benchmark runs
     # untraced after one refused connection; MLFLOW_TRACKING_URI= (empty)
@@ -68,13 +72,26 @@ HOST_DEFAULTS = {
 }
 
 
-# The three configurations --compare measures. Each is the one before it plus a
+# The four configurations --compare measures. Each is the one before it plus a
 # retrieval stage, so a difference between two rows is attributable to that
-# stage and nothing else.
+# stage and nothing else. The last is the agent as it ships.
 CONFIGURATIONS = {
-    "schema-only": {"rag_enabled": False, "examples_enabled": False, "multi_shot_enabled": False},
-    "knowledge": {"rag_enabled": True, "examples_enabled": False, "multi_shot_enabled": False},
-    "multi-shot": {"rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True},
+    "schema-only": {
+        "rag_enabled": False, "examples_enabled": False, "multi_shot_enabled": False,
+        "snippets_enabled": False,
+    },
+    "knowledge": {
+        "rag_enabled": True, "examples_enabled": False, "multi_shot_enabled": False,
+        "snippets_enabled": False,
+    },
+    "multi-shot": {
+        "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
+        "snippets_enabled": False,
+    },
+    "snippets": {
+        "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
+        "snippets_enabled": True,
+    },
 }
 
 
@@ -88,7 +105,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--compare", action="store_true",
         help="run every configuration in CONFIGURATIONS and print them side by side",
     )
-    p.add_argument("--config", choices=sorted(CONFIGURATIONS), default="multi-shot")
+    p.add_argument("--config", choices=sorted(CONFIGURATIONS), default="snippets")
     p.add_argument("--json", metavar="PATH", help="also write the full results as JSON")
     p.add_argument("--database-url", help="override the retail database URL")
     p.add_argument("--model", help="override the chat model")

@@ -25,6 +25,7 @@ that way; this guide is about using it.
 - [Reading an answer](#reading-an-answer)
 - [Giving feedback](#giving-feedback)
 - [Reviewing feedback](#reviewing-feedback)
+- [Curating what it learns from](#curating-what-it-learns-from)
 - [When an answer is wrong: the SQL console](#when-an-answer-is-wrong-the-sql-console)
 - [Seeing what the agent did: MLflow](#seeing-what-the-agent-did-mlflow)
 - [Measuring it: the benchmark](#measuring-it-the-benchmark)
@@ -48,9 +49,9 @@ retail data, and answers with a sentence, a chart and the rows. Every number
 in the sentence is traced back to the cells it was read from, and one that
 cannot be is left out.
 
-Behind the question is a team of agents: a Supervisor that screens it, four
+Behind the question is a team of agents: a Supervisor that screens it, five
 retrievers that gather the schema, matching database values, business
-knowledge and worked examples, a SQL Generator, a validator and planner gate
+knowledge, worked examples and verified SQL snippets, a SQL Generator, a validator and planner gate
 that check the query before it runs, an executor that runs it read-only, a
 reviewer that checks the result answers the question, a narrator, and an
 auditor. Each model call goes to a model on your Ollama host.
@@ -64,6 +65,7 @@ It all runs in Docker, and three scripts start it. What you get:
 | Terminal | Ask from a shell or a script | `docker compose run --rm agent "..."` |
 | REST API | Ask from your own code, over HTTPS | `./launch.sh --api` |
 | Review interface | Turn those verdicts into new golden questions and corrected queries | `./start.sh --review` |
+| Curation interface | Write SQL snippets, golden questions and corrected queries directly, each run against the database first | `./start.sh --curate` |
 | SQL console | Run SQL exactly the way the agent runs it, to see why an answer was wrong | `./start.sh --console` |
 | MLflow | See everything the agent did with a question, agent by agent | `./start.sh --mlflow` |
 | Benchmark | Measure accuracy and speed on fifteen questions | `python benchmarks/run_benchmark.py` |
@@ -132,7 +134,8 @@ cd nl2sql
 ```
 
 `setup.sh` pulls the images, pins their tags in a `.env` file, starts the
-three databases, checks that both models are reachable, and finishes by
+four databases -- loading the SQL snippets into the last -- checks that both
+models are reachable, and finishes by
 proving the agent container can retrieve from the knowledge base:
 
 ```
@@ -186,7 +189,8 @@ another agent version, no knowledge base.
 ./start.sh --review                       # and the review interface, in a window of its own
 ./start.sh --console                      # and the SQL console, in a window of its own
 ./start.sh --mlflow                       # and MLflow, in a window of its own
-./start.sh --review --console --mlflow    # every page
+./start.sh --curate                       # and the curation interface, in a window of its own
+./start.sh --review --curate --console --mlflow   # every page
 ./start.sh --feedback                     # keep verdicts, without the review interface
 ./start.sh --load-golden                  # load the golden question document into the stores first
 ./start.sh --no-browser                   # start everything, and print the URLs instead
@@ -198,8 +202,8 @@ BROWSER=firefox ./start.sh                # open the pages with a browser of you
 
 The flags combine. `--desktop` replaces the web interface rather than adding
 to it: the web interface is not started, and the window opens instead.
-`--review`, `--console` and `--mlflow` still open their pages in a browser
-beside it.
+`--review`, `--curate`, `--console` and `--mlflow` still open their pages in
+a browser beside it.
 
 The extra pages open in windows of their own -- Safari is asked through
 AppleScript, which macOS asks you to allow once; Chrome, Firefox and the
@@ -215,13 +219,14 @@ The same stack without the browser, without starting Docker or Ollama, and
 without re-pinning anything:
 
 ```bash
-./launch.sh                               # the three databases: enough for the terminal
+./launch.sh                               # the four databases: enough for the terminal
 ./launch.sh --api                         # and the REST API
 ./launch.sh --gui                         # and the web interface, with the API behind it
 ./launch.sh --feedback                    # and the staging database verdicts are kept in
 ./launch.sh --review                      # and the whole review system (implies --feedback)
 ./launch.sh --console                     # and the SQL console (implies --api)
 ./launch.sh --mlflow                      # and MLflow
+./launch.sh --curate                      # and the curation interface, with the review service behind it
 ./launch.sh --desktop                     # build or fetch the desktop jar, and copy the API's certificate out
 ./launch.sh --load-golden                 # load the golden question document into the stores first
 ./launch.sh --no-rag                      # the retail database only
@@ -232,8 +237,12 @@ without re-pinning anything:
 What it checks, every time:
 
 - each database is healthy **and populated** -- the sales rows, the
-  knowledge chunks, the golden pairs and their vectors, the schema index --
-  and the context store holds as many golden pairs as the question document;
+  knowledge chunks, the golden pairs and their vectors, the schema index, the
+  SQL snippets -- and the context store holds as many golden pairs as the
+  question document;
+- the snippet store holds the snippet document as it is now, and when it
+  does not -- a fresh volume, or a document a `git pull` or the curation
+  interface changed -- the snippets are loaded before anything is asked;
 - the agent's read-only role exists and holds `SELECT` and nothing else, and
   `pg_trgm` is installed for matching literal values;
 - the chat model is on the chat host, and `bge-m3` on this machine;
@@ -250,8 +259,8 @@ to do about each warning.
 
 ```bash
 docker compose --profile '*' down         # everything; all data is kept
-docker compose down                       # the three databases only
-docker compose --profile mlflow down      # MLflow, and the three databases
+docker compose down                       # the four databases only
+docker compose --profile mlflow down      # MLflow, and the four databases
 ```
 
 `down` stops and removes containers. The data is in volumes, which `down`
@@ -266,8 +275,9 @@ To start the databases over from the images:
 ./setup.sh --reset
 ```
 
-That deletes the volumes of the retail database, the knowledge base and the
-context store and recreates them from their images -- anything changed in
+That deletes the volumes of the retail database, the knowledge base, the
+context store and the snippet store and recreates them -- the first three
+from their images, the snippets from their document. Anything changed in
 them by hand is lost. Staged verdicts, fixes and traces are in other volumes
 and are kept. `docker compose --profile '*' down -v` deletes *every* volume,
 those included.
@@ -280,22 +290,24 @@ those included.
 |---|---|---|
 | Web interface | <http://localhost:8080> | `start.sh`, `launch.sh --gui` |
 | Review interface | <http://localhost:8081> | `--review` |
+| Curation interface | <http://localhost:8083> | `--curate` |
 | SQL console | <http://localhost:8082> (this machine only) | `--console` |
 | MLflow | <http://localhost:5001> (this machine only) | `--mlflow` |
 | REST API | <https://localhost:8443> | `--api`, `--gui`, `--feedback`, `--review`, `--console`, `--desktop` |
-| Review service | <https://localhost:8444> | `--review` |
+| Review service | <https://localhost:8444> | `--review`, `--curate` |
 | SQL console's service | <https://localhost:8445> (this machine only) | `--console` |
 | Retail database | `localhost:5432` | always |
 | Context store (golden pairs) | `localhost:5433` | always, unless `--no-rag` |
 | Knowledge base (pgvector) | `localhost:5434` | always, unless `--no-rag` |
+| Snippet store (pgvector) | `localhost:5438` | always, unless `--no-rag` |
 | Staging database (verdicts) | `localhost:5435` | `--feedback`, `--review` |
-| Corrections store | `localhost:5436` | `--review` |
-| Completions store | `localhost:5437` | `--review` |
+| Corrections store | `localhost:5436` | `--review`, `--curate` |
+| Completions store | `localhost:5437` | `--review`, `--curate` |
 
 MLflow's own database is not published at all. Every port can be moved in
-`.env`: `GUI_PORT`, `REVIEW_GUI_PORT`, `CONSOLE_GUI_PORT`, `MLFLOW_PORT`,
-`API_PORT`, `REVIEW_PORT`, `CONSOLE_PORT`, `POSTGRES_PORT`,
-`CONTEXT_DB_PORT`, `VECTOR_DB_PORT`, `FEEDBACK_DB_PORT`,
+`.env`: `GUI_PORT`, `REVIEW_GUI_PORT`, `CURATE_GUI_PORT`, `CONSOLE_GUI_PORT`,
+`MLFLOW_PORT`, `API_PORT`, `REVIEW_PORT`, `CONSOLE_PORT`, `POSTGRES_PORT`,
+`CONTEXT_DB_PORT`, `VECTOR_DB_PORT`, `SNIPPETS_DB_PORT`, `FEEDBACK_DB_PORT`,
 `CORRECTIONS_DB_PORT` and `COMPLETIONS_DB_PORT`. The scripts read the same
 file, so the URLs they print and open follow.
 
@@ -422,14 +434,16 @@ the Ollama host or model is wrong -- it checks both before anything else.
 | `--rag`, `--no-rag` | Retrieve business knowledge for the question (on by default) |
 | `--examples`, `--no-examples` | Retrieve worked question/SQL examples (on by default) |
 | `--multi-shot`, `--no-multi-shot` | Show the examples to the SQL Generator as worked turns (on by default) |
+| `--snippets`, `--no-snippets` | Retrieve verified SQL snippets -- joins, filters, measures -- for the question (on by default) |
 | `--rag-top-k N` | Knowledge chunks retrieved per collection |
 | `--examples-top-k N` | Worked examples handed to the model |
+| `--snippets-top-k N` | SQL snippets handed to the model, at most |
 | `--embed-model NAME` | The embedding model; must be the one the knowledge base was built with |
 | `--embed-url URL` | The Ollama host serving it |
 | `--max-rows N` | Rows read back from a query |
 | `--max-attempts N` | SQL generations before giving up |
 | `--sample-rows N` | Sample rows per table shown to the model |
-| `--database-url URL`, `--vector-db-url URL`, `--context-db-url URL` | Point at other databases |
+| `--database-url URL`, `--vector-db-url URL`, `--context-db-url URL`, `--snippet-db-url URL` | Point at other databases |
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 
@@ -633,6 +647,65 @@ rules each step enforces.
 
 ---
 
+## Curating what it learns from
+
+```bash
+./start.sh --curate                       # opens http://localhost:8083
+```
+
+The review interface works through what people said about answers. The
+curation interface writes what the agent learns from directly, with nothing
+waiting in a queue. It has three tabs:
+
+**SQL snippets.** A snippet is one piece of SQL beside what it means: how two
+tables **join**, what a phrase **filters** to ("store brands" is
+`p.is_private_label`), how a **measure** is calculated (net sales, average
+basket value), or a **dimension** to group by (a fiscal quarter labelled
+`FY2025 Q3`). The agent finds the snippets a question means, by the phrases
+listed for each and by meaning, and shows the ones whose tables it is using
+to the SQL Generator. To add one, press **New snippet** and fill in:
+
+- its **kind** and **name**, and what it **means**, in a sentence or two:
+  the meaning is half of how a question finds it;
+- the **keywords**: the phrases a question says it with, comma-separated.
+  A phrase matches a question that has every one of its words, so prefer
+  "store brands" to "store", which every question about stores would match;
+- **Applies to**: the `FROM` clause it is written over, with its aliases --
+  `fact_pos_retail_sales f`, say;
+- the **SQL**: the join, the condition (without `WHERE`), the aggregate or
+  the expression;
+- a **note**: where it came from, or the mistake it prevents. The SQL
+  Generator is shown it beside the SQL, so "both counts are integers, so
+  without the cast the division truncates to zero" is worth writing down.
+
+Then **Validate against the live database**. The snippet is run the way it
+would be used -- a join joined, a filter in a `WHERE`, a measure aggregated
+-- and the page shows the query it was checked in, the rows, and anything
+worth knowing: a join that multiplied or dropped rows, a filter that keeps
+nothing or everything. **Add snippet** is enabled once it passes. It is
+written into
+[`context_questions/sql_snippets.md`](context_questions/sql_snippets.md) in
+this checkout and loaded into the snippet store, so the agent can use it on
+the next question; the change shows up in `git diff`, to commit like any
+other edit. Pick a snippet in the list to change or remove it.
+
+**Golden pairs.** Add a question and the SQL that answers it, with the same
+fields a promotion asks for. The SQL must run and return rows. Or remove a
+pair. A pair the review queue produced goes back to that queue as pending,
+so it can be judged again.
+
+**Corrections & completions.** Store the query that answers a question the
+agent gets wrong, or answers incompletely, without waiting for someone to
+vote on it. Or remove a fix, with the same rule about the queue.
+
+Nothing is saved that has not run against the live database, exactly as
+typed: edit the SQL after validating it and it has to be validated again.
+The page uses the review service, so the same `REVIEW_TOKEN` protects it, and
+it can be up with or without the review interface.
+[`curate/README.md`](curate/README.md) has the rules for each kind.
+
+---
+
 ## When an answer is wrong: the SQL console
 
 ```bash
@@ -780,7 +853,8 @@ calibration.
 
 ## The knowledge base and the golden pairs
 
-The agent retrieves from two stores that ship as images:
+The agent retrieves from two stores that ship as images, and a third built
+from a document in this checkout:
 
 - **The knowledge base** (`nl2sql-vectordb`): the documents in
   [`knowledge/`](knowledge) -- a data dictionary, a DDL index and a business
@@ -791,6 +865,13 @@ The agent retrieves from two stores that ship as images:
   knowledge base): questions already answered with SQL that runs, in
   [`context_questions/translated_questions.md`](context_questions/translated_questions.md).
   The closest are shown to the SQL Generator as worked examples.
+- **The SQL snippets** (`nl2sql-snippetsdb`): joins, filters, measures and
+  dimensions, each run against the database and written beside what it
+  means, in
+  [`context_questions/sql_snippets.md`](context_questions/sql_snippets.md).
+  This store ships empty: `launch.sh` loads the document into it whenever
+  the two differ, so a fresh volume, a pulled change or a save in the
+  curation interface all reach the agent on the next start or sooner.
 
 The golden set grows through the review interface: each promotion is
 appended to that document and loaded into both stores straight away. It has
@@ -839,6 +920,7 @@ recreates the containers.
 | `EMBED_BASE_URL` | `http://host.docker.internal:11434` | The embedding host: the Ollama on this machine, as a container sees it |
 | `EMBED_MODEL` | `bge-m3` | The embedding model |
 | `RAG_ENABLED` | `true` | Retrieve knowledge and examples |
+| `SNIPPETS_ENABLED` | `true` | Retrieve SQL snippets |
 | `MODEL_ROUTING_ENABLED` | `true` | Route calls by the catalog |
 | `MAX_ATTEMPTS` | `7` | SQL generations before giving up |
 | `MAX_ROWS` | `50` | Rows read back from a query |
@@ -871,8 +953,9 @@ reach it:
   certificate -- `API_TLS_ALLOW_SELF_SIGNED=false` makes the server refuse
   to start without one. The web interface's proxy holds the token, so the
   browser never sees it. `launch.sh` warns while no token is set.
-- **The review service** can rewrite the golden question set. Set
-  `REVIEW_TOKEN`.
+- **The review service** can rewrite the golden question set and the SQL
+  snippets, through the review interface or the curation interface. Set
+  `REVIEW_TOKEN`; both pages' proxies hold it, and neither browser sees it.
 - **The SQL console and MLflow** are published on `127.0.0.1` only. The
   console runs SQL, and MLflow has no login and shows every question's rows.
   Opening either up (`CONSOLE_BIND_ADDRESS`, `MLFLOW_BIND_ADDRESS`) gets a
@@ -913,6 +996,9 @@ it. `./setup.sh` with no `--agent-tag` goes back to the shipped version, and
 pulling a newer checkout re-pins it like everything else. An agent from
 before `v4_1` has no REST API, so only the terminal can ask it questions.
 
+Upgrading to `v5_6` adds one container, `nl2sql-snippetsdb`, on an empty
+volume of its own; the first start loads the snippet document into it.
+
 [`README.md`](README.md) lists what each tag is, and
 [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what each version changed.
 
@@ -932,6 +1018,9 @@ the first question.
 | `the vector store is up but holds no embedded chunks` / `no ddl_index_embeddings` | The knowledge base volume predates its image | `./setup.sh --reset` |
 | `the context store holds N golden pairs, and context_questions/translated_questions.md M` | The question document has pairs the stores do not -- promoted elsewhere and pulled | `./start.sh --load-golden` |
 | `the golden pairs did not load completely` | A loader failed -- usually the embedding model is down -- and the stores keep what they had | Start Ollama here with `bge-m3`, then `--load-golden` again |
+| `the SQL snippets did not load completely` | The snippet loader failed, usually on the embedding model: the snippets are found by keyword alone meanwhile | Start Ollama here with `bge-m3`; the next start loads them again |
+| `the pinned review image predates SQL snippets` | `.env` pins a review image from before `v5_6`, which has no snippet loader | `./start.sh`, which re-pins it, or `./setup.sh` |
+| `the snippet store holds no SQL snippets` | Nothing has loaded it yet, so the generator is shown none | Read the warning above it; `./start.sh` again once that is fixed |
 | `.env pins the agent image at ..., but this checkout ships ...` | You are running an older agent than the checkout | `./start.sh`, or `./setup.sh` |
 | `model routing: ...` and a note about another host | The catalog describes a different Ollama host, so every call goes to `OLLAMA_MODEL` | Fine as it is; or build and calibrate a catalog ([Models](#models)) |
 | `the REST API container did not become healthy` | It failed to start | `docker compose --profile api logs api` |
@@ -955,7 +1044,7 @@ Problems with answers rather than with the stack:
 
 The logs: `docker compose --profile '*' logs <service>`, with the service
 names in [Where everything is](#where-everything-is) (`api`, `gui`,
-`review`, `reviewgui`, `console`, `consolegui`, `mlflow`, `postgres`, ...).
+`review`, `reviewgui`, `curategui`, `console`, `consolegui`, `mlflow`, `snippetsdb`, `postgres`, ...).
 
 ---
 
@@ -967,6 +1056,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 |---|---|
 | `--desktop` | Use the desktop client instead of the web interface |
 | `--review` | Also the feedback system and the review interface |
+| `--curate` | Also the curation interface, and the review service behind it |
 | `--console` | Also the SQL console |
 | `--mlflow` | Also MLflow |
 | `--feedback` | Keep verdicts, without the review interface |
@@ -985,6 +1075,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--gui` | Also the web interface, and the API |
 | `--feedback` | Also the staging database, and the API |
 | `--review` | Also the review service, its interface and the two fix stores; implies `--feedback` |
+| `--curate` | Also the review service, the two fix stores and the curation interface, without the review interface; implies `--feedback` |
 | `--console` | Also the SQL console, and the API |
 | `--mlflow` | Also MLflow |
 | `--desktop` | Build or fetch the desktop client, and copy the API's certificate out; implies `--api` |
@@ -1005,6 +1096,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `-p`, `--port PORT` | The retail database's host port |
 | `--gui` | Also pull and pin the web interface |
 | `--review` | Also the review service and its interface (implies `--gui`) |
+| `--curate` | Also the curation interface. The review service is pinned whenever retrieval is on, because it loads the snippets |
 | `--console` | Also the SQL console's interface |
 | `--mlflow` | Also MLflow's server and store |
 | `--desktop` | Also the desktop client's jar, for this machine |
@@ -1012,10 +1104,10 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--build-agent` | Build the agent from this checkout instead of pulling it |
 | `-t`, `--tag TAG`, `-i`, `--image NAME` | Another retail database image |
 | `--build` | Build the retail database here, regenerating the data |
-| `--gui-tag`, `--gui-image`, `--review-tag`, `--review-image`, `--review-gui-tag`, `--review-gui-image`, `--console-gui-tag`, `--console-gui-image`, `--mlflow-tag`, `--mlflow-image`, `--mlflow-db-tag`, `--mlflow-db-image`, `--desktop-tag`, `--desktop-image`, `--vector-tag`, `--vector-image`, `--context-tag`, `--context-image` | Another version or repository of each image |
+| `--gui-tag`, `--gui-image`, `--review-tag`, `--review-image`, `--review-gui-tag`, `--review-gui-image`, `--curate-gui-tag`, `--curate-gui-image`, `--console-gui-tag`, `--console-gui-image`, `--mlflow-tag`, `--mlflow-image`, `--mlflow-db-tag`, `--mlflow-db-image`, `--desktop-tag`, `--desktop-image`, `--vector-tag`, `--vector-image`, `--context-tag`, `--context-image` | Another version or repository of each image |
 | `--no-rag` | No knowledge base: the agent answers from the schema alone |
 | `--no-verify` | Skip the closing retrieval check |
-| `--reset` | Delete the three databases' volumes first and start from the images |
+| `--reset` | Delete the four databases' volumes first and start from the images and the snippet document |
 | `-h`, `--help` | The usage |
 
 Each script's `--help` prints the same, with defaults.
@@ -1032,7 +1124,8 @@ Each script's `--help` prints the same, with defaults.
 | [`agent/API.md`](agent/API.md) | The REST API contract, with client code |
 | [`gui/README.md`](gui/README.md) | The web interface |
 | [`desktop/README.md`](desktop/README.md) | The desktop client |
-| [`review/README.md`](review/README.md) | Feedback review: promotion, fixes, taking a judgement back |
+| [`review/README.md`](review/README.md) | Feedback review: promotion, fixes, taking a judgement back, and the curation routes |
+| [`curate/README.md`](curate/README.md) | The curation interface: SQL snippets, golden pairs and fixes, written directly |
 | [`console/README.md`](console/README.md) | The SQL console |
 | [`benchmarks/README.md`](benchmarks/README.md) | The benchmark and its scoring |
 | [`models/README.md`](models/README.md) | The model catalog and calibration |

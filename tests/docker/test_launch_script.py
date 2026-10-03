@@ -1334,3 +1334,174 @@ def test_a_context_store_behind_the_document_is_called_out(run_launch, tmp_path)
 def test_a_context_store_that_matches_the_document_says_nothing(run_launch, tmp_path):
     _golden_document(tmp_path, 45)
     assert "golden pairs, and context_questions" not in run_launch().output
+
+
+# ---------------------------------------------------------------------------
+# The SQL snippets (v5.6): the store launch.sh fills from its document
+# ---------------------------------------------------------------------------
+
+SNIPPET_LOAD = "07_load_snippets.py"
+
+
+def test_the_snippet_store_is_started_and_waited_on_with_the_other_stores(run_launch):
+    result = run_launch()
+    assert result.called("up -d postgres vectordb chunkdb snippetsdb")
+    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-snippetsdb")
+    assert "nl2sql-snippetsdb is healthy" in result.output
+
+
+def test_a_store_that_holds_the_document_is_not_loaded_and_says_what_it_holds(run_launch):
+    result = run_launch()
+    # Both halves of the comparison are taken inside the store's container.
+    assert result.called("compose exec -T snippetsdb sha256sum")
+    assert result.called("SELECT document_hash FROM sql_snippet_source")
+    assert not result.called(SNIPPET_LOAD)
+    assert "Loading the SQL snippets" not in result.output
+    assert "SQL snippets: 32 snippets, 32 embedded meanings" in result.output
+
+
+def test_a_store_behind_its_document_is_loaded_in_the_review_image(run_launch):
+    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": "", "FAKE_SNIPPETS_EMBEDDED": "3"})
+
+    assert result.returncode == 0
+    assert "==> Loading the SQL snippets from context_questions/sql_snippets.md" in result.output
+    assert "the snippet store is behind the document" in result.output
+    assert "32 rows written, 0 stale rows removed" in result.output
+    assert "vectors -> sql_snippet_vectors: 3 embedded, 29 already current" in result.output
+    assert result.called(LOAD)
+    script = "\n".join(result.calls[result.index_of(SNIPPET_LOAD) - 2:][:4])
+    assert '07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL"' in script
+    # Counted after the load had its chance, so the count is what the agent sees.
+    assert result.index_of(SNIPPET_LOAD) < result.index_of("SELECT count(*) FROM sql_snippets")
+
+
+def test_a_document_edited_since_the_last_load_is_loaded_again(run_launch):
+    # The store recorded the old hash; the checkout's document hashes to another.
+    result = run_launch(env={"FAKE_SNIPPETS_DOC_HASH": "edited", "FAKE_SNIPPETS_EMBEDDED": "1"})
+    assert "the snippet store is behind the document" in result.output
+    assert result.called(SNIPPET_LOAD)
+    assert "vectors -> sql_snippet_vectors: 1 embedded, 31 already current" in result.output
+
+
+def test_a_document_the_store_cannot_hash_loads_nothing(run_launch):
+    # No hash from the store's container is no comparison: an empty answer
+    # must not read as "different" and reload on every start.
+    result = run_launch(env={"FAKE_SNIPPETS_DOC_HASH": "", "FAKE_SNIPPETS_LOADED_HASH": "old"})
+    assert result.called("compose exec -T snippetsdb sha256sum")
+    assert not result.called(SNIPPET_LOAD)
+    assert "SQL snippets: 32 snippets, 32 embedded meanings" in result.output
+
+
+@pytest.mark.parametrize("vectors", ["0", ""])
+def test_snippets_whose_meanings_are_not_embedded_are_counted_as_none(run_launch, vectors):
+    result = run_launch(env={"FAKE_SNIPPET_VECTORS": vectors})
+    assert "SQL snippets: 32 snippets, 0 embedded meanings" in result.output
+
+
+def test_a_snippet_load_the_embedding_host_stopped_is_a_warning(run_launch):
+    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": "old", "FAKE_SNIPPETS_LOAD_FAILS": "1"})
+
+    assert result.returncode == 0
+    assert (
+        "the SQL snippets did not load completely; the agent is shown what the store holds. It said:"
+        in result.output
+    )
+    assert "the rows are loaded and searchable by keyword" in result.output
+    assert "==> Ready." in result.output
+
+
+def test_a_review_image_from_before_snippets_is_named_as_the_reason(run_launch):
+    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": "", "FAKE_SNIPPETS_OLD_IMAGE": "1"})
+    assert "the pinned review image predates SQL snippets, so it cannot load them." in result.output
+    assert "./setup.sh pulls the image this checkout ships" in result.output
+
+
+def test_an_empty_snippet_store_is_warned_about(run_launch):
+    result = run_launch(env={"FAKE_SNIPPET_COUNT": "0"})
+    assert "the snippet store holds no SQL snippets, so the generator is shown none." in result.output
+    assert "check the review image can run" in result.output
+
+
+def test_without_the_document_nothing_is_compared_or_loaded(run_launch, tmp_path):
+    (tmp_path / "repo" / "context_questions" / "sql_snippets.md").unlink()
+    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": ""})
+    assert not result.called("sha256sum")
+    assert not result.called(SNIPPET_LOAD)
+
+
+def test_no_rag_starts_no_snippet_store_and_loads_nothing(run_launch):
+    result = run_launch("--no-rag", env={"FAKE_SNIPPETS_LOADED_HASH": ""})
+    assert not result.called("snippetsdb")
+    assert not result.called(SNIPPET_LOAD)
+
+
+def test_a_snippet_store_that_never_comes_up_stops_the_start(run_launch):
+    result = run_launch(env={"FAKE_SNIPPETS_HEALTH": "starting"}, timeout=240)
+    assert result.returncode != 0
+    assert "nl2sql-snippetsdb did not become healthy" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The curation interface (--curate)
+# ---------------------------------------------------------------------------
+
+
+def test_curate_starts_the_review_service_and_its_own_page_but_not_the_review_page(run_launch):
+    result = run_launch("--curate")
+    assert result.called("--profile feedback up -d feedbackdb")
+    assert result.called("--profile feedback --profile review up -d correctionsdb completionsdb")
+    assert result.called("--profile feedback --profile review up -d review")
+    assert result.called("--profile feedback --profile review --profile curategui up -d curategui")
+    assert not result.called("up -d reviewgui")
+    assert "Curation interface is healthy at http://localhost:8083" in result.output
+
+
+def test_curate_asks_for_the_api_whose_certificate_the_service_presents(run_launch):
+    assert run_launch("--curate").called("--profile api up -d api")
+
+
+def test_the_curation_page_is_not_started_unless_asked_for(run_launch):
+    assert not run_launch("--review").called("up -d curategui")
+
+
+def test_review_and_curate_together_start_one_service_and_both_pages(run_launch):
+    result = run_launch("--review", "--curate")
+    assert sum("up -d review" in call and "reviewgui" not in call for call in result.calls) == 1
+    assert result.called("up -d reviewgui") and result.called("up -d curategui")
+
+
+def test_the_curation_port_follows_what_compose_will_use(run_launch):
+    result = run_launch("--curate", env_file="IMAGE_NAME=x\nCURATE_GUI_PORT=9083\n")
+    assert "Curation interface is healthy at http://localhost:9083" in result.output
+    assert result.called("localhost:9083/readyz")
+
+
+def test_the_closing_lines_say_where_to_curate_and_what_is_written(run_launch):
+    output = run_launch("--curate").output
+    assert "==> The curation interface is up:" in output
+    assert "open http://localhost:8083" in output
+    assert "context_questions/sql_snippets.md" in output and "git diff" in output
+    assert "curate/README.md" in output
+
+
+def test_a_curation_page_that_never_comes_up_is_reported(run_launch):
+    result = run_launch(
+        "--curate", env={"FAKE_CURATE_GUI_HEALTH": "starting", "FAKE_CURATE_GUI_RUNNING": "false"}, timeout=60
+    )
+    assert "the curation interface did not become healthy." in result.output
+    assert (
+        "docker compose --profile feedback --profile review --profile curategui logs curategui"
+        in result.output
+    )
+
+
+def test_a_curation_page_whose_proxy_is_stale_is_restarted(run_launch):
+    result = run_launch("--curate", env={"FAKE_PROXY_BROKEN": "8083"})
+    assert result.called("restart curategui")
+    assert "Curation interface is healthy at http://localhost:8083" in result.output
+
+
+def test_a_curation_proxy_a_restart_does_not_fix_is_reported(run_launch):
+    result = run_launch("--curate", env={"FAKE_PROXY_DEAD": "8083"})
+    assert "the curation interface is up but cannot reach the review service." in result.output
+    assert "Curation interface is healthy" not in result.output

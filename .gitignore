@@ -32,9 +32,12 @@ review/gui/coverage/
 console/node_modules/
 console/dist/
 console/coverage/
+curate/node_modules/
+curate/dist/
+curate/coverage/
 
-# The copy the review service keeps beside the golden question document
-# before it replaces it. Useful when a promotion turns out to be wrong;
+# The copy the review service keeps beside the golden question document --
+# and, since 5.6, beside the SQL snippet document -- before it replaces it. Useful when a promotion turns out to be wrong;
 # never something to commit.
 context_questions/*.md.bak
 

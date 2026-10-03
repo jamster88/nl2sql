@@ -76,13 +76,15 @@ docker compose run --rm agent "How many stores are there?"
 ./start.sh --review                       # and review the verdicts people gave
 ./start.sh --console                      # and the SQL console, for working out a wrong answer
 ./start.sh --mlflow                       # and MLflow: everything the agent did, per question
-./start.sh --review --console --mlflow    # every page
+./start.sh --curate                       # and write what it learns from: SQL snippets, golden pairs, fixes
+./start.sh --review --curate --console --mlflow   # every page
 ```
 
 | Page | Address |
 |---|---|
 | Web interface | <http://localhost:8080> |
 | Review interface | <http://localhost:8081> |
+| Curation interface | <http://localhost:8083> |
 | SQL console | <http://localhost:8082> |
 | MLflow | <http://localhost:5001> |
 

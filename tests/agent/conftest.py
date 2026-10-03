@@ -13,6 +13,7 @@ from nl2sql_agent.completeness import Reflection
 from nl2sql_agent.database import QueryResult
 from nl2sql_agent.examples import ExamplesUnavailableError, GoldenPair
 from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
+from nl2sql_agent.snippets import Found, Snippet, SnippetsUnavailableError
 from nl2sql_agent.supervisor import Screening
 from nl2sql_agent.tools import TableSelection
 
@@ -227,6 +228,64 @@ class FakeGoldenPairLibrary:
         if self.error is not None:
             raise ExamplesUnavailableError(self.error)
         return list(self._pairs)
+
+
+class FakeSnippetLibrary:
+    """Stands in for nl2sql_agent.snippets.SnippetLibrary.
+
+    Finds nothing unless given snippets, so a test that is not about them
+    sees the prompt it always did. `error` is an unreachable store, which
+    the pipeline survives without them; `warning` is the meaning half sitting
+    out while the keyword half answers.
+    """
+
+    def __init__(
+        self,
+        snippets: list[Snippet] | None = None,
+        error: str | None = None,
+        warning: str | None = None,
+    ) -> None:
+        self._snippets = list(snippets or [])
+        self.error = error
+        self.warning = warning
+        self.find_calls: list[tuple[str, int | None]] = []
+
+    def find(self, question: str, top_k: int | None = None) -> Found:
+        self.find_calls.append((question, top_k))
+        if self.error is not None:
+            raise SnippetsUnavailableError(self.error)
+        return Found(list(self._snippets), self.warning)
+
+
+def make_snippet(
+    *,
+    snippet_id: str = "S19",
+    kind: str = "measure",
+    name: str = "Net sales",
+    tables: str = "fact_pos_retail_sales",
+    means: str = "Revenue actually collected, after register discounts.",
+    applies_to: str = "fact_pos_retail_sales f",
+    sql: str = "SUM(f.net_sales_amt)",
+    note: str = "",
+    score: float = 0.8,
+    similarity: float | None = 0.55,
+    matched: str = "net sales",
+) -> Snippet:
+    return Snippet(
+        snippet_id=snippet_id,
+        chunk_id=f"snippet:{snippet_id.lower()}",
+        kind=kind,
+        name=name,
+        tables=tables,
+        means=means,
+        applies_to=applies_to,
+        sql=sql,
+        note=note,
+        score=score,
+        similarity=similarity,
+        keyword_score=4.0,
+        matched=matched,
+    )
 
 
 def make_pair(

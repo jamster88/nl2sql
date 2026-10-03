@@ -118,6 +118,7 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
         (
             "human",
             "{knowledge}"
+            "{snippets}"
             "{literals}"
             "{task}"
             "{contract}"
@@ -126,9 +127,10 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
             "SQL:",
         ),
     ]
-    # The contract line is optional in the template, not only in the graph:
-    # every caller that predates arch5 renders the arch4 prompt unchanged.
-).partial(contract="")
+    # The contract and snippet blocks are optional in the template, not only
+    # in the graph: every caller that predates them renders the prompt it
+    # always did.
+).partial(contract="", snippets="")
 
 RETRY_FEEDBACK = (
     "Your previous attempt was rejected.\n"
@@ -168,6 +170,28 @@ def knowledge_block(knowledge: str) -> str:
     if not knowledge or not knowledge.strip():
         return ""
     return KNOWLEDGE_BLOCK.format(knowledge=knowledge.strip())
+
+
+SNIPPET_BLOCK = (
+    "SQL snippets for this database whose meaning matches the question, each one "
+    "verified to run here. Build the query from the ones that apply and ignore the "
+    "rest. Keep each piece you use exactly as written -- its casts, NULLIFs and "
+    "join keys -- changing only the aliases, and literals to what the question "
+    "asks; a note says what the piece guards against:\n"
+    "{snippets}\n\n"
+)
+
+
+def snippet_block(rendered: str) -> str:
+    """Wrap the snippets for the prompt, or render nothing when none apply.
+
+    The instruction lives in the block rather than in the system prompt, so a
+    question no snippet matches is asked exactly as it was before snippets
+    existed -- the same rule the contract line follows.
+    """
+    if not rendered or not rendered.strip():
+        return ""
+    return SNIPPET_BLOCK.format(snippets=rendered.strip())
 
 
 LITERAL_BLOCK = (

@@ -1,0 +1,53 @@
+#!/bin/sh
+# The two decisions nginx cannot make for itself, made before its templates
+# are substituted -- the review interface's script, under this page's names.
+#
+# Sourced rather than executed -- hence `.envsh` -- because the first of the
+# two exports a variable the envsubst step after it has to see.
+
+set -eu
+
+# 1. The Authorization header. Empty when there is no token, and nginx drops
+#    a header whose value is empty. The token is the review service's, which
+#    can rewrite the golden set and the snippets; it never reaches a browser.
+if [ -n "${CURATE_TOKEN:-}" ]; then
+    export CURATE_AUTH_HEADER="Bearer ${CURATE_TOKEN}"
+else
+    export CURATE_AUTH_HEADER=""
+fi
+
+# 2. Whether there is a certificate to verify. Naming a file that is not
+#    there stops nginx from starting with an error that says nothing about
+#    why, so it is checked here first; behind plain HTTP there is none.
+#    The destination is overridable only so the test suite can run this
+#    against a temporary directory.
+tls_conf="${NGINX_CURATE_UPSTREAM_TLS_CONF:-/etc/nginx/nl2sql-curate-upstream-tls.conf}"
+
+case "${CURATE_UPSTREAM}" in
+    https://*)
+        if [ ! -r "${CURATE_CACERT}" ]; then
+            echo "nl2sql-curate-gui: CURATE_UPSTREAM is ${CURATE_UPSTREAM} but there is no" >&2
+            echo "  readable certificate at CURATE_CACERT=${CURATE_CACERT} to verify it." >&2
+            echo "  The review service presents the certificate the agent API generates," >&2
+            echo "  so this usually means the API has not started yet, or the apitls" >&2
+            echo "  volume is not mounted here." >&2
+            exit 1
+        fi
+        cat > "$tls_conf" <<TLSEOF
+# Written by 10-nl2sql-curate-config.envsh because CURATE_UPSTREAM is HTTPS.
+proxy_ssl_verify on;
+proxy_ssl_verify_depth 3;
+proxy_ssl_trusted_certificate ${CURATE_CACERT};
+proxy_ssl_server_name on;
+proxy_ssl_name ${CURATE_SSL_NAME};
+TLSEOF
+        ;;
+    *)
+        cat > "$tls_conf" <<TLSEOF
+# Written by 10-nl2sql-curate-config.envsh. CURATE_UPSTREAM is
+# ${CURATE_UPSTREAM} -- plain HTTP, so there is no certificate to verify.
+# Everything the curator's browser sends, including their edits to the
+# golden set and the snippets, crosses in clear text.
+TLSEOF
+        ;;
+esac

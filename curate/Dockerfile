@@ -1,0 +1,62 @@
+# The curation GUI: built with node, served by nginx, with no node in the result.
+#
+# A fourth npm project and image, for the reason the review and console
+# interfaces are their own: an entry point in another project would be served
+# by that project's image, and this page writes what the agent is shown --
+# SQL snippets -- and what it is measured against -- the golden set. Its
+# backend is the review service, the one process with those powers.
+
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build
+
+WORKDIR /build
+
+# The lockfile alone first, so the dependency layer is only rebuilt when the
+# dependencies actually change rather than on every source edit.
+COPY curate/package.json curate/package-lock.json ./
+RUN npm ci
+
+COPY curate/tsconfig.json curate/vite.config.ts curate/index.html ./
+COPY curate/src/ ./src/
+# `npm run build` is `tsc --noEmit && vite build`, so an image cannot be
+# produced from code that does not compile.
+RUN npm run build
+
+
+FROM nginx:1.29-alpine
+
+# `default.conf` ships with the image and would otherwise win on port 80.
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+COPY --from=build /build/dist/ /usr/share/nginx/html/
+COPY curate/nginx.conf.template /etc/nginx/templates/nl2sql-curate.conf.template
+COPY curate/10-nl2sql-curate-config.envsh /docker-entrypoint.d/10-nl2sql-curate-config.envsh
+RUN chmod +x /docker-entrypoint.d/10-nl2sql-curate-config.envsh
+
+# Substituted into the template at start-up. Only these names are touched --
+# without the filter, envsubst would also eat nginx's own $uri and $host.
+ENV NGINX_ENVSUBST_FILTER="^CURATE_" \
+    CURATE_GUI_PORT=8083 \
+    CURATE_UPSTREAM=https://nl2sql-review:8444 \
+    CURATE_CACERT=/etc/nl2sql/tls/server.crt \
+    CURATE_SSL_NAME=nl2sql-review \
+    CURATE_READ_TIMEOUT=900s \
+    CURATE_GUI_RESOLVER=127.0.0.11
+
+# CURATE_TOKEN is deliberately not given a default. A token baked into an
+# image is a token in every layer of it -- and this one is the review
+# service's, which can rewrite the golden set and the snippets. Unset is what
+# the entrypoint script expects: it turns "no token" into an empty
+# Authorization header, which nginx then does not send at all.
+
+# Where the agent API's certificate is expected to appear, mounted by compose
+# from the volume the API writes it into.
+RUN mkdir -p /etc/nl2sql/tls
+
+EXPOSE 8083
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null "http://127.0.0.1:${CURATE_GUI_PORT}/index.html" || exit 1
+
+LABEL org.opencontainers.image.title="nl2sql curation GUI" \
+      org.opencontainers.image.description="React/TypeScript interface for curating SQL snippets, golden pairs, corrections and completions" \
+      org.opencontainers.image.version="5.6.0"

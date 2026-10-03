@@ -1,0 +1,63 @@
+# The curation GUI's own server, and the hop that makes a browser's life simple.
+#
+# The review interface's proxy, for the same service: the token this hop
+# holds can rewrite the golden question set and the SQL snippets, so it stays
+# on this side of the hop and the curator's browser never holds it.
+#
+# A long read timeout, because a save runs the loaders: a golden pair reloads
+# both stores and re-embeds, a snippet reloads its store and embeds what
+# changed.
+
+server {
+    listen ${CURATE_GUI_PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+    }
+
+    # One page, so any path that is not a file is still the page.
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # --- the review service ----------------------------------------------
+
+    location ~ ^/(v1|healthz|readyz|openapi\.json) {
+        # Resolved per request rather than once at start-up, as in the other
+        # interfaces: a literal upstream is looked up while nginx parses its
+        # config and cached for the life of the process.
+        resolver ${CURATE_GUI_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${CURATE_UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Empty when no token is configured, and nginx omits a header whose
+        # value is empty.
+        proxy_set_header Authorization "${CURATE_AUTH_HEADER}";
+        proxy_set_header Connection "";
+
+        # Verified rather than skipped: this hop crosses a container network.
+        # Included because the directives are wrong when CURATE_UPSTREAM is
+        # plain HTTP -- see 10-nl2sql-curate-config.envsh.
+        include /etc/nginx/nl2sql-curate-upstream-tls.conf;
+
+        proxy_read_timeout ${CURATE_READ_TIMEOUT};
+        proxy_send_timeout ${CURATE_READ_TIMEOUT};
+    }
+}

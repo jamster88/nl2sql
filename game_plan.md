@@ -24,20 +24,23 @@
 
 ## V6
 * v6 - adversarial reivew
-* v6_1 - fixes from adversarial review + test and release
-* v6_2 - documentation clean-up (docs folder, shorter readme, break-up current readme into multiple files in the docs folder)
+* v6_1 - user support via DB and LDAP
+* v6_2 - re-run adversarial review
+* v6_3 - fixes from adversarial review + test and release
+* v6_3_1 - documentation clean-up (docs folder, shorter readme, break-up current readme into multiple files in the docs folder)
 
 ## V7
-* v7 - question classification (easy/medium/hard/xhard + simple/complex) + wrappers for v5_6_1 and v3_x (or v2_x)
-* v7_1 - question decomposition
-* v7_2 - answer planning
-* v7_3 - answer assembly + tests and release
-* v7_4 - more model choice flexibility (list available models, choose models and set their capacity/strength/intelligence)
+* v7 - question classification, question decomposition, answer planning and answer assembly arch
+* v7_1 - question classification (easy/medium/hard/xhard + simple/complex) + wrappers for v5_6_1 and v3_x (or v2_x)
+* v7_2 - question decomposition
+* v7_3 - answer planning
+* v7_4 - answer assembly + tests and release
+* v7_5 - more model choice flexibility (list available models, choose models and set their capacity/strength/intelligence)
 
 ## V8
-* v8 - user support via DB
-* v8_1 - via LDAP
-* v8_2 - short and long-term memory
+* v8 - memory arch
+* v8_1 - short-term memory
+* v8_2 - long-term memory
 * v8_3 - semantic cache
 
 ## V9

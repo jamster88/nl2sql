@@ -1,0 +1,4 @@
+uid,given_name,surname,mail,groups
+asker,Ada,Asker,ada.asker@example.com,nl2sql-users
+reviewer,Rex,Reviewer,rex.reviewer@example.com,nl2sql-users;nl2sql-reviewers
+curator,Cora,Curator,cora.curator@example.com,nl2sql-users;nl2sql-curators

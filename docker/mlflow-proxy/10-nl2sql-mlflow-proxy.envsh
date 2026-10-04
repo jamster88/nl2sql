@@ -1,0 +1,108 @@
+#!/bin/sh
+# The decisions nginx cannot make for itself, made before its templates are
+# substituted.
+#
+# Sourced rather than executed -- hence `.envsh`, which the nginx image's
+# entrypoint treats differently -- because it exports variables the envsubst
+# step after it has to see.
+
+set -eu
+
+# 1. The Authorization header MLflow's server is sent: none, ever. What a
+#    browser or an MLflow client presented was for this proxy to check; an
+#    empty value makes nginx drop it.
+export MLFLOW_AUTH_HEADER=""
+
+# Writes the directives that verify an upstream into a file the template
+# includes, or says in the file that there is nothing to verify.
+#
+#   upstream_tls NAME URL CACERT_NAME CACERT SSL_NAME FILE
+upstream_tls() {
+    case "$2" in
+        https://*)
+            if [ ! -r "$4" ]; then
+                echo "nl2sql-mlflow-proxy: $1 is $2 but there is no" >&2
+                echo "  readable certificate at $3=$4 to verify it." >&2
+                echo "  The auth service presents the certificate the agent API generates," >&2
+                echo "  so this usually means the API has not started yet, or the apitls" >&2
+                echo "  volume is not mounted here." >&2
+                exit 1
+            fi
+            cat > "$6" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh because $1 is HTTPS.
+proxy_ssl_verify on;
+proxy_ssl_verify_depth 3;
+proxy_ssl_trusted_certificate $4;
+proxy_ssl_server_name on;
+proxy_ssl_name $5;
+TLSEOF
+            ;;
+        *)
+            cat > "$6" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh. $1 is $2 -- plain HTTP, inside
+# the stack's own network.
+TLSEOF
+            ;;
+    esac
+}
+
+# 2. MLflow's server: plain HTTP on the stack's network, where only this
+#    proxy and the agent reach it.
+upstream_tls MLFLOW_UPSTREAM "${MLFLOW_UPSTREAM}" MLFLOW_CACERT "${MLFLOW_CACERT:-}" "${MLFLOW_SSL_NAME:-}" \
+    "${NGINX_UPSTREAM_TLS_CONF:-/etc/nginx/nl2sql-mlflow-upstream-tls.conf}"
+
+# 3. The sign-in hop.
+upstream_tls AUTH_UPSTREAM "${AUTH_UPSTREAM}" AUTH_CACERT "${AUTH_CACERT}" "${AUTH_SSL_NAME}" \
+    "${NGINX_AUTH_TLS_CONF:-/etc/nginx/nl2sql-auth-tls.conf}"
+
+# 4. Whether every request is asked about. With sign-in off (AUTH_ENABLED
+#    false) there is nobody to ask, and anyone who can reach this port
+#    reaches MLflow -- which is why compose publishes it on this machine only
+#    unless told otherwise.
+signin_conf="${NGINX_SIGNIN_CONF:-/etc/nginx/nl2sql-mlflow-signin.conf}"
+case "${AUTH_ENABLED:-false}" in
+    true|1|yes|on)
+        cat > "$signin_conf" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh because AUTH_ENABLED is on.
+auth_request /_nl2sql_verify;
+error_page 401 = @signin;
+error_page 403 = @forbidden;
+TLSEOF
+        ;;
+    *)
+        cat > "$signin_conf" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh. AUTH_ENABLED is off: no sign-in,
+# so anyone who can reach this port reaches MLflow.
+TLSEOF
+        ;;
+esac
+
+# 5. This proxy's own listener. HTTPS by default, because passwords are typed
+#    into the sign-in page behind it; the certificate is the API's. Off
+#    (MLFLOW_PROXY_TLS_ENABLED=false) only behind something that terminates TLS.
+server_conf="${NGINX_SERVER_TLS_CONF:-/etc/nginx/nl2sql-server-tls.conf}"
+case "${MLFLOW_PROXY_TLS_ENABLED:-true}" in
+    false|0|no|off)
+        export MLFLOW_PROXY_LISTEN_TLS=""
+        cat > "$server_conf" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh. MLFLOW_PROXY_TLS_ENABLED=false:
+# plain HTTP, and so is every password typed into the sign-in page.
+TLSEOF
+        ;;
+    *)
+        if [ ! -r "${MLFLOW_PROXY_TLS_CERT_FILE}" ] || [ ! -r "${MLFLOW_PROXY_TLS_KEY_FILE}" ]; then
+            echo "nl2sql-mlflow-proxy: MLFLOW_PROXY_TLS_ENABLED is on but ${MLFLOW_PROXY_TLS_CERT_FILE} or" >&2
+            echo "  ${MLFLOW_PROXY_TLS_KEY_FILE} is not readable. They come from the apitls volume" >&2
+            echo "  the API writes on its first start; mount it, or set MLFLOW_PROXY_TLS_ENABLED=false" >&2
+            echo "  behind something that terminates TLS itself." >&2
+            exit 1
+        fi
+        export MLFLOW_PROXY_LISTEN_TLS=" ssl"
+        cat > "$server_conf" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh because MLFLOW_PROXY_TLS_ENABLED is on.
+ssl_certificate ${MLFLOW_PROXY_TLS_CERT_FILE};
+ssl_certificate_key ${MLFLOW_PROXY_TLS_KEY_FILE};
+ssl_protocols TLSv1.2 TLSv1.3;
+TLSEOF
+        ;;
+esac

@@ -1,0 +1,109 @@
+# MLflow's front door: the one way in from outside the stack, behind sign-in.
+#
+# MLflow's server has no login of its own, can delete what it shows, and
+# shows the rows every question returned. So its own port is not published at
+# all; this is, and it asks the auth service about every request it passes on
+# (`auth_request`). A browser without a session is sent to the sign-in page
+# and back; an MLflow client -- the benchmark, a notebook -- signs in with
+# MLFLOW_TRACKING_USERNAME and _PASSWORD, or a token from POST /auth/token
+# as MLFLOW_TRACKING_TOKEN. Who may come in is MLFLOW_ALLOWED_ROLES on the
+# auth service: reviewers and administrators by default.
+#
+# The agent still writes its traces to the server directly, inside the
+# stack's own network, where nothing outside can reach.
+
+server {
+    listen ${MLFLOW_PROXY_PORT}${MLFLOW_PROXY_LISTEN_TLS};
+    server_name _;
+
+    # The certificate, when this page is HTTPS. Written by the start-up script.
+    include /etc/nginx/nl2sql-server-tls.conf;
+
+    # Artifacts -- a benchmark's report, a trace's attachments -- are
+    # uploaded through here.
+    client_max_body_size 512m;
+
+    # --- sign-in -----------------------------------------------------------
+
+    # The sign-in page and its form, the auth service's. Its cookie comes
+    # back through here, so it belongs to this host -- and to every page of
+    # the stack served from it.
+    location /auth/ {
+        resolver ${MLFLOW_PROXY_RESOLVER} valid=10s ipv6=off;
+        set $auth_upstream ${AUTH_UPSTREAM};
+        proxy_pass $auth_upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Connection "";
+        include /etc/nginx/nl2sql-auth-tls.conf;
+    }
+
+    # The question asked about every request: may this through? The method
+    # it is about goes along, because a write riding on a cookie has to come
+    # from this page's own origin.
+    location = /_nl2sql_verify {
+        internal;
+        resolver ${MLFLOW_PROXY_RESOLVER} valid=10s ipv6=off;
+        set $auth_upstream ${AUTH_UPSTREAM};
+        proxy_pass $auth_upstream/auth/verify;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URI $request_uri;
+        include /etc/nginx/nl2sql-auth-tls.conf;
+    }
+
+    # A browser is sent to sign in and brought back; a client of MLflow's API
+    # is told 401, which its library reports, rather than handed a page.
+    location @signin {
+        if ($uri ~ ^/(api|ajax-api)/) {
+            return 401;
+        }
+        return 302 /auth/login?next=$request_uri;
+    }
+
+    location @forbidden {
+        default_type text/plain;
+        return 403 "Refused: signed in as someone not in a group that may use MLflow (MLFLOW_ALLOWED_ROLES on the auth service), or a change sent from another site. To sign in as someone else: /auth/login\n";
+    }
+
+    # --- MLflow -----------------------------------------------------------
+
+    # MLflow's health route, open: it answers "OK" and nothing else, and the
+    # container's healthcheck asks it through here.
+    location = /health {
+        resolver ${MLFLOW_PROXY_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${MLFLOW_UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        include /etc/nginx/nl2sql-mlflow-upstream-tls.conf;
+    }
+
+    location / {
+        # The auth_request, when sign-in is on; nothing, when it is off.
+        # Written by the start-up script from AUTH_ENABLED.
+        include /etc/nginx/nl2sql-mlflow-signin.conf;
+
+        # Resolved per request, as in every page of this stack, so the proxy
+        # can start before MLflow and follows it across a restart.
+        resolver ${MLFLOW_PROXY_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${MLFLOW_UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        proxy_http_version 1.1;
+        # Host is left as nginx's default -- the upstream's own name -- which
+        # is one MLflow's --allowed-hosts already answers.
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Always empty, so always dropped: the session or the MLflow client's
+        # credentials were for this proxy, and MLflow's server takes none.
+        proxy_set_header Authorization "${MLFLOW_AUTH_HEADER}";
+        proxy_set_header Connection "";
+        include /etc/nginx/nl2sql-mlflow-upstream-tls.conf;
+        proxy_read_timeout ${MLFLOW_READ_TIMEOUT};
+    }
+}

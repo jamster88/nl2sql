@@ -77,7 +77,7 @@ skips the last step; `BROWSER` chooses what does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 
-    docker pull mcfaddja/nl2sql-gui:v5_6_1
+    docker pull mcfaddja/nl2sql-gui:v6_0
     ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -85,7 +85,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_6_1 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v6_0 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -315,12 +315,24 @@ and is read at container start-up.
 | `API_UPSTREAM` | `https://nl2sql-api:8443` | The API. An `http://` scheme turns certificate verification off, for the deployment behind a TLS terminator |
 | `API_SSL_NAME` | `nl2sql-api` | The name the certificate is verified against. Must be one `API_TLS_HOSTNAMES` covers |
 | `API_CACERT` | `/etc/nl2sql/tls/server.crt` | What to verify against, from the volume the API writes it into |
-| `API_TOKEN` | *(none)* | Sent as a bearer token. Held here so the browser never has it |
+| `API_TOKEN` | *(none)* | Sent as a bearer token with sign-in off. Held here so the browser never has it |
 | `API_READ_TIMEOUT` | `600s` | Must outlast a question, and `API_MAX_WAIT_SECONDS` |
 | `GUI_RESOLVER` | `127.0.0.11` | Docker's embedded DNS, for the per-request lookup |
+| `AUTH_ENABLED` | `true` in compose | The page asks who you are, and admits `nl2sql_users`; the session cookie, not `API_TOKEN`, is what reaches the API |
+| `AUTH_UPSTREAM` | `https://nl2sql-auth:8446` | The auth service, which `/auth/` is proxied to -- `GUI_AUTH_UPSTREAM` in `.env` |
+| `AUTH_SSL_NAME` | `nl2sql-auth` | `GUI_AUTH_SSL_NAME` |
+| `AUTH_CACERT` | `/etc/nl2sql/tls/server.crt` | `GUI_AUTH_CACERT` |
+| `GUI_TLS_ENABLED` | `true` | Serve the page over HTTPS, with the API's certificate, so a password is never sent in clear. Off only behind something that terminates TLS |
+| `GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | |
+| `GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | |
 
-`npm run dev` reads `NL2SQL_API_URL`, `API_TOKEN`, `NL2SQL_API_TLS_VERIFY`
-and `GUI_PORT` instead; the defaults assume the compose stack.
+The `GUI_` settings in `.env` reach every interface at once -- the review,
+curation, console and directory pages and MLflow's front door read the same
+lines. [`auth/README.md`](../auth/README.md) has how sign-in works.
+
+`npm run dev` reads `NL2SQL_API_URL`, `NL2SQL_AUTH_URL`, `API_TOKEN`,
+`NL2SQL_API_TLS_VERIFY` and `GUI_PORT` instead; the defaults assume the
+compose stack.
 
 Behind `API_TLS_ENABLED=false`, point the GUI at it with
 `GUI_API_UPSTREAM=http://nl2sql-api:8443` -- the scheme is what decides, and
@@ -333,7 +345,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-312 tests, 100% of statements, branches, functions and lines -- matching the
+332 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

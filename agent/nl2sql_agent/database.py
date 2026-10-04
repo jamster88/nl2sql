@@ -265,7 +265,7 @@ class Database:
     def _quote(self, table_name: str) -> str:
         return f'"{self._schema}"."{table_name}"'
 
-    def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
+    def explain_plan(self, sql: str, *, principal: str | None = None) -> tuple[float | None, str | None]:
         """Plan without executing; return the estimated total cost and any error.
 
         This is the Planner Gate of the v4 architecture (section 6.2). It is
@@ -283,12 +283,18 @@ class Database:
         The cost is `Plan."Total Cost"` from the JSON plan, which is what the
         cost ceiling compares against. Returns `(None, message)` on failure
         and `(cost, None)` on success.
+
+        `principal` plans it as the person it will run as, so a table they
+        may not read is refused here, in Postgres's own words, rather than
+        only once the executor tries.
         """
         cleaned = ensure_read_only(sql)
         try:
             with self._engine.connect() as conn:
                 with conn.begin():
                     conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+                    if principal:
+                        conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
                     row = conn.exec_driver_sql(
                         f"EXPLAIN (FORMAT JSON) {cleaned}"
                     ).scalar()

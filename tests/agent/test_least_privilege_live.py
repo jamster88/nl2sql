@@ -489,6 +489,18 @@ def test_the_executor_sets_the_role_when_a_principal_is_supplied(reader):
     assert result.rows[0][0] == READER
 
 
+def test_the_planner_gate_plans_as_the_principal_too(reader):
+    """Signed in, a question is planned as well as run as the person who asked
+    it, so a table they may not read is refused by the gate, in Postgres's
+    words, before the executor is reached.
+    """
+    db = Database(POSTGRES_URL)
+    cost, error = db.explain_plan("SELECT 1", principal=READER)
+    assert error is None and cost is not None
+    cost, error = db.explain_plan("SELECT 1", principal=OWNER)
+    assert cost is None and "permission denied to set role" in error
+
+
 def test_a_principal_the_reader_may_not_become_is_refused_by_the_server(reader):
     """`SET ROLE` to a role you are not a member of is an error, and the
     agent must surface it rather than quietly running as itself with more

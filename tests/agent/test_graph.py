@@ -506,6 +506,7 @@ def test_the_principal_reaches_the_executor_for_row_level_security():
     llm = scripted(["SELECT count(*) AS n FROM dim_store"])
     make_agent(db, llm).run("q", principal="analyst_jo")
     assert db.run_select_principals == ["analyst_jo"]
+    assert db.explain_principals == ["analyst_jo"], "planned as the person too"
 
 
 def test_a_query_naming_a_table_out_of_scope_is_rejected_before_the_planner():

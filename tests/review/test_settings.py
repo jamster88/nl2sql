@@ -50,6 +50,11 @@ ENVIRONMENT = {
     "REVIEW_RELOAD_SNIPPETS": "false",
     "REVIEW_DOCS_ENABLED": "false",
     "REVIEW_LOG_LEVEL": "debug",
+    "AUTH_ENABLED": "true",
+    "AUTH_PUBLIC_KEY_FILE": "/keys/session.pub",
+    "AUTH_COOKIE_NAME": "sid",
+    "REVIEW_REVIEWER_ROLES": "nl2sql_admins",
+    "REVIEW_CURATOR_ROLES": "nl2sql_admins,nl2sql_curators",
 }
 
 

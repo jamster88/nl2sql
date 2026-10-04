@@ -32,6 +32,10 @@ pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+#: Worked out by the start-up script -- the sign-in hop's TLS include and this
+#: listener's -- rather than set by anyone.
+SIGN_IN_COMPUTED = {"NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF"}
+
 PROFILES = ("api", "gui", "feedback", "review", "reviewgui")
 
 
@@ -364,7 +368,7 @@ def _review_proxy_variables() -> set[str]:
     names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources))
     # Worked out by the start-up script rather than set by anyone: the header
     # from REVIEW_TOKEN, and where it writes the upstream's TLS settings.
-    return names - {"REVIEW_AUTH_HEADER", "NGINX_REVIEW_UPSTREAM_TLS_CONF"}
+    return names - {"REVIEW_AUTH_HEADER", "NGINX_REVIEW_UPSTREAM_TLS_CONF", *SIGN_IN_COMPUTED, "REVIEW_GUI_LISTEN_TLS"}
 
 
 def test_every_setting_the_review_proxy_reads_can_be_set_through_compose(reviewgui: dict):

@@ -20,6 +20,8 @@ import type {
   Verdict,
 } from "./types";
 
+import { notifyUnauthorized } from "../auth/session";
+
 /**
  * A failure the server described.
  *
@@ -132,6 +134,9 @@ export function createClient(options: ClientOptions = {}): Client {
 
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
+      // A session that ended while the page was open: the sign-in gate
+      // listens for this and asks for a sign-in again.
+      if (response.status === 401) notifyUnauthorized();
       if (isErrorBody(body)) {
         throw new ApiError(response.status, body.error.code, body.error.message, body.error.detail);
       }

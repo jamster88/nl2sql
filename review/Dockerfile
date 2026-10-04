@@ -24,6 +24,9 @@ COPY review/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY review/nl2sql_review/ ./nl2sql_review/
+# Sign-in's shared half: it verifies the session the auth service signs, so
+# a promotion is recorded as the reviewer who made it. Verify only.
+COPY auth/nl2sql_identity/ ./nl2sql_identity/
 
 # The loaders, and the package they import. Promotion runs these as scripts
 # from /app/rag, which is REVIEW_RAG_DIR's default -- and so does writing a
@@ -45,7 +48,7 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8444
 
-ARG REVIEW_VERSION=5.6.1
+ARG REVIEW_VERSION=6.0.0
 ENV REVIEW_VERSION=${REVIEW_VERSION}
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \

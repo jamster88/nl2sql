@@ -177,4 +177,34 @@ class ModelsTest {
     void an_error_envelope_parses_even_when_it_is_empty() {
         assertEquals(Map.of(), Json.read("{}", Models.ApiErrorBody.class).error());
     }
+
+    @Test
+    void neither_record_that_carries_a_secret_prints_it() {
+        Models.SignIn signIn = new Models.SignIn("ada", "correct horse");
+        Models.Token token = Fakes.token("ada", "Ada Lovelace");
+
+        assertEquals("SignIn[username=ada]", signIn.toString());
+        assertFalse(token.toString().contains(token.token()), token.toString());
+        assertTrue(token.toString().contains("user=ada"));
+        // And what goes over the wire is still the whole of it.
+        assertTrue(Json.write(signIn).contains("\"password\":\"correct horse\""));
+    }
+
+    @Test
+    void a_session_from_an_older_or_terser_service_has_no_nulls_in_it() {
+        Models.Token token = Json.read("{\"expires_at\": 5}", Models.Token.class);
+
+        assertEquals("", token.user());
+        assertEquals("", token.token());
+        assertEquals(List.of(), token.roles());
+        assertEquals("", token.kind());
+        assertEquals(5, token.expires_at());
+    }
+
+    @Test
+    void who_is_their_name_and_user_name_once_and_only_once() {
+        assertEquals("Ada Lovelace (ada)", Fakes.token("ada", "Ada Lovelace").who());
+        assertEquals("ada", Fakes.token("ada", "").who());
+        assertEquals("ada", Fakes.token("ada", "ada").who());
+    }
 }

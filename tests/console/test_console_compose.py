@@ -32,6 +32,10 @@ from nl2sql_agent.console.settings import AGENT_SETTINGS, SERVICE_HOSTNAME
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+#: Worked out by the start-up script -- the sign-in hop's TLS include and this
+#: listener's -- rather than set by anyone.
+SIGN_IN_COMPUTED = {"NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF"}
 CONSOLE = REPO_ROOT / "console"
 PROFILES = ("agent", "api", "gui", "feedback", "review", "reviewgui", "console", "consolegui")
 
@@ -302,7 +306,7 @@ def _proxy_variables() -> set[str]:
     sources = (CONSOLE / "nginx.conf.template").read_text() + (CONSOLE / "10-nl2sql-console-config.envsh").read_text()
     names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources))
     # Worked out by the start-up script rather than set by anyone.
-    return names - {"CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF"}
+    return names - {"CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF", *SIGN_IN_COMPUTED, "CONSOLE_GUI_LISTEN_TLS"}
 
 
 def test_every_setting_the_console_proxy_reads_can_be_set_through_compose(consolegui: dict):

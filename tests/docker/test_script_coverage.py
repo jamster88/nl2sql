@@ -77,11 +77,27 @@ SMOKE = "docker/apitest/smoke.sh"
 #: tests/docker/test_init_db_script.py.
 INIT_DB = "docker/init_db.sh"
 
+#: The directory page's equivalent (sign-in): the upstream and listener
+#: decisions, and a refusal to start beside a replica. Driven in
+#: tests/auth/test_directory_gui_project.py.
+DIRECTORY_GUI_ENVSH = "auth/gui/10-nl2sql-directory-config.envsh"
+
+#: MLflow's front door: its upstream and listener decisions, and whether
+#: every request is asked about (sign-in). Driven in
+#: tests/docker/test_mlflow_proxy.py.
+MLFLOW_PROXY_ENVSH = "docker/mlflow-proxy/10-nl2sql-mlflow-proxy.envsh"
+
+#: Piped into the retail container on every start to write sign-in's rules
+#: into pg_hba.conf, and to take them out when sign-in is off. No flags --
+#: it is handed its settings as environment -- and driven against a fake
+#: `psql` and a pg_hba.conf of its own in tests/docker/test_ldap_hba_script.py.
+LDAP_HBA = "docker/ldap_hba.sh"
+
 #: Everything that parses a flag or prints a message a user reads.
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB, LDAP_HBA, DIRECTORY_GUI_ENVSH, MLFLOW_PROXY_ENVSH)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
@@ -535,9 +551,14 @@ DOCKERFILES = {
     "curate/Dockerfile": ("tests/curate/test_curate_project.py",),
     "docker/mlflow/Dockerfile": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
     "docker/mlflowdb/Dockerfile": ("tests/docker/test_mlflow_compose.py",),
+    "docker/mlflow-proxy/Dockerfile": ("tests/docker/test_mlflow_proxy.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/restore.Dockerfile": ("tests/rag/test_rag_images.py",),
+    # Sign-in: the directory, and the service that signs people in against it.
+    "ldap/Dockerfile": ("tests/ldap/test_ldap_image.py",),
+    "auth/Dockerfile": ("tests/auth/test_auth_image.py", "tests/auth/test_auth_live.py"),
+    "auth/gui/Dockerfile": ("tests/auth/test_directory_gui_project.py",),
 }
 
 #: Compose file -> the test files that resolve and assert on it.
@@ -580,6 +601,10 @@ COMPOSE_SERVICES = {
         "consolegui": ("tests/console/test_console_compose.py",),
         "mlflowdb": ("tests/docker/test_mlflow_compose.py",),
         "mlflow": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
+        "mlflowproxy": ("tests/docker/test_mlflow_compose.py",),
+        "ldap": ("tests/auth/test_auth_compose.py",),
+        "auth": ("tests/auth/test_auth_compose.py",),
+        "directorygui": ("tests/auth/test_auth_compose.py",),
         "desktop": (
             "tests/java/test_desktop_project.py",
             "tests/docker/test_desktop_image.py",

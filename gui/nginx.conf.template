@@ -15,10 +15,19 @@
 # and this server talks TLS to the API with a certificate it verifies and a
 # token it holds. It is the "intermediary service" the API documentation
 # recommends, and `vite.config.ts` is the same three rules for `npm run dev`.
+#
+# With sign-in on it holds no token: `/auth/` goes to the auth service, whose
+# session cookie the browser then sends with every call, and the API reads
+# the person from it. The page itself is HTTPS for the same reason -- a
+# password is typed into it.
 
 server {
-    listen ${GUI_PORT};
+    listen ${GUI_PORT}${GUI_LISTEN_TLS};
     server_name _;
+
+    # The certificate, when the page is HTTPS (GUI_TLS_ENABLED). Written by
+    # 10-nl2sql-config.envsh, which knows whether there is one.
+    include /etc/nginx/nl2sql-server-tls.conf;
 
     root /usr/share/nginx/html;
     index index.html;
@@ -46,6 +55,25 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # --- sign-in ---------------------------------------------------------
+
+    # The auth service: signing in and out, and who is signed in. Its cookie
+    # comes back through here, so it belongs to this page's host -- and, a
+    # cookie being scoped by host rather than port, to every page of the
+    # stack served from it.
+    location /auth/ {
+        resolver ${GUI_RESOLVER} valid=10s ipv6=off;
+        set $auth_upstream ${AUTH_UPSTREAM};
+        proxy_pass $auth_upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Connection "";
+        include /etc/nginx/nl2sql-auth-tls.conf;
+    }
+
     # --- the API ---------------------------------------------------------
 
     location ~ ^/(v1|healthz|readyz|openapi\.json) {
@@ -70,6 +98,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # Host and port, which the API's cross-site check compares a
+        # cookie-carrying write's Origin with: another port is another site.
+        proxy_set_header X-Forwarded-Host $http_host;
         # Empty when no token is configured, and nginx omits a header whose
         # value is empty -- so the unauthenticated deployment sends nothing
         # rather than sending the word "Bearer" on its own.

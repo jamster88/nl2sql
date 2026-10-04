@@ -7,11 +7,31 @@ each version created, updated or fixed.
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
 SQL console's interface, the desktop client's jar, since v5_5 MLflow's
-server and store, and since v5_6 the curation interface -- are released together
+server and store, since v5_6 the curation interface, and since v6_0 the
+directory, the auth service, the directory page and MLflow's front door -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v6_0 (6.0.0) -- 2026-10-03
+
+**Added**
+- Sign-in, on by default: a person signs in with the password a directory holds, which the retail database checks itself, and what they ask or run, runs as their own database role.
+- Four groups decide what a person may open: `nl2sql-users` ask, `nl2sql-reviewers` review and read MLflow, `nl2sql-curators` curate, reviewers and curators use the SQL console, `nl2sql-admins` manage the directory.
+- The directory (`nl2sql-ldap`): standalone, loaded from a CSV or LDIF file and edited on its page, or a read-only replica of Active Directory or any LDAP server, with each password checked by the primary.
+- The auth service (`nl2sql-auth`, port 8446): sign-in, the session, and the database's roles kept in step with the directory.
+- The directory page (`nl2sql-directory-gui`, port 8084), for administrators.
+- MLflow's front door (`nl2sql-mlflow-proxy`): HTTPS, and sign-in asked about every request; MLflow itself is no longer published.
+- Sign-in in the desktop client (`--auth-url`, `--user`).
+- `--no-auth` for `start.sh`, `launch.sh` and `setup.sh`.
+
+**Updated**
+- Every web interface is HTTPS, asks who you are, and offers a password change and sign-out.
+- The API shows each person only their own questions; a reviewer's name on a decision is the one they signed in as.
+- `setup.sh` generates the directory's and the role sync's passwords into `.env`, which only its owner can read.
+- `--mlflow` brings the API up too: the front door presents its certificate.
+- Version 6.0.0 in every declaration; `setup.sh` pins `v6_0`, seventeen tags with the four new images'.
 
 ## v5_6_1 (5.6.1) -- 2026-10-03
 

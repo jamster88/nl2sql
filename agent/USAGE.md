@@ -218,7 +218,7 @@ narrative states each one.
 
 With tracing on (`MLFLOW_TRACKING_URI`, which `setup.sh` points at the
 `mlflow` service that `./launch.sh --mlflow` starts), `trace_id` names the
-run's trace in MLflow -- open the experiment at <http://localhost:5001> and
+run's trace in MLflow -- open the experiment at <https://localhost:5001> and
 filter on it -- and the CLI says where its traces go before it answers:
 
 ```
@@ -266,7 +266,7 @@ validator -- and says beside the rows which of those gates would have stopped
 it, in that gate's words:
 
 ```bash
-./launch.sh --console      # http://localhost:8082
+./launch.sh --console      # https://localhost:8082
 ./start.sh --console       # the same, with the page opened for you
 ```
 

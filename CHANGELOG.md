@@ -10,7 +10,9 @@ the tag `v5_1_2`, and a tag with fewer components names a line
 (`v5_1` is 5.1.x). The app images -- `nl2sql-agent`, `nl2sql-gui`,
 `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui`, the five
 `nl2sql-desktop-build` platforms, since v5_5 `nl2sql-mlflow` and
-`nl2sql-mlflowdb`, and since v5_6 `nl2sql-curate-gui` -- are released
+`nl2sql-mlflowdb`, since v5_6 `nl2sql-curate-gui`, and since v6_0
+`nl2sql-ldap`, `nl2sql-auth`, `nl2sql-directory-gui` and
+`nl2sql-mlflow-proxy` -- are released
 together at one number, which
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds every
 declaration in the repository to. The dataset images --
@@ -30,6 +32,56 @@ Docker Hub's, in UTC; release dates are the repository's.
 file where a file is new; the tests a version merely extended are summarised.
 
 ---
+
+## v6_0 (6.0.0) -- 2026-10-03
+
+Sign-in, on by default. A person signs in with the user name and password a
+directory holds, and the retail database checks that password itself:
+pg_hba's `ldap` method binds to the directory, so a person the directory
+does not know cannot connect to anything, by any route. The groups they are
+in become the database roles they hold, and those decide what they may open:
+`nl2sql-users` ask questions, `nl2sql-reviewers` review and read MLflow,
+`nl2sql-curators` curate, reviewers and curators use the SQL console, and
+`nl2sql-admins` manage the directory. What a person asks or runs, runs as
+their own database role. The directory is standalone -- people loaded from a
+file on its first start and edited on a page of its own -- or a read-only
+replica of Active Directory or any LDAP server, with every password checked
+by the primary. Every interface is HTTPS and asks who you are, MLflow is
+reached only through a front door that does the same, and the desktop client
+signs in too. `--no-auth` turns all of it off. Four new images, and the
+major version, because the defaults change under existing users.
+
+### Created
+- `auth/nl2sql_identity/` -- what every service shares: `tokens.py`, the session (an Ed25519-signed JWT with a fixed header, issuer and audience, refused in its own words when malformed, unsigned by the key, for another audience, early or expired); `guard.py`, the FastAPI dependency each service puts in front of its routes -- a session from a bearer token or the `nl2sql_session` cookie, the service's static token beside it, the origin check for a write riding on a cookie (`Sec-Fetch-Site`, else `Origin`/`Referer` against `X-Forwarded-Host`), the auth service's public key read when it appears and again when it changes, and the caller's groups re-read from Postgres at most once a minute; `postgres.py`, that lookup (`pg_has_role`).
+- `ldap/` -- the directory image (`nl2sql-ldap`): OpenLDAP 2.6 on Alpine with the memberof, refint, ppolicy and remoteauth overlays and Argon2 hashing, run as the `ldap` user, which is also the directory's root on its local socket by peer credentials. `nl2sql_ldap/`: the settings and both modes; the layout and the rule a user name must meet to be a role name; the CSV and LDIF readers; people and groups, read and written; `slapd.conf`, rendered on every start; a self-signed certificate for StartTLS; the first start (the base, the four groups, the auth service's account, the first administrator, the seed file); the replica's copy -- paged searches, nested groups resolved, groups mapped, and a copy that would empty a directory with people in it refused; the supervisor and its commands (`serve`, `health`, `import`, `sync`, `config`). `ldap/README.md`; `ldap/seed/people.example.csv`.
+- `docker/auth_roles.sql` -- `nl2sql_ldap` (every person's marker), the four group roles and what each may read, the three narrower ones members of `nl2sql_users` without becoming it, and `nl2sql_rolesync`, which can create roles and administer those five and nothing else. Idempotent; applied on every start.
+- `docker/ldap_hba.sh` -- writes the sign-in lines at the top of `pg_hba.conf` between markers -- the roles that keep their own passwords by `scram-sha-256`, then every member of `nl2sql_ldap` by `ldap` over StartTLS -- checks the file with `pg_hba_file_rules`, puts the old one back if it has errors, and reloads. With sign-in off it takes them out.
+- `auth/nl2sql_auth/` -- the auth service (`nl2sql-auth`, port 8446): signing in by opening a connection to the retail database as the person, with their password; the session as a cookie (`POST /auth/login`) or a token (`POST /auth/token`); `/auth/session`, `/auth/logout`, a person's own password change (`/auth/password`); `/auth/verify` for a proxy's `auth_request`, including an MLflow client's Basic credentials, checked by signing in and kept five minutes; a plain HTML sign-in form for a proxy to send a browser to; a throttle per name and per address; the role sync, every 30 seconds and after every edit -- a `LOGIN` role per person with a connection limit, read-only transactions and a statement timeout, group memberships added and taken away, the reader granted each person's role to become them and nothing more, a person gone dropped or, if they own anything, disabled; and the directory page's API, for `nl2sql_admins`, with a replica refused. `auth/Dockerfile`, `auth/requirements.txt`, `auth/README.md`.
+- `auth/gui/` -- the directory page (`nl2sql-directory-gui`, port 8084): React and TypeScript behind nginx, which proxies `/auth/` and `/directory/` to the auth service; people listed, added with a generated password if wanted, edited, put in groups, given passwords, unlocked and removed; a file imported; the role sync run. Its start-up refuses `LDAP_MODE=replica`. 54 vitest tests at 100% coverage.
+- `docker/mlflow-proxy/` -- MLflow's front door (`nl2sql-mlflow-proxy`): nginx over HTTPS with the API's certificate, asking `/auth/verify` about every request with the method it is asking about; a browser that has not signed in is sent to sign in, an API client is told `401`, and `/health` stays open.
+- `desktop/` -- `Session`, the token held in memory for every call; `SignIn` and `HttpSignIn`, `POST /auth/token` over the API's TLS settings; `SignInView`, the panel above the question box.
+- Tests: `tests/auth/` (the session format, the guard, the auth service's every part, the compose wiring of all four services, the image, the directory page's project, contract and suite, and sign-in end to end against a real database, directory and MLflow), `tests/ldap/` (every module against ldap3's in-memory directory, and the image: slaptest on both modes, and a replica copying a second directory end to end), `tests/api/test_signin.py`, `tests/console/test_signin.py`, `tests/review/test_signin.py`, `tests/docker/test_ldap_hba_script.py`, `tests/docker/test_mlflow_proxy.py`; `HttpSignInTest`, `SessionTest`, `SignInViewTest` in the desktop client.
+
+### Updated
+- `agent/nl2sql_agent/api/` -- every `/v1` route behind the guard (`nl2sql_users`); a signed-in person's questions run as them, and a `principal` naming anyone else is refused; each job has an owner, and someone else's is a `404`; `/readyz` says whether sessions can be checked; `/v1/meta`'s `authentication` can be `session`. `AUTH_ENABLED`, `AUTH_PUBLIC_KEY_FILE`, `AUTH_COOKIE_NAME`.
+- `agent/nl2sql_agent/console/` -- behind the guard, for `CONSOLE_ALLOWED_ROLES` (reviewers and curators); each statement runs as the person who typed it, and the answer says as whom (`runs_as`).
+- `review/nl2sql_review/` -- the queue for `REVIEW_REVIEWER_ROLES`, direct writes for `REVIEW_CURATOR_ROLES`, reading for either; a reviewer's name on a decision is the one they signed in as; corrected SQL and snippets are validated as the person.
+- `agent/nl2sql_agent/database.py`, `graph.py` -- the planner gate asks as the principal too. `tracing.py` -- the probe trusts the certificate MLflow's client is told to.
+- `agent/Dockerfile`, `review/Dockerfile` -- carry `nl2sql_identity`; `review/requirements.txt` -- `cryptography`.
+- The four web interfaces -- a sign-in gate admitting the groups each is for, with password change and sign-out; a `401` brings the gate back; nginx serves HTTPS with the API's certificate (`GUI_TLS_ENABLED`), proxies `/auth/` to the auth service, reports `X-Forwarded-Host`, and sends no token with sign-in on; HTTPS health checks. 332, 175, 101 and 150 tests, each at 100%.
+- `desktop/` -- `--auth-url`/`NL2SQL_AUTH_URL` (the API's host, port 8446) and `--user`/`NL2SQL_USER`; asks before the first question when the server wants sign-in, asks again on a `401` and then asks the refused question again; the status bar says who and offers to sign out. 404 tests at 100%.
+- `benchmarks/run_benchmark.py` -- MLflow at `https://localhost:5001`, trusting `./nl2sql-api.crt` when it is there.
+- `docker-compose.yml` -- `ldap` and `auth` (profile `auth`), `directorygui` (profile `directorygui`), `mlflowproxy` (profile `mlflow`); MLflow's server no longer published; `AUTH_ENABLED` (default `true`), the public key's volume and the cookie's name for the API, the console and the review service; sign-in and TLS settings for every interface, one `GUI_` line in `.env` for all of them; the directory's certificate for the retail database (`LDAPTLS_CACERT`); `nl2sql-auth` in `API_TLS_HOSTNAMES`; volumes `ldapdata`, `ldaptls`, `authdata`, `authkeys`.
+- `launch.sh` -- with the API, prepares the database for sign-in (`auth_roles.sql`, `ldap_hba.sh`), generates any of the three sign-in passwords `.env` lacks, starts the directory, the auth service and -- beside a standalone directory -- the directory page, and says who signs in first and where; with sign-in off, takes the `pg_hba` lines out. `--no-auth`. `--mlflow` implies `--api`. Every page's address is HTTPS; the proxy probe follows the pages' scheme; the warnings about no token and exposed ports apply with sign-in off.
+- `setup.sh` -- pulls and pins `nl2sql-ldap`, `nl2sql-auth` and `nl2sql-directory-gui` (and `nl2sql-mlflow-proxy` with `--mlflow`); generates `LDAP_ADMIN_PASSWORD`, `LDAP_SERVICE_PASSWORD` and `AUTH_ROLESYNC_PASSWORD` once and carries them from one `.env` to the next; `.env` and `.env.bak` are 0600. `--no-auth` writes `AUTH_ENABLED=false`, which later runs keep.
+- `start.sh` -- `--no-auth` for one run; HTTPS addresses; how to sign in; stop commands that name the sign-in profiles.
+- `README.md` (Sign-in, the container, image and tag tables, the publish commands, Tracing's front door, test and file counts), `USAGE_GUIDE.md` (Signing in, the addresses, ports and flags, Security), `QUICKSTART.md`, `agent/API.md` (Authentication, the error codes, the settings), `review/README.md`, `console/README.md`, `curate/README.md`, `gui/README.md`, `desktop/README.md` (Signing in), `benchmarks/README.md`.
+- `tests/docs/test_versions.py` -- the four new images among the tags that move together. `tests/docker/` -- the fake `docker` knows the sign-in containers and records what compose was told about sign-in.
+- Version 6.0.0 in every declaration -- thirty-two places, each lockfile counted twice; `setup.sh` pins `v6_0`, seventeen tags with the five desktop platforms.
+
+### Checked live, before publishing
+- `tests/auth/test_auth_live.py`: the directory, the auth service and MLflow's front door built from this checkout, beside a copy of the published retail database on a private network, the database prepared as `launch.sh` prepares it. The first administrator signs in through the database; a person added on the directory page's API signs in once the sync has run, reads the retail tables as their own role, cannot write, and can no longer connect once removed; the reader becomes a person only for a transaction and never a group; a browser is sent to sign in at MLflow's door, an MLflow client's Basic credentials are let through, and a write from another site is refused.
+- `tests/ldap/test_ldap_image.py`: both modes' `slapd.conf` pass slaptest, and a replica copies a second directory, passes a sign-in through to it, and refuses to be edited.
 
 ## v5_6_1 (5.6.1) -- 2026-10-03
 

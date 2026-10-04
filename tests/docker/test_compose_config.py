@@ -114,11 +114,16 @@ def test_postgres_service_shape(agent_profile_config: dict):
     assert postgres["restart"] == "unless-stopped"
     assert "pg_isready" in " ".join(postgres["healthcheck"]["test"])
 
-    [volume] = postgres["volumes"]
+    volume, ldaptls = postgres["volumes"]
     assert volume["source"] == "pgdata"
     # Must match ENV PGDATA in docker/Dockerfile, or the image's baked data
     # is invisible to the named volume that's supposed to seed from it.
     assert volume["target"] == "/var/lib/pgdata"
+    # Sign-in: pg_hba's `ldap` method verifies the directory's certificate,
+    # which libldap finds through LDAPTLS_CACERT, in the volume the
+    # directory writes it to -- read-only here.
+    assert (ldaptls["source"], ldaptls["target"], ldaptls["read_only"]) == ("ldaptls", "/etc/nl2sql/ldap-tls", True)
+    assert postgres["environment"] == {"LDAPTLS_CACERT": "/etc/nl2sql/ldap-tls/ldap.crt"}
 
     [port] = postgres["ports"]
     assert port["target"] == 5432

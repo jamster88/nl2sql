@@ -582,10 +582,11 @@ def _compose_service(name: str) -> str:
 
 
 def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(root_readme: str):
-    """Image pins aside, which `setup.sh --mlflow` writes, every setting either
-    service takes from `.env` has a row in the README's Tracing table -- with
+    """Image pins aside, which `setup.sh --mlflow` writes, every setting the
+    three -- the store, the server and its front door -- take from `.env` has
+    a row in the README's Tracing table -- with
     the default compose really falls back to, where that is one value."""
-    block = _compose_service("mlflowdb") + _compose_service("mlflow")
+    block = _compose_service("mlflowdb") + _compose_service("mlflow") + _compose_service("mlflowproxy")
     settings = {
         name: default
         for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", block)
@@ -692,7 +693,8 @@ def test_every_setting_the_console_proxy_reads_is_documented(console_readme: str
     )
     # Worked out by the start-up script rather than set by anyone.
     names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {
-        "CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF"
+        "CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF", "NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF",
+        "CONSOLE_GUI_LISTEN_TLS",
     }
     for name in sorted(names):
         assert _rows(console_readme, name), f"the console's proxy reads {name}, which console/README.md never lists"
@@ -712,12 +714,24 @@ def test_every_route_the_console_serves_is_documented(console_readme: str):
             assert path in console_readme, f"the console serves {path}, which console/README.md never mentions"
 
 
+def _identity_codes() -> set[str]:
+    """What the shared guard answers a caller it cannot let in with."""
+    identity = REPO_ROOT / "auth" / "nl2sql_identity"
+    codes = set(re.findall(r'IdentityError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', (identity / "guard.py").read_text()))
+    codes |= set(re.findall(r'TokenError\(\s*"([a-z_]+)"', (identity / "tokens.py").read_text()))
+    return codes
+
+
 def test_every_error_code_the_console_can_return_is_documented(console_readme: str):
     source = (AGENT_DIR / "nl2sql_agent" / "console" / "app.py").read_text()
     codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
     codes |= set(re.findall(r'_error_response\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
-    assert {"unauthorized", "unknown_table", "database_unavailable", "invalid_request"} <= codes, (
-        "the error codes were not all found in console/app.py -- the regexes need updating"
+    # Who may call is decided by the guard every service shares, and a
+    # session it cannot read is refused in the session format's own words.
+    codes |= _identity_codes()
+    assert {"unauthorized", "sign_in_required", "forbidden", "expired", "unknown_table", "database_unavailable",
+            "invalid_request"} <= codes, (
+        "the error codes were not all found in console/app.py and the guard -- the regexes need updating"
     )
     for code in sorted(codes | {"not_found"}):
         assert f"`{code}`" in console_readme, f"the console returns {code!r}, which console/README.md never lists"

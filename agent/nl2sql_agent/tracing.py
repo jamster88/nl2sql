@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import os
+import ssl
 import threading
 import time
 import urllib.request
@@ -106,8 +107,23 @@ def probe(uri: str, timeout: float = PROBE_TIMEOUT) -> None:
     """
     if not uri.startswith(("http://", "https://")):
         return
-    with urllib.request.urlopen(uri.rstrip("/") + "/health", timeout=timeout) as response:
+    with urllib.request.urlopen(uri.rstrip("/") + "/health", timeout=timeout, context=tls_context()) as response:
         response.read(1)
+
+
+def tls_context() -> ssl.SSLContext | None:
+    """The trust MLflow's own client uses, so the probe agrees with it.
+
+    The proxy in front of MLflow presents the stack's development certificate
+    unless a real one is mounted. MLflow's client is told about it with
+    MLFLOW_TRACKING_SERVER_CERT_PATH (or, for an experiment, told not to
+    check with MLFLOW_TRACKING_INSECURE_TLS); a probe that ignored them would
+    call a server MLflow can reach unreachable, and trace nothing.
+    """
+    if (os.getenv("MLFLOW_TRACKING_INSECURE_TLS") or "").strip().lower() == "true":
+        return ssl._create_unverified_context()
+    cafile = (os.getenv("MLFLOW_TRACKING_SERVER_CERT_PATH") or "").strip()
+    return ssl.create_default_context(cafile=cafile) if cafile else None
 
 
 #: MLflow announces, at INFO, that it is sending the queue on the way out --

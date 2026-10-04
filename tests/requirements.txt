@@ -1,6 +1,7 @@
 pytest>=8.0
 -r ../data_gen/requirements.txt
 -r ../agent/requirements.txt
+-r ../auth/requirements.txt
 # The benchmark files each configuration as an MLflow run
 # (benchmarks/tracking.py), which takes MLflow's runs API -- mlflow-skinny,
 # not in the agent image's tracing client. The version the agent pins and

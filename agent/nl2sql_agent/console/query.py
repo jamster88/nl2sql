@@ -18,7 +18,8 @@ agent's own order:
    looking at the catalogue is part of troubleshooting.
 2. **Planner** -- `EXPLAIN (FORMAT JSON)`, its cost read by the agent's
    `total_cost` and judged by the agent's `plan_cost_problem`.
-3. **Runtime** -- the statement itself, as the agent's role, inside
+3. **Runtime** -- the statement itself, as the agent's role (or, signed
+   in, as the person's own -- the role their questions run as), inside
    `SET TRANSACTION READ ONLY` and the agent's `statement_timeout`, read
    through a server-side cursor so a `SELECT *` over the sales fact fetches
    the rows it shows and no more.
@@ -41,7 +42,7 @@ from typing import Any, Literal
 from sqlalchemy import text
 
 from ..config import Settings
-from ..database import Database, plan_cost_problem, strip_sql, total_cost
+from ..database import Database, _quote_identifier, plan_cost_problem, strip_sql, total_cost
 from ..state import PLANNER, RUNTIME, STATIC
 from ..validate import validate
 
@@ -224,7 +225,7 @@ class Inspector:
 
     # --- a query -----------------------------------------------------------
 
-    def run(self, sql: str, mode: Mode = "run") -> Outcome:
+    def run(self, sql: str, mode: Mode = "run", principal: str | None = None) -> Outcome:
         cleaned = strip_sql(sql)
         unsafe = validate(cleaned)
         if unsafe:
@@ -249,7 +250,7 @@ class Inspector:
             with self.db.engine.connect() as conn:
                 transaction = conn.begin()
                 try:
-                    outcome = self._staged(conn, cleaned, mode, found)
+                    outcome = self._staged(conn, cleaned, mode, found, principal)
                 finally:
                     transaction.rollback()
         except Exception as exc:  # noqa: BLE001
@@ -257,11 +258,17 @@ class Inspector:
         outcome.elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         return outcome
 
-    def _staged(self, conn: Any, sql: str, mode: Mode, found: list[Finding]) -> Outcome:
+    def _staged(
+        self, conn: Any, sql: str, mode: Mode, found: list[Finding], principal: str | None = None
+    ) -> Outcome:
         conn.exec_driver_sql("SET TRANSACTION READ ONLY")
         conn.exec_driver_sql(
             f"SET LOCAL statement_timeout = {int(self.agent.statement_timeout_ms)}"
         )
+        if principal:
+            # As the executor does for a question: the plan, the run and the
+            # privilege errors are the person's own.
+            conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
 
         try:
             plan = conn.exec_driver_sql(f"EXPLAIN (FORMAT JSON) {sql}").scalar()

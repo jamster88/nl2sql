@@ -35,7 +35,13 @@ RUN chmod +x /docker-entrypoint.d/10-nl2sql-review-config.envsh
 
 # Substituted into the template at start-up. Only these names are touched --
 # without the filter, envsubst would also eat nginx's own $uri and $host.
-ENV NGINX_ENVSUBST_FILTER="^REVIEW_" \
+ENV NGINX_ENVSUBST_FILTER="^(REVIEW_|AUTH_)" \
+    REVIEW_GUI_TLS_ENABLED=true \
+    REVIEW_GUI_TLS_CERT_FILE=/etc/nl2sql/tls/server.crt \
+    REVIEW_GUI_TLS_KEY_FILE=/etc/nl2sql/tls/server.key \
+    AUTH_UPSTREAM=https://nl2sql-auth:8446 \
+    AUTH_CACERT=/etc/nl2sql/tls/server.crt \
+    AUTH_SSL_NAME=nl2sql-auth \
     REVIEW_GUI_PORT=8081 \
     REVIEW_UPSTREAM=https://nl2sql-review:8444 \
     REVIEW_CACERT=/etc/nl2sql/tls/server.crt \
@@ -55,9 +61,13 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8081
 
+# HTTPS unless the page was told otherwise. Unverified, and only here: this is
+# the container checking its own socket, where the certificate's name proves
+# nothing.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q -O /dev/null "http://127.0.0.1:${REVIEW_GUI_PORT}/index.html" || exit 1
+    CMD case "$REVIEW_GUI_TLS_ENABLED" in false|0|no|off) s=http ;; *) s=https ;; esac; \
+        wget -q --no-check-certificate -O /dev/null "$s://127.0.0.1:${REVIEW_GUI_PORT}/index.html" || exit 1
 
 LABEL org.opencontainers.image.title="nl2sql feedback review GUI" \
       org.opencontainers.image.description="React/TypeScript interface for reviewing feedback and promoting it into the golden question set" \
-      org.opencontainers.image.version="5.6.1"
+      org.opencontainers.image.version="6.0.0"

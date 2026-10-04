@@ -236,6 +236,17 @@
     -fx-background-color: -surface-sunken;
 }
 
+.signin {
+    -fx-background-color: -surface-raised;
+    -fx-border-color: -accent;
+    -fx-border-radius: 8;
+}
+
+.signin-title {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
 .notice-quiet {
     -fx-background-color: -surface-sunken;
     -fx-text-fill: -text-secondary;

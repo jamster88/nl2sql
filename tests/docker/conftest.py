@@ -24,6 +24,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 FAKE_DOCKER = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_LOG"
+# What each compose call was told about sign-in: compose reads the shell
+# before .env, so this is what every service it starts would be given.
+if [[ "${1:-}" == compose ]]; then
+    printf '%s\n' "${AUTH_ENABLED-unset}" >> "${FAKE_LOG%/*}/auth-enabled"
+fi
 
 read_env() {  # read_env KEY DEFAULT -- reflects whatever setup.sh wrote to .env
     local key="$1" default="$2" value=""
@@ -105,6 +110,23 @@ case "$1" in
             echo "${FAKE_CONSOLE_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-console* ]]; then
             echo "${FAKE_CONSOLE_HEALTH:-healthy}"
+        # The front door's name holds MLflow's, so it is matched first.
+        elif [[ "$*" == *nl2sql-mlflow-proxy* && "$*" == *Running* ]]; then
+            echo "${FAKE_MLFLOW_PROXY_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-mlflow-proxy* ]]; then
+            echo "${FAKE_MLFLOW_PROXY_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-ldap* && "$*" == *Running* ]]; then
+            echo true
+        elif [[ "$*" == *nl2sql-ldap* ]]; then
+            echo "${FAKE_LDAP_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-auth* && "$*" == *Running* ]]; then
+            echo "${FAKE_AUTH_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-auth* ]]; then
+            echo "${FAKE_AUTH_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-directory-gui* && "$*" == *Running* ]]; then
+            echo true
+        elif [[ "$*" == *nl2sql-directory-gui* ]]; then
+            echo "${FAKE_DIRECTORY_GUI_HEALTH:-healthy}"
         elif [[ "$*" == *nl2sql-mlflow* && "$*" == *Running* ]]; then
             echo "${FAKE_MLFLOW_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-mlflow* ]]; then
@@ -252,6 +274,15 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
                     echo "${FAKE_READER_EXTRA_GRANTS-0}"
                 elif [[ "$*" == *ddl_index_embeddings* ]]; then
                     echo "${FAKE_DDL_CHUNKS-20}"
+                elif [[ "$*" == *NL2SQL_SIGNIN=* ]]; then
+                    # docker/ldap_hba.sh, piped into sh as postgres.
+                    printf '%s\n' "$*" >> "${FAKE_LOG%/*}/ldap-hba"
+                    [[ -n "${FAKE_LDAP_HBA_FAILS:-}" ]] && exit 1
+                    exit 0
+                elif [[ "$*" == *rolesync=* ]]; then
+                    # docker/auth_roles.sql, piped in as the superuser.
+                    [[ -n "${FAKE_AUTH_ROLES_FAIL:-}" ]] && exit 1
+                    exit 0
                 elif [[ "$*" == *reader=* ]]; then
                     # docker/reader_role.sql, piped in as the superuser.
                     [[ -n "${FAKE_READER_ROLE_FAILS:-}" ]] && exit 1
@@ -536,9 +567,11 @@ def _copy_snippet_document(workdir: Path) -> None:
 
 
 def _copy_reader_role_sql(workdir: Path) -> None:
-    """Both scripts pipe docker/reader_role.sql into the (fake) container."""
+    """Both scripts pipe docker/reader_role.sql into the (fake) container --
+    and launch.sh, with sign-in on, docker/auth_roles.sql and docker/ldap_hba.sh."""
     (workdir / "docker").mkdir()
-    shutil.copy(REPO_ROOT / "docker" / "reader_role.sql", workdir / "docker" / "reader_role.sql")
+    for name in ("reader_role.sql", "auth_roles.sql", "ldap_hba.sh"):
+        shutil.copy(REPO_ROOT / "docker" / name, workdir / "docker" / name)
 
 
 def _make_desktop_sources(workdir: Path) -> None:

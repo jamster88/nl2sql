@@ -1,10 +1,12 @@
 """Shared fixtures and configuration for the whole test suite.
 
-Puts data_gen/, agent/, review/ and rag/ on sys.path so `import datagen`,
-`import nl2sql_agent`, `import nl2sql_review` and `import ragproc` work
-without any of them being installed, and wires up the --run-docker,
---run-node and --run-java opt-ins for tests that build/run real containers,
-talk to a live service, or need a JavaScript or Java toolchain.
+Puts data_gen/, agent/, review/, rag/, auth/ and ldap/ on sys.path so
+`import datagen`, `import nl2sql_agent`, `import nl2sql_review`,
+`import ragproc`, `import nl2sql_auth`, `import nl2sql_identity` and
+`import nl2sql_ldap` work without any of them being installed, and wires
+up the --run-docker, --run-node and --run-java opt-ins for tests that
+build/run real containers, talk to a live service, or need a JavaScript or
+Java toolchain.
 
 `rag/` is there because the review service's promotion path validates a
 rendered golden pair by parsing it with the loader's own parser -- the whole
@@ -21,7 +23,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-for _p in (ROOT / "data_gen", ROOT / "agent", ROOT / "review", ROOT / "rag"):
+for _p in (ROOT / "data_gen", ROOT / "agent", ROOT / "review", ROOT / "rag", ROOT / "auth", ROOT / "ldap"):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 

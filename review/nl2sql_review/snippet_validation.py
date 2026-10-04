@@ -237,6 +237,7 @@ def validate_snippet(
     timeout_ms: int = 30000,
     known_tables: list[str] | None = None,
     sample_rows: int = SAMPLE_ROWS,
+    principal: str | None = None,
     connect: Callable[..., Any] = psycopg.connect,
 ) -> SnippetValidation:
     """Run the snippet inside its probe, and its count, and say whether it may be kept."""
@@ -261,6 +262,10 @@ def validate_snippet(
         conn.execute(
             pgsql.SQL("SET LOCAL statement_timeout = {}").format(pgsql.Literal(int(timeout_ms)))
         )
+        if principal:
+            # Signed in, a person's SQL runs as them -- the role their
+            # questions run as -- so what they keep is what they can read.
+            conn.execute(pgsql.SQL("SET LOCAL ROLE {}").format(pgsql.Identifier(principal)))
         if known_tables is None:
             known_tables = [
                 row[0]

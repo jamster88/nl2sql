@@ -6,7 +6,7 @@ why an answer was wrong.
 ```bash
 ./start.sh --console       # everything, and the console in a window of its own
 ./launch.sh --console      # the same containers, without the browser
-open http://localhost:8082
+open https://localhost:8082
 ```
 
 When the agent gets an answer wrong, the useful questions are about the
@@ -141,8 +141,9 @@ Everything a query here runs inside, from the outside in:
 
 | Layer | What it does |
 |---|---|
-| **The address** | Both ports are published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise -- every other port in the stack is opened the way Docker opens ports, and a page that runs SQL is not one to offer the network by default. `launch.sh` warns when it is opened up with no token. |
-| **The token** | `CONSOLE_TOKEN`, when set, guards every `/v1` route. The interface's nginx holds it and adds it; the browser never has it. |
+| **The address** | Both ports are published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise -- every other port in the stack is opened the way Docker opens ports, and a page that runs SQL is not one to offer the network by default. `launch.sh` warns when it is opened up with neither sign-in nor a token. |
+| **Sign-in** | On in compose (`AUTH_ENABLED`): every `/v1` route needs a signed-in person in `CONSOLE_ALLOWED_ROLES` -- `nl2sql_reviewers` and `nl2sql_curators` by default -- and each statement runs as them, `SET LOCAL ROLE` from the reader, so it can read what they can and nothing more. See [`auth/README.md`](../auth/README.md). |
+| **The token** | `CONSOLE_TOKEN`, when set, is a static service token: with sign-in off it guards every `/v1` route, and the interface's nginx holds it and adds it so the browser never has it; with sign-in on it is accepted beside sessions, and the interface sends none. |
 | **CORS** | Off unless `CONSOLE_CORS_ORIGINS` names an origin. The page is same-origin behind its proxy, and a SQL runner any site in the browser could call is not something to offer without being asked. |
 | **TLS** | The console presents the certificate the agent API generates (`API_TLS_HOSTNAMES` covers `nl2sql-console`), and the proxy verifies it rather than trusting whatever answers. |
 | **The role** | `DATABASE_URL` is the agent's own -- compose anchors the one value -- so every query runs as `nl2sql_reader`: `SELECT` on the retail tables and nothing else. A URL pointed at the owner by mistake is shown in the status bar and the readiness check. |
@@ -210,7 +211,12 @@ Every failure has the API's error shape, `{"error": {"code", "message"}}`:
 
 | Code | Status | When |
 |---|---|---|
-| `unauthorized` | 401 | `CONSOLE_TOKEN` is set and the request did not carry it |
+| `unauthorized` | 401 | Sign-in is off, `CONSOLE_TOKEN` is set and the request did not carry it |
+| `sign_in_required` | 401 | Sign-in is on and there is no session or token |
+| `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid`, `account_removed` | 401 | A session that is not good any more: sign in again |
+| `forbidden` | 403 | Signed in, but in no group `CONSOLE_ALLOWED_ROLES` names |
+| `cross_site` | 403 | A cookie-authenticated request from another site |
+| `sign_in_unavailable`, `roles_unavailable` | 503 | The auth service's key is not there yet, or Postgres could not be asked about groups |
 | `invalid_request` | 422 | The body is not a query: empty, longer than 20,000 characters, an unknown mode, or a field that is not `sql` or `mode` |
 | `unknown_table` | 404 | The prompt of a table that is not in the schema |
 | `not_found` | 404 | A path the console does not serve |
@@ -231,7 +237,11 @@ empty unless set, so the default below stands.
 | `CONSOLE_TLS_ENABLED` | `true` | Serve HTTPS. Off only behind something that terminates TLS itself |
 | `CONSOLE_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | The certificate to present -- the one the API writes |
 | `CONSOLE_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | Its key |
-| `CONSOLE_TOKEN` | *(unset)* | Require this bearer token (or `X-API-Key`) on every `/v1` route |
+| `AUTH_ENABLED` | `false` (`true` in compose) | Accept signed-in people, and run each statement as the one who typed it |
+| `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
+| `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
+| `CONSOLE_ALLOWED_ROLES` | `nl2sql_reviewers,nl2sql_curators` | Who may use it, signed in |
+| `CONSOLE_TOKEN` | *(unset)* | A static service token (or `X-API-Key`): required on every `/v1` route when sign-in is off, accepted beside sessions when it is on |
 | `CONSOLE_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly, comma-separated |
 | `CONSOLE_MAX_ROWS` | `1000` | Rows read and sent back for one query |
 | `CONSOLE_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc` |
@@ -268,10 +278,18 @@ the names on the left.
 | `CONSOLE_GUI_CACERT` | `CONSOLE_CACERT` | `/etc/nl2sql/tls/server.crt` |
 | `CONSOLE_GUI_READ_TIMEOUT` | `CONSOLE_READ_TIMEOUT` | `120s` -- longer than the statement timeout, or the proxy cuts off an answer that is coming |
 | `CONSOLE_GUI_RESOLVER` | `CONSOLE_GUI_RESOLVER` | `127.0.0.11`, Docker's DNS |
-| `CONSOLE_TOKEN` | `CONSOLE_TOKEN` | *(unset)*: no `Authorization` header is sent at all |
+| `CONSOLE_TOKEN` | `CONSOLE_TOKEN` | *(unset)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
+| `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are, and sends the session rather than a token |
+| `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where `/auth/` is proxied: the sign-in form posts there |
+| `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
+| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_ENABLED` | `CONSOLE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with the API's certificate, so a password never crosses in clear |
+| `GUI_TLS_CERT_FILE` | `CONSOLE_GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `CONSOLE_GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
 
-And one for compose alone: `CONSOLE_BIND_ADDRESS` (`127.0.0.1`), the host
-address both ports are published on.
+The `GUI_` ones are shared: one line in `.env` sets them for every
+interface. And one for compose alone: `CONSOLE_BIND_ADDRESS` (`127.0.0.1`),
+the host address both ports are published on.
 
 ### Flags
 
@@ -336,4 +354,4 @@ be served by the public GUI's image, to anyone who could reach it.
 | [`test_console_live.py`](../tests/console/test_console_live.py) | The real retail database as the real reader: types, a write the transaction refuses, a timeout, the sales fact read as far as it is shown |
 | [`test_console_compose.py`](../tests/console/test_console_compose.py) | The two services as compose resolves them: the agent's URL and limits, one credential, the certificate's names, loopback ports, and every setting both ways |
 | [`test_console_container.py`](../tests/console/test_console_container.py) | Four real containers on a private network: the proxy verifies the console's certificate, adds the token, and a write is refused by the database |
-| [`test_console_project.py`](../tests/console/test_console_project.py), [`test_console_gui_contract.py`](../tests/console/test_console_gui_contract.py), [`test_console_gui_suite.py`](../tests/console/test_console_gui_suite.py) | The npm project, nginx and the start-up script; the TypeScript types field by field against the models; and the interface's own suite -- console GUI: 130 tests, at 100% of statements, branches, functions and lines |
+| [`test_console_project.py`](../tests/console/test_console_project.py), [`test_console_gui_contract.py`](../tests/console/test_console_gui_contract.py), [`test_console_gui_suite.py`](../tests/console/test_console_gui_suite.py) | The npm project, nginx and the start-up script; the TypeScript types field by field against the models; and the interface's own suite -- console GUI: 150 tests, at 100% of statements, branches, functions and lines |

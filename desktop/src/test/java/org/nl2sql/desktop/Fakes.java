@@ -3,6 +3,7 @@ package org.nl2sql.desktop;
 import org.nl2sql.desktop.api.ApiClient;
 import org.nl2sql.desktop.api.ApiException;
 import org.nl2sql.desktop.api.Models;
+import org.nl2sql.desktop.api.SignIn;
 
 import java.io.IOException;
 import java.net.URI;
@@ -110,12 +111,26 @@ public final class Fakes {
             "fact_vendor_allowances", "fact_store_traffic");
 
     public static Models.Meta meta(boolean feedback) {
-        return new Models.Meta("nl2sql-agent", "5.6.1", "qwen3.8-256k",
+        return new Models.Meta("nl2sql-agent", "6.0.0", "qwen3.8-256k",
                 List.of("aggregate"), TABLES, SCOPE,
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",
                         List.of("screen", "generate_sql", "run_sql")),
                 Map.of("enabled", true), "bearer", feedback, Map.of());
+    }
+
+    /** The same server, saying how it wants to be told who is asking. */
+    public static Models.Meta meta(boolean feedback, String authentication) {
+        Models.Meta meta = meta(feedback);
+        return new Models.Meta(meta.service(), meta.version(), meta.model(), meta.intents(),
+                meta.tables(), meta.scope(), meta.limits(), meta.pipeline(), meta.tls(),
+                authentication, meta.feedback(), meta.routing());
+    }
+
+    /** What the auth service hands a client that signed in. */
+    public static Models.Token token(String user, String name) {
+        return new Models.Token(user, name, List.of("nl2sql_users"), "session", 1_790_000_000L,
+                "eyJ.session." + user);
     }
 
     public static Models.Readiness ready() {
@@ -247,6 +262,36 @@ public final class Fakes {
                 throw new IOException("no stream left in this fake");
             }
             return new ListLines(new ArrayDeque<>(next));
+        }
+    }
+
+    /**
+     * An auth service that answers from a script: the session to hand back,
+     * or the refusal to throw, and what happens on the server once it has
+     * worked -- usually that the API stops refusing.
+     */
+    public static class FakeSignIn implements SignIn {
+
+        public Models.Token answer = token("ada", "Ada Lovelace");
+        public ApiException fail;
+        public Runnable then = () -> {
+        };
+        public final List<String> attempts = new ArrayList<>();
+        public int signOuts;
+
+        @Override
+        public Models.Token signIn(String username, String password) {
+            attempts.add(username + ":" + password);
+            if (fail != null) {
+                throw fail;
+            }
+            then.run();
+            return answer;
+        }
+
+        @Override
+        public void signOut() {
+            signOuts++;
         }
     }
 

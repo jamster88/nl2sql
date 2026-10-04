@@ -194,6 +194,26 @@ def test_the_probe_leaves_a_uri_it_cannot_ask_to_mlflow():
     tracing.probe("databricks")
 
 
+def test_the_probe_trusts_what_mlflows_client_is_told_to(monkeypatch, tmp_path):
+    import ssl
+
+    monkeypatch.delenv("MLFLOW_TRACKING_INSECURE_TLS", raising=False)
+    monkeypatch.delenv("MLFLOW_TRACKING_SERVER_CERT_PATH", raising=False)
+    assert tracing.tls_context() is None, "the system's trust, as MLflow's client"
+    monkeypatch.setenv("MLFLOW_TRACKING_INSECURE_TLS", "TRUE")
+    assert tracing.tls_context().verify_mode == ssl.CERT_NONE
+    monkeypatch.delenv("MLFLOW_TRACKING_INSECURE_TLS")
+    import datetime as dt
+
+    from nl2sql_ldap.tls import generate
+
+    pem, _ = generate(("localhost",), days=1, now=dt.datetime.now(dt.timezone.utc))
+    (tmp_path / "ca.pem").write_bytes(pem)
+    monkeypatch.setenv("MLFLOW_TRACKING_SERVER_CERT_PATH", str(tmp_path / "ca.pem"))
+    context = tracing.tls_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.cert_store_stats()["x509_ca"] >= 1
+
+
 # ---------------------------------------------------------------------------
 # A run's trace
 # ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@ class FakeDatabase:
         self.schema_text: str | None = None
 
         self.explain_calls: list[str] = []
+        self.explain_principals: list[str | None] = []
         self.run_select_calls: list[str] = []
         self.run_select_principals: list[str | None] = []
         self.schema_and_samples_calls: list[tuple[list[str], int]] = []
@@ -69,9 +70,10 @@ class FakeDatabase:
             return self.schema_text
         return "\n".join(f"=== {t} ===\ncolumns: id" for t in tables)
 
-    def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
+    def explain_plan(self, sql: str, *, principal: str | None = None) -> tuple[float | None, str | None]:
         """The v4 Planner Gate: (estimated cost, error message)."""
         self.explain_calls.append(sql)
+        self.explain_principals.append(principal)
         error = self._next(self.explain_error)
         if error:
             return None, error

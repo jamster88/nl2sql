@@ -767,7 +767,7 @@ def test_a_pinned_console_stays_pinned_without_the_flag(run_setup):
 def test_setup_ends_by_saying_the_console_is_there(run_setup):
     output = run_setup().output
     assert "./launch.sh --console" in output
-    assert "http://localhost:8082" in output
+    assert "https://localhost:8082" in output
 
 
 # ---------------------------------------------------------------------------
@@ -781,11 +781,22 @@ def test_mlflow_pulls_and_pins_its_server_and_its_store(run_setup):
     result = run_setup("--mlflow")
 
     server, store = _shipped_tag("MLFLOW_TAG"), _shipped_tag("MLFLOW_DB_TAG")
+    door = _shipped_tag("MLFLOW_PROXY_TAG")
     pulled = [call for call in result.calls if call.startswith("pull") and "mlflow" in call]
-    assert pulled == [f"pull mcfaddja/nl2sql-mlflow:{server}", f"pull mcfaddja/nl2sql-mlflowdb:{store}"]
+    assert pulled == [
+        f"pull mcfaddja/nl2sql-mlflow:{server}", f"pull mcfaddja/nl2sql-mlflowdb:{store}",
+        f"pull mcfaddja/nl2sql-mlflow-proxy:{door}",
+    ]
     env = result.env_file()
     assert (env["MLFLOW_IMAGE_NAME"], env["MLFLOW_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflow", server)
     assert (env["MLFLOW_DB_IMAGE_NAME"], env["MLFLOW_DB_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflowdb", store)
+    assert (env["MLFLOW_PROXY_IMAGE_NAME"], env["MLFLOW_PROXY_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflow-proxy", door)
+
+
+def test_mlflows_front_door_that_will_not_pull_is_built_instead(run_setup):
+    result = run_setup("--mlflow", env={"FAKE_FAIL_PULL": "nl2sql-mlflow-proxy"})
+    assert result.returncode == 0
+    assert "./launch.sh --mlflow will build MLflow's front door from source instead." in result.output
 
 
 def test_nothing_about_mlflow_is_pulled_or_pinned_unless_it_was_asked_for(run_setup):
@@ -820,7 +831,7 @@ def test_a_pinned_mlflow_stays_pinned_without_the_flag(run_setup):
 def test_setup_ends_by_saying_mlflow_is_there(run_setup):
     output = run_setup().output
     assert "./launch.sh --mlflow" in output
-    assert "http://localhost:5001" in output
+    assert "https://localhost:5001" in output
 
 
 # ---------------------------------------------------------------------------
@@ -1148,4 +1159,56 @@ def test_without_retrieval_no_snippet_store_is_started(run_setup):
 
 
 def test_the_closing_lines_point_at_the_curation_interface(run_setup):
-    assert "./launch.sh --curate                     # http://localhost:8083" in run_setup().output
+    assert "./launch.sh --curate                     # https://localhost:8083" in run_setup().output
+
+
+# ---------------------------------------------------------------------------
+# Sign-in
+# ---------------------------------------------------------------------------
+
+SIGNIN_SECRETS = ("LDAP_ADMIN_PASSWORD", "LDAP_SERVICE_PASSWORD", "AUTH_ROLESYNC_PASSWORD")
+
+
+def test_sign_in_is_pulled_pinned_and_given_its_passwords_by_default(run_setup):
+    result = run_setup()
+    assert result.returncode == 0
+    for image, family in (("nl2sql-ldap", "LDAP"), ("nl2sql-auth", "AUTH"), ("nl2sql-directory-gui", "DIRECTORY_GUI")):
+        tag = _shipped_tag(f"{family}_TAG")
+        assert result.called(f"pull mcfaddja/{image}:{tag}"), image
+        env = result.env_file()
+        assert (env[f"{family}_IMAGE_NAME"], env[f"{family}_IMAGE_TAG"]) == (f"mcfaddja/{image}", tag)
+    env = result.env_file()
+    for key in SIGNIN_SECRETS:
+        assert re.fullmatch(r"[0-9a-f]{48}", env[key]), key
+    assert len({env[key] for key in SIGNIN_SECRETS}) == 3
+    assert "AUTH_ENABLED" not in env
+    assert (result.workdir / ".env").stat().st_mode & 0o777 == 0o600
+    output = " ".join(result.output.split())
+    assert "Every page asks who you are. The first person is admin, whose password is LDAP_ADMIN_PASSWORD in .env" in output
+    assert "which ./launch.sh --api starts at https://localhost:8084" in output
+
+
+def test_the_passwords_are_kept_from_one_env_to_the_next_and_so_is_the_backup_private(run_setup):
+    first = run_setup().env_file()
+    again = run_setup()
+    assert [again.env_file()[key] for key in SIGNIN_SECRETS] == [first[key] for key in SIGNIN_SECRETS]
+    assert (again.workdir / ".env.bak").stat().st_mode & 0o777 == 0o600
+
+
+def test_no_auth_turns_sign_in_off_for_good_and_pulls_nothing_for_it(run_setup):
+    result = run_setup("--no-auth")
+    env = result.env_file()
+    assert env["AUTH_ENABLED"] == "false"
+    assert "LDAP_IMAGE_NAME" not in env and "AUTH_IMAGE_NAME" not in env
+    assert not result.calls_matching("pull mcfaddja/nl2sql-ldap")
+    assert "Sign-in is off (AUTH_ENABLED=false in .env)" in result.output
+    # And it stays off on the next run, which is given no flag.
+    again = run_setup()
+    assert again.env_file()["AUTH_ENABLED"] == "false"
+    assert not again.calls_matching("pull mcfaddja/nl2sql-auth")
+
+
+def test_a_sign_in_image_that_will_not_pull_is_built_instead(run_setup):
+    result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-auth"})
+    assert result.returncode == 0
+    assert "./launch.sh will build it from source the first time sign-in starts." in result.output

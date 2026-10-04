@@ -164,20 +164,59 @@ server says so at startup, and `/readyz` repeats it.
 
 ## Authentication
 
-Unset by default, because the usual deployment is a private network and a
+Two kinds of caller, and with sign-in on -- the compose default,
+`AUTH_ENABLED=true` -- both are accepted:
+
+- **A person**, signed in through the auth service
+  ([`auth/README.md`](../auth/README.md)) with the user name and password
+  the directory holds. A browser holds the session as the `nl2sql_session`
+  cookie its interface's sign-in sets; anything else asks for a token and
+  sends it:
+
+      curl --cacert ./nl2sql-api.crt https://localhost:8446/auth/token \
+           -H 'Content-Type: application/json' \
+           -d '{"username": "alice", "password": "..."}'
+      # -> {"user": "alice", "name": "Alice Smith", "roles": [...], "kind": "session",
+      #     "expires_at": 1790000000, "token": "eyJ..."}
+
+      Authorization: Bearer <token>
+
+  The token is checked here against the auth service's public key, and the
+  groups in it against Postgres, at most a minute old. Every `/v1` route
+  needs `nl2sql_users`, which every group includes. A person's questions
+  run as their own database role (`SET LOCAL ROLE`), and each sees only the
+  questions they asked: anyone else's job is a `404`, because whether a job
+  id exists is itself something only its owner should learn.
+
+- **A service**, with `API_TOKEN`: a static token for a script, a smoke
+  test, a service in front. It is not a person, so its questions run as the
+  agent's reader -- or as the `principal` it names, with
+  `API_ALLOW_PRINCIPAL` -- and it sees every job.
+
+With sign-in off (`AUTH_ENABLED=false`, the default outside compose) only the
+second kind exists, and only if `API_TOKEN` is set: unset, the API is open,
+because the usual deployment without sign-in is a private network and a
 token that has to be invented before anything works is a token that ends up
-committed. Set `API_TOKEN` and every `/v1` route requires it:
+committed. `GET /v1/meta` says which applies: `authentication` is `session`,
+`bearer` or `none`.
+
+A static token or a session token is sent the same ways:
 
     Authorization: Bearer <token>       # preferred
-    X-API-Key: <token>                  # for clients that find that easier
-    ?access_token=<token>               # event streams only, see below
+    X-API-Key: <token>                  # the static token, for clients that find that easier
+    ?access_token=<token>               # the static token, on event streams only, see below
 
 `/`, `/healthz`, `/readyz` and `/openapi.json` stay open so an orchestrator's
 probes and a client's code generation keep working.
 
 The query-string form exists because a browser's `EventSource` cannot set
 headers, and a GUI that cannot stream progress is back to a spinner. Use a
-header everywhere else -- query strings end up in access logs.
+header everywhere else -- query strings end up in access logs. A signed-in
+browser needs neither: `EventSource` sends the cookie.
+
+A write that rides on the cookie has to come from the interface's own pages
+-- `Sec-Fetch-Site`, or `Origin` against the host its proxy reports in
+`X-Forwarded-Host` -- or it is refused with `403 cross_site`.
 
 ### Browsers
 
@@ -449,10 +488,17 @@ Branch on `code`; the message is for a person.
 | Code | Status | Meaning |
 | --- | --- | --- |
 | `invalid_request` | 422 | The body or query string is wrong. `detail.errors` says where |
-| `unauthorized` | 401 | Missing or wrong token |
+| `unauthorized` | 401 | Missing or wrong static token, with sign-in off |
+| `sign_in_required` | 401 | Sign-in is on and there is no session or token |
+| `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid` | 401 | A session token that is not good: sign in again |
+| `account_removed` | 401 | The person is no longer in the directory |
+| `forbidden` | 403 | Signed in, but in no group that may ask |
+| `cross_site` | 403 | A cookie-authenticated write from another site |
+| `sign_in_unavailable` | 503 | The auth service has not written its key yet |
+| `roles_unavailable` | 503 | Postgres could not be asked which groups the caller is in |
 | `not_found` | 404 | No such job. Finished jobs are kept `API_JOB_TTL_SECONDS` |
 | `job_running` | 409 | A question in flight cannot be interrupted |
-| `principal_not_allowed` | 400 | `principal` was sent to a server started without `API_ALLOW_PRINCIPAL` |
+| `principal_not_allowed` | 400 | `principal` was sent to a server started without `API_ALLOW_PRINCIPAL`, or named someone other than the person signed in |
 | `already_reviewed` | 409 | A verdict has been acted on and no longer belongs to the voter |
 | `feedback_unavailable` | 503 | No staging database is configured (`API_FEEDBACK_DB_URL`) |
 | `unavailable` | 503 | The server is shutting down |
@@ -599,7 +645,10 @@ an unset variable through as an empty string, and empty is read as absent.
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `API_TOKEN` | *(none)* | Require this bearer token on `/v1` |
+| `AUTH_ENABLED` | `false` (`true` in compose) | Accept signed-in people; their questions run as them |
+| `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against. Read when it appears and again when it changes |
+| `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
+| `API_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
 | `API_CORS_ORIGINS` | `*` | Browser origins allowed to call it |
 | `API_ALLOW_PRINCIPAL` | `false` | Let callers choose the database role rows are read as (`SET LOCAL ROLE`, for row-level security). Only with something authenticating them in front |
 

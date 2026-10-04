@@ -19,4 +19,4 @@ EXPOSE 5000
 
 LABEL org.opencontainers.image.title="nl2sql MLflow server" \
       org.opencontainers.image.description="MLflow tracking server for the nl2sql agent's traces, the verdicts on them and the benchmark's runs" \
-      org.opencontainers.image.version="5.6.1"
+      org.opencontainers.image.version="6.0.0"

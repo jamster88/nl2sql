@@ -148,6 +148,7 @@ def validate(
     timeout_ms: int = 30000,
     max_rows: int = 200,
     sample_rows: int = SAMPLE_ROWS,
+    principal: str | None = None,
     connect: Callable[..., Any] = psycopg.connect,
 ) -> Validation:
     """Run the query against the retail database and say whether it may be kept.
@@ -175,6 +176,10 @@ def validate(
         conn.execute(
             pgsql.SQL("SET LOCAL statement_timeout = {}").format(pgsql.Literal(int(timeout_ms)))
         )
+        if principal:
+            # Signed in, a person's SQL runs as them -- the role their
+            # questions run as -- so what they keep is what they can read.
+            conn.execute(pgsql.SQL("SET LOCAL ROLE {}").format(pgsql.Identifier(principal)))
         plan = conn.execute(f"EXPLAIN (FORMAT JSON) {cleaned}").fetchone()[0]
         cursor = conn.execute(cleaned)
         columns = [column.name for column in (cursor.description or [])]

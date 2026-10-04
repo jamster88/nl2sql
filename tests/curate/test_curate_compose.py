@@ -26,6 +26,10 @@ from tests.review.test_review_compose import PROFILES, _compose_config
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+#: Worked out by the start-up script -- the sign-in hop's TLS include and this
+#: listener's -- rather than set by anyone.
+SIGN_IN_COMPUTED = {"NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF"}
 EVERY = (*PROFILES, "curategui", "agent")
 
 
@@ -181,7 +185,9 @@ def test_the_proxy_outlasts_a_save(curategui: dict):
 def _proxy_variables() -> set[str]:
     gui = REPO_ROOT / "curate"
     sources = (gui / "nginx.conf.template").read_text() + (gui / "10-nl2sql-curate-config.envsh").read_text()
-    return set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {"CURATE_AUTH_HEADER", "NGINX_CURATE_UPSTREAM_TLS_CONF"}
+    return set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {
+        "CURATE_AUTH_HEADER", "NGINX_CURATE_UPSTREAM_TLS_CONF", *SIGN_IN_COMPUTED, "CURATE_GUI_LISTEN_TLS"
+    }
 
 
 def test_each_setting_of_the_page_is_set_by_the_name_compose_documents(tmp_path_factory):

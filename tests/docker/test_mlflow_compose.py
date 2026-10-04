@@ -17,9 +17,11 @@ What carries weight is what joins files that never mention each other:
 * **The address the agent is given is this service's.** setup.sh writes
   `http://nl2sql-mlflow:5000` into .env; that is a container name and a port
   here, and the server's DNS-rebinding guard must accept it as a Host header.
-* **Its interface is this machine's.** It has no login, and a trace holds
-  the rows every question returned -- so, like the SQL console, it is
-  published on loopback unless someone says otherwise.
+* **Its interface is reached through its front door, and only that.** MLflow
+  has no login, and a trace holds the rows every question returned -- so the
+  server itself publishes nothing, and `mlflowproxy` publishes it over HTTPS,
+  asking the auth service about every request, on loopback unless someone
+  says otherwise.
 * **The store behind it is not published at all.** Nothing reads it but the
   server.
 """
@@ -66,6 +68,11 @@ def config(tmp_path_factory) -> dict:
 @pytest.fixture(scope="module")
 def mlflow(config: dict) -> dict:
     return config["services"]["mlflow"]
+
+
+@pytest.fixture(scope="module")
+def proxy(config: dict) -> dict:
+    return config["services"]["mlflowproxy"]
 
 
 @pytest.fixture(scope="module")
@@ -242,16 +249,42 @@ def test_the_rebinding_guard_lets_the_agent_and_this_machine_in(mlflow: dict, ho
     assert any(fnmatch.fnmatch(host, pattern) if "*" in pattern else host == pattern for pattern in allowed)
 
 
-def test_the_interface_is_this_machines_unless_someone_says_otherwise(mlflow: dict):
-    [port] = mlflow["ports"]
-    assert (port["host_ip"], port["published"], port["target"]) == ("127.0.0.1", "5001", 5000)
+def test_the_interface_is_this_machines_unless_someone_says_otherwise(mlflow: dict, proxy: dict):
+    assert "ports" not in mlflow, "MLflow has no login of its own: it is reached through its front door"
+    [port] = proxy["ports"]
+    assert (port["host_ip"], port["published"], port["target"]) == ("127.0.0.1", "5001", 5001)
+
+
+def test_the_front_door_asks_about_every_request_over_https(proxy: dict):
+    env = proxy["environment"]
+    assert (env["AUTH_ENABLED"], env["MLFLOW_PROXY_TLS_ENABLED"]) == ("true", "true")
+    assert env["MLFLOW_UPSTREAM"] == "http://nl2sql-mlflow:5000"
+    assert env["AUTH_UPSTREAM"] == "https://nl2sql-auth:8446"
+    # It waits for MLflow. The certificate it presents, and verifies the auth
+    # service with, is the one the API writes -- which launch.sh starts first,
+    # so that `--profile mlflow` alone is a project compose accepts, and
+    # `--profile mlflow down` stops all three.
+    assert set(proxy["depends_on"]) == {"mlflow"}
+    [volume] = proxy["volumes"]
+    assert (volume["source"], volume["target"], volume["read_only"]) == ("apitls", "/etc/nl2sql/tls", True)
+    assert proxy["profiles"] == ["mlflow"]
+
+
+def test_every_setting_the_front_door_reads_can_be_set_through_compose_and_nothing_else_is(proxy: dict):
+    root = REPO_ROOT / "docker" / "mlflow-proxy"
+    sources = (root / "nginx.conf.template").read_text() + (root / "10-nl2sql-mlflow-proxy.envsh").read_text()
+    computed = {"MLFLOW_AUTH_HEADER", "MLFLOW_PROXY_LISTEN_TLS", "NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF",
+                "NGINX_SIGNIN_CONF", "NGINX_UPSTREAM_TLS_CONF"}
+    read = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - computed
+    assert sorted(read - set(proxy["environment"])) == []
+    assert sorted(set(proxy["environment"]) - read) == []
 
 
 def test_the_published_port_and_address_can_be_changed(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("port"), env={"MLFLOW_PORT": "6001", "MLFLOW_BIND_ADDRESS": "0.0.0.0"}
     )
-    [port] = config["services"]["mlflow"]["ports"]
+    [port] = config["services"]["mlflowproxy"]["ports"]
     assert (port["host_ip"], port["published"]) == ("0.0.0.0", "6001")
 
 
@@ -267,11 +300,11 @@ def test_the_servers_workers_and_guard_can_be_changed(mlflow: dict, tmp_path_fac
     assert (flags["workers"], flags["allowed-hosts"]) == ("4", "mlflow.example.org")
 
 
-def test_the_benchmark_looks_for_mlflow_on_the_published_port(mlflow: dict):
+def test_the_benchmark_looks_for_mlflow_on_the_published_port(proxy: dict):
     from benchmarks.run_benchmark import HOST_DEFAULTS
 
-    [port] = mlflow["ports"]
-    assert HOST_DEFAULTS["mlflow_tracking_uri"] == ("MLFLOW_TRACKING_URI", f"http://localhost:{port['published']}")
+    [port] = proxy["ports"]
+    assert HOST_DEFAULTS["mlflow_tracking_uri"] == ("MLFLOW_TRACKING_URI", f"https://localhost:{port['published']}")
 
 
 def test_the_server_is_health_checked_without_curl(mlflow: dict):
@@ -281,14 +314,14 @@ def test_the_server_is_health_checked_without_curl(mlflow: dict):
     assert f"127.0.0.1:{_flags(mlflow)['port']}/health" in test
 
 
-def test_mlflow_does_not_collide_with_another_service(config: dict, mlflow: dict):
+def test_mlflow_does_not_collide_with_another_service(config: dict, proxy: dict):
     published = {
         port["published"]
         for name, service in config["services"].items()
-        if name != "mlflow"
+        if name != "mlflowproxy"
         for port in service.get("ports", [])
     }
-    assert mlflow["ports"][0]["published"] not in published
+    assert proxy["ports"][0]["published"] not in published
 
 
 # ---------------------------------------------------------------------------

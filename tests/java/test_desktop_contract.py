@@ -25,10 +25,12 @@ from typing import Literal, get_args, get_origin
 import pytest
 
 from nl2sql_agent.api import models
+from nl2sql_auth import models as auth_models
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "api" / "Models.java"
 CHART_KIND_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "chart" / "ChartKind.java"
+STATUS_BAR_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "ui" / "StatusBar.java"
 
 #: The two records this client constructs rather than receives. Everything
 #: else below arrives as JSON from a server whose version is not this one's.
@@ -57,6 +59,16 @@ MIRRORED = {
     "AskRequest": models.AskRequest,
     "FeedbackRequest": models.FeedbackRequest,
     "FeedbackModel": models.FeedbackModel,
+}
+
+
+#: The auth service's shapes, which this client sends (`SignIn`) or reads
+#: (`Token`) when a person signs in. Mirrored from `auth/nl2sql_auth/models.py`,
+#: a second server with its own models, so held to that file rather than the
+#: API's.
+AUTH_MIRRORED = {
+    "SignIn": auth_models.SignIn,
+    "Token": auth_models.Token,
 }
 
 
@@ -160,6 +172,22 @@ def test_the_field_order_matches(name: str, records: dict[str, list[str]]):
     still compiles and still parses, and puts one field's value in another's
     place for anything constructing one by hand."""
     assert records[name] == list(MIRRORED[name].model_fields)
+
+
+@pytest.mark.parametrize("name", sorted(AUTH_MIRRORED))
+def test_the_sign_in_records_match_the_auth_service(name: str, records: dict[str, list[str]]):
+    assert records[name] == list(AUTH_MIRRORED[name].model_fields)
+
+
+def test_every_way_a_server_can_ask_who_is_asking_is_said_in_the_status_bar():
+    """`authentication` grew `session` with sign-in; a value the status bar
+    does not name falls through to "no token", which is the one thing it
+    must not say about a server that requires sign-in."""
+    annotation = models.Meta.model_fields["authentication"].annotation
+    status_bar = STATUS_BAR_JAVA.read_text()
+    for value in get_args(annotation):
+        if value != "none":
+            assert f'case "{value}" ->' in status_bar, value
 
 
 # ---------------------------------------------------------------------------

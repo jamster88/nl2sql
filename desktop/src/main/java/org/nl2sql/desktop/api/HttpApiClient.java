@@ -37,20 +37,18 @@ public final class HttpApiClient implements ApiClient {
 
     private final HttpClient http;
     private final Settings settings;
+    private final Session session;
 
+    /** A client presenting the static token from the settings, if there is one. */
     public HttpApiClient(Settings settings) {
-        this(settings, HttpClient.newBuilder()
-                .sslContext(Tls.contextFor(settings))
-                .sslParameters(Tls.parametersFor(settings))
-                .connectTimeout(Duration.ofSeconds(10))
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build());
+        this(settings, new Session(settings.token()));
     }
 
-    /** For the tests, which supply a client pointed at a server on a loopback port. */
-    public HttpApiClient(Settings settings, HttpClient http) {
+    /** A client presenting whatever {@code session} holds when each call is made. */
+    public HttpApiClient(Settings settings, Session session) {
         this.settings = settings;
-        this.http = http;
+        this.session = session;
+        this.http = Tls.client(settings);
     }
 
     @Override
@@ -163,11 +161,15 @@ public final class HttpApiClient implements ApiClient {
      * token" has to be an empty array rather than an empty value -- an
      * {@code Authorization: Bearer} with nothing after it is a 401 that looks
      * like a server problem.
+     *
+     * <p>Asked for at each call rather than once, because signing in happens
+     * after this client is built: the session is whatever it is now.
      */
     private String[] authorisation() {
-        return settings.authenticated()
-                ? new String[] {"Authorization", "Bearer " + settings.token()}
-                : new String[0];
+        String bearer = session.bearer();
+        return bearer.isEmpty()
+                ? new String[0]
+                : new String[] {"Authorization", "Bearer " + bearer};
     }
 
     private URI url(String path, Map<String, String> query) {
@@ -219,7 +221,7 @@ public final class HttpApiClient implements ApiClient {
         throw described(status, body);
     }
 
-    private static ApiException described(int status, String body) {
+    static ApiException described(int status, String body) {
         JsonNode error;
         try {
             error = Json.tree(body).path("error");

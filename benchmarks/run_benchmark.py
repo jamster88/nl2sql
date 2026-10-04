@@ -65,10 +65,12 @@ HOST_DEFAULTS = {
         "SNIPPET_DB_URL", "postgresql+psycopg://snippets_reader:snippets_reader@localhost:5438/nl2sql_snippets",
     ),
     "embed_base_url": ("EMBED_BASE_URL", "http://localhost:11434"),
-    # The `mlflow` service's published port. Not up, and the benchmark runs
+    # MLflow's front door, the proxy's published port: HTTPS, and behind
+    # sign-in when the stack has it -- MLFLOW_TRACKING_USERNAME and _PASSWORD
+    # (a reviewer's) or MLFLOW_TRACKING_TOKEN. Not up, and the benchmark runs
     # untraced after one refused connection; MLFLOW_TRACKING_URI= (empty)
     # turns tracing off even when it is up.
-    "mlflow_tracking_uri": ("MLFLOW_TRACKING_URI", "http://localhost:5001"),
+    "mlflow_tracking_uri": ("MLFLOW_TRACKING_URI", "https://localhost:5001"),
 }
 
 
@@ -129,8 +131,21 @@ def select(args: argparse.Namespace) -> list[BenchmarkQuestion]:
     return questions
 
 
+#: The stack's development certificate, as launch.sh copies it out of the
+#: API's volume. MLflow's client trusts it when told to, and is told to here
+#: unless the environment already says what to trust.
+CERTIFICATE = Path(__file__).resolve().parent.parent / "nl2sql-api.crt"
+
+
+def trust_the_stack(environ=os.environ, certificate: Path = CERTIFICATE) -> None:
+    if certificate.is_file() and not environ.get("MLFLOW_TRACKING_SERVER_CERT_PATH"):
+        environ["MLFLOW_TRACKING_SERVER_CERT_PATH"] = str(certificate)
+
+
 def build_settings(args: argparse.Namespace, configuration: str):
     from nl2sql_agent.config import Settings
+
+    trust_the_stack()
 
     settings = Settings.from_env()
     for field, (variable, host_default) in HOST_DEFAULTS.items():

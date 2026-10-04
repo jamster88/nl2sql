@@ -8,7 +8,7 @@
 # Or, in a browser:
 #
 #     ./launch.sh --gui
-#     open http://localhost:8080
+#     open https://localhost:8080
 #
 # Or, for something else to talk to -- another GUI, a service, curl:
 #
@@ -19,20 +19,25 @@
 # database queried as the agent sees it:
 #
 #     ./launch.sh --console
-#     open http://localhost:8082
+#     open https://localhost:8082
 #
 # Or, to see what the agent did with a question -- every agent and every
 # model call it made, traced in MLflow:
 #
 #     ./launch.sh --mlflow
-#     open http://localhost:5001
+#     open https://localhost:5001
 #
 # Or, to write what the agent learns from directly -- SQL snippets, golden
 # pairs, corrections and completions, each run against the retail database
 # before it is saved:
 #
 #     ./launch.sh --curate
-#     open http://localhost:8083
+#     open https://localhost:8083
+#
+# Every page and port asks who you are: a person signs in with the password
+# the directory holds, and the groups they are in decide what they may open.
+# The directory and the auth service start with the API; --no-auth leaves
+# them down and every page open, as before sign-in.
 #
 # This is the every-time script. setup.sh is the first-time one: it pulls the
 # images and writes the .env that pins them. launch.sh assumes that has already
@@ -64,6 +69,7 @@ WITH_MLFLOW=0
 WITH_CURATE=0
 WITH_DESKTOP=0
 WITH_LOAD_GOLDEN=0
+NO_AUTH=0
 RESTART=0
 QUIET=0
 
@@ -92,7 +98,8 @@ Usage: ./launch.sh [options]
                    gates, to work out why an answer was wrong (implies --api)
       --mlflow     Also start MLflow, where every question the agent answers
                    is traced -- a span per agent and per model call -- and
-                   verdicts are recorded on the traces they judge
+                   verdicts are recorded on the traces they judge (implies
+                   --api: its front door presents the API's certificate)
       --curate     Also start the curation interface, where SQL snippets,
                    golden pairs, corrections and completions are written
                    directly -- each run against the retail database before
@@ -105,6 +112,9 @@ Usage: ./launch.sh [options]
                    context store and its vectors before anything is asked, so
                    the worked examples are this checkout's golden set rather
                    than the one the images were published with
+      --no-auth    Start without sign-in, for this run: no directory, no auth
+                   service, and every page and port open to whoever can
+                   reach it. AUTH_ENABLED=false in .env makes it the default
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -129,8 +139,11 @@ while [[ $# -gt 0 ]]; do
         # The console presents the certificate the API writes, so the API is
         # what it cannot start without -- and what it is troubleshooting.
         --console) WITH_CONSOLE=1; WITH_API=1; shift ;;
-        # Not --api: a question asked from a terminal is traced as well.
-        --mlflow) WITH_MLFLOW=1; shift ;;
+        # A question asked from a terminal is traced as well, so MLflow does
+        # not need the API to be useful -- but its front door presents the
+        # certificate the API writes, and checks sign-ins with the auth
+        # service, which starts with the API.
+        --mlflow) WITH_MLFLOW=1; WITH_API=1; shift ;;
         # The review service is its backend, and that needs the staging
         # database and the certificate the API writes -- what --review needs,
         # without the review interface itself.
@@ -141,12 +154,20 @@ while [[ $# -gt 0 ]]; do
         # Nothing else started for it: the loaders run once, in a container
         # of their own, against the stores started below.
         --load-golden) WITH_LOAD_GOLDEN=1; shift ;;
+        --no-auth) NO_AUTH=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option: $1" ;;
     esac
 done
+
+# Exported, because compose reads the shell before .env: every service and
+# interface started below is told sign-in is off, not only the ones this
+# script asks about.
+if [[ $NO_AUTH -eq 1 ]]; then
+    export AUTH_ENABLED=false
+fi
 
 # --- Prerequisites ---------------------------------------------------------
 command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
@@ -232,6 +253,92 @@ if ensure_reader_role; then
 else
     warn "could not create the agent's read-only role in the retail database."
     warn "The agent will fail to connect. Check: docker compose logs postgres"
+fi
+
+# --- Sign-in: the database's half ------------------------------------------
+# A person signs in to the retail database itself: pg_hba's `ldap` method
+# checks their password against the directory, and the groups they are in
+# there become the roles they hold here. Two things make that so, both
+# idempotent and both done on every start, like the reader role above:
+#
+#   docker/auth_roles.sql  the four group roles, what each may read, and the
+#                          role the auth service keeps people in step with
+#   docker/ldap_hba.sh     the pg_hba.conf lines, at the top of the file, and
+#                          a reload -- or, with sign-in off, their removal,
+#                          which is all turning it off takes
+#
+# Only with the API: the directory and the auth service start with it, and a
+# start for the terminal alone has nobody to sign in.
+signin_on() {  # signin_on -- unless AUTH_ENABLED says otherwise, in the shell or .env
+    case "$(compose_env AUTH_ENABLED true)" in
+        0|false|no|off|FALSE|NO|OFF) return 1 ;;
+    esac
+}
+
+WITH_SIGNIN=0
+if [[ $WITH_API -eq 1 ]] && signin_on; then
+    WITH_SIGNIN=1
+fi
+
+# setup.sh writes these three; a .env written before sign-in existed has
+# none, and a directory started without them refuses to. Generated here
+# rather than sending the user back to setup.sh, and never replaced: the
+# directory and the database keep the first ones they were given.
+signin_secret() {
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+ensure_signin_secrets() {
+    local key added=0
+    for key in LDAP_ADMIN_PASSWORD LDAP_SERVICE_PASSWORD AUTH_ROLESYNC_PASSWORD; do
+        if [[ -z "$(compose_env "$key" "")" ]]; then
+            printf '%s=%s\n' "$key" "$(signin_secret)" >> .env
+            added=$((added + 1))
+        fi
+    done
+    # Passwords, so the file is its owner's alone -- whoever wrote it.
+    chmod 600 .env
+    if [[ $added -gt 0 ]]; then
+        info "generated $added sign-in password(s) into .env, which only you can read"
+    fi
+}
+
+ensure_auth_roles() {
+    docker compose exec -T postgres psql -U postgres -q \
+        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -v ON_ERROR_STOP=1 \
+        -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
+        -v owner="$(compose_env POSTGRES_USER nl2sql)" \
+        -v rolesync="$(compose_env AUTH_ROLESYNC_USER nl2sql_rolesync)" \
+        -v rolesync_password="$(compose_env AUTH_ROLESYNC_PASSWORD "")" \
+        -f - < docker/auth_roles.sql >/dev/null
+}
+
+ldap_hba() {  # ldap_hba on|off -- write pg_hba.conf's sign-in lines, or take them out
+    docker compose exec -T -u postgres \
+        -e NL2SQL_SIGNIN="$1" \
+        -e NL2SQL_DB="$(compose_env POSTGRES_DB nl2sql_retail)" \
+        -e NL2SQL_SERVICE_ROLES="$(compose_env POSTGRES_READER_USER nl2sql_reader),$(compose_env AUTH_ROLESYNC_USER nl2sql_rolesync)" \
+        -e NL2SQL_LDAP_BASE_DN="$(compose_env LDAP_BASE_DN dc=nl2sql,dc=local)" \
+        postgres sh -s < docker/ldap_hba.sh >/dev/null
+}
+
+if [[ $WITH_SIGNIN -eq 1 ]]; then
+    step "Preparing the retail database for sign-in"
+    ensure_signin_secrets
+    if ensure_auth_roles && ldap_hba on; then
+        info "a person signs in with their directory password, which Postgres checks itself"
+    else
+        warn "could not prepare the retail database for sign-in, so nobody will be able to."
+        warn "Check what it said: docker compose logs postgres"
+    fi
+elif ! signin_on; then
+    step "Sign-in is off (AUTH_ENABLED=false)"
+    if ldap_hba off; then
+        info "every page and port is open to whoever can reach it"
+    else
+        warn "could not take the sign-in lines out of the retail database's pg_hba.conf."
+    fi
 fi
 
 # --- The golden pairs ------------------------------------------------------
@@ -590,7 +697,7 @@ if [[ $WITH_API -eq 1 ]]; then
         warn "API_TLS_ENABLED is off, so the API serves plain HTTP: questions, SQL"
         warn "and rows all cross the network in clear text."
     fi
-    if [[ -z "$api_token" ]]; then
+    if [[ -z "$api_token" ]] && ! signin_on; then
         warn "no API_TOKEN is set, so anything that can reach port $api_port may ask"
         warn "questions. Set API_TOKEN in .env before exposing this off this machine."
     fi
@@ -611,6 +718,13 @@ await_health() {  # await_health CONTAINER
     return 1
 }
 
+# Every page is HTTPS with the API's certificate unless GUI_TLS_ENABLED says
+# otherwise -- which is for behind something that terminates TLS itself.
+case "$(compose_env GUI_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) gui_scheme=http ;;
+    *) gui_scheme=https ;;
+esac
+
 # --- The proxies, and the certificate they loaded at start ---------------
 # nginx reads `proxy_ssl_trusted_certificate` once, while it parses its
 # config. A certificate reissued after that -- which the API does when
@@ -623,8 +737,11 @@ await_health() {  # await_health CONTAINER
 # owns, through the proxy, and the cure is a restart.
 proxy_reaches_api() {  # proxy_reaches_api PORT
     local code
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-        "http://localhost:$1/readyz" 2>/dev/null || echo 000)
+    # -k: this asks whether nginx reaches what is behind it, not whether this
+    # machine trusts nginx's certificate -- which, for the development one,
+    # it does not until someone tells it to.
+    code=$(curl -s -k -o /dev/null -w '%{http_code}' --max-time 10 \
+        "$gui_scheme://localhost:$1/readyz" 2>/dev/null || echo 000)
     # 503 is the API answering that it is not ready, which still means the
     # proxy reached it. Only a failure to reach it at all is the problem here.
     [[ "$code" == "200" || "$code" == "503" ]]
@@ -640,6 +757,52 @@ repair_proxy() {  # repair_proxy SERVICE CONTAINER PORT PROFILES...
     await_health "$container" || return 1
     proxy_reaches_api "$port"
 }
+
+# --- Sign-in: the directory and the auth service ---------------------------
+# After the API, because the auth service presents the certificate the API
+# writes. Compose starts the directory first and waits for it. A standalone
+# directory also gets its page, where nl2sql_admins add and edit people; a
+# replica's people are edited on its primary, so it has none.
+auth_port=$(compose_env AUTH_PORT 8446)
+ldap_mode=$(compose_env LDAP_MODE standalone)
+directory_gui_port=$(compose_env DIRECTORY_GUI_PORT 8084)
+WITH_DIRECTORY_GUI=0
+
+start_signin() {
+    docker compose --profile api --profile auth up -d auth >/dev/null 2>&1 || return 1
+    await_health nl2sql-ldap || return 1
+    await_health nl2sql-auth
+}
+
+start_directorygui() {
+    docker compose --profile api --profile auth --profile directorygui \
+        up -d directorygui >/dev/null 2>&1 || return 1
+    await_health nl2sql-directory-gui
+}
+
+case "$(compose_env AUTH_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) auth_scheme=http ;;
+    *) auth_scheme=https ;;
+esac
+
+if [[ $WITH_SIGNIN -eq 1 ]]; then
+    step "Starting the directory and the auth service"
+    if start_signin; then
+        info "Auth service is healthy at $auth_scheme://localhost:$auth_port, with a $ldap_mode directory"
+        if [[ "$ldap_mode" == "replica" ]]; then
+            info "The directory copies $(compose_env LDAP_UPSTREAM_URI "its primary"): people are added and changed there."
+        elif start_directorygui; then
+            WITH_DIRECTORY_GUI=1
+            info "Directory page is healthy at $gui_scheme://localhost:$directory_gui_port"
+        else
+            warn "the directory page did not become healthy."
+            warn "Check what it said: docker compose --profile api --profile auth --profile directorygui logs directorygui"
+        fi
+    else
+        warn "the directory or the auth service did not become healthy, so nobody can sign in."
+        warn "Check what they said: docker compose --profile api --profile auth logs ldap auth"
+    fi
+fi
 
 # --- The desktop client ----------------------------------------------------
 # A jar, not a container. The desktop client draws a window on this machine,
@@ -748,7 +911,7 @@ if [[ $WITH_GUI -eq 1 ]]; then
     step "Starting the web interface"
     if start_gui; then
         if repair_proxy gui nl2sql-gui "$gui_port" --profile api --profile gui; then
-            info "GUI is healthy at http://localhost:$gui_port"
+            info "GUI is healthy at $gui_scheme://localhost:$gui_port"
         else
             warn "the GUI is up but cannot reach the API through its proxy."
             warn "Check what it said: docker compose --profile api --profile gui logs gui"
@@ -846,7 +1009,7 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
     if start_reviewgui; then
         if repair_proxy reviewgui nl2sql-review-gui "$review_gui_port" \
             --profile feedback --profile review --profile reviewgui; then
-            info "Review interface is healthy at http://localhost:$review_gui_port"
+            info "Review interface is healthy at $gui_scheme://localhost:$review_gui_port"
         else
             warn "the review interface is up but cannot reach the review service."
             warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
@@ -874,7 +1037,7 @@ if [[ $WITH_CURATE -eq 1 ]]; then
     if start_curategui; then
         if repair_proxy curategui nl2sql-curate-gui "$curate_gui_port" \
             --profile feedback --profile review --profile curategui; then
-            info "Curation interface is healthy at http://localhost:$curate_gui_port"
+            info "Curation interface is healthy at $gui_scheme://localhost:$curate_gui_port"
         else
             warn "the curation interface is up but cannot reach the review service."
             warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
@@ -926,7 +1089,7 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
     if start_consolegui; then
         if repair_proxy consolegui nl2sql-console-gui "$console_gui_port" \
             --profile console --profile consolegui; then
-            info "SQL console interface is healthy at http://localhost:$console_gui_port"
+            info "SQL console interface is healthy at $gui_scheme://localhost:$console_gui_port"
         else
             warn "the SQL console's interface is up but cannot reach the console."
             warn "Check what it said: docker compose --profile console --profile consolegui logs consolegui"
@@ -942,7 +1105,7 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
         127.0.0.1|localhost|::1) console_exposed=0 ;;
         *) console_exposed=1 ;;
     esac
-    if [[ $console_exposed -eq 1 && -z "$(compose_env CONSOLE_TOKEN "")" ]]; then
+    if [[ $console_exposed -eq 1 && -z "$(compose_env CONSOLE_TOKEN "")" ]] && ! signin_on; then
         warn "the SQL console is published on $console_bind with no CONSOLE_TOKEN, so"
         warn "anything that can reach it may run SQL as the agent's database role."
     fi
@@ -961,27 +1124,41 @@ start_mlflow() {
     await_health nl2sql-mlflow
 }
 
+# MLflow itself publishes nothing: a browser and the benchmark reach it
+# through this, which is HTTPS and asks the auth service about every request.
+start_mlflowproxy() {
+    docker compose --profile mlflow up -d mlflowproxy >/dev/null 2>&1 || return 1
+    await_health nl2sql-mlflow-proxy
+}
+
 if [[ $WITH_MLFLOW -eq 1 ]]; then
     step "Starting MLflow"
     info "The first start fetches MLflow's image, about 370 MB."
     if start_mlflow; then
-        info "MLflow is healthy at http://localhost:$mlflow_port"
         if [[ -z "$(compose_env MLFLOW_TRACKING_URI "")" ]]; then
             warn "MLFLOW_TRACKING_URI is not set, so the agent will not trace to it."
             warn "setup.sh writes one into .env; add it there or export it before starting."
+        fi
+        if start_mlflowproxy; then
+            info "MLflow is healthy at $gui_scheme://localhost:$mlflow_port"
+        else
+            warn "MLflow is up, and tracing, but its front door did not become healthy,"
+            warn "so its interface cannot be reached from this machine."
+            warn "Check what it said: docker compose --profile mlflow logs mlflowproxy"
         fi
     else
         warn "MLflow did not become healthy, so questions are answered untraced."
         warn "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb"
     fi
-    # Its interface has no login, and what it shows includes every row every
-    # question returned -- so, like the console, it is this machine's unless
-    # someone says otherwise, and saying otherwise is worth a warning.
+    # What it shows includes every row every question returned. With sign-in
+    # its front door lets in nl2sql_reviewers and nl2sql_admins only; without
+    # it, nobody is asked -- so, like the console, it is this machine's
+    # unless someone says otherwise, and saying otherwise is worth a warning.
     case "$mlflow_bind" in
         127.0.0.1|localhost|::1) mlflow_exposed=0 ;;
         *) mlflow_exposed=1 ;;
     esac
-    if [[ $mlflow_exposed -eq 1 ]]; then
+    if [[ $mlflow_exposed -eq 1 ]] && ! signin_on; then
         warn "MLflow is published on $mlflow_bind with no login: anything that can"
         warn "reach it can read every question, query and result, and delete them."
     fi
@@ -1006,6 +1183,31 @@ if [[ $QUIET -eq 0 ]]; then
     ./launch.sh --help     other options
     docker compose down    stop the databases
 EOF
+    if [[ $WITH_SIGNIN -eq 1 ]]; then
+        cat <<EOF
+
+==> Sign-in is on. Every page asks who you are. The first person is
+    $(compose_env LDAP_ADMIN_USER admin), whose password was generated into .env:
+
+    grep LDAP_ADMIN_PASSWORD .env
+
+    The groups a person is in decide what they may open: nl2sql-users ask
+    questions, nl2sql-reviewers review and read MLflow, nl2sql-curators
+    curate, reviewers and curators use the SQL console, and nl2sql-admins
+    manage the directory. What a person asks runs as their own database role.
+EOF
+        if [[ $WITH_DIRECTORY_GUI -eq 1 ]]; then
+            cat <<EOF
+
+    Add people, and put them in groups, at:
+
+    open $gui_scheme://localhost:$directory_gui_port
+
+    Or load them from a file on the directory's first start: LDAP_SEED_FILE
+    in .env, with ldap/seed/people.example.csv as the shape (ldap/README.md).
+EOF
+        fi
+    fi
     if [[ $WITH_API -eq 1 ]]; then
         cat <<EOF
 
@@ -1015,12 +1217,33 @@ EOF
     docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
 
     curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/meta"
+EOF
+        if [[ $WITH_SIGNIN -eq 1 ]]; then
+            cat <<EOF
+
+    # sign in: the "token" in the answer is a session, sent as a bearer token
+    curl --cacert ./nl2sql-api.crt "$auth_scheme://localhost:$auth_port/auth/token" \\
+         -H 'Content-Type: application/json' \\
+         -d '{"username": "$(compose_env LDAP_ADMIN_USER admin)", "password": "..."}'
+    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
+         -H "Authorization: Bearer \$TOKEN" -H 'Content-Type: application/json' \\
+         -d '{"question": "How many stores are there?"}'
+
+    # the outside-container smoke test presents API_TOKEN, a service token:
+    # set one in .env, then
+    docker compose --profile api run --rm apitest
+EOF
+        else
+            cat <<EOF
     curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
          -H 'Content-Type: application/json' \\
          -d '{"question": "How many stores are there?"}'
 
     # or drive the whole API from an outside container, with nothing but curl
     docker compose --profile api run --rm apitest
+EOF
+        fi
+        cat <<EOF
 
     Browse it at $api_scheme://localhost:$api_port/docs
     agent/API.md is the contract a GUI is written against.
@@ -1031,7 +1254,7 @@ EOF
 
 ==> The review interface is up:
 
-    open http://localhost:$review_gui_port
+    open $gui_scheme://localhost:$review_gui_port
 
     Verdicts given in the web and desktop interfaces land in the staging
     database and wait here, one pane per verdict:
@@ -1063,7 +1286,7 @@ EOF
 
 ==> The curation interface is up:
 
-    open http://localhost:$curate_gui_port
+    open $gui_scheme://localhost:$curate_gui_port
 
     Three tabs, each written directly rather than out of the review queue,
     and each run against the live retail database before it can be saved:
@@ -1090,7 +1313,7 @@ EOF
 
 ==> The SQL console is up:
 
-    open http://localhost:$console_gui_port
+    open $gui_scheme://localhost:$console_gui_port
 
     Paste the SQL an answer was built from, or pick a table, and run it one
     of three ways: Run returns the rows, Plan stops at the planner's
@@ -1108,7 +1331,7 @@ EOF
 
 ==> MLflow is up:
 
-    open http://localhost:$mlflow_port
+    open $gui_scheme://localhost:$mlflow_port
 
     Every question the agent answers -- from a terminal, the API or the
     benchmark -- is a trace in the experiment $(compose_env MLFLOW_EXPERIMENT_NAME nl2sql-agent): one span per
@@ -1143,11 +1366,12 @@ EOF
 
 ==> The web interface is up:
 
-    open http://localhost:$gui_port
+    open $gui_scheme://localhost:$gui_port
 
     Ask a question and watch the pipeline work through it, then say whether
-    the answer was right. nginx in that container holds the API token and
-    verifies the API's certificate, so the browser sees neither.
+    the answer was right. nginx in that container verifies the API's
+    certificate; with sign-in on, the session you sign in with is what
+    reaches the API, and your questions run as your own database role.
 
     docker compose --profile api --profile gui logs -f gui
     gui/README.md explains how it is put together.

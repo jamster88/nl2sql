@@ -467,9 +467,14 @@ def test_turning_tls_off_is_called_out_as_clear_text(run_launch):
 
 
 def test_an_api_with_no_token_warns_before_it_is_exposed(run_launch):
-    result = run_launch("--api")
+    result = run_launch("--api", "--no-auth")
     assert "no API_TOKEN is set" in result.output
     assert "Set API_TOKEN in .env before exposing this off this machine" in result.output
+
+
+def test_with_sign_in_on_no_token_is_nothing_to_warn_about(run_launch):
+    """Every caller is somebody: a session or a service token."""
+    assert "no API_TOKEN is set" not in run_launch("--api").output
 
 
 def test_a_token_in_the_env_silences_that_warning(run_launch):
@@ -509,7 +514,7 @@ def test_the_gui_flag_starts_it_with_both_profiles(run_launch):
     """
     result = run_launch("--gui")
     assert result.called("--profile api --profile gui up -d gui")
-    assert "GUI is healthy at http://localhost:8080" in result.output
+    assert "GUI is healthy at https://localhost:8080" in result.output
 
 
 def test_asking_for_the_gui_asks_for_the_api_behind_it(run_launch):
@@ -528,7 +533,7 @@ def test_the_api_alone_does_not_drag_the_gui_in(run_launch):
 
 def test_the_gui_port_follows_what_compose_will_use(run_launch):
     result = run_launch("--gui", env_file="IMAGE_NAME=x\nGUI_PORT=9080\n")
-    assert "GUI is healthy at http://localhost:9080" in result.output
+    assert "GUI is healthy at https://localhost:9080" in result.output
 
 
 def test_a_gui_container_that_never_comes_up_is_reported(run_launch):
@@ -548,7 +553,7 @@ def test_a_gui_container_that_is_up_but_never_healthy_is_waited_out_then_reporte
 
 def test_the_closing_lines_say_where_to_open_it(run_launch):
     output = run_launch("--gui").output
-    assert "open http://localhost:8080" in output
+    assert "open https://localhost:8080" in output
     assert "gui/README.md" in output
 
 
@@ -556,9 +561,9 @@ def test_the_closing_lines_say_what_the_browser_is_spared(run_launch):
     """The reason the GUI ships with a proxy rather than CORS settings, said
     once where someone deploying it will read it.
     """
-    output = run_launch("--gui").output
-    assert "holds the API token and" in output
-    assert "verifies the API's certificate" in output
+    output = " ".join(run_launch("--gui").output.split())
+    assert "nginx in that container verifies the API's certificate" in output
+    assert "the session you sign in with is what reaches the API" in output
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +630,7 @@ def test_the_review_flag_starts_the_service_and_its_interface(run_launch):
     assert result.called("--profile feedback --profile review up -d review")
     assert result.called("--profile feedback --profile review --profile reviewgui up -d reviewgui")
     assert "Review service is healthy at https://localhost:8444" in result.output
-    assert "Review interface is healthy at http://localhost:8081" in result.output
+    assert "Review interface is healthy at https://localhost:8081" in result.output
 
 
 def test_asking_for_review_asks_for_everything_under_it(run_launch):
@@ -646,7 +651,7 @@ def test_the_review_ports_follow_what_compose_will_use(run_launch):
         "--review", env_file="IMAGE_NAME=x\nREVIEW_PORT=9444\nREVIEW_GUI_PORT=9081\n"
     )
     assert "https://localhost:9444" in result.output
-    assert "http://localhost:9081" in result.output
+    assert "https://localhost:9081" in result.output
 
 
 def test_a_review_service_that_never_comes_up_is_reported(run_launch):
@@ -674,7 +679,7 @@ def test_a_container_that_died_is_not_waited_out(run_launch):
 
 def test_the_closing_lines_say_where_to_open_the_review_interface(run_launch):
     output = run_launch("--review").output
-    assert "open http://localhost:8081" in output
+    assert "open https://localhost:8081" in output
     assert "review/README.md" in output
 
 
@@ -766,7 +771,7 @@ def test_the_closing_lines_say_a_judgement_can_be_taken_back(run_launch):
 def test_the_gui_is_checked_through_its_proxy_not_just_for_health(run_launch):
     result = run_launch("--gui")
     assert result.called("readyz"), "nothing asked the API for anything through the proxy"
-    assert "GUI is healthy at http://localhost:8080" in result.output
+    assert "GUI is healthy at https://localhost:8080" in result.output
 
 
 def test_a_gui_whose_proxy_cannot_reach_the_api_is_restarted(run_launch):
@@ -775,7 +780,7 @@ def test_a_gui_whose_proxy_cannot_reach_the_api_is_restarted(run_launch):
     assert "cannot reach the API through its proxy" in result.output
     assert result.called("restart gui")
     # And once restarted it is reported as working, not as broken.
-    assert "GUI is healthy at http://localhost:8080" in result.output
+    assert "GUI is healthy at https://localhost:8080" in result.output
 
 
 def test_a_working_gui_proxy_is_not_restarted(run_launch):
@@ -802,7 +807,7 @@ def test_a_review_interface_whose_proxy_is_stale_is_restarted(run_launch):
 
     assert "cannot reach the API through its proxy" in result.output
     assert result.called("restart reviewgui")
-    assert "Review interface is healthy at http://localhost:8081" in result.output
+    assert "Review interface is healthy at https://localhost:8081" in result.output
 
 
 def test_a_gui_proxy_a_restart_does_not_fix_is_reported_not_papered_over(run_launch):
@@ -845,7 +850,7 @@ def test_the_console_flag_starts_the_console_and_its_interface(run_launch):
     assert result.called("--profile console up -d console")
     assert result.called("--profile console --profile consolegui up -d consolegui")
     assert "SQL console is healthy at https://localhost:8445" in result.output
-    assert "SQL console interface is healthy at http://localhost:8082" in result.output
+    assert "SQL console interface is healthy at https://localhost:8082" in result.output
 
 
 def test_asking_for_the_console_starts_the_api_first(run_launch):
@@ -869,8 +874,8 @@ def test_the_console_scheme_follows_the_tls_setting(run_launch):
 def test_the_console_ports_follow_what_compose_will_use(run_launch):
     result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_PORT=9445\nCONSOLE_GUI_PORT=9082\n")
     assert "https://localhost:9445" in result.output
-    assert "SQL console interface is healthy at http://localhost:9082" in result.output
-    assert "open http://localhost:9082" in result.output
+    assert "SQL console interface is healthy at https://localhost:9082" in result.output
+    assert "open https://localhost:9082" in result.output
 
 
 def test_a_console_that_never_comes_up_is_reported(run_launch):
@@ -917,7 +922,7 @@ def test_a_console_interface_whose_proxy_is_stale_is_restarted(run_launch):
 
     assert result.called("--profile console --profile consolegui restart consolegui")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-console-gui")
-    assert "SQL console interface is healthy at http://localhost:8082" in result.output
+    assert "SQL console interface is healthy at https://localhost:8082" in result.output
 
 
 def test_a_console_proxy_a_restart_does_not_fix_is_reported(run_launch):
@@ -936,9 +941,15 @@ def test_a_console_on_this_machine_only_needs_no_token(run_launch, bind):
 
 
 def test_a_console_opened_to_the_network_without_a_token_is_warned_about(run_launch):
-    result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\n")
+    result = run_launch("--console", "--no-auth", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\n")
     assert "the SQL console is published on 0.0.0.0 with no CONSOLE_TOKEN, so" in result.output
     assert "anything that can reach it may run SQL as the agent's database role." in result.output
+
+
+def test_a_console_opened_to_the_network_with_sign_in_on_is_not(run_launch):
+    """Only reviewers and curators get past its sign-in."""
+    result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\n")
+    assert "with no CONSOLE_TOKEN" not in result.output
 
 
 def test_a_console_opened_to_the_network_with_a_token_is_not(run_launch):
@@ -950,7 +961,7 @@ def test_a_console_opened_to_the_network_with_a_token_is_not(run_launch):
 
 def test_the_closing_lines_say_where_the_console_is_and_what_it_answers(run_launch):
     output = " ".join(run_launch("--console").output.split())
-    assert "open http://localhost:8082" in output
+    assert "open https://localhost:8082" in output
     assert "Run returns the rows, Plan stops at the planner's estimate, Analyze times a real run" in output
     assert "which of its gates would have refused it" in output
     assert "console/README.md" in output
@@ -1191,21 +1202,33 @@ def test_the_mlflow_flag_starts_mlflow_and_says_where_traces_go(run_launch):
 
     assert result.returncode == 0
     assert result.called("--profile mlflow up -d mlflow")
-    assert "MLflow is healthy at http://localhost:5001" in result.output
+    assert "MLflow is healthy at https://localhost:5001" in result.output
     assert "==> MLflow is up:" in result.output
-    assert "open http://localhost:5001" in result.output
+    assert "open https://localhost:5001" in result.output
     output = " ".join(result.output.split())
     assert "is a trace in the experiment nl2sql-agent: one span per agent and per model call" in output
     assert "docker compose --profile mlflow logs -f mlflow" in output
     assert "WARNING" not in result.output
 
 
-def test_mlflow_needs_neither_the_api_nor_an_interface(run_launch):
-    """A question asked from a terminal is traced too, so tracing is no
-    reason to open the API's port."""
+def test_mlflow_brings_the_api_for_its_front_doors_certificate_but_no_interface(run_launch):
+    """A question asked from a terminal is traced too -- but MLflow's front
+    door presents the certificate the API writes, and asks the auth service,
+    which starts with the API, about every request."""
     result = run_launch("--mlflow", env_file=TRACED_ENV_FILE)
-    assert not result.called("up -d api")
+    assert result.called("--profile api up -d api")
+    assert result.index_of("--profile api up -d api") < result.index_of("--profile mlflow up -d mlflowproxy")
+    assert result.index_of("--profile mlflow up -d mlflow") < result.index_of("--profile mlflow up -d mlflowproxy")
     assert not result.called("up -d gui")
+
+
+def test_mlflow_whose_front_door_does_not_come_up_is_still_tracing_and_says_so(run_launch):
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE, env={"FAKE_MLFLOW_PROXY_HEALTH": "unhealthy"})
+    output = " ".join(result.output.split())
+    assert result.returncode == 0
+    assert "MLflow is up, and tracing, but its front door did not become healthy" in output
+    assert "docker compose --profile mlflow logs mlflowproxy" in output
+    assert "MLflow is healthy at" not in output
 
 
 def test_mlflow_comes_up_after_the_api_it_does_not_hold_up(run_launch):
@@ -1217,8 +1240,8 @@ def test_mlflow_comes_up_after_the_api_it_does_not_hold_up(run_launch):
 
 def test_mlflows_port_and_experiment_follow_what_compose_will_use(run_launch):
     result = run_launch("--mlflow", env_file=TRACED_ENV_FILE + "MLFLOW_PORT=6001\nMLFLOW_EXPERIMENT_NAME=ablations\n")
-    assert "MLflow is healthy at http://localhost:6001" in result.output
-    assert "open http://localhost:6001" in result.output
+    assert "MLflow is healthy at https://localhost:6001" in result.output
+    assert "open https://localhost:6001" in result.output
     assert "the experiment ablations" in " ".join(result.output.split())
 
 
@@ -1247,8 +1270,14 @@ def test_mlflow_on_this_machine_only_is_not_warned_about(run_launch, bind):
     assert "with no login" not in result.output
 
 
-def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
+def test_mlflow_published_beyond_this_machine_with_sign_in_on_is_not_warned_about(run_launch):
+    """Its front door lets in reviewers and administrators, and nobody else."""
     result = run_launch("--mlflow", env_file=TRACED_ENV_FILE + "MLFLOW_BIND_ADDRESS=0.0.0.0\n")
+    assert "MLflow is published" not in result.output
+
+
+def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
+    result = run_launch("--mlflow", "--no-auth", env_file=TRACED_ENV_FILE + "MLFLOW_BIND_ADDRESS=0.0.0.0\n")
     output = " ".join(result.output.split())
     assert "MLflow is published on 0.0.0.0 with no login: anything that can" in result.output
     assert "reach it can read every question, query and result, and delete them." in result.output
@@ -1453,7 +1482,7 @@ def test_curate_starts_the_review_service_and_its_own_page_but_not_the_review_pa
     assert result.called("--profile feedback --profile review up -d review")
     assert result.called("--profile feedback --profile review --profile curategui up -d curategui")
     assert not result.called("up -d reviewgui")
-    assert "Curation interface is healthy at http://localhost:8083" in result.output
+    assert "Curation interface is healthy at https://localhost:8083" in result.output
 
 
 def test_curate_asks_for_the_api_whose_certificate_the_service_presents(run_launch):
@@ -1472,14 +1501,14 @@ def test_review_and_curate_together_start_one_service_and_both_pages(run_launch)
 
 def test_the_curation_port_follows_what_compose_will_use(run_launch):
     result = run_launch("--curate", env_file="IMAGE_NAME=x\nCURATE_GUI_PORT=9083\n")
-    assert "Curation interface is healthy at http://localhost:9083" in result.output
+    assert "Curation interface is healthy at https://localhost:9083" in result.output
     assert result.called("localhost:9083/readyz")
 
 
 def test_the_closing_lines_say_where_to_curate_and_what_is_written(run_launch):
     output = run_launch("--curate").output
     assert "==> The curation interface is up:" in output
-    assert "open http://localhost:8083" in output
+    assert "open https://localhost:8083" in output
     assert "context_questions/sql_snippets.md" in output and "git diff" in output
     assert "curate/README.md" in output
 
@@ -1498,10 +1527,157 @@ def test_a_curation_page_that_never_comes_up_is_reported(run_launch):
 def test_a_curation_page_whose_proxy_is_stale_is_restarted(run_launch):
     result = run_launch("--curate", env={"FAKE_PROXY_BROKEN": "8083"})
     assert result.called("restart curategui")
-    assert "Curation interface is healthy at http://localhost:8083" in result.output
+    assert "Curation interface is healthy at https://localhost:8083" in result.output
 
 
 def test_a_curation_proxy_a_restart_does_not_fix_is_reported(run_launch):
     result = run_launch("--curate", env={"FAKE_PROXY_DEAD": "8083"})
     assert "the curation interface is up but cannot reach the review service." in result.output
     assert "Curation interface is healthy" not in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sign-in
+# ---------------------------------------------------------------------------
+
+SIGNIN_SECRETS = ("LDAP_ADMIN_PASSWORD", "LDAP_SERVICE_PASSWORD", "AUTH_ROLESYNC_PASSWORD")
+
+
+def _ldap_hba_calls(result) -> list[str]:
+    path = result.workdir.parent / "ldap-hba"
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def test_with_the_api_the_database_is_prepared_and_the_directory_and_auth_service_start(run_launch):
+    result = run_launch("--api")
+    assert result.returncode == 0
+    # The database's half: the group roles and the role sync's login, then
+    # the pg_hba lines -- naming the two roles that keep their own passwords.
+    assert result.called("-v rolesync=nl2sql_rolesync")
+    [hba] = _ldap_hba_calls(result)
+    assert "NL2SQL_SIGNIN=on" in hba and "NL2SQL_DB=nl2sql_retail" in hba
+    assert "NL2SQL_SERVICE_ROLES=nl2sql_reader,nl2sql_rolesync" in hba
+    assert "NL2SQL_LDAP_BASE_DN=dc=nl2sql,dc=local" in hba
+    assert "-u postgres" in hba and hba.rstrip().endswith("postgres sh -s")
+    # Then the services, after the API whose certificate the auth service presents.
+    assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d auth")
+    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-ldap")
+    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-auth")
+    assert result.called("--profile api --profile auth --profile directorygui up -d directorygui")
+    assert "Auth service is healthy at https://localhost:8446, with a standalone directory" in result.output
+    assert "Directory page is healthy at https://localhost:8084" in result.output
+
+
+def test_the_closing_lines_say_who_signs_in_first_and_where_people_are_added(run_launch):
+    output = " ".join(run_launch("--gui").output.split())
+    assert "==> Sign-in is on. Every page asks who you are. The first person is admin," in output
+    assert "grep LDAP_ADMIN_PASSWORD .env" in output
+    assert "nl2sql-users ask questions, nl2sql-reviewers review and read MLflow" in output
+    assert "open https://localhost:8084" in output
+    assert "LDAP_SEED_FILE in .env, with ldap/seed/people.example.csv as the shape" in output
+    # And the REST API's example signs in first.
+    assert "https://localhost:8446/auth/token" in output
+    assert '-H "Authorization: Bearer $TOKEN"' in output
+
+
+def test_a_terminal_only_start_has_nobody_to_sign_in_and_leaves_pg_hba_alone(run_launch):
+    result = run_launch()
+    assert not result.called("--profile auth")
+    assert not result.called("rolesync=")
+    assert _ldap_hba_calls(result) == []
+    assert "Sign-in is" not in result.output
+
+
+def test_an_env_from_before_sign_in_is_given_its_passwords_once_and_only_it_can_read_them(run_launch):
+    result = run_launch("--api")
+    values = result.env_file()
+    for key in SIGNIN_SECRETS:
+        assert re.fullmatch(r"[0-9a-f]{48}", values[key]), key
+    assert len({values[key] for key in SIGNIN_SECRETS}) == 3
+    assert "generated 3 sign-in password(s) into .env, which only you can read" in result.output
+    assert (result.workdir / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_passwords_already_in_env_are_never_replaced(run_launch):
+    kept = "".join(f"{key}=kept-{index}\n" for index, key in enumerate(SIGNIN_SECRETS))
+    result = run_launch("--api", env_file="IMAGE_NAME=x\n" + kept)
+    assert [result.env_file()[key] for key in SIGNIN_SECRETS] == ["kept-0", "kept-1", "kept-2"]
+    assert "sign-in password(s)" not in result.output
+    assert result.called("-v rolesync_password=kept-2")
+
+
+@pytest.mark.parametrize("how", ["flag", "env"])
+def test_with_sign_in_off_nothing_is_started_and_pg_hba_is_put_back(run_launch, how):
+    if how == "flag":
+        result = run_launch("--gui", "--no-auth")
+    else:
+        result = run_launch("--gui", env_file="IMAGE_NAME=x\nAUTH_ENABLED=false\n")
+    assert result.returncode == 0
+    assert not result.called("--profile auth")
+    assert not result.called("rolesync=")
+    [hba] = _ldap_hba_calls(result)
+    assert "NL2SQL_SIGNIN=off" in hba
+    assert "==> Sign-in is off (AUTH_ENABLED=false)" in result.output
+    assert "every page and port is open to whoever can reach it" in result.output
+    assert "Sign-in is on" not in result.output
+    assert not any(key in result.env_file() for key in SIGNIN_SECRETS)
+
+
+def test_no_auth_reaches_every_service_compose_starts(run_launch):
+    """Exported, because compose reads the shell before .env: a service the
+    script never asks about is still told sign-in is off."""
+    result = run_launch("--gui", "--no-auth")
+    told = (result.workdir.parent / "auth-enabled").read_text().split()
+    assert told and set(told) == {"false"}
+
+
+def test_a_replica_has_no_directory_page_and_says_where_people_are_edited(run_launch):
+    result = run_launch("--api", env_file="IMAGE_NAME=x\nLDAP_MODE=replica\nLDAP_UPSTREAM_URI=ldaps://ad.example.com:636\n")
+    assert "Auth service is healthy at https://localhost:8446, with a replica directory" in result.output
+    assert "The directory copies ldaps://ad.example.com:636: people are added and changed there." in result.output
+    assert not result.called("up -d directorygui")
+    assert "open https://localhost:8084" not in result.output
+
+
+def test_a_plain_auth_service_is_said_to_be_one(run_launch):
+    result = run_launch("--api", env_file="IMAGE_NAME=x\nAUTH_TLS_ENABLED=false\n")
+    assert "Auth service is healthy at http://localhost:8446" in result.output
+
+
+@pytest.mark.parametrize("failing", ["FAKE_LDAP_HEALTH", "FAKE_AUTH_HEALTH"])
+def test_a_directory_or_auth_service_that_does_not_come_up_is_reported_and_the_rest_carries_on(run_launch, failing):
+    result = run_launch("--gui", env={failing: "unhealthy", "FAKE_AUTH_RUNNING": "false"})
+    output = " ".join(result.output.split())
+    assert result.returncode == 0
+    assert "the directory or the auth service did not become healthy, so nobody can sign in." in output
+    assert "Check what they said: docker compose --profile api --profile auth logs ldap auth" in output
+    assert "GUI is healthy at https://localhost:8080" in output
+    assert not result.called("up -d directorygui")
+
+
+def test_a_directory_page_that_does_not_come_up_is_reported(run_launch):
+    result = run_launch("--api", env={"FAKE_DIRECTORY_GUI_HEALTH": "unhealthy"})
+    output = " ".join(result.output.split())
+    assert "the directory page did not become healthy." in output
+    assert "docker compose --profile api --profile auth --profile directorygui logs directorygui" in output
+    assert "open https://localhost:8084" not in output
+
+
+@pytest.mark.parametrize("failing", ["FAKE_AUTH_ROLES_FAIL", "FAKE_LDAP_HBA_FAILS"])
+def test_a_database_that_cannot_be_prepared_for_sign_in_is_warned_about(run_launch, failing):
+    result = run_launch("--api", env={failing: "1"})
+    assert result.returncode == 0
+    assert "could not prepare the retail database for sign-in, so nobody will be able to." in result.output
+    assert "Check what it said: docker compose logs postgres" in result.output
+
+
+def test_pg_hba_that_cannot_be_put_back_is_warned_about(run_launch):
+    result = run_launch("--no-auth", env={"FAKE_LDAP_HBA_FAILS": "1"})
+    assert result.returncode == 0
+    assert "could not take the sign-in lines out of the retail database's pg_hba.conf." in result.output
+
+
+def test_plain_pages_are_probed_and_named_over_http(run_launch):
+    result = run_launch("--gui", env_file="IMAGE_NAME=x\nGUI_TLS_ENABLED=false\n")
+    assert "GUI is healthy at http://localhost:8080" in result.output
+    assert result.called("curl readyz -s -k -o /dev/null -w %{http_code} --max-time 10 http://localhost:8080/readyz")

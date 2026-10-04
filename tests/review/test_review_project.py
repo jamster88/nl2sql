@@ -251,7 +251,7 @@ def test_the_default_config_is_overwritten(dockerfile: str):
 
 def test_only_this_projects_variables_are_substituted(dockerfile: str):
     """Without the filter, envsubst also eats nginx's own $uri and $host."""
-    assert 'NGINX_ENVSUBST_FILTER="^REVIEW_"' in dockerfile
+    assert 'NGINX_ENVSUBST_FILTER="^(REVIEW_|AUTH_)"' in dockerfile
 
 
 def test_the_image_has_a_health_check(dockerfile: str):
@@ -276,6 +276,16 @@ def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "REVIEW_UPSTREAM": "https://nl2sql-review:8444",
         "REVIEW_CACERT": "/etc/nl2sql/tls/server.crt",
         "REVIEW_SSL_NAME": "nl2sql-review",
+        "NGINX_AUTH_TLS_CONF": str(tmp_path / "auth-tls.conf"),
+        "NGINX_SERVER_TLS_CONF": str(tmp_path / "server-tls.conf"),
+        # Plain unless a test says otherwise, so each decision is tested on
+        # its own rather than every test needing every certificate.
+        "AUTH_UPSTREAM": "http://nl2sql-auth:8446",
+        "AUTH_CACERT": "/etc/nl2sql/tls/server.crt",
+        "AUTH_SSL_NAME": "nl2sql-auth",
+        "REVIEW_GUI_TLS_ENABLED": "false",
+        "REVIEW_GUI_TLS_CERT_FILE": "/etc/nl2sql/tls/server.crt",
+        "REVIEW_GUI_TLS_KEY_FILE": "/etc/nl2sql/tls/server.key",
     }
     env.update(overrides)
     return env
@@ -391,3 +401,76 @@ def test_the_plain_http_note_says_what_is_at_stake(config_envsh: Path, tmp_path:
     written = tmp_path / "upstream-tls.conf"
     _source(config_envsh, _env(tmp_path, REVIEW_UPSTREAM="http://nl2sql-review:8444"))
     assert "golden question set" in written.read_text()
+
+
+# --- sign-in --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("enabled", ["true", "1", "yes", "on"])
+def test_with_sign_in_on_the_proxy_adds_no_token(config_envsh: Path, enabled, tmp_path: Path):
+    """The browser's session goes through instead; a token here would let
+    every visitor act as the service."""
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1", REVIEW_TOKEN="s3cret", AUTH_ENABLED=enabled)
+    result = _source(config_envsh, env, 'printf "%s" "$REVIEW_AUTH_HEADER"')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_the_sign_in_hop_is_verified(config_envsh: Path, tmp_path: Path):
+    cacert = tmp_path / "server.crt"
+    cacert.write_text("readable")
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1", AUTH_UPSTREAM="https://nl2sql-auth:8446", AUTH_CACERT=str(cacert))
+    assert _source(config_envsh, env).returncode == 0
+    written = (tmp_path / "auth-tls.conf").read_text()
+    assert "proxy_ssl_verify on;" in written and "proxy_ssl_name nl2sql-auth;" in written
+
+
+def test_a_plain_sign_in_hop_says_what_is_at_stake(config_envsh: Path, tmp_path: Path):
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1")
+    assert _source(config_envsh, env).returncode == 0
+    assert "passwords cross this hop in clear text" in (tmp_path / "auth-tls.conf").read_text()
+
+
+def test_a_sign_in_hop_with_no_certificate_refuses_to_start(config_envsh: Path, tmp_path: Path):
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1", AUTH_UPSTREAM="https://nl2sql-auth:8446",
+               AUTH_CACERT=str(tmp_path / "absent.crt"))
+    result = _source(config_envsh, env)
+    assert result.returncode != 0
+    assert "nl2sql-review-gui: AUTH_UPSTREAM is https://nl2sql-auth:8446 but there is no" in result.stderr
+    assert "readable certificate at AUTH_CACERT=" in result.stderr
+    assert "The auth service presents the certificate the agent API generates," in result.stderr
+    assert "so this usually means the API has not started yet, or the apitls" in result.stderr
+    assert "volume is not mounted here." in result.stderr
+
+
+def test_the_page_is_https_with_the_apis_certificate(config_envsh: Path, tmp_path: Path):
+    cert, key = tmp_path / "server.crt", tmp_path / "server.key"
+    cert.write_text("c")
+    key.write_text("k")
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1", REVIEW_GUI_TLS_ENABLED="true",
+               REVIEW_GUI_TLS_CERT_FILE=str(cert), REVIEW_GUI_TLS_KEY_FILE=str(key))
+    result = _source(config_envsh, env, 'printf "[%s]" "$REVIEW_GUI_LISTEN_TLS"')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "[ ssl]"
+    written = (tmp_path / "server-tls.conf").read_text()
+    assert f"ssl_certificate {cert};" in written and f"ssl_certificate_key {key};" in written
+
+
+def test_an_https_page_with_no_certificate_refuses_to_start(config_envsh: Path, tmp_path: Path):
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1", REVIEW_GUI_TLS_ENABLED="true",
+               REVIEW_GUI_TLS_CERT_FILE=str(tmp_path / "absent.crt"))
+    result = _source(config_envsh, env)
+    assert result.returncode != 0
+    assert "nl2sql-review-gui: REVIEW_GUI_TLS_ENABLED is on but" in result.stderr
+    assert "is not readable. They come from the apitls volume" in result.stderr
+    assert "the API writes on its first start; mount it, or set REVIEW_GUI_TLS_ENABLED=false" in result.stderr
+    assert "behind something that terminates TLS itself." in result.stderr
+
+
+@pytest.mark.parametrize("off", ["false", "0", "no", "off"])
+def test_a_plain_page_is_said_to_be_one(config_envsh: Path, off, tmp_path: Path):
+    env = _env(tmp_path, REVIEW_UPSTREAM="http://upstream:1", REVIEW_GUI_TLS_ENABLED=off)
+    result = _source(config_envsh, env, 'printf "[%s]" "$REVIEW_GUI_LISTEN_TLS"')
+    assert result.stdout == "[]"
+    assert "every password typed into it" in (tmp_path / "server-tls.conf").read_text()
+

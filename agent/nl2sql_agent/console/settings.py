@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 
+from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
+
 from ..api.settings import DEFAULT_CERT_FILE, DEFAULT_KEY_FILE, _env_tuple
 from ..config import _env, _env_bool, _env_int, _env_str
 
@@ -88,6 +90,15 @@ class ConsoleSettings:
     # its own nginx, and a SQL runner that any page in the browser could
     # call is not something to offer without being asked.
     cors_origins: tuple[str, ...] = ()
+    # Sign-in (the auth service). On, a person's session is what every /v1
+    # route needs, they must hold one of `allowed_roles`, and their query runs
+    # as their own database role -- the role the agent runs their questions
+    # as, which keeps this the database as the agent sees it, for them.
+    # CONSOLE_TOKEN still works, for scripts, as the agent's reader.
+    auth_enabled: bool = False
+    auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
+    auth_cookie_name: str = SESSION_COOKIE
+    allowed_roles: tuple[str, ...] = (REVIEWERS, CURATORS)
 
     # --- What a query may return ----------------------------------------
     max_rows: int = DEFAULT_MAX_ROWS
@@ -111,6 +122,10 @@ class ConsoleSettings:
             tls_key_file=_env_str("CONSOLE_TLS_KEY_FILE", DEFAULT_KEY_FILE),
             token=_env("CONSOLE_TOKEN"),
             cors_origins=_env_tuple("CONSOLE_CORS_ORIGINS", ()),
+            auth_enabled=_env_bool("AUTH_ENABLED", False),
+            auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
+            auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
+            allowed_roles=_env_tuple("CONSOLE_ALLOWED_ROLES", (REVIEWERS, CURATORS)),
             max_rows=_env_int("CONSOLE_MAX_ROWS", DEFAULT_MAX_ROWS),
             docs_enabled=_env_bool("CONSOLE_DOCS_ENABLED", True),
             log_level=_env_str("CONSOLE_LOG_LEVEL", "info"),
@@ -140,10 +155,10 @@ class ConsoleSettings:
                 "network in clear text. Only do this behind something that "
                 "terminates TLS itself."
             )
-        if not self.token:
+        if not self.token and not self.auth_enabled:
             notes.append(
-                "No CONSOLE_TOKEN is set, so anyone who can reach the port can run SQL "
-                "as the agent's database role."
+                "No CONSOLE_TOKEN is set and sign-in is off (AUTH_ENABLED=false), so anyone "
+                "who can reach the port can run SQL as the agent's database role."
             )
         if self.token and "*" in self.cors_origins:
             notes.append(

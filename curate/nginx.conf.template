@@ -9,8 +9,12 @@
 # changed.
 
 server {
-    listen ${CURATE_GUI_PORT};
+    listen ${CURATE_GUI_PORT}${CURATE_GUI_LISTEN_TLS};
     server_name _;
+
+    # The certificate, when the page is HTTPS. Written by the start-up
+    # script, which knows whether there is one.
+    include /etc/nginx/nl2sql-server-tls.conf;
 
     root /usr/share/nginx/html;
     index index.html;
@@ -35,6 +39,22 @@ server {
 
     # --- the review service ----------------------------------------------
 
+    # Sign-in: the auth service. Its session cookie comes back through here,
+    # so it belongs to this page's host -- and, a cookie being scoped by host
+    # rather than port, to every page of the stack served from it.
+    location /auth/ {
+        resolver ${CURATE_GUI_RESOLVER} valid=10s ipv6=off;
+        set $auth_upstream ${AUTH_UPSTREAM};
+        proxy_pass $auth_upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Connection "";
+        include /etc/nginx/nl2sql-auth-tls.conf;
+    }
+
     location ~ ^/(v1|healthz|readyz|openapi\.json) {
         # Resolved per request rather than once at start-up, as in the other
         # interfaces: a literal upstream is looked up while nginx parses its
@@ -47,6 +67,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # Host and port, which the service's cross-site check compares a
+        # cookie-carrying write's Origin with: another port is another site.
+        proxy_set_header X-Forwarded-Host $http_host;
         # Empty when no token is configured, and nginx omits a header whose
         # value is empty.
         proxy_set_header Authorization "${CURATE_AUTH_HEADER}";

@@ -455,8 +455,8 @@ them, for the snippet form's table picker.
 
 That is the whole thing from cold: the databases, the API, the web interface
 people vote in, the staging database, the corrections and completions stores,
-this service, and the review interface -- then <http://localhost:8080> and
-<http://localhost:8081> in your browser, the second in a window of its own.
+this service, and the review interface -- then <https://localhost:8080> and
+<https://localhost:8081> in your browser, the second in a window of its own.
 
 The same containers without the browser step, or a smaller subset:
 
@@ -593,12 +593,23 @@ to cover `nl2sql-review`, which compose does.
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `REVIEW_TOKEN` | *(none)* | Require this bearer token on `/v1` |
+| `AUTH_ENABLED` | `false` (`true` in compose) | Accept signed-in people ([`auth/README.md`](../auth/README.md)) |
+| `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
+| `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
+| `REVIEW_REVIEWER_ROLES` | `nl2sql_reviewers` | Who may work the review queue: judge, promote, fix, reopen, delete |
+| `REVIEW_CURATOR_ROLES` | `nl2sql_curators` | Who may write directly: snippets, golden pairs, corrections and completions |
+| `REVIEW_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
 | `REVIEW_CORS_ORIGINS` | `*` | Browser origins allowed to call it |
 
-Not optional the way the agent's token is. A caller here can edit the
-question set the agent is measured against; `/readyz` and the start-up banner
-both say so loudly when it is unset.
+With sign-in on, a reviewer's or curator's own name is what is recorded on
+everything they decide -- not a name typed into a form -- and the SQL they
+validate runs as their own database role. Reading the queue and the stores
+is open to either group; changing anything takes the group the route
+belongs to. A static token is a service, and may do both.
+
+With sign-in off, the token is not optional the way the agent's is. A caller
+here can edit the question set the agent is measured against; `/readyz` and
+the start-up banner both say so loudly when it is unset.
 
 There is no query-string token, unlike the agent API. That one accepts one
 because `EventSource` cannot set headers; nothing here streams, so the token
@@ -667,8 +678,10 @@ behind it, and `/readyz` and the start-up banner say so.
 ## The interface
 
 A React/TypeScript single page in [`gui/`](gui), built to static files and
-served by nginx, which proxies this service and holds the token so the
-reviewer's browser never does.
+served by nginx over HTTPS, which proxies this service and the auth service.
+With sign-in on, the page asks who you are and admits `nl2sql_reviewers`;
+the session cookie is what reaches the service. With it off, nginx holds the
+token so the reviewer's browser never does.
 
 A **separate npm project** from [`../gui`](../gui), and the separation is
 physical rather than conventional. Two Vite entry points in one project share
@@ -707,7 +720,7 @@ whether the stores caught up.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 155 tests, 100% coverage
+npm run test     # review GUI: 175 tests, 100% coverage
 ```
 
 ## Tests

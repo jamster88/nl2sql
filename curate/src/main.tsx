@@ -10,7 +10,16 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { SignInGate } from "./auth/SignInGate";
 import "./styles.css";
 
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<StrictMode><App /></StrictMode>);
+if (root) {
+  createRoot(root).render(
+    <StrictMode>
+      <SignInGate title="NL2SQL curation" needs={["nl2sql_curators"]} group="nl2sql-curators">
+        <App />
+      </SignInGate>
+    </StrictMode>,
+  );
+}

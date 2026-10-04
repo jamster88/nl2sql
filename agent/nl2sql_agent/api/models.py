@@ -350,7 +350,7 @@ class Meta(BaseModel):
     limits: Limits
     pipeline: Pipeline
     tls: dict[str, Any] = Field(default_factory=dict)
-    authentication: Literal["none", "bearer"] = "none"
+    authentication: Literal["none", "bearer", "session"] = "none"
     feedback: bool = Field(
         default=False,
         description=(

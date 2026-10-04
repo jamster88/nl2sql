@@ -62,6 +62,10 @@ class Job:
     id: str
     question: str
     principal: str | None = None
+    #: Who asked, when someone signed in did: only they see the job. None
+    #: for a service token or a server without sign-in, where every caller
+    #: is the same caller.
+    owner: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
     status: str = "queued"
     created_at: dt.datetime = field(default_factory=_now)
@@ -130,6 +134,7 @@ class JobStore:
         question: str,
         *,
         principal: str | None = None,
+        owner: str | None = None,
         metadata: dict[str, str] | None = None,
     ) -> Job:
         if self._closed:
@@ -138,6 +143,7 @@ class JobStore:
             id=uuid.uuid4().hex,
             question=question,
             principal=principal,
+            owner=owner,
             metadata=dict(metadata or {}),
         )
         with self._lock:
@@ -205,11 +211,18 @@ class JobStore:
             self._prune_locked()
             return self._jobs.get(job_id)
 
-    def list(self, *, limit: int = 50) -> list[Job]:
-        """Newest first, which is the order a GUI's history panel wants."""
+    def list(self, *, limit: int = 50, owner: str | None = None) -> list[Job]:
+        """Newest first, which is the order a GUI's history panel wants.
+
+        With `owner`, only that person's: a signed-in caller's history is
+        theirs, not everyone's who has used this server.
+        """
         with self._lock:
             self._prune_locked()
-            return list(self._jobs.values())[::-1][:limit]
+            found = list(self._jobs.values())[::-1]
+        if owner is not None:
+            found = [job for job in found if job.owner == owner]
+        return found[:limit]
 
     def cancel(self, job_id: str) -> str:
         """Returns what happened: 'cancelled', 'forgotten', 'running', or 'missing'.

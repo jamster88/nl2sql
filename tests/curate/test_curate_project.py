@@ -151,7 +151,7 @@ def test_no_token_is_baked_into_the_image(dockerfile: str):
 
 def test_the_image_serves_only_this_page_on_its_own_port(dockerfile: str):
     assert "rm -f /etc/nginx/conf.d/default.conf" in dockerfile
-    assert 'NGINX_ENVSUBST_FILTER="^CURATE_"' in dockerfile
+    assert 'NGINX_ENVSUBST_FILTER="^(CURATE_|AUTH_)"' in dockerfile
     assert "CURATE_GUI_PORT=8083" in dockerfile and "EXPOSE 8083" in dockerfile
     assert "HEALTHCHECK" in dockerfile and "/index.html" in dockerfile
     assert "/docker-entrypoint.d/10-nl2sql-curate-config.envsh" in dockerfile
@@ -171,6 +171,16 @@ def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
         "CURATE_UPSTREAM": "https://nl2sql-review:8444",
         "CURATE_CACERT": "/etc/nl2sql/tls/server.crt",
         "CURATE_SSL_NAME": "nl2sql-review",
+        "NGINX_AUTH_TLS_CONF": str(tmp_path / "auth-tls.conf"),
+        "NGINX_SERVER_TLS_CONF": str(tmp_path / "server-tls.conf"),
+        # Plain unless a test says otherwise, so each decision is tested on
+        # its own rather than every test needing every certificate.
+        "AUTH_UPSTREAM": "http://nl2sql-auth:8446",
+        "AUTH_CACERT": "/etc/nl2sql/tls/server.crt",
+        "AUTH_SSL_NAME": "nl2sql-auth",
+        "CURATE_GUI_TLS_ENABLED": "false",
+        "CURATE_GUI_TLS_CERT_FILE": "/etc/nl2sql/tls/server.crt",
+        "CURATE_GUI_TLS_KEY_FILE": "/etc/nl2sql/tls/server.key",
     }
     env.update(overrides)
     return env
@@ -209,3 +219,76 @@ def test_a_plain_http_upstream_writes_no_verification_block_and_says_what_is_at_
     assert result.returncode == 0, result.stderr
     text = (tmp_path / "upstream-tls.conf").read_text()
     assert "proxy_ssl_verify" not in text and "clear text" in text and "golden set and the snippets" in text
+
+
+# --- sign-in --------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("enabled", ["true", "1", "yes", "on"])
+def test_with_sign_in_on_the_proxy_adds_no_token(enabled, tmp_path: Path):
+    """The browser's session goes through instead; a token here would let
+    every visitor act as the service."""
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1", CURATE_TOKEN="s3cret", AUTH_ENABLED=enabled)
+    result = _source(ENVSH, env, 'printf "%s" "$CURATE_AUTH_HEADER"')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+
+
+def test_the_sign_in_hop_is_verified(tmp_path: Path):
+    cacert = tmp_path / "server.crt"
+    cacert.write_text("readable")
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1", AUTH_UPSTREAM="https://nl2sql-auth:8446", AUTH_CACERT=str(cacert))
+    assert _source(ENVSH, env).returncode == 0
+    written = (tmp_path / "auth-tls.conf").read_text()
+    assert "proxy_ssl_verify on;" in written and "proxy_ssl_name nl2sql-auth;" in written
+
+
+def test_a_plain_sign_in_hop_says_what_is_at_stake(tmp_path: Path):
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1")
+    assert _source(ENVSH, env).returncode == 0
+    assert "passwords cross this hop in clear text" in (tmp_path / "auth-tls.conf").read_text()
+
+
+def test_a_sign_in_hop_with_no_certificate_refuses_to_start(tmp_path: Path):
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1", AUTH_UPSTREAM="https://nl2sql-auth:8446",
+               AUTH_CACERT=str(tmp_path / "absent.crt"))
+    result = _source(ENVSH, env)
+    assert result.returncode != 0
+    assert "nl2sql-curate-gui: AUTH_UPSTREAM is https://nl2sql-auth:8446 but there is no" in result.stderr
+    assert "readable certificate at AUTH_CACERT=" in result.stderr
+    assert "The auth service presents the certificate the agent API generates," in result.stderr
+    assert "so this usually means the API has not started yet, or the apitls" in result.stderr
+    assert "volume is not mounted here." in result.stderr
+
+
+def test_the_page_is_https_with_the_apis_certificate(tmp_path: Path):
+    cert, key = tmp_path / "server.crt", tmp_path / "server.key"
+    cert.write_text("c")
+    key.write_text("k")
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1", CURATE_GUI_TLS_ENABLED="true",
+               CURATE_GUI_TLS_CERT_FILE=str(cert), CURATE_GUI_TLS_KEY_FILE=str(key))
+    result = _source(ENVSH, env, 'printf "[%s]" "$CURATE_GUI_LISTEN_TLS"')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "[ ssl]"
+    written = (tmp_path / "server-tls.conf").read_text()
+    assert f"ssl_certificate {cert};" in written and f"ssl_certificate_key {key};" in written
+
+
+def test_an_https_page_with_no_certificate_refuses_to_start(tmp_path: Path):
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1", CURATE_GUI_TLS_ENABLED="true",
+               CURATE_GUI_TLS_CERT_FILE=str(tmp_path / "absent.crt"))
+    result = _source(ENVSH, env)
+    assert result.returncode != 0
+    assert "nl2sql-curate-gui: CURATE_GUI_TLS_ENABLED is on but" in result.stderr
+    assert "is not readable. They come from the apitls volume" in result.stderr
+    assert "the API writes on its first start; mount it, or set CURATE_GUI_TLS_ENABLED=false" in result.stderr
+    assert "behind something that terminates TLS itself." in result.stderr
+
+
+@pytest.mark.parametrize("off", ["false", "0", "no", "off"])
+def test_a_plain_page_is_said_to_be_one(off, tmp_path: Path):
+    env = _env(tmp_path, CURATE_UPSTREAM="http://upstream:1", CURATE_GUI_TLS_ENABLED=off)
+    result = _source(ENVSH, env, 'printf "[%s]" "$CURATE_GUI_LISTEN_TLS"')
+    assert result.stdout == "[]"
+    assert "every password typed into it" in (tmp_path / "server-tls.conf").read_text()
+

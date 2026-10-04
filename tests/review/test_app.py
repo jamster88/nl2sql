@@ -51,7 +51,7 @@ def test_readiness_checks_the_database_the_document_and_the_write(client):
     assert set(body["checks"]) == {
         "staging_database", "golden_document", "document_writable",
         "retail_database", "corrections_store", "completions_store",
-        "snippets_document", "snippets_store",
+        "snippets_document", "snippets_store", "sign_in",
     }
     assert f"{BASE_PAIRS} pairs, next is {NEXT_ID}" in body["checks"]["golden_document"]["detail"]
 
@@ -920,8 +920,10 @@ def test_the_default_validator_runs_against_the_configured_retail_database(setti
     assert run("SELECT 1", "SELECT 2").valid is True
     assert seen == {
         "sql": "SELECT 1", "url": "postgresql://r/db", "reference": "SELECT 2",
-        "timeout_ms": 900, "max_rows": 7,
+        "timeout_ms": 900, "max_rows": 7, "principal": None,
     }
+    run("SELECT 1", "SELECT 2", principal="rita")
+    assert seen["principal"] == "rita", "a signed-in reviewer's SQL runs as them"
 
 
 def test_the_default_retail_ping_round_trips_the_database(settings, monkeypatch):

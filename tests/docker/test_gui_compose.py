@@ -23,6 +23,10 @@ import pytest
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+#: Worked out by the start-up script -- the sign-in hop's TLS include and this
+#: listener's -- rather than set by anyone.
+SIGN_IN_COMPUTED = {"NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF"}
 GUI = REPO_ROOT / "gui"
 
 
@@ -173,7 +177,7 @@ def _template_variables() -> set[str]:
     # Computed by the start-up script from API_TOKEN rather than set by
     # anyone, and deliberately not settable: a caller who set it directly
     # would bypass the empty-token handling.
-    return names - {"API_AUTH_HEADER", "NGINX_UPSTREAM_TLS_CONF"}
+    return names - {"API_AUTH_HEADER", "NGINX_UPSTREAM_TLS_CONF", *SIGN_IN_COMPUTED, "GUI_LISTEN_TLS"}
 
 
 def test_every_setting_the_proxy_reads_can_be_set_through_compose(gui: dict):

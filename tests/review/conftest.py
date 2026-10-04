@@ -349,6 +349,7 @@ class FakeValidator:
 
     def __init__(self, result: Validation | None = None) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.principals: list[str | None] = []
         self.result = result or Validation(
             sql="",
             valid=True,
@@ -359,8 +360,9 @@ class FakeValidator:
             elapsed_ms=3.0,
         )
 
-    def __call__(self, sql: str, reference: str) -> Validation:
+    def __call__(self, sql: str, reference: str, principal: str | None = None) -> Validation:
         self.calls.append((sql, reference))
+        self.principals.append(principal)
         return replace(self.result, sql=clean(sql))
 
 
@@ -398,10 +400,12 @@ class FakeSnippetValidator:
 
     def __init__(self, result: SnippetValidation | None = None) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.principals: list[str | None] = []
         self.result = result
 
-    def __call__(self, kind: str, applies_to: str, sql: str) -> SnippetValidation:
+    def __call__(self, kind: str, applies_to: str, sql: str, principal: str | None = None) -> SnippetValidation:
         self.calls.append((kind, applies_to, sql))
+        self.principals.append(principal)
         if self.result is not None:
             return replace(self.result, kind=kind, applies_to=applies_to, sql=sql)
         tables = [t for t in ("fact_pos_retail_sales", "dim_date", "dim_product") if t in f"{applies_to} {sql}"]

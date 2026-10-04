@@ -20,6 +20,8 @@ import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
+
 #: The document that *is* the golden set. Everything downstream -- the
 #: context store rows, the BM25 statistics, both vector tables -- is built
 #: from it, and step 5 deletes rows whose pair is no longer in it. So this
@@ -135,6 +137,17 @@ class ReviewSettings:
     # unset, and the readiness endpoint repeats it.
     token: str | None = None
     cors_origins: tuple[str, ...] = ("*",)
+    # Sign-in (the auth service). On, a person's session is what every /v1
+    # route needs: the review routes take a reviewer, the curation routes a
+    # curator, and reading takes either. What they do is recorded as done by
+    # them -- not by whatever name a header claimed -- and the SQL they run
+    # to check a fix or a snippet runs as their own database role.
+    # REVIEW_TOKEN still works, for scripts, with both roles.
+    auth_enabled: bool = False
+    auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
+    auth_cookie_name: str = SESSION_COOKIE
+    reviewer_roles: tuple[str, ...] = (REVIEWERS,)
+    curator_roles: tuple[str, ...] = (CURATORS,)
 
     # --- The staging database -------------------------------------------
     # As the owner: this service creates the schema and the writer role.
@@ -211,6 +224,11 @@ class ReviewSettings:
             tls_key_file=_env_str("REVIEW_TLS_KEY_FILE", DEFAULT_KEY_FILE),
             token=_env("REVIEW_TOKEN"),
             cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ("*",)),
+            auth_enabled=_env_bool("AUTH_ENABLED", False),
+            auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
+            auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
+            reviewer_roles=_env_tuple("REVIEW_REVIEWER_ROLES", (REVIEWERS,)),
+            curator_roles=_env_tuple("REVIEW_CURATOR_ROLES", (CURATORS,)),
             feedback_db_url=_env_str(
                 "FEEDBACK_DB_URL", "postgresql://feedback:feedback@localhost:5435/nl2sql_feedback"
             ),
@@ -279,9 +297,10 @@ class ReviewSettings:
     def warnings(self) -> list[str]:
         """Configurations that will work and probably should not."""
         notes: list[str] = []
-        if not self.token:
+        if not self.token and not self.auth_enabled:
             notes.append(
-                "No REVIEW_TOKEN is set, so anyone who can reach this port can edit "
+                "No REVIEW_TOKEN is set and sign-in is off (AUTH_ENABLED=false), so anyone "
+                "who can reach this port can edit "
                 "and promote golden questions. This service writes the question set "
                 "the agent is measured against; it is not the one to leave open."
             )

@@ -22,7 +22,14 @@ console/coverage
 curate/node_modules
 curate/dist
 curate/coverage
+auth/gui/node_modules
+auth/gui/dist
+auth/gui/coverage
 
 # The desktop client's build output: a jar of about ten megabytes, built from
 # the sources beside it.
 desktop/target/
+
+# The directory's seed files, which can hold passwords. Mounted into the
+# directory at run time; never part of any image.
+ldap/seed

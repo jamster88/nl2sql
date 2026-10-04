@@ -65,6 +65,12 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
     # running it for real would mean building the dataset image.
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),
+    # Writes sign-in's rules into pg_hba.conf; driven against a fake psql.
+    "docker/ldap_hba.sh": ("tests/docker/test_ldap_hba_script.py",),
+    # The directory page's nginx start-up script; refuses beside a replica.
+    "auth/gui/10-nl2sql-directory-config.envsh": ("tests/auth/test_directory_gui_project.py",),
+    # MLflow's front door; writes the auth_request when sign-in is on.
+    "docker/mlflow-proxy/10-nl2sql-mlflow-proxy.envsh": ("tests/docker/test_mlflow_proxy.py",),
 }
 
 #: Lines bash never attributes a line number to, so counting them as missed

@@ -189,7 +189,7 @@ export interface Meta {
   limits: Limits;
   pipeline: Pipeline;
   tls: Record<string, unknown>;
-  authentication: "none" | "bearer";
+  authentication: "none" | "bearer" | "session";
   /**
    * Whether this server accepts feedback. False when it has no staging
    * database configured, in which case the verdict buttons are not drawn --

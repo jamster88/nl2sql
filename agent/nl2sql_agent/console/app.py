@@ -26,7 +26,6 @@ from fastapi.security import APIKeyHeader, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.status import (
-    HTTP_401_UNAUTHORIZED,
     HTTP_404_NOT_FOUND,
     HTTP_503_SERVICE_UNAVAILABLE,
 )
@@ -55,9 +54,32 @@ from .models import (
 )
 from .query import DatabaseUnavailable, Identity, Inspector, Outcome
 from .settings import MAX_SQL_LENGTH, ConsoleSettings
+from nl2sql_identity import Guard, GuardSettings, Identity
+from nl2sql_identity.postgres import membership_lookup
 
-_bearer = HTTPBearer(auto_error=False, description="Console token, when one is configured.")
-_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="Alternative to the bearer token.")
+_bearer = HTTPBearer(
+    auto_error=False,
+    description="A session token from the auth service (POST /auth/token), or the console token.",
+)
+_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="The console token, by another name.")
+
+#: On every route that needs a caller, so the OpenAPI document says how to
+#: authenticate. They decide nothing: `Guard` does.
+DOCUMENTED = [Depends(_bearer), Depends(_api_key)]
+
+
+def default_guard(agent: Settings, console: ConsoleSettings) -> Guard:
+    """Sign-in as the environment configures it, roles re-read from Postgres."""
+    return Guard(
+        GuardSettings(
+            enabled=console.auth_enabled,
+            public_key_file=console.auth_public_key_file,
+            cookie_name=console.auth_cookie_name,
+            service_token=console.token,
+            service_roles=frozenset(console.allowed_roles),
+        ),
+        recheck=membership_lookup(agent.database_url) if console.auth_enabled else None,
+    )
 
 
 def _error_response(status: int, code: str, message: str, **detail: Any) -> JSONResponse:
@@ -109,6 +131,7 @@ def create_app(
     console_settings: ConsoleSettings | None = None,
     inspector_factory: Callable[[], Inspector] | None = None,
     certificate: CertificateInfo | None = None,
+    guard: Guard | None = None,
 ) -> FastAPI:
     """The application, with the database behind an injectable seam.
 
@@ -118,6 +141,7 @@ def create_app(
     """
     agent = settings or Settings.from_env()
     console = console_settings or ConsoleSettings.from_env()
+    guard = guard or default_guard(agent, console)
 
     def default_inspector() -> Inspector:
         db = Database(
@@ -162,19 +186,7 @@ def create_app(
 
     # --- authentication ---------------------------------------------------
 
-    def authenticate(bearer=Depends(_bearer), api_key: str | None = Depends(_api_key)) -> None:
-        if not console.token:
-            return
-        presented = (bearer.credentials if bearer else None) or api_key
-        if presented != console.token:
-            raise ApiHTTPError(
-                HTTP_401_UNAUTHORIZED,
-                "unauthorized",
-                "a valid console token is required",
-                **{"WWW-Authenticate": "Bearer"},
-            )
-
-    guarded = [Depends(authenticate)]
+    caller = guard.require(*console.allowed_roles)
 
     # --- error shape ------------------------------------------------------
 
@@ -271,6 +283,11 @@ def create_app(
         ready = checks["database"].ok
         if not ready:
             response.status_code = HTTP_503_SERVICE_UNAVAILABLE
+        signed, detail = guard.check()
+        checks["sign_in"] = Check(ok=signed, detail=detail)
+        ready = ready and signed
+        if not ready:
+            response.status_code = HTTP_503_SERVICE_UNAVAILABLE
         return Readiness(ready=ready, checks=checks, warnings=warnings)
 
     # --- the console ------------------------------------------------------
@@ -279,10 +296,10 @@ def create_app(
         "/v1/meta",
         tags=["console"],
         response_model=ConsoleMeta,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="What the console is connected to, and the limits every query runs under",
     )
-    def meta() -> ConsoleMeta:
+    def meta(who: Identity = Depends(caller)) -> ConsoleMeta:
         identity = inspector.identity()
         tables = inspector.tables()
         warning = role_warning(identity)
@@ -302,7 +319,8 @@ def create_app(
                 sample_rows=agent.sample_rows,
                 max_sql_length=MAX_SQL_LENGTH,
             ),
-            authentication="bearer" if console.token else "none",
+            authentication=guard.describe(),
+            runs_as=who.principal or identity.role,
             tls=(
                 certificate.summary()
                 if certificate is not None
@@ -315,10 +333,10 @@ def create_app(
         "/v1/schema",
         tags=["console"],
         response_model=SchemaModel,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Every table, as the agent's introspection reads it",
     )
-    def schema() -> SchemaModel:
+    def schema(who: Identity = Depends(caller)) -> SchemaModel:
         return SchemaModel(
             db_schema=agent.db_schema,
             tables=[
@@ -345,10 +363,10 @@ def create_app(
         "/v1/schema/{table}/prompt",
         tags=["console"],
         response_model=PromptModel,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="The block of the agent's prompt that describes one table",
     )
-    def prompt(table: str) -> PromptModel:
+    def prompt(table: str, who: Identity = Depends(caller)) -> PromptModel:
         text = inspector.prompt(table)
         if not text:
             raise ApiHTTPError(
@@ -362,11 +380,11 @@ def create_app(
         "/v1/query",
         tags=["console"],
         response_model=QueryResult,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Run a query through the agent's gates",
     )
-    def query(body: QueryRequest) -> QueryResult:
-        outcome = inspector.run(body.sql, body.mode)
+    def query(body: QueryRequest, who: Identity = Depends(caller)) -> QueryResult:
+        outcome = inspector.run(body.sql, body.mode, principal=who.principal)
         return result_model(outcome, max_rows=console.max_rows, max_plan_cost=agent.max_plan_cost)
 
     return app

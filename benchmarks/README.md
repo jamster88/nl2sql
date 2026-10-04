@@ -251,7 +251,7 @@ the same names are service names. Set `DATABASE_URL`, `VECTOR_DB_URL`,
 ## MLflow
 
 ```bash
-./launch.sh --mlflow                      # MLflow up, at http://localhost:5001
+./launch.sh --mlflow                      # MLflow up, at https://localhost:5001
 python benchmarks/run_benchmark.py --compare
 ```
 
@@ -271,9 +271,16 @@ read what, which model wrote the SQL, what the repair said -- and two runs
 can be compared in MLflow's own run view. A run cut short, by Ctrl-C or a
 database that went away, keeps what it measured and ends as `KILLED`.
 
-It runs on the host, so MLflow is `http://localhost:5001` -- the port compose
-publishes -- unless `MLFLOW_TRACKING_URI` says otherwise; set it empty to run
-untraced with MLflow up. With nothing answering there, the benchmark runs as
+It runs on the host, so MLflow is `https://localhost:5001` -- its front door,
+the port compose publishes -- unless `MLFLOW_TRACKING_URI` says otherwise;
+set it empty to run untraced with MLflow up. The front door presents the
+API's certificate, which the benchmark trusts when `./nl2sql-api.crt` is
+there (`./launch.sh --desktop` copies it out, or `docker compose --profile
+api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt`) and
+`MLFLOW_TRACKING_SERVER_CERT_PATH` does not name another. With sign-in on it
+also asks who is logging runs: set `MLFLOW_TRACKING_USERNAME` and
+`MLFLOW_TRACKING_PASSWORD` to someone in `nl2sql-reviewers` or
+`nl2sql-admins`, which MLflow's client sends as Basic credentials. With nothing answering there, the benchmark runs as
 before. The runs need MLflow's `mlflow-skinny`, which
 `pip install -r tests/requirements.txt` installs; with only the agent's
 tracing client, the traces are still written, ungrouped, and the benchmark

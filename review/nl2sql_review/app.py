@@ -140,8 +140,10 @@ from .render import Draft
 from .settings import ReviewSettings
 from .snippets import SnippetDraft, SnippetMissing
 from .store import STATES, VERDICTS, Repository, Submission
+from nl2sql_identity import Guard, GuardSettings, Identity
+from nl2sql_identity.postgres import membership_lookup
 
-__version__ = "5.6.1"
+__version__ = "6.0.0"
 
 #: What each verdict's submissions are for, in the words a refusal uses.
 #: `yes` is promoted into the golden set; the other two are fixed into the
@@ -158,8 +160,43 @@ FALLBACK_CODES = {
     503: "unavailable",
 }
 
-_bearer = HTTPBearer(auto_error=False)
-_api_key = APIKeyHeader(name="X-API-Key", auto_error=False)
+_bearer = HTTPBearer(
+    auto_error=False,
+    description="A session token from the auth service (POST /auth/token), or the review token.",
+)
+_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="The review token, by another name.")
+
+#: On every route that needs a caller, so the OpenAPI document says how to
+#: authenticate. They decide nothing: `Guard` does.
+DOCUMENTED = [Depends(_bearer), Depends(_api_key)]
+
+
+def default_guard(config: ReviewSettings) -> Guard:
+    """Sign-in as the environment configures it, roles re-read from Postgres.
+
+    Re-read through the validating connection: any role can ask
+    `pg_has_role`. The static token holds both roles, as it always could do
+    everything here.
+    """
+    return Guard(
+        GuardSettings(
+            enabled=config.auth_enabled,
+            public_key_file=config.auth_public_key_file,
+            cookie_name=config.auth_cookie_name,
+            service_token=config.token,
+            service_roles=frozenset((*config.reviewer_roles, *config.curator_roles)),
+        ),
+        recheck=membership_lookup(config.retail_db_url) if config.auth_enabled else None,
+    )
+
+
+def author(caller: Identity, claimed: str | None) -> str | None:
+    """Who did it: a signed-in person, whatever a header or a field said.
+
+    Only without sign-in is the claimed name used -- the `X-Reviewer` a
+    token-holding script sends, as before there was anybody to sign in.
+    """
+    return caller.principal or claimed
 
 
 class ReviewHTTPError(HTTPException):
@@ -221,14 +258,15 @@ def default_embedder(config: ReviewSettings) -> Any:
     return build_embedder("ollama", config.embed_model, config.ollama_url)
 
 
-def default_validator(config: ReviewSettings) -> Callable[[str, str], validation_module.Validation]:
-    def run(sql: str, reference: str) -> validation_module.Validation:
+def default_validator(config: ReviewSettings) -> Callable[..., validation_module.Validation]:
+    def run(sql: str, reference: str, principal: str | None = None) -> validation_module.Validation:
         return validation_module.validate(
             sql,
             url=config.retail_db_url,
             reference=reference,
             timeout_ms=config.validate_timeout_ms,
             max_rows=config.validate_max_rows,
+            principal=principal,
         )
 
     return run
@@ -237,9 +275,16 @@ def default_validator(config: ReviewSettings) -> Callable[[str, str], validation
 def default_snippet_validator(
     config: ReviewSettings,
 ) -> Callable[[str, str, str], snippet_validation_module.SnippetValidation]:
-    def run(kind: str, applies_to: str, sql: str) -> snippet_validation_module.SnippetValidation:
+    def run(
+        kind: str, applies_to: str, sql: str, principal: str | None = None
+    ) -> snippet_validation_module.SnippetValidation:
         return snippet_validation_module.validate_snippet(
-            kind, applies_to, sql, url=config.retail_db_url, timeout_ms=config.validate_timeout_ms
+            kind,
+            applies_to,
+            sql,
+            url=config.retail_db_url,
+            timeout_ms=config.validate_timeout_ms,
+            principal=principal,
         )
 
     return run
@@ -281,13 +326,14 @@ def create_app(
     promoter: Callable[[ReviewSettings, Draft], promotion_module.Promotion] | None = None,
     previewer: Callable[[ReviewSettings, Draft], tuple[str, str, list[str]]] | None = None,
     fix_stores: dict[str, FixStore] | None = None,
-    validator: Callable[[str, str], validation_module.Validation] | None = None,
+    validator: Callable[..., validation_module.Validation] | None = None,
     embedder_factory: Callable[[], Any] | None = None,
     retail_pinger: Callable[[], None] | None = None,
     withdrawer: Callable[[ReviewSettings, str], promotion_module.Withdrawal] | None = None,
-    snippet_validator: Callable[[str, str, str], snippet_validation_module.SnippetValidation] | None = None,
+    snippet_validator: Callable[..., snippet_validation_module.SnippetValidation] | None = None,
     snippet_book: Any = None,
     schema_reader: Callable[[], list[dict[str, Any]]] | None = None,
+    guard: Guard | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
@@ -319,6 +365,7 @@ def create_app(
     do_validate_snippet = snippet_validator or default_snippet_validator(config)
     book = snippet_book if snippet_book is not None else snippets_module
     read_schema = schema_reader or default_schema_reader(config)
+    guard = guard or default_guard(config)
     started = time.monotonic()
 
     app = FastAPI(
@@ -354,27 +401,9 @@ def create_app(
 
     # --- authentication ---------------------------------------------------
 
-    def authenticate(
-        request: Request,
-        bearer=Depends(_bearer),
-        api_key: str | None = Depends(_api_key),
-    ) -> None:
-        # No query-string token here, unlike the agent API. That one accepts
-        # one because `EventSource` cannot set headers; nothing in this
-        # service streams, so the token never has to go somewhere it would
-        # be written to an access log.
-        if not config.token:
-            return
-        presented = (bearer.credentials if bearer else None) or api_key
-        if presented != config.token:
-            raise ReviewHTTPError(
-                HTTP_401_UNAUTHORIZED,
-                "unauthorized",
-                "a valid review token is required",
-                **{"WWW-Authenticate": "Bearer"},
-            )
-
-    guarded = [Depends(authenticate)]
+    reviewing = guard.require(*config.reviewer_roles)
+    curating = guard.require(*config.curator_roles)
+    reading = guard.require(*config.reviewer_roles, *config.curator_roles)
 
     # --- error shape ------------------------------------------------------
 
@@ -475,14 +504,14 @@ def create_app(
             submission_id=submission_id,
         )
 
-    def _golden_check(sql: str) -> validation_module.Validation:
+    def _golden_check(sql: str, principal: str | None = None) -> validation_module.Validation:
         """A golden pair's SQL, run: it has to run, and it has to return rows.
 
         Rows, because the golden set's own rule is that an empty result reads
         as a failure: a pair whose answer is nothing teaches nothing and
         measures nothing.
         """
-        checked = do_validate(sql, "")
+        checked = do_validate(sql, "", principal=principal)
         if checked.valid and checked.row_count == 0:
             checked.valid = False
             checked.problems.append(
@@ -625,6 +654,9 @@ def create_app(
         status = book.store_status(config.snippets_db_url, digest)
         checks["snippets_store"] = Check(ok=status["reachable"], detail=status["detail"])
 
+        signed, detail = guard.check()
+        checks["sign_in"] = Check(ok=signed, detail=detail)
+
         ready = all(check.ok for check in checks.values())
         if not ready:
             response.status_code = HTTP_503_SERVICE_UNAVAILABLE
@@ -636,7 +668,7 @@ def create_app(
         "/v1/meta",
         tags=["service"],
         response_model=ReviewMeta,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reading)],
         summary="Everything the review GUI needs to configure itself",
     )
     def meta() -> ReviewMeta:
@@ -664,7 +696,7 @@ def create_app(
                 validate_timeout_ms=config.validate_timeout_ms,
                 validate_max_rows=config.validate_max_rows,
             ),
-            authentication="bearer" if config.token else "none",
+            authentication=guard.describe(),
             warnings=config.warnings(),
         )
 
@@ -672,7 +704,7 @@ def create_app(
         "/v1/submissions",
         tags=["submissions"],
         response_model=SubmissionList,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="The review queue, newest first",
     )
     def list_submissions(
@@ -705,7 +737,7 @@ def create_app(
         "/v1/submissions/{submission_id}",
         tags=["submissions"],
         response_model=SubmissionModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="One submission, with the draft seeded if it has none",
         responses={HTTP_404_NOT_FOUND: {"model": ApiError}},
     )
@@ -723,14 +755,16 @@ def create_app(
         "/v1/submissions/{submission_id}",
         tags=["submissions"],
         response_model=SubmissionModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="Judge a submission, or save a draft golden pair against it",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
             HTTP_409_CONFLICT: {"model": ApiError},
         },
     )
-    def patch_submission(submission_id: str, body: ReviewRequest) -> SubmissionModel:
+    def patch_submission(
+        submission_id: str, body: ReviewRequest, caller: Identity = Depends(reviewing)
+    ) -> SubmissionModel:
         found = _require(submission_id)
         if found.state == "promoted":
             raise ReviewHTTPError(
@@ -751,7 +785,7 @@ def create_app(
         updated = repo.review(
             submission_id,
             state=body.state,
-            reviewer=body.reviewer,
+            reviewer=author(caller, body.reviewer),
             review_note=body.review_note,
             draft=body.draft.model_dump() if body.draft is not None else None,
         )
@@ -765,7 +799,7 @@ def create_app(
         "/v1/submissions/{submission_id}/preview",
         tags=["promotion"],
         response_model=PreviewModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="The markdown this draft would add, without writing anything",
         responses={HTTP_404_NOT_FOUND: {"model": ApiError}},
     )
@@ -785,7 +819,7 @@ def create_app(
         "/v1/submissions/{submission_id}/promote",
         tags=["promotion"],
         response_model=PromotionModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="Write this pair into the golden question set",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -797,6 +831,7 @@ def create_app(
         submission_id: str,
         body: PreviewRequest,
         reviewer: str = Header(default="", alias="X-Reviewer"),
+        caller: Identity = Depends(reviewing),
     ) -> PromotionModel:
         found = _require(submission_id)
         if found.verdict != GOLDEN_VERDICT:
@@ -851,7 +886,7 @@ def create_app(
             suite=result.suite,
             title=result.title,
             markdown=result.markdown,
-            reviewer=reviewer or found.reviewer,
+            reviewer=author(caller, reviewer) or found.reviewer,
             reloaded=result.reloaded,
             reload_detail=result.detail,
         )
@@ -893,7 +928,7 @@ def create_app(
         "/v1/submissions/{submission_id}/reopen",
         tags=["submissions"],
         response_model=UndoModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="Put a submission back in the queue, taking out what it produced",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -920,7 +955,7 @@ def create_app(
         "/v1/submissions/{submission_id}",
         tags=["submissions"],
         response_model=UndoModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="Delete a submission for good, taking out what it produced",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -942,19 +977,21 @@ def create_app(
         "/v1/submissions/{submission_id}/validate",
         tags=["fixes"],
         response_model=ValidationModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="Run a corrected query against the live retail database",
         responses={HTTP_404_NOT_FOUND: {"model": ApiError}, HTTP_409_CONFLICT: {"model": ApiError}},
     )
-    def validate_fix(submission_id: str, body: ValidateRequest) -> ValidationModel:
+    def validate_fix(
+        submission_id: str, body: ValidateRequest, caller: Identity = Depends(reviewing)
+    ) -> ValidationModel:
         found = _require_fixable(submission_id)
-        return ValidationModel(**do_validate(body.sql, found.sql_code).as_dict())
+        return ValidationModel(**do_validate(body.sql, found.sql_code, principal=caller.principal).as_dict())
 
     @app.post(
         "/v1/submissions/{submission_id}/fix",
         tags=["fixes"],
         response_model=FixResultModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reviewing)],
         summary="Store a validated fix in the corrections or completions store",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -967,6 +1004,7 @@ def create_app(
         submission_id: str,
         body: FixRequest,
         reviewer: str = Header(default="", alias="X-Reviewer"),
+        caller: Identity = Depends(reviewing),
     ) -> FixResultModel:
         found = _require_fixable(submission_id)
         if found.state == "corrected":
@@ -985,7 +1023,7 @@ def create_app(
         # Validated again, here, whatever the browser was told a moment ago:
         # the rule is that only SQL that runs is stored, and a rule the
         # client enforces is a suggestion.
-        checked = do_validate(body.sql, found.sql_code)
+        checked = do_validate(body.sql, found.sql_code, principal=caller.principal)
         if not checked.valid:
             raise ReviewHTTPError(
                 HTTP_422_UNPROCESSABLE, "not_valid", "; ".join(checked.problems)
@@ -993,7 +1031,7 @@ def create_app(
 
         kind = KINDS[found.verdict]
         store = stores[kind.slug]
-        who = reviewer or found.reviewer
+        who = author(caller, reviewer) or found.reviewer
         record = Fix(
             fix_id="",
             submission_id=found.id,
@@ -1053,7 +1091,7 @@ def create_app(
         "/v1/fixes/{kind}",
         tags=["fixes"],
         response_model=FixList,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reading)],
         summary="What one store holds, newest first",
         responses={HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError}},
     )
@@ -1069,7 +1107,7 @@ def create_app(
         "/v1/golden",
         tags=["promotion"],
         response_model=GoldenSet,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reading)],
         summary="The golden question set as the document holds it",
     )
     def golden() -> GoldenSet:
@@ -1079,7 +1117,7 @@ def create_app(
         "/v1/promotions",
         tags=["promotion"],
         response_model=PromotionList,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reading)],
         summary="What has been promoted, newest first",
     )
     def promotions(limit: int = Query(default=50, ge=1, le=500)) -> PromotionList:
@@ -1095,17 +1133,17 @@ def create_app(
         "/v1/golden/validate",
         tags=["curation"],
         response_model=ValidationModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Run a golden pair's SQL against the live retail database",
     )
-    def validate_golden(body: ValidateRequest) -> ValidationModel:
-        return ValidationModel(**_golden_check(body.sql).as_dict())
+    def validate_golden(body: ValidateRequest, caller: Identity = Depends(curating)) -> ValidationModel:
+        return ValidationModel(**_golden_check(body.sql, caller.principal).as_dict())
 
     @app.post(
         "/v1/golden/preview",
         tags=["curation"],
         response_model=PreviewModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="The markdown a hand-written pair would add, without writing anything",
     )
     def preview_golden(body: PreviewRequest) -> PreviewModel:
@@ -1122,13 +1160,13 @@ def create_app(
         "/v1/golden",
         tags=["curation"],
         response_model=GoldenResultModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Validate a hand-written pair's SQL, then write it into the golden set",
         responses={HTTP_422_UNPROCESSABLE: {"model": ApiError}},
     )
-    def add_golden(body: PreviewRequest) -> GoldenResultModel:
+    def add_golden(body: PreviewRequest, caller: Identity = Depends(curating)) -> GoldenResultModel:
         draft = Draft.from_mapping(body.draft.model_dump())
-        checked = _golden_check(draft.sql_code)
+        checked = _golden_check(draft.sql_code, caller.principal)
         if not checked.valid:
             raise ReviewHTTPError(HTTP_422_UNPROCESSABLE, "not_valid", "; ".join(checked.problems))
         draft.sql_code = checked.sql
@@ -1144,7 +1182,7 @@ def create_app(
         "/v1/golden/{pair_id}",
         tags=["curation"],
         response_model=GoldenRemovalModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Take a pair out of the golden set, reopening the submission it came from",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -1185,17 +1223,21 @@ def create_app(
         "/v1/fixes/{kind}/validate",
         tags=["curation"],
         response_model=ValidationModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Run a fix's SQL against the live retail database",
     )
-    def validate_curated_fix(kind: FixKind, body: CuratedFixValidateRequest) -> ValidationModel:
-        return ValidationModel(**do_validate(body.sql, body.incorrect_sql).as_dict())
+    def validate_curated_fix(
+        kind: FixKind, body: CuratedFixValidateRequest, caller: Identity = Depends(curating)
+    ) -> ValidationModel:
+        return ValidationModel(
+            **do_validate(body.sql, body.incorrect_sql, principal=caller.principal).as_dict()
+        )
 
     @app.post(
         "/v1/fixes/{kind}",
         tags=["curation"],
         response_model=CuratedFixResultModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Validate a fix with no submission behind it, then store it",
         responses={
             HTTP_422_UNPROCESSABLE: {"model": ApiError},
@@ -1206,8 +1248,9 @@ def create_app(
         kind: FixKind,
         body: CuratedFixRequest,
         reviewer: str = Header(default="", alias="X-Reviewer"),
+        caller: Identity = Depends(curating),
     ) -> CuratedFixResultModel:
-        checked = do_validate(body.sql, body.incorrect_sql)
+        checked = do_validate(body.sql, body.incorrect_sql, principal=caller.principal)
         if not checked.valid:
             raise ReviewHTTPError(HTTP_422_UNPROCESSABLE, "not_valid", "; ".join(checked.problems))
         store = stores[BY_SLUG[kind].slug]
@@ -1223,7 +1266,7 @@ def create_app(
             corrected_row_count=checked.row_count,
             corrected_truncated=checked.truncated,
             plan_cost=checked.plan_cost,
-            reviewer=reviewer,
+            reviewer=author(caller, reviewer) or "",
             review_note=body.review_note,
             source="curated",
         )
@@ -1245,7 +1288,7 @@ def create_app(
         "/v1/fixes/{kind}/{fix_id}",
         tags=["curation"],
         response_model=FixRemovalModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Take a fix out of its store, reopening the submission it came from",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -1296,7 +1339,9 @@ def create_app(
             note=snippet.note,
         )
 
-    def _snippet_check(draft: SnippetDraft) -> snippet_validation_module.SnippetValidation:
+    def _snippet_check(
+        draft: SnippetDraft, principal: str | None = None
+    ) -> snippet_validation_module.SnippetValidation:
         """Run the snippet, and hold its listed tables to the ones it uses.
 
         A table the SQL uses and `tables` does not list is a problem, not a
@@ -1305,7 +1350,7 @@ def create_app(
         scope -- straight into the static validator's refusal. An empty list
         is filled in from what the SQL uses.
         """
-        checked = do_validate_snippet(draft.kind, draft.applies_to, draft.sql)
+        checked = do_validate_snippet(draft.kind, draft.applies_to, draft.sql, principal=principal)
         if not checked.valid:
             return checked
         listed = [t.strip() for t in draft.tables.split(",") if t.strip()]
@@ -1341,9 +1386,11 @@ def create_app(
             validation=SnippetValidationModel(**checked.as_dict()) if checked is not None else None,
         )
 
-    def _checked_draft(body: SnippetRequest) -> tuple[SnippetDraft, snippet_validation_module.SnippetValidation]:
+    def _checked_draft(
+        body: SnippetRequest, principal: str | None = None
+    ) -> tuple[SnippetDraft, snippet_validation_module.SnippetValidation]:
         draft = SnippetDraft.from_mapping(body.draft.model_dump())
-        checked = _snippet_check(draft)
+        checked = _snippet_check(draft, principal)
         if not checked.valid:
             raise ReviewHTTPError(HTTP_422_UNPROCESSABLE, "not_valid", "; ".join(checked.problems))
         return draft, checked
@@ -1360,7 +1407,7 @@ def create_app(
         "/v1/snippets",
         tags=["snippets"],
         response_model=SnippetSet,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reading)],
         summary="The SQL snippets as their document holds them, and the store beside it",
     )
     def snippets() -> SnippetSet:
@@ -1384,18 +1431,18 @@ def create_app(
         "/v1/snippets/validate",
         tags=["snippets"],
         response_model=SnippetValidationModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Run a snippet inside its probe query against the live retail database",
     )
-    def validate_snippet(body: SnippetRequest) -> SnippetValidationModel:
+    def validate_snippet(body: SnippetRequest, caller: Identity = Depends(curating)) -> SnippetValidationModel:
         draft = SnippetDraft.from_mapping(body.draft.model_dump())
-        return SnippetValidationModel(**_snippet_check(draft).as_dict())
+        return SnippetValidationModel(**_snippet_check(draft, caller.principal).as_dict())
 
     @app.post(
         "/v1/snippets/preview",
         tags=["snippets"],
         response_model=SnippetPreviewModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="The section a snippet would write, without writing anything",
     )
     def preview_snippet(body: SnippetPreviewRequest) -> SnippetPreviewModel:
@@ -1410,31 +1457,33 @@ def create_app(
         "/v1/snippets",
         tags=["snippets"],
         response_model=SnippetResultModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Validate a snippet, write it into its document, and load the store",
         responses={HTTP_422_UNPROCESSABLE: {"model": ApiError}},
     )
-    def add_snippet(body: SnippetRequest) -> SnippetResultModel:
-        draft, checked = _checked_draft(body)
+    def add_snippet(body: SnippetRequest, caller: Identity = Depends(curating)) -> SnippetResultModel:
+        draft, checked = _checked_draft(body, caller.principal)
         return _snippet_result(_write_snippet(lambda: book.add(config, draft)), checked)
 
     @app.put(
         "/v1/snippets/{snippet_id}",
         tags=["snippets"],
         response_model=SnippetResultModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Validate a changed snippet, rewrite it in its document, and load the store",
         responses={HTTP_404_NOT_FOUND: {"model": ApiError}, HTTP_422_UNPROCESSABLE: {"model": ApiError}},
     )
-    def change_snippet(snippet_id: str, body: SnippetRequest) -> SnippetResultModel:
-        draft, checked = _checked_draft(body)
+    def change_snippet(
+        snippet_id: str, body: SnippetRequest, caller: Identity = Depends(curating)
+    ) -> SnippetResultModel:
+        draft, checked = _checked_draft(body, caller.principal)
         return _snippet_result(_write_snippet(lambda: book.change(config, snippet_id, draft)), checked)
 
     @app.delete(
         "/v1/snippets/{snippet_id}",
         tags=["snippets"],
         response_model=SnippetResultModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(curating)],
         summary="Take a snippet out of its document, and out of the store",
         responses={HTTP_404_NOT_FOUND: {"model": ApiError}, HTTP_422_UNPROCESSABLE: {"model": ApiError}},
     )
@@ -1445,7 +1494,7 @@ def create_app(
         "/v1/schema",
         tags=["snippets"],
         response_model=SchemaModel,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(reading)],
         summary="The retail tables and columns a snippet can be written over",
     )
     def schema() -> SchemaModel:

@@ -14,10 +14,13 @@ the whole design constraint, and it produces three rules:
 * **Progress is real.** The event stream carries the pipeline's own nodes,
   so a GUI shows what the agent is actually doing rather than a spinner.
 
-Authentication is a bearer token when one is configured and nothing when it
-is not, because the common deployment is a private network and a token that
-must be invented before anything works is a token that gets committed to a
-repository.
+Who may call is decided by `nl2sql_identity.Guard`. With sign-in on
+(AUTH_ENABLED) a person's session -- the cookie their GUI sends, or the
+bearer token the desktop client holds -- is what every /v1 route needs; their
+question runs as their own database role, and the questions they see are
+theirs. The static API_TOKEN still works, for machines with no person to sign
+in. With sign-in off it is the token when one is configured and nothing when
+it is not, as it always was.
 """
 
 from __future__ import annotations
@@ -36,7 +39,6 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.status import (
     HTTP_202_ACCEPTED,
     HTTP_400_BAD_REQUEST,
-    HTTP_401_UNAUTHORIZED,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
     HTTP_503_SERVICE_UNAVAILABLE,
@@ -48,6 +50,8 @@ from ..graph import STEP_LABELS, Nl2SqlAgent
 from ..llm import LlmUnavailableError
 from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
+from nl2sql_identity import USERS, Guard, GuardSettings, Identity
+from nl2sql_identity.postgres import membership_lookup
 from .jobs import Job, JobStore, StreamChunk
 from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable, build_sink
 from .models import (
@@ -97,8 +101,33 @@ class ApiHTTPError(HTTPException):
         self.code = code
 
 
-_bearer = HTTPBearer(auto_error=False, description="API token, when one is configured.")
-_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="Alternative to the bearer token.")
+_bearer = HTTPBearer(
+    auto_error=False,
+    description="A session token from the auth service (POST /auth/token), or the API token.",
+)
+_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="The API token, by another name.")
+
+#: On every route that needs a caller, so the OpenAPI document says how to
+#: authenticate. They decide nothing: `Guard` does.
+DOCUMENTED = [Depends(_bearer), Depends(_api_key)]
+
+
+def default_guard(settings: Settings, api: ApiSettings) -> Guard:
+    """Sign-in as the environment configures it, with roles re-read from Postgres.
+
+    The re-read uses the agent's own connection: any role can ask
+    `pg_has_role`, and the reader is a role.
+    """
+    return Guard(
+        GuardSettings(
+            enabled=api.auth_enabled,
+            public_key_file=api.auth_public_key_file,
+            cookie_name=api.auth_cookie_name,
+            service_token=api.token,
+            service_roles=frozenset({USERS}),
+        ),
+        recheck=membership_lookup(settings.database_url) if api.auth_enabled else None,
+    )
 
 
 class AgentHolder:
@@ -218,6 +247,7 @@ def create_app(
     certificate: CertificateInfo | None = None,
     feedback: FeedbackSink | None = None,
     tracer: Tracer | None = None,
+    guard: Guard | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
@@ -228,6 +258,7 @@ def create_app(
     settings = settings or Settings.from_env()
     api = api_settings or ApiSettings.from_env()
     sink = feedback if feedback is not None else build_sink(api.feedback_db_url)
+    guard = guard or default_guard(settings, api)
     # One connection to MLflow for the server: the agent traces its runs on
     # it, and the feedback routes put verdicts on those traces.
     tracer = tracer or Tracer(settings)
@@ -275,6 +306,7 @@ def create_app(
     app.state.certificate = certificate
     app.state.feedback = sink
     app.state.tracer = tracer
+    app.state.guard = guard
 
     if api.cors_origins:
         app.add_middleware(
@@ -291,31 +323,10 @@ def create_app(
 
     # --- authentication ---------------------------------------------------
 
-    def authenticate(
-        request: Request,
-        bearer=Depends(_bearer),
-        api_key: str | None = Depends(_api_key),
-        access_token: str | None = Query(
-            default=None,
-            description=(
-                "The token, for clients that cannot set headers. Browsers' "
-                "EventSource is the reason this exists; prefer the header "
-                "everywhere else."
-            ),
-        ),
-    ) -> None:
-        if not api.token:
-            return
-        presented = (bearer.credentials if bearer else None) or api_key or access_token
-        if presented != api.token:
-            raise ApiHTTPError(
-                HTTP_401_UNAUTHORIZED,
-                "unauthorized",
-                "a valid API token is required",
-                **{"WWW-Authenticate": "Bearer"},
-            )
-
-    guarded = [Depends(authenticate)]
+    asker = guard.require(USERS)
+    # The one route whose static token may come in the query string, because
+    # `EventSource` cannot set headers. A signed-in browser sends its cookie.
+    streamer = guard.require(USERS, query_token=True)
 
     # --- error shape ------------------------------------------------------
 
@@ -376,6 +387,11 @@ def create_app(
         ready = all(check.ok for check in checks.values())
         ok, detail = sink.check()
         checks["feedback"] = Check(ok=ok, detail=detail)
+        # Sign-in is reported and counted: with it on and no key to verify a
+        # session with, nobody can ask anything.
+        signed, detail = guard.check()
+        checks["sign_in"] = Check(ok=signed, detail=detail)
+        ready = ready and signed
         if not ready:
             response.status_code = HTTP_503_SERVICE_UNAVAILABLE
         return Readiness(ready=ready, checks=checks, warnings=api.warnings())
@@ -386,7 +402,7 @@ def create_app(
         "/v1/meta",
         tags=["service"],
         response_model=Meta,
-        dependencies=guarded,
+        dependencies=[*DOCUMENTED, Depends(asker)],
         summary="Everything a client needs to configure itself",
     )
     def meta() -> Meta:
@@ -420,7 +436,7 @@ def create_app(
                 if certificate is not None
                 else {"enabled": api.tls_enabled, "self_signed": False}
             ),
-            authentication="bearer" if api.token else "none",
+            authentication=guard.describe(),
             routing=holder.routing(),
             feedback=sink.check()[0],
         )
@@ -430,7 +446,7 @@ def create_app(
         tags=["questions"],
         response_model=JobModel,
         status_code=HTTP_202_ACCEPTED,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Ask a question",
         responses={
             HTTP_400_BAD_REQUEST: {"model": ApiError},
@@ -440,6 +456,7 @@ def create_app(
     def ask(
         body: AskRequest,
         response: Response,
+        identity: Identity = Depends(asker),
         wait: float | None = Query(
             default=None,
             ge=0,
@@ -452,17 +469,31 @@ def create_app(
             ),
         ),
     ) -> JobModel:
-        if body.principal and not api.allow_principal:
+        # A signed-in person's questions run as them, and only as them: a
+        # principal they name must be themselves. Choosing one is otherwise
+        # the old opt-in, for a trusted caller in front of an open server.
+        if identity.principal is not None:
+            if body.principal and body.principal != identity.principal:
+                raise ApiHTTPError(
+                    HTTP_400_BAD_REQUEST,
+                    "principal_not_allowed",
+                    f"signed in as {identity.principal}, your questions run as {identity.principal}",
+                )
+            principal: str | None = identity.principal
+        elif body.principal and not api.allow_principal:
             raise ApiHTTPError(
                 HTTP_400_BAD_REQUEST,
                 "principal_not_allowed",
                 "this server does not accept a caller-chosen database principal; "
                 "start it with API_ALLOW_PRINCIPAL=true to enable it",
             )
+        else:
+            principal = body.principal if api.allow_principal else None
         try:
             job = jobs.submit(
                 body.question,
-                principal=body.principal if api.allow_principal else None,
+                principal=principal,
+                owner=identity.principal,
                 metadata=body.metadata,
             )
         except RuntimeError as exc:
@@ -479,18 +510,25 @@ def create_app(
         "/v1/questions",
         tags=["questions"],
         response_model=JobList,
-        dependencies=guarded,
-        summary="Recent questions, newest first",
+        dependencies=DOCUMENTED,
+        summary="Recent questions, newest first -- your own, once you have signed in",
     )
-    def list_jobs(limit: int = Query(default=50, ge=1, le=500)) -> JobList:
-        found = jobs.list(limit=limit)
+    def list_jobs(
+        identity: Identity = Depends(asker), limit: int = Query(default=50, ge=1, le=500)
+    ) -> JobList:
+        found = jobs.list(limit=limit, owner=identity.principal)
         return JobList(
             jobs=[job_model(job, base=api.root_path) for job in found], count=len(found)
         )
 
-    def _require(job_id: str) -> Job:
+    def _require(job_id: str, identity: Identity) -> Job:
+        """The job, if it exists and is this caller's to see.
+
+        Someone else's is a 404, not a 403: whether a job id exists is
+        itself something only its owner should learn.
+        """
         job = jobs.get(job_id)
-        if job is None:
+        if job is None or (identity.principal is not None and job.owner != identity.principal):
             raise ApiHTTPError(
                 HTTP_404_NOT_FOUND,
                 "not_found",
@@ -503,20 +541,21 @@ def create_app(
         "/v1/questions/{job_id}",
         tags=["questions"],
         response_model=JobModel,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="One question, running or finished",
         responses={HTTP_404_NOT_FOUND: {"model": ApiError}},
     )
     def get_job(
         job_id: str,
         response: Response,
+        identity: Identity = Depends(asker),
         wait: float | None = Query(
             default=None,
             ge=0,
             description="Seconds to wait for the job to finish before answering.",
         ),
     ) -> JobModel:
-        job = _require(job_id)
+        job = _require(job_id, identity)
         if wait:
             jobs.wait(job, min(wait, api.max_wait_seconds))
         if not job.terminal:
@@ -528,7 +567,7 @@ def create_app(
     @app.get(
         "/v1/questions/{job_id}/events",
         tags=["questions"],
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Progress as it happens (Server-Sent Events)",
         response_class=StreamingResponse,
         responses={
@@ -550,8 +589,9 @@ def create_app(
             description="Resume after this event number. Last-Event-ID wins over it.",
         ),
         last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+        identity: Identity = Depends(streamer),
     ) -> StreamingResponse:
-        job = _require(job_id)
+        job = _require(job_id, identity)
         if last_event_id and last_event_id.isdigit():
             from_seq = int(last_event_id)
 
@@ -614,7 +654,7 @@ def create_app(
         tags=["feedback"],
         response_model=FeedbackModel,
         status_code=201,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Say whether this answer was right",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -630,8 +670,10 @@ def create_app(
             "Voting again replaces the verdict, until a reviewer has acted on it."
         ),
     )
-    def record_feedback(job_id: str, body: FeedbackRequest) -> FeedbackModel:
-        job = _require(job_id)
+    def record_feedback(
+        job_id: str, body: FeedbackRequest, identity: Identity = Depends(asker)
+    ) -> FeedbackModel:
+        job = _require(job_id, identity)
         if not job.terminal:
             # There is nothing to have an opinion about yet, and the snapshot
             # taken now would be of a half-finished run -- which is the one
@@ -661,7 +703,7 @@ def create_app(
         "/v1/questions/{job_id}/feedback",
         tags=["feedback"],
         status_code=204,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Withdraw a verdict",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
@@ -673,7 +715,13 @@ def create_app(
             "happened and stops being the voter's to take back."
         ),
     )
-    def withdraw_feedback(job_id: str) -> Response:
+    def withdraw_feedback(job_id: str, identity: Identity = Depends(asker)) -> Response:
+        # Only the asker's own, while the job is still known; after that the
+        # job id -- unguessable, and only ever shown to its owner -- is the
+        # proof of having asked it.
+        known = jobs.get(job_id)
+        if known is not None:
+            _require(job_id, identity)
         try:
             removed = sink.withdraw(job_id)
         except FeedbackUnavailable as exc:
@@ -688,8 +736,7 @@ def create_app(
             )
         # A verdict can outlive its job (API_JOB_TTL_SECONDS), so a job the
         # server has forgotten is found by the id its trace is tagged with.
-        job = jobs.get(job_id)
-        trace_id = (job.state or {}).get("trace_id") if job else tracer.find_job_trace(job_id)
+        trace_id = (known.state or {}).get("trace_id") if known else tracer.find_job_trace(job_id)
         tracer.withdraw_verdict(trace_id)
         return Response(status_code=204)
 
@@ -697,14 +744,16 @@ def create_app(
         "/v1/questions/{job_id}",
         tags=["questions"],
         status_code=204,
-        dependencies=guarded,
+        dependencies=DOCUMENTED,
         summary="Cancel a queued question, or forget a finished one",
         responses={
             HTTP_404_NOT_FOUND: {"model": ApiError},
             HTTP_409_CONFLICT: {"model": ApiError},
         },
     )
-    def delete_job(job_id: str) -> Response:
+    def delete_job(job_id: str, identity: Identity = Depends(asker)) -> Response:
+        if jobs.get(job_id) is not None:
+            _require(job_id, identity)
         outcome = jobs.cancel(job_id)
         if outcome == "missing":
             raise ApiHTTPError(HTTP_404_NOT_FOUND, "not_found", f"no job {job_id}")

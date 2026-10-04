@@ -326,6 +326,51 @@ public final class Models {
         }
     }
 
+    // --- the auth service, which is a second server -----------------------
+    //
+    // Mirrored from auth/nl2sql_auth/models.py rather than the API's models,
+    // and checked against that file by the same contract test.
+
+    /**
+     * What signing in sends to {@code /auth/token}.
+     *
+     * <p>Its own {@code toString}, because a record's would print the password
+     * into whatever log or exception message the record ever reaches.
+     */
+    public record SignIn(String username, String password) {
+        @Override
+        public String toString() {
+            return "SignIn[username=" + username + "]";
+        }
+    }
+
+    /**
+     * A session for a client that holds its own token: who signed in, the
+     * groups Postgres says they are in, when it ends (seconds since the
+     * epoch), and the token to present until then.
+     */
+    public record Token(String user, String name, List<String> roles, String kind, long expires_at,
+                        String token) {
+        public Token {
+            user = text(user);
+            name = text(name);
+            roles = list(roles);
+            kind = text(kind);
+            token = text(token);
+        }
+
+        /** Not the token, for the reason {@link SignIn} leaves out the password. */
+        @Override
+        public String toString() {
+            return "Token[user=" + user + ", roles=" + roles + ", expires_at=" + expires_at + "]";
+        }
+
+        /** Their name and user name, or the user name alone when there is no other. */
+        public String who() {
+            return name.isEmpty() || name.equals(user) ? user : name + " (" + user + ")";
+        }
+    }
+
     /** One error shape for every failure. Branch on {@code code}. */
     public record ApiErrorBody(Map<String, Object> error) {
         public ApiErrorBody {

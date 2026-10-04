@@ -30,6 +30,7 @@ export function makeMeta(overrides: Partial<ConsoleMeta> = {}): ConsoleMeta {
       max_sql_length: 20000,
     },
     authentication: "none",
+    runs_as: "nl2sql_reader",
     tls: { enabled: true, self_signed: true },
     warnings: [],
     ...overrides,

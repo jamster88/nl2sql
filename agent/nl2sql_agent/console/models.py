@@ -67,7 +67,9 @@ class ConsoleMeta(BaseModel):
     db_schema: str
     tables: int
     limits: ConsoleLimits
-    authentication: Literal["bearer", "none"]
+    authentication: Literal["bearer", "none", "session"]
+    #: The role a query runs as: a signed-in person's own, or `role` above.
+    runs_as: str
     tls: dict[str, Any]
     warnings: list[str] = Field(default_factory=list)
 

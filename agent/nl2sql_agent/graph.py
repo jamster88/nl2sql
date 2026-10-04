@@ -870,7 +870,7 @@ class Nl2SqlAgent:
         aggregate outside GROUP BY; the planner sees all three, in
         milliseconds, and its message goes to the Repair Agent verbatim.
         """
-        cost, error = self.db.explain_plan(state.get("sql", ""))
+        cost, error = self.db.explain_plan(state.get("sql", ""), principal=state.get("principal"))
         if error:
             return {
                 "issues": [Issue(source=PLANNER, message=error)],

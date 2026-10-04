@@ -128,6 +128,8 @@ Brings up the whole stack and opens the web interface in your browser.
       --no-browser   Start everything, but print the URLs instead of opening them
       --no-rag       Start only the retail database; the agent answers from the
                      schema alone, with neither knowledge nor worked examples
+      --no-auth      Start without sign-in, this once: every page open to
+                     whoever can reach it. ./setup.sh --no-auth makes it stick
       --restart      Recreate the containers instead of reusing what is running
   -q, --quiet        Only print problems
   -h, --help         Show this message
@@ -175,6 +177,9 @@ while [[ $# -gt 0 ]]; do
         --desktop) WITH_DESKTOP=1; shift ;;
         --no-browser) OPEN_BROWSER=0; shift ;;
         --no-rag) WITH_RAG=0; LAUNCH_ARGS+=(--no-rag); SETUP_ARGS+=(--no-rag); shift ;;
+        # This run only: setup.sh's own --no-auth is the one that sticks, and
+        # a first run handed it would turn sign-in off for good unasked.
+        --no-auth) LAUNCH_ARGS+=(--no-auth); export AUTH_ENABLED=false; shift ;;
         --restart) LAUNCH_ARGS+=(--restart); shift ;;
         -q|--quiet) QUIET=1; LAUNCH_ARGS+=(--quiet); shift ;;
         -h|--help) usage; exit 0 ;;
@@ -384,14 +389,31 @@ fi
 ./launch.sh "${LAUNCH_ARGS[@]}"
 
 # --- The page --------------------------------------------------------------
+# HTTPS, with the API's certificate, unless GUI_TLS_ENABLED says otherwise.
+case "$(compose_env GUI_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) scheme=http ;;
+    *) scheme=https ;;
+esac
 gui_port=$(compose_env GUI_PORT 8080)
-url="http://localhost:${gui_port}"
+url="$scheme://localhost:${gui_port}"
 review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
-review_url="http://localhost:${review_gui_port}"
+review_url="$scheme://localhost:${review_gui_port}"
 console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
-console_url="http://localhost:${console_gui_port}"
-curate_url="http://localhost:$(compose_env CURATE_GUI_PORT 8083)"
-mlflow_url="http://localhost:$(compose_env MLFLOW_PORT 5001)"
+console_url="$scheme://localhost:${console_gui_port}"
+curate_url="$scheme://localhost:$(compose_env CURATE_GUI_PORT 8083)"
+mlflow_url="$scheme://localhost:$(compose_env MLFLOW_PORT 5001)"
+
+# Sign-in, as launch.sh decided it: on unless AUTH_ENABLED says otherwise.
+# Its services are behind profiles of their own, so stopping everything
+# names them too.
+signin=1
+case "$(compose_env AUTH_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) signin=0 ;;
+esac
+signin_profiles=""
+if [[ $signin -eq 1 ]]; then
+    signin_profiles=" --profile auth --profile directorygui"
+fi
 
 # Healthy is not the same as answering. The container reports healthy as soon
 # as nginx is up, and nginx is up a moment before it has read its generated
@@ -400,7 +422,9 @@ mlflow_url="http://localhost:$(compose_env MLFLOW_PORT 5001)"
 wait_for_page() {  # wait_for_page URL
     local _
     for _ in $(seq 1 60); do
-        curl -s -f -o /dev/null --max-time 3 "$1" && return 0
+        # -k: whether the page answers, not whether this machine trusts the
+        # development certificate yet -- the browser asks that itself.
+        curl -s -f -k -o /dev/null --max-time 3 "$1" && return 0
         sleep 1
     done
     return 1
@@ -757,7 +781,15 @@ fi
 
 # Deliberately short. launch.sh has just printed what the stack is and how
 # to look at it; saying it again is how a front door starts feeling like a
-# wall of text rather than one command.
+# wall of text rather than one command. The one thing repeated is how to get
+# in, because the page that has just opened asks for it.
+if [[ $QUIET -eq 0 && $signin -eq 1 ]]; then
+    cat <<EOF
+
+    Sign in as $(compose_env LDAP_ADMIN_USER admin), with the password in .env (grep LDAP_ADMIN_PASSWORD .env),
+    and add everyone else at $scheme://localhost:$(compose_env DIRECTORY_GUI_PORT 8084).
+EOF
+fi
 if [[ $QUIET -eq 0 && $WITH_DESKTOP -eq 1 ]]; then
     cat <<EOF
 
@@ -799,7 +831,7 @@ EOF
 EOF
     fi
     cat <<EOF
-    docker compose --profile api down          stop the API behind it
+    docker compose --profile api${signin_profiles} down          stop the API behind it
     $DESKTOP_LOG        what the window said, if it did not open
 
 EOF
@@ -816,14 +848,14 @@ elif [[ $QUIET -eq 0 ]]; then
     never to the golden set.
 
     docker compose --profile api --profile gui --profile feedback \\
-      --profile review --profile reviewgui down          stop everything
+      --profile review --profile reviewgui${signin_profiles} down          stop everything
 
 EOF
     else
         cat <<EOF
 
     $url
-    docker compose --profile api --profile gui down    stop everything
+    docker compose --profile api --profile gui${signin_profiles} down    stop everything
 
 EOF
     fi

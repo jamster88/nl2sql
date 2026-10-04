@@ -41,12 +41,18 @@ RUN chmod +x /docker-entrypoint.d/10-nl2sql-config.envsh
 
 # Substituted into the template at start-up. Only these names are touched --
 # without the filter, envsubst would also eat nginx's own $uri and $host.
-ENV NGINX_ENVSUBST_FILTER="^(API_|GUI_)" \
+ENV NGINX_ENVSUBST_FILTER="^(API_|GUI_|AUTH_)" \
     GUI_PORT=8080 \
+    GUI_TLS_ENABLED=true \
+    GUI_TLS_CERT_FILE=/etc/nl2sql/tls/server.crt \
+    GUI_TLS_KEY_FILE=/etc/nl2sql/tls/server.key \
     API_UPSTREAM=https://nl2sql-api:8443 \
     API_CACERT=/etc/nl2sql/tls/server.crt \
     API_SSL_NAME=nl2sql-api \
     API_READ_TIMEOUT=600s \
+    AUTH_UPSTREAM=https://nl2sql-auth:8446 \
+    AUTH_CACERT=/etc/nl2sql/tls/server.crt \
+    AUTH_SSL_NAME=nl2sql-auth \
     GUI_RESOLVER=127.0.0.11
 
 # API_TOKEN is deliberately not given a default here. A token baked into an
@@ -61,9 +67,13 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8080
 
+# HTTPS unless the page was told otherwise. Unverified, and only here: this is
+# the container checking its own socket, where the certificate's name proves
+# nothing.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q -O /dev/null "http://127.0.0.1:${GUI_PORT}/index.html" || exit 1
+    CMD case "$GUI_TLS_ENABLED" in false|0|no|off) s=http ;; *) s=https ;; esac; \
+        wget -q --no-check-certificate -O /dev/null "$s://127.0.0.1:${GUI_PORT}/index.html" || exit 1
 
 LABEL org.opencontainers.image.title="nl2sql GUI" \
       org.opencontainers.image.description="React/TypeScript web interface for the nl2sql agent REST API" \
-      org.opencontainers.image.version="5.6.1"
+      org.opencontainers.image.version="6.0.0"

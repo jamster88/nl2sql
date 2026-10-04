@@ -9,6 +9,7 @@ import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -19,6 +20,7 @@ import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 
@@ -75,6 +77,22 @@ public final class Tls {
             return context(new TrustManager[] {trustManagerFor(settings.caCert())}, PROTOCOL);
         }
         return context(null, PROTOCOL);
+    }
+
+    /**
+     * An HTTP client that checks certificates as the settings say.
+     *
+     * <p>One for the API and one for the sign-in service, built the same way,
+     * because the two present the same certificate and a difference between
+     * them would be a bug in whichever was written second.
+     */
+    public static HttpClient client(Settings settings) {
+        return HttpClient.newBuilder()
+                .sslContext(contextFor(settings))
+                .sslParameters(parametersFor(settings))
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
     }
 
     /**

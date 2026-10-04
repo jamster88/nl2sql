@@ -401,8 +401,10 @@ def test_the_default_snippet_validator_runs_against_the_configured_retail_databa
     assert run("filter", "dim_date d", "d.is_holiday").valid is True
     assert seen == {
         "kind": "filter", "applies_to": "dim_date d", "sql": "d.is_holiday",
-        "url": "postgresql://r/db", "timeout_ms": 900,
+        "url": "postgresql://r/db", "timeout_ms": 900, "principal": None,
     }
+    run("filter", "dim_date d", "d.is_holiday", principal="cora")
+    assert seen["principal"] == "cora", "a signed-in curator's snippet runs as them"
 
 
 def test_the_default_schema_reader_lists_each_table_with_its_columns_in_order(settings, monkeypatch):

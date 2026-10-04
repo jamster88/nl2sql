@@ -34,15 +34,27 @@ const proxy: ProxyOptions = {
   },
 };
 
+/**
+ * Sign-in, which the auth service answers. Its cookie comes back through
+ * this proxy, so it is the dev server's own, as it is nginx's in the image.
+ */
+const auth: ProxyOptions = {
+  target: env.NL2SQL_AUTH_URL ?? "https://localhost:8446",
+  changeOrigin: true,
+  secure,
+};
+
+const proxies = { ...Object.fromEntries(API_PATHS.map((path) => [path, proxy])), "/auth": auth };
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: Number(env.CURATE_GUI_PORT ?? 5176),
-    proxy: Object.fromEntries(API_PATHS.map((path) => [path, proxy])),
+    proxy: proxies,
   },
   preview: {
     port: Number(env.CURATE_GUI_PORT ?? 5176),
-    proxy: Object.fromEntries(API_PATHS.map((path) => [path, proxy])),
+    proxy: proxies,
   },
   build: { outDir: "dist", sourcemap: true },
 });

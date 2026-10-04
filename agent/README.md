@@ -1,4 +1,4 @@
-# NL2SQL Agent (v5, multi-agent)
+# NL2SQL Agent (v6, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -34,6 +34,14 @@ the verdict of each of the agent's gates beside the rows -- see
 SQL a question's answer is built from -- a join, a filter, a measure, a
 dimension, each beside what it means -- and the generator is shown the ones
 whose tables are in scope. See [SQL snippets (v5.6)](#sql-snippets-v56).
+
+**v6 asks who is asking.** The pipeline is v5.6's. What changed is who it
+runs for: with sign-in on, the REST API, the SQL console and the review
+service accept a person signed in through the auth service, and run that
+person's questions and statements as their own database role -- the agent
+still connects as its read-only reader, and becomes the person for a
+transaction with `SET LOCAL ROLE`. The command line is unchanged: it is
+whoever runs it. See [`../auth/README.md`](../auth/README.md).
 
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.

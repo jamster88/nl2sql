@@ -42,6 +42,8 @@ fail_under = 100
 include =
     agent/nl2sql_agent/*
     review/nl2sql_review/*
+    auth/*
+    ldap/*
     benchmarks/*
     rag/*
     data_gen/*

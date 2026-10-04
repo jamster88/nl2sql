@@ -25,34 +25,42 @@ cd "$(dirname "$0")"
 POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 POSTGRES_TAG="v1_1"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v5_6_1"
+AGENT_TAG="v6_0"
 GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v5_6_1"
+GUI_TAG="v6_0"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v5_6_1"
+REVIEW_TAG="v6_0"
 REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v5_6_1"
+REVIEW_GUI_TAG="v6_0"
 # The curation interface: a page in front of the review service, for writing
 # SQL snippets, golden pairs and fixes directly. --curate adds it.
 CURATE_GUI_IMAGE="mcfaddja/nl2sql-curate-gui"
-CURATE_GUI_TAG="v5_6_1"
+CURATE_GUI_TAG="v6_0"
 # The SQL console's interface. The console behind it runs from the agent
 # image above, started with a different command, so this is the one image
 # --console adds.
 CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
-CONSOLE_GUI_TAG="v5_6_1"
+CONSOLE_GUI_TAG="v6_0"
 # MLflow, where the agent's runs are traced: its server and the Postgres it
 # keeps traces in, both published with the release. --mlflow adds them.
 MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
-MLFLOW_TAG="v5_6_1"
+MLFLOW_TAG="v6_0"
 MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
-MLFLOW_DB_TAG="v5_6_1"
+MLFLOW_DB_TAG="v6_0"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v5_6_1"
+DESKTOP_TAG="v6_0"
+LDAP_IMAGE="mcfaddja/nl2sql-ldap"
+LDAP_TAG="v6_0"
+AUTH_IMAGE="mcfaddja/nl2sql-auth"
+AUTH_TAG="v6_0"
+DIRECTORY_GUI_IMAGE="mcfaddja/nl2sql-directory-gui"
+DIRECTORY_GUI_TAG="v6_0"
+MLFLOW_PROXY_IMAGE="mcfaddja/nl2sql-mlflow-proxy"
+MLFLOW_PROXY_TAG="v6_0"
 # The release this checkout ships: the agent's tag before any flag changes
 # it. Written into .env, so start.sh can tell a tag someone chose for this
 # checkout from one an older checkout left behind.
@@ -79,6 +87,7 @@ WITH_CONSOLE=0
 WITH_MLFLOW=0
 WITH_DESKTOP=0
 WITH_RAG=1
+WITH_SIGNIN=1
 VERIFY=1
 RESET=0
 
@@ -94,45 +103,45 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v5_6_1)
+      --agent-tag TAG    Agent image tag to pull (default: v6_0)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the web interface, so ./launch.sh
                          --gui starts it instead of building it here
       --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v5_6_1)
+      --gui-tag TAG      GUI image tag to pull (default: v6_0)
       --review           Also pull and pin the feedback review service and
                          its interface (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v5_6_1)
+      --review-tag TAG   Review service image tag (default: v6_0)
       --review-gui-image N   Review interface image
                          (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v5_6_1)
+      --review-gui-tag TAG   Review interface image tag (default: v6_0)
       --curate           Also pull and pin the curation interface, where SQL
                          snippets, golden pairs and fixes are written directly,
                          each run against the retail database first
       --curate-gui-image N   Curation interface image
                          (default: mcfaddja/nl2sql-curate-gui)
-      --curate-gui-tag TAG   Curation interface image tag (default: v5_6_1)
+      --curate-gui-tag TAG   Curation interface image tag (default: v6_0)
       --console          Also pull and pin the SQL console's interface, where
                          the retail database is queried as the agent sees it
                          (the console itself runs from the agent image)
       --console-gui-image N  SQL console interface image
                          (default: mcfaddja/nl2sql-console-gui)
-      --console-gui-tag TAG  SQL console interface image tag (default: v5_6_1)
+      --console-gui-tag TAG  SQL console interface image tag (default: v6_0)
       --mlflow           Also pull and pin MLflow -- its server and the
                          Postgres it keeps traces in -- so ./launch.sh
                          --mlflow starts it instead of building it here
       --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
-      --mlflow-tag TAG   MLflow server image tag (default: v5_6_1)
+      --mlflow-tag TAG   MLflow server image tag (default: v6_0)
       --mlflow-db-image N    MLflow store image
                          (default: mcfaddja/nl2sql-mlflowdb)
-      --mlflow-db-tag TAG    MLflow store image tag (default: v5_6_1)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v6_0)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v5_6_1). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v6_0). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_2)
@@ -144,6 +153,11 @@ Usage: ./setup.sh [options]
       --embed-model NAME Embedding model for retrieval (default: bge-m3)
       --no-rag           Skip the knowledge base; the agent answers from the
                          schema alone, like v1
+      --no-auth          Turn sign-in off, in .env, for every later start: no
+                         directory, no auth service, every page and port open
+                         to whoever can reach it. Without it, the directory,
+                         the auth service and the directory page are pulled
+                         and pinned, and their passwords generated into .env
       --no-verify        Skip the end-of-setup retrieval check
       --build            Build the Postgres image locally instead of pulling
                          it (regenerates the dataset; takes a few minutes)
@@ -200,6 +214,7 @@ while [[ $# -gt 0 ]]; do
         --embed-url) EMBED_URL="$2"; shift 2 ;;
         --embed-model) EMBED_MODEL_NAME="$2"; shift 2 ;;
         --no-rag) WITH_RAG=0; shift ;;
+        --no-auth) WITH_SIGNIN=0; shift ;;
         --no-verify) VERIFY=0; shift ;;
         --build) BUILD_POSTGRES=1; shift ;;
         --reset) RESET=1; shift ;;
@@ -369,6 +384,38 @@ fi
 if [[ $WITH_DESKTOP -eq 0 && -n "$(env_value DESKTOP_IMAGE_NAME)" ]]; then
     WITH_DESKTOP=1
 fi
+# Sign-in turned off before stays off: the line is kept from the old file
+# below, and nothing it would need is pulled.
+case "$(env_value AUTH_ENABLED)" in
+    0|false|no|off|FALSE|NO|OFF) WITH_SIGNIN=0 ;;
+esac
+
+# --- Sign-in's passwords ---------------------------------------------------
+# Three, generated once and then carried from one .env to the next for as
+# long as there is one: the directory and the database keep the first ones
+# they were given, so a new one here would be a password nothing accepts.
+#
+#   LDAP_ADMIN_PASSWORD     the first person, admin, in every group -- what
+#                           signs in to the directory page the first time
+#   LDAP_SERVICE_PASSWORD   the auth service's account in the directory
+#   AUTH_ROLESYNC_PASSWORD  the role that keeps the database's people in
+#                           step with the directory's
+#
+# Hex, so each can sit in a URL and a shell line as it is. 24 bytes from
+# /dev/urandom; `od -N` reads exactly that many, so nothing is cut short.
+signin_secret() {
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+LDAP_ADMIN_PASSWORD=""
+LDAP_SERVICE_PASSWORD=""
+AUTH_ROLESYNC_PASSWORD=""
+for secret_key in LDAP_ADMIN_PASSWORD LDAP_SERVICE_PASSWORD AUTH_ROLESYNC_PASSWORD; do
+    carry "$secret_key" "$secret_key"
+    if [[ -z "${!secret_key}" ]]; then
+        printf -v "$secret_key" '%s' "$(signin_secret)"
+    fi
+done
 
 step "Writing .env"
 had_env=0
@@ -428,6 +475,27 @@ fi
         echo "DESKTOP_IMAGE_NAME=$DESKTOP_IMAGE"
         echo "DESKTOP_IMAGE_TAG=$DESKTOP_TAG"
     fi
+    # Sign-in's three: the directory, the auth service and the directory
+    # page. Pinned whenever sign-in is on, which is by default, because
+    # every page and port waits on them. MLflow's front door goes with
+    # MLflow.
+    if [[ $WITH_SIGNIN -eq 1 ]]; then
+        echo "LDAP_IMAGE_NAME=$LDAP_IMAGE"
+        echo "LDAP_IMAGE_TAG=$LDAP_TAG"
+        echo "AUTH_IMAGE_NAME=$AUTH_IMAGE"
+        echo "AUTH_IMAGE_TAG=$AUTH_TAG"
+        echo "DIRECTORY_GUI_IMAGE_NAME=$DIRECTORY_GUI_IMAGE"
+        echo "DIRECTORY_GUI_IMAGE_TAG=$DIRECTORY_GUI_TAG"
+    else
+        echo "AUTH_ENABLED=false"
+    fi
+    if [[ $WITH_MLFLOW -eq 1 ]]; then
+        echo "MLFLOW_PROXY_IMAGE_NAME=$MLFLOW_PROXY_IMAGE"
+        echo "MLFLOW_PROXY_IMAGE_TAG=$MLFLOW_PROXY_TAG"
+    fi
+    echo "LDAP_ADMIN_PASSWORD=$LDAP_ADMIN_PASSWORD"
+    echo "LDAP_SERVICE_PASSWORD=$LDAP_SERVICE_PASSWORD"
+    echo "AUTH_ROLESYNC_PASSWORD=$AUTH_ROLESYNC_PASSWORD"
     echo "VECTOR_IMAGE_NAME=$VECTOR_IMAGE"
     echo "VECTOR_IMAGE_TAG=$VECTOR_TAG"
     echo "CONTEXT_IMAGE_NAME=$CONTEXT_IMAGE"
@@ -459,6 +527,11 @@ fi
     if [[ -n "$EMBED_MODEL_NAME" ]]; then echo "EMBED_MODEL=$EMBED_MODEL_NAME"; fi
     if [[ -n "$POSTGRES_PORT" ]]; then echo "POSTGRES_PORT=$POSTGRES_PORT"; fi
 } > .env
+# Passwords, so both files are their owner's alone.
+chmod 600 .env
+if [[ $had_env -eq 1 ]]; then
+    chmod 600 .env.bak
+fi
 
 # Everything else the previous file held -- a port, an API token, a setting
 # added by hand -- is kept as it was. This script writes the keys above and
@@ -575,6 +648,24 @@ javafx_platform() {
         *) printf 'linux' ;;
     esac
 }
+
+# Sign-in's images, and MLflow's front door with MLflow.
+if [[ $WITH_SIGNIN -eq 1 ]]; then
+    for pair in "$LDAP_IMAGE:$LDAP_TAG" "$AUTH_IMAGE:$AUTH_TAG" "$DIRECTORY_GUI_IMAGE:$DIRECTORY_GUI_TAG"; do
+        step "Pulling $pair (sign-in)"
+        if ! docker pull "$pair"; then
+            warn "could not pull $pair (private repo, or not logged in);"
+            warn "./launch.sh will build it from source the first time sign-in starts."
+        fi
+    done
+fi
+if [[ $WITH_MLFLOW -eq 1 ]]; then
+    step "Pulling $MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG (MLflow's front door)"
+    if ! docker pull "$MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG"; then
+        warn "could not pull $MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG (private repo, or not logged in);"
+        warn "./launch.sh --mlflow will build MLflow's front door from source instead."
+    fi
+fi
 
 if [[ $WITH_DESKTOP -eq 1 ]]; then
     desktop_pair="$DESKTOP_IMAGE:$DESKTOP_TAG-$(javafx_platform)"
@@ -812,23 +903,23 @@ cat <<EOF
 
     Rather use a browser? There is a web interface:
 
-    ./launch.sh --gui                        # http://localhost:8080
+    ./launch.sh --gui                        # https://localhost:8080
 
     Teaching it this database's pieces -- how two tables join, what a phrase
     filters to, how a measure is calculated? The curation interface writes
     SQL snippets, golden pairs and fixes, each run on the database first:
 
-    ./launch.sh --curate                     # http://localhost:8083
+    ./launch.sh --curate                     # https://localhost:8083
 
     Working out why an answer was wrong? The SQL console runs a query the way
     the agent runs its own, and says which of its gates would have stopped it:
 
-    ./launch.sh --console                    # http://localhost:8082
+    ./launch.sh --console                    # https://localhost:8082
 
     Want to see what the agent did with a question, agent by agent and
     model call by model call? MLflow traces every one:
 
-    ./launch.sh --mlflow                     # http://localhost:5001
+    ./launch.sh --mlflow                     # https://localhost:5001
 
     Or connect a GUI of your own: the same image serves a REST API over TLS,
     and agent/API.md is the contract a client is written against:
@@ -837,3 +928,17 @@ cat <<EOF
     docker compose --profile api run --rm apitest
 
 EOF
+if [[ $WITH_SIGNIN -eq 1 ]]; then
+    cat <<EOF
+    Every page asks who you are. The first person is $(compose_env LDAP_ADMIN_USER admin), whose password
+    is LDAP_ADMIN_PASSWORD in .env; they add everyone else on the directory
+    page, which ./launch.sh --api starts at https://localhost:8084.
+
+EOF
+else
+    cat <<EOF
+    Sign-in is off (AUTH_ENABLED=false in .env): every page and port is open
+    to whoever can reach it.
+
+EOF
+fi

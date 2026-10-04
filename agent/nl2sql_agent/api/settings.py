@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 
+from nl2sql_identity import DEFAULT_PUBLIC_KEY_FILE, SESSION_COOKIE
+
 from ..config import _env, _env_bool, _env_float, _env_int, _env_str
 
 #: Where the dummy certificate is written inside the container. A directory
@@ -86,7 +88,16 @@ class ApiSettings:
     # Forwarding a caller-chosen database principal means letting an HTTP
     # client pick the role rows are read as. Off unless someone decides
     # otherwise: the default identity is the agent's own read-only role.
+    # Never for a signed-in person, whose principal is themselves.
     allow_principal: bool = False
+    # Sign-in (the auth service). On, a person's session -- the cookie a GUI
+    # sends, or the bearer the desktop client holds -- is what every /v1
+    # route needs, their question runs as their own database role, and they
+    # see only their own questions. The token above still works, for the
+    # machines that have no person to sign in.
+    auth_enabled: bool = False
+    auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
+    auth_cookie_name: str = SESSION_COOKIE
 
     # --- Work ------------------------------------------------------------
     # Questions in flight at once. Two, not one, so a browser polling a
@@ -143,6 +154,9 @@ class ApiSettings:
             token=_env("API_TOKEN"),
             cors_origins=_env_tuple("API_CORS_ORIGINS", ("*",)),
             allow_principal=_env_bool("API_ALLOW_PRINCIPAL", False),
+            auth_enabled=_env_bool("AUTH_ENABLED", False),
+            auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
+            auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             max_concurrency=_env_int("API_MAX_CONCURRENCY", 2),
             job_ttl_seconds=_env_int("API_JOB_TTL_SECONDS", 3600),
             max_jobs=_env_int("API_MAX_JOBS", 200),
@@ -182,17 +196,17 @@ class ApiSettings:
                 "cross the network in clear text. Only do this behind something "
                 "that terminates TLS itself."
             )
-        if not self.token:
+        if not self.token and not self.auth_enabled:
             notes.append(
-                "No API_TOKEN is set, so every caller that can reach the port can "
-                "ask questions."
+                "No API_TOKEN is set and sign-in is off (AUTH_ENABLED=false), so every "
+                "caller that can reach the port can ask questions."
             )
         if self.token and "*" in self.cors_origins:
             notes.append(
                 "API_CORS_ORIGINS is '*' while a token is required; browsers refuse "
                 "to send credentials to a wildcard origin. List the GUI's origin."
             )
-        if self.feedback_db_url and not self.token:
+        if self.feedback_db_url and not self.token and not self.auth_enabled:
             notes.append(
                 "API_FEEDBACK_DB_URL is set while no API_TOKEN is, so anyone who can "
                 "reach the port can write rows into the feedback staging database."

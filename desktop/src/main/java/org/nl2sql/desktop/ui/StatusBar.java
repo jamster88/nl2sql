@@ -1,5 +1,6 @@
 package org.nl2sql.desktop.ui;
 
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.Region;
@@ -30,6 +31,8 @@ public final class StatusBar {
     private final String connection;
     private List<String> warnings = List.of();
     private Models.Meta meta;
+    private String who;
+    private Runnable signOut;
 
     /** @param connection how the certificate is being checked, from {@code Tls.describe} */
     public StatusBar(String connection) {
@@ -57,6 +60,18 @@ public final class StatusBar {
 
     public void show(Models.Meta value) {
         this.meta = value;
+        redraw();
+    }
+
+    /**
+     * Who is signed in, and how to stop being them; null for nobody.
+     *
+     * <p>Here rather than in the masthead because it is the same kind of fact
+     * as the certificate check beside it: who this window is talking as.
+     */
+    public void setSignedIn(String person, Runnable onSignOut) {
+        this.who = person;
+        this.signOut = onSignOut;
         redraw();
     }
 
@@ -92,9 +107,18 @@ public final class StatusBar {
                 service,
                 muted(meta.model()),
                 muted(meta.tables().size() + (meta.tables().size() == 1 ? " table" : " tables")),
-                muted(meta.authentication().equals("bearer") ? "token required" : "no token"),
+                muted(switch (meta.authentication()) {
+                    case "session" -> "sign-in required";
+                    case "bearer" -> "token required";
+                    default -> "no token";
+                }),
                 muted(connection),
                 muted(meta.feedback() ? "feedback staged for review" : "feedback kept locally"));
+        if (who != null) {
+            Hyperlink out = new Hyperlink("Sign out");
+            out.setOnAction(event -> signOut.run());
+            node.getChildren().addAll(muted("signed in as " + who), out);
+        }
         if (!meta.scope().isEmpty()) {
             node.getChildren().add(muted(meta.scope()));
         }

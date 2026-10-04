@@ -17,6 +17,14 @@ services:
     restart: unless-stopped
     shm_size: 256mb
     stop_grace_period: 1m
+    environment:
+      # Sign-in: pg_hba's `ldap` method checks a person's password by binding
+      # to the directory over StartTLS, and libldap verifies the directory's
+      # certificate against this file -- the one the directory writes into
+      # the ldaptls volume on its first start. Without sign-in (no directory,
+      # or AUTH_ENABLED=false) launch.sh writes no ldap line and this is
+      # never read.
+      LDAPTLS_CACERT: /etc/nl2sql/ldap-tls/ldap.crt
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -25,6 +33,7 @@ services:
       # the first time the volume is created, and the volume keeps any later
       # writes across stop/start/recreate.
       - pgdata:/var/lib/pgdata
+      - ldaptls:/etc/nl2sql/ldap-tls:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -394,14 +403,21 @@ services:
       API_TLS_KEY_FILE: ${API_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
       API_TLS_GENERATE: ${API_TLS_GENERATE:-true}
       API_TLS_ALLOW_SELF_SIGNED: ${API_TLS_ALLOW_SELF_SIGNED:-true}
-      # nl2sql-review and nl2sql-console are in this list because the review
-      # service and the SQL console present this same certificate rather
-      # than generating one each, and their interfaces' nginx verifies the
-      # name it connects to. A name added here is picked up on the API's next
+      # nl2sql-review, nl2sql-console and nl2sql-auth are in this list because
+      # the review service, the SQL console and the auth service present this
+      # same certificate rather than generating one each, and the nginx in
+      # front of each verifies the name it connects to. A name added here is picked up on the API's next
       # start: it reissues a development certificate that does not cover it.
-      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,nl2sql-review,review,nl2sql-console,console,127.0.0.1,::1}
+      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,nl2sql-review,review,nl2sql-console,console,nl2sql-auth,auth,127.0.0.1,::1}
       API_TLS_DAYS: ${API_TLS_DAYS:-}
       # --- who may call ----------------------------------------------
+      # Sign-in: on, a person signs in through the auth service and their
+      # questions run as their own database role; API_TOKEN, when set, is
+      # still accepted, as a service token for scripts. The key a session is
+      # checked with is the auth service's public half, read from authkeys.
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      AUTH_PUBLIC_KEY_FILE: ${AUTH_PUBLIC_KEY_FILE:-/etc/nl2sql/auth/session.pub}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-}
       API_TOKEN: ${API_TOKEN:-}
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-}
       API_ALLOW_PRINCIPAL: ${API_ALLOW_PRINCIPAL:-}
@@ -427,6 +443,7 @@ services:
       - "${API_PORT:-8443}:${API_PORT:-8443}"
     volumes:
       - apitls:/etc/nl2sql/tls
+      - authkeys:/etc/nl2sql/auth:ro
       - ./models/catalog.json:/app/models/catalog.json:ro
     healthcheck:
       # /healthz is the one route that never needs a token, and --insecure is
@@ -482,9 +499,22 @@ services:
       # Docker's embedded DNS. The proxy resolves the API per request so it
       # survives the API being restarted onto a new address.
       GUI_RESOLVER: ${GUI_RESOLVER:-127.0.0.11}
-      # Held here so the browser never sees it. The GUI sends no token of
-      # its own; this is the only place one is added.
+      # Held here so the browser never sees it -- and only used with sign-in
+      # off. With it on, each person's own session is what reaches the API,
+      # and a token added here would make every visitor the same somebody.
       API_TOKEN: ${API_TOKEN:-}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      # Where the page's sign-in form posts: the auth service, verified like
+      # the upstream above.
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      # HTTPS with the API's certificate, so a password typed into the
+      # sign-in form is never sent in clear. Off only behind something that
+      # terminates TLS itself; GUI_TLS_ENABLED switches every interface.
+      GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
+      GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${GUI_PORT:-8080}:${GUI_PORT:-8080}"
     volumes:
@@ -541,6 +571,14 @@ services:
       # is unset.
       REVIEW_TOKEN: ${REVIEW_TOKEN:-}
       REVIEW_CORS_ORIGINS: ${REVIEW_CORS_ORIGINS:-}
+      # Sign-in, as for the API: reviewing is nl2sql_reviewers' and writing
+      # directly is nl2sql_curators', each configurable, and a reviewer's
+      # name on what they decided is the one they signed in as.
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      AUTH_PUBLIC_KEY_FILE: ${AUTH_PUBLIC_KEY_FILE:-/etc/nl2sql/auth/session.pub}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-}
+      REVIEW_REVIEWER_ROLES: ${REVIEW_REVIEWER_ROLES:-}
+      REVIEW_CURATOR_ROLES: ${REVIEW_CURATOR_ROLES:-}
       # As the owner: this service creates the schema and re-fences the
       # INSERT-only role the API connects as, on every start.
       FEEDBACK_DB_URL: ${REVIEW_FEEDBACK_DB_URL:-postgresql://feedback:feedback@nl2sql-feedbackdb:5432/nl2sql_feedback}
@@ -586,6 +624,8 @@ services:
     volumes:
       # Read-only: the certificate the API wrote, which this service presents.
       - apitls:/etc/nl2sql/tls:ro
+      # Read-only: the auth service's public key, which sessions are checked with.
+      - authkeys:/etc/nl2sql/auth:ro
       # The golden question document, bind-mounted from the working tree.
       #
       # This is the one writable bind mount in the project and it is the
@@ -642,6 +682,15 @@ services:
       # Held here so the reviewer's browser never sees it. This token can
       # rewrite the golden question set.
       REVIEW_TOKEN: ${REVIEW_TOKEN:-}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      # Where the page's sign-in form posts: the auth service, verified like
+      # the upstream above.
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      REVIEW_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
+      REVIEW_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      REVIEW_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${REVIEW_GUI_PORT:-8081}:${REVIEW_GUI_PORT:-8081}"
     volumes:
@@ -680,6 +729,15 @@ services:
       # The review service's token, held here so the curator's browser never
       # sees it. It can rewrite the golden set and the snippets.
       CURATE_TOKEN: ${REVIEW_TOKEN:-}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      # Where the page's sign-in form posts: the auth service, verified like
+      # the upstream above.
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      CURATE_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
+      CURATE_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      CURATE_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${CURATE_GUI_PORT:-8083}:${CURATE_GUI_PORT:-8083}"
     volumes:
@@ -735,6 +793,12 @@ services:
       # --- who may call ----------------------------------------------
       CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
       CONSOLE_CORS_ORIGINS: ${CONSOLE_CORS_ORIGINS:-}
+      # Sign-in: the console is reviewers' and curators' by default, and
+      # each statement runs as the person who typed it.
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      AUTH_PUBLIC_KEY_FILE: ${AUTH_PUBLIC_KEY_FILE:-/etc/nl2sql/auth/session.pub}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-}
+      CONSOLE_ALLOWED_ROLES: ${CONSOLE_ALLOWED_ROLES:-}
       # --- what a query may return -----------------------------------
       CONSOLE_MAX_ROWS: ${CONSOLE_MAX_ROWS:-}
       CONSOLE_DOCS_ENABLED: ${CONSOLE_DOCS_ENABLED:-}
@@ -744,6 +808,8 @@ services:
     volumes:
       # Read-only: the certificate the API wrote, which this process presents.
       - apitls:/etc/nl2sql/tls:ro
+      # Read-only: the auth service's public key, which sessions are checked with.
+      - authkeys:/etc/nl2sql/auth:ro
     healthcheck:
       test:
         - CMD-SHELL
@@ -788,11 +854,237 @@ services:
       CONSOLE_GUI_RESOLVER: ${CONSOLE_GUI_RESOLVER:-127.0.0.11}
       # Held here so the browser never sees it.
       CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      # Where the page's sign-in form posts: the auth service, verified like
+      # the upstream above.
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      CONSOLE_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
+      CONSOLE_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      CONSOLE_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_GUI_PORT:-8082}:${CONSOLE_GUI_PORT:-8082}"
     volumes:
       - apitls:/etc/nl2sql/tls:ro
     profiles: ["consolegui"]
+
+  # --- sign-in ---------------------------------------------------------
+  #
+  # Who may use what, decided by the retail database and a directory beside
+  # it. A person signs in with the user name and password the directory
+  # holds; Postgres checks that password itself (pg_hba's `ldap` method,
+  # which launch.sh writes); and the groups they are in become the database
+  # roles they hold, which is what every service asks about. Off with
+  # AUTH_ENABLED=false, or `./start.sh --no-auth`.
+
+  # The directory: OpenLDAP, standalone or a read-only replica of another
+  # directory -- Active Directory, another OpenLDAP, anything that answers an
+  # LDAP search -- chosen by LDAP_MODE. Standalone, its people are loaded
+  # from LDAP_SEED_FILE on first start and edited through the directory page
+  # below; a replica copies its primary on an interval, passes each password
+  # through to it, and has no page at all.
+  #
+  # Not published: only the retail database and the auth service talk to it.
+  ldap:
+    build:
+      context: .
+      dockerfile: ldap/Dockerfile
+    image: ${LDAP_IMAGE_NAME:-nl2sql-ldap}:${LDAP_IMAGE_TAG:-latest}
+    container_name: nl2sql-ldap
+    # The name its certificate is issued for, and the one Postgres and the
+    # auth service connect to. Set as the host name as well as the service
+    # name because libldap checks a certificate against the name it was
+    # asked to connect to, and a container that thinks it is called
+    # something else issues itself a certificate for that.
+    hostname: nl2sql-ldap
+    restart: unless-stopped
+    environment:
+      LDAP_MODE: ${LDAP_MODE:-standalone}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=nl2sql,dc=local}
+      LDAP_ORGANISATION: ${LDAP_ORGANISATION:-}
+      # The auth service's account, which reads every person and, standalone,
+      # edits them. setup.sh generates it into .env.
+      LDAP_SERVICE_PASSWORD: ${LDAP_SERVICE_PASSWORD:-}
+      # The first administrator, made on the first start of a standalone
+      # directory and in every group. setup.sh generates the password into
+      # .env; it is what signs in to the directory page the first time.
+      LDAP_ADMIN_USER: ${LDAP_ADMIN_USER:-admin}
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD:-}
+      LDAP_ADMIN_NAME: ${LDAP_ADMIN_NAME:-}
+      # A CSV or LDIF of people to load on the first start, as a path inside
+      # the container: put the file in ./ldap/seed and name it
+      # /seed/<file>. See ldap/README.md for the columns.
+      LDAP_SEED_FILE: ${LDAP_SEED_FILE:-}
+      LDAP_GROUPS: ${LDAP_GROUPS:-}
+      # Its own certificate, generated on first start into ldaptls for the
+      # names below; mount a real one and set LDAP_TLS_GENERATE=false.
+      LDAP_TLS_CERT_FILE: ${LDAP_TLS_CERT_FILE:-}
+      LDAP_TLS_KEY_FILE: ${LDAP_TLS_KEY_FILE:-}
+      LDAP_TLS_GENERATE: ${LDAP_TLS_GENERATE:-}
+      LDAP_TLS_HOSTNAMES: ${LDAP_TLS_HOSTNAMES:-}
+      LDAP_TLS_DAYS: ${LDAP_TLS_DAYS:-}
+      LDAP_REQUIRE_TLS: ${LDAP_REQUIRE_TLS:-}
+      LDAP_LOCKOUT_FAILURES: ${LDAP_LOCKOUT_FAILURES:-}
+      LDAP_LOCKOUT_SECONDS: ${LDAP_LOCKOUT_SECONDS:-}
+      LDAP_MIN_PASSWORD_LENGTH: ${LDAP_MIN_PASSWORD_LENGTH:-}
+      LDAP_LOG_LEVEL: ${LDAP_LOG_LEVEL:-}
+      # A replica's primary, and what to copy from it. Read only when
+      # LDAP_MODE=replica; ldap/README.md has the values for Active Directory.
+      LDAP_UPSTREAM_URI: ${LDAP_UPSTREAM_URI:-}
+      LDAP_UPSTREAM_FLAVOUR: ${LDAP_UPSTREAM_FLAVOUR:-}
+      LDAP_UPSTREAM_BIND_DN: ${LDAP_UPSTREAM_BIND_DN:-}
+      LDAP_UPSTREAM_BIND_PASSWORD: ${LDAP_UPSTREAM_BIND_PASSWORD:-}
+      LDAP_UPSTREAM_BASE_DN: ${LDAP_UPSTREAM_BASE_DN:-}
+      LDAP_UPSTREAM_USER_BASE: ${LDAP_UPSTREAM_USER_BASE:-}
+      LDAP_UPSTREAM_GROUP_BASE: ${LDAP_UPSTREAM_GROUP_BASE:-}
+      LDAP_UPSTREAM_USER_FILTER: ${LDAP_UPSTREAM_USER_FILTER:-}
+      LDAP_UPSTREAM_GROUP_FILTER: ${LDAP_UPSTREAM_GROUP_FILTER:-}
+      LDAP_UPSTREAM_LOGIN_ATTRIBUTE: ${LDAP_UPSTREAM_LOGIN_ATTRIBUTE:-}
+      LDAP_UPSTREAM_MEMBER_ATTRIBUTE: ${LDAP_UPSTREAM_MEMBER_ATTRIBUTE:-}
+      LDAP_UPSTREAM_STARTTLS: ${LDAP_UPSTREAM_STARTTLS:-}
+      LDAP_UPSTREAM_CACERT: ${LDAP_UPSTREAM_CACERT:-}
+      LDAP_UPSTREAM_TLS_VERIFY: ${LDAP_UPSTREAM_TLS_VERIFY:-}
+      LDAP_UPSTREAM_PAGE_SIZE: ${LDAP_UPSTREAM_PAGE_SIZE:-}
+      LDAP_UPSTREAM_TIMEOUT: ${LDAP_UPSTREAM_TIMEOUT:-}
+      LDAP_REPLICA_GROUPS: ${LDAP_REPLICA_GROUPS:-}
+      LDAP_REPLICA_INTERVAL: ${LDAP_REPLICA_INTERVAL:-}
+      LDAP_REPLICA_ONLY_GROUP_MEMBERS: ${LDAP_REPLICA_ONLY_GROUP_MEMBERS:-}
+      # A copy that would empty a directory with people in it is refused
+      # unless this says the primary really is empty.
+      LDAP_REPLICA_ALLOW_EMPTY: ${LDAP_REPLICA_ALLOW_EMPTY:-}
+    volumes:
+      - ldapdata:/var/lib/openldap/openldap-data
+      # Written here: the directory's certificate, read by the database and
+      # the auth service to verify it.
+      - ldaptls:/etc/nl2sql/ldap-tls
+      # Seed files, and the upstream's CA certificate for a replica. Read-only.
+      - ./ldap/seed:/seed:ro
+    profiles: ["auth"]
+
+  # The auth service: signing in, the session, turning the directory's
+  # people and groups into Postgres roles, and the directory page's API.
+  #
+  # Published, unlike the directory: the desktop client and scripts sign in
+  # here directly (POST /auth/token). Browsers sign in through the interface
+  # they opened, whose nginx proxies /auth/ to this.
+  #
+  # After the API, because it presents the certificate the API writes.
+  auth:
+    build:
+      context: .
+      dockerfile: auth/Dockerfile
+    image: ${AUTH_IMAGE_NAME:-nl2sql-auth}:${AUTH_IMAGE_TAG:-latest}
+    container_name: nl2sql-auth
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ldap:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      AUTH_HOST: ${AUTH_HOST:-0.0.0.0}
+      AUTH_PORT: ${AUTH_PORT:-8446}
+      AUTH_ROOT_PATH: ${AUTH_ROOT_PATH:-}
+      AUTH_TLS_ENABLED: ${AUTH_TLS_ENABLED:-true}
+      AUTH_TLS_CERT_FILE: ${AUTH_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      AUTH_TLS_KEY_FILE: ${AUTH_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
+      # --- the session -------------------------------------------------
+      AUTH_SIGNING_KEY_FILE: ${AUTH_SIGNING_KEY_FILE:-}
+      AUTH_PUBLIC_KEY_FILE: ${AUTH_PUBLIC_KEY_FILE:-/etc/nl2sql/auth/session.pub}
+      AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-}
+      AUTH_SESSION_HOURS: ${AUTH_SESSION_HOURS:-}
+      AUTH_THROTTLE_FAILURES: ${AUTH_THROTTLE_FAILURES:-}
+      AUTH_THROTTLE_SECONDS: ${AUTH_THROTTLE_SECONDS:-}
+      # The database a person signs in to, which is the one that checks
+      # their password -- and the role that keeps its people in step with
+      # the directory: it can create and drop them, and nothing else.
+      AUTH_DB_HOST: ${AUTH_DB_HOST:-}
+      AUTH_DB_PORT: ${AUTH_DB_PORT:-}
+      AUTH_DB_NAME: ${POSTGRES_DB:-nl2sql_retail}
+      AUTH_DB_SSLMODE: ${AUTH_DB_SSLMODE:-}
+      AUTH_DB_CONNECT_TIMEOUT: ${AUTH_DB_CONNECT_TIMEOUT:-}
+      AUTH_ROLESYNC_DB_URL: postgresql://${AUTH_ROLESYNC_USER:-nl2sql_rolesync}:${AUTH_ROLESYNC_PASSWORD:-}@nl2sql-postgres:5432/${POSTGRES_DB:-nl2sql_retail}
+      AUTH_READER_ROLE: ${POSTGRES_READER_USER:-nl2sql_reader}
+      AUTH_GROUP_ROLES: ${AUTH_GROUP_ROLES:-}
+      AUTH_ROLE_SYNC_INTERVAL: ${AUTH_ROLE_SYNC_INTERVAL:-}
+      AUTH_USER_STATEMENT_TIMEOUT_MS: ${AUTH_USER_STATEMENT_TIMEOUT_MS:-}
+      AUTH_USER_CONNECTION_LIMIT: ${AUTH_USER_CONNECTION_LIMIT:-}
+      # --- the directory -----------------------------------------------
+      AUTH_LDAP_URL: ${AUTH_LDAP_URL:-}
+      AUTH_LDAP_STARTTLS: ${AUTH_LDAP_STARTTLS:-}
+      AUTH_LDAP_CACERT: ${AUTH_LDAP_CACERT:-}
+      AUTH_LDAP_TIMEOUT: ${AUTH_LDAP_TIMEOUT:-}
+      LDAP_MODE: ${LDAP_MODE:-standalone}
+      LDAP_BASE_DN: ${LDAP_BASE_DN:-dc=nl2sql,dc=local}
+      LDAP_SERVICE_PASSWORD: ${LDAP_SERVICE_PASSWORD:-}
+      LDAP_MIN_PASSWORD_LENGTH: ${LDAP_MIN_PASSWORD_LENGTH:-}
+      # Who MLflow lets in, through its front door below.
+      MLFLOW_ALLOWED_ROLES: ${MLFLOW_ALLOWED_ROLES:-}
+      AUTH_CORS_ORIGINS: ${AUTH_CORS_ORIGINS:-}
+      AUTH_DOCS_ENABLED: ${AUTH_DOCS_ENABLED:-}
+      AUTH_LOG_LEVEL: ${AUTH_LOG_LEVEL:-}
+    ports:
+      - "${AUTH_PORT:-8446}:${AUTH_PORT:-8446}"
+    volumes:
+      - apitls:/etc/nl2sql/tls:ro
+      - ldaptls:/etc/nl2sql/ldap-tls:ro
+      # The signing key: this service's alone.
+      - authdata:/var/lib/nl2sql-auth
+      # Its public half, written here and read by every service that checks
+      # a session.
+      - authkeys:/etc/nl2sql/auth
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os,ssl,urllib.request;
+          p=os.environ.get('AUTH_PORT','8446');
+          s='https' if os.environ.get('AUTH_TLS_ENABLED','true').lower() not in ('0','false','no','off') else 'http';
+          c=ssl._create_unverified_context();
+          urllib.request.urlopen(f'{s}://127.0.0.1:{p}/healthz', context=c, timeout=5).read()"
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 20s
+    profiles: ["auth"]
+
+  # The directory page: people and groups, added, edited, imported from a
+  # file, removed. For nl2sql_admins, over HTTPS, and only beside a
+  # standalone directory -- its start-up refuses LDAP_MODE=replica, whose
+  # people are edited on its primary.
+  #
+  # This machine's unless DIRECTORY_GUI_BIND_ADDRESS says otherwise, like
+  # the SQL console: it is where people are made.
+  directorygui:
+    build:
+      context: .
+      dockerfile: auth/gui/Dockerfile
+    image: ${DIRECTORY_GUI_IMAGE_NAME:-nl2sql-directory-gui}:${DIRECTORY_GUI_IMAGE_TAG:-latest}
+    container_name: nl2sql-directory-gui
+    restart: unless-stopped
+    depends_on:
+      auth:
+        condition: service_healthy
+    environment:
+      DIRECTORY_GUI_PORT: ${DIRECTORY_GUI_PORT:-8084}
+      DIRECTORY_UPSTREAM: ${DIRECTORY_GUI_UPSTREAM:-https://nl2sql-auth:8446}
+      DIRECTORY_SSL_NAME: ${DIRECTORY_GUI_SSL_NAME:-nl2sql-auth}
+      DIRECTORY_CACERT: ${DIRECTORY_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      DIRECTORY_READ_TIMEOUT: ${DIRECTORY_GUI_READ_TIMEOUT:-120s}
+      DIRECTORY_GUI_RESOLVER: ${DIRECTORY_GUI_RESOLVER:-127.0.0.11}
+      DIRECTORY_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
+      DIRECTORY_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      DIRECTORY_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
+      # Read so it can refuse: a replica's people are edited on its primary.
+      LDAP_MODE: ${LDAP_MODE:-standalone}
+    ports:
+      - "${DIRECTORY_GUI_BIND_ADDRESS:-127.0.0.1}:${DIRECTORY_GUI_PORT:-8084}:${DIRECTORY_GUI_PORT:-8084}"
+    volumes:
+      - apitls:/etc/nl2sql/tls:ro
+    profiles: ["directorygui"]
 
   # The tracking store behind MLflow: experiments, traces and the verdicts on
   # them. Stock Postgres, like feedbackdb and for its reason -- what it holds
@@ -836,9 +1128,10 @@ services:
   # pinned to the version of the agent's tracing client, which a test holds.
   # How it is served is the command below, not the image.
   #
-  # Published on this machine only unless MLFLOW_BIND_ADDRESS says otherwise,
-  # like the SQL console: the interface has no login, can delete what it
-  # shows, and what it shows includes the rows every question returned.
+  # Not published. Its interface has no login of its own, can delete what
+  # it shows, and what it shows includes the rows every question returned,
+  # so a browser reaches it only through its front door below. The agent,
+  # on this network, traces to it directly.
   mlflow:
     build:
       context: .
@@ -866,9 +1159,6 @@ services:
       # any host replaces that default rather than adding to it.
       - --allowed-hosts=${MLFLOW_ALLOWED_HOSTS:-nl2sql-mlflow,nl2sql-mlflow:*,mlflow,mlflow:*,localhost,127.0.0.1,[::1],0.0.0.0,localhost:*,127.0.0.1:*,[[]::1]:*,0.0.0.0:*,192.168.*,10.*,172.16.*,172.17.*,172.18.*,172.19.*,172.20.*,172.21.*,172.22.*,172.23.*,172.24.*,172.25.*,172.26.*,172.27.*,172.28.*,172.29.*,172.30.*,172.31.*,fc00:*,fd00:*}
       - --workers=${MLFLOW_WORKERS:-2}
-    ports:
-      # 5001 on the host: macOS keeps 5000 for AirPlay.
-      - "${MLFLOW_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-5001}:5000"
     volumes:
       - mlflowartifacts:/mlflow/artifacts
     healthcheck:
@@ -880,6 +1170,49 @@ services:
       timeout: 8s
       retries: 6
       start_period: 30s
+    profiles: ["mlflow"]
+
+  # MLflow's front door: nginx, over HTTPS with the API's certificate, asking
+  # the auth service about every request (auth_request). A browser that has
+  # not signed in is sent to; an MLflow client -- the benchmark, a notebook --
+  # signs in with MLFLOW_TRACKING_USERNAME and _PASSWORD, which MLflow sends
+  # as Basic credentials. nl2sql_reviewers and nl2sql_admins by default
+  # (MLFLOW_ALLOWED_ROLES, on the auth service).
+  #
+  # In MLflow's profile, and not waiting on the API in compose: the
+  # certificate it presents is the API's, so launch.sh starts the API first,
+  # and a start before the certificate exists is refused and retried rather
+  # than served without one.
+  mlflowproxy:
+    build:
+      context: .
+      dockerfile: docker/mlflow-proxy/Dockerfile
+    image: ${MLFLOW_PROXY_IMAGE_NAME:-nl2sql-mlflow-proxy}:${MLFLOW_PROXY_IMAGE_TAG:-latest}
+    container_name: nl2sql-mlflow-proxy
+    restart: unless-stopped
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_PROXY_PORT: ${MLFLOW_PROXY_PORT:-5001}
+      MLFLOW_UPSTREAM: ${MLFLOW_PROXY_UPSTREAM:-http://nl2sql-mlflow:5000}
+      MLFLOW_SSL_NAME: ${MLFLOW_PROXY_SSL_NAME:-nl2sql-mlflow}
+      MLFLOW_CACERT: ${MLFLOW_PROXY_CACERT:-/etc/nl2sql/tls/server.crt}
+      MLFLOW_READ_TIMEOUT: ${MLFLOW_PROXY_READ_TIMEOUT:-300s}
+      MLFLOW_PROXY_RESOLVER: ${MLFLOW_PROXY_RESOLVER:-127.0.0.11}
+      MLFLOW_PROXY_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
+      MLFLOW_PROXY_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
+      MLFLOW_PROXY_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+    ports:
+      # 5001 on the host: macOS keeps 5000 for AirPlay. This machine's
+      # unless MLFLOW_BIND_ADDRESS says otherwise.
+      - "${MLFLOW_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-5001}:${MLFLOW_PROXY_PORT:-5001}"
+    volumes:
+      - apitls:/etc/nl2sql/tls:ro
     profiles: ["mlflow"]
 
   # An outside client. Nothing of this project is installed in it -- it is a
@@ -937,6 +1270,14 @@ services:
     profiles: ["desktop"]
 
 volumes:
+  # The directory's people, and its certificate (read by the database and the
+  # auth service).
+  ldapdata:
+  ldaptls:
+  # The auth service's signing key, and the public half every service checks
+  # a session with.
+  authdata:
+  authkeys:
   apitls:
     # The REST server's certificate and key. Named so a generated development
     # certificate survives a restart: a client that trusted it once (or

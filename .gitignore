@@ -35,6 +35,9 @@ console/coverage/
 curate/node_modules/
 curate/dist/
 curate/coverage/
+auth/gui/node_modules/
+auth/gui/dist/
+auth/gui/coverage/
 
 # The copy the review service keeps beside the golden question document --
 # and, since 5.6, beside the SQL snippet document -- before it replaces it. Useful when a promotion turns out to be wrong;
@@ -49,3 +52,9 @@ desktop/target/
 # itself in. Per-deployment and regenerated when the names it covers change,
 # so a committed one would be wrong for everybody who did not write it.
 nl2sql-api.crt
+
+# People to load into a standalone directory: names and addresses at least,
+# and passwords or their hashes as often as not. The example is the one file
+# here that belongs to the repository.
+ldap/seed/*
+!ldap/seed/people.example.csv

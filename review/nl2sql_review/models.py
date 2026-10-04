@@ -572,7 +572,7 @@ class ReviewMeta(BaseModel):
     reload_context: bool = True
     reload_vectors: bool = True
     limits: ReviewLimits
-    authentication: Literal["none", "bearer"] = "none"
+    authentication: Literal["none", "bearer", "session"] = "none"
     warnings: list[str] = Field(default_factory=list)
 
 

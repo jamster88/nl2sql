@@ -198,6 +198,23 @@ def test_success_clears_the_name_and_zero_failures_means_no_throttle():
     assert off.wait("name:a") == 0
 
 
+def test_an_address_has_a_limit_of_its_own():
+    """Everyone behind one proxy is one address: a name's five would let one
+    person's typing lock the rest out."""
+    clock = Clock()
+    throttle = Throttle(2, 60, clock=clock, per_kind={"address": 4})
+    for name in ("a", "b", "c"):
+        throttle.failed(f"name:{name}", "address:office")
+    assert throttle.wait("name:d", "address:office") == 0, "three is under the address's four"
+    assert throttle.wait("name:a") == 0 and throttle.limit("name:a") == 2
+    throttle.failed("name:d", "address:office")
+    assert throttle.wait("name:e", "address:office") == 60
+    off = Throttle(2, 60, clock=clock, per_kind={"address": 0})
+    for _ in range(5):
+        off.failed("address:office")
+    assert off.wait("address:office") == 0, "0 is no limit for that kind"
+
+
 def test_the_throttle_reads_a_monotonic_clock_by_default():
     assert Throttle(1, 1).wait("x") == 0
 

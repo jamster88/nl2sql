@@ -42,4 +42,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql MLflow proxy" \
       org.opencontainers.image.description="nginx in front of the nl2sql MLflow server: sign-in through the auth service for every request" \
-      org.opencontainers.image.version="6.0.0"
+      org.opencontainers.image.version="6.0.1"

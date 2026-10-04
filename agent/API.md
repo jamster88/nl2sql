@@ -197,8 +197,11 @@ With sign-in off (`AUTH_ENABLED=false`, the default outside compose) only the
 second kind exists, and only if `API_TOKEN` is set: unset, the API is open,
 because the usual deployment without sign-in is a private network and a
 token that has to be invented before anything works is a token that ends up
-committed. `GET /v1/meta` says which applies: `authentication` is `session`,
-`bearer` or `none`.
+committed. `GET /v1/meta` says which applies -- `authentication` is
+`session`, `bearer` or `none` -- to a caller it answers. It is a `/v1` route
+like the rest, so to a caller with neither a session nor a token, on a
+server that requires one, the answer is the `401` itself: `sign_in_required`
+means sign-in is on, `unauthorized` that a static token is wanted.
 
 A static token or a session token is sent the same ways:
 

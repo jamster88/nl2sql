@@ -42,10 +42,15 @@ COPY ldap/nl2sql_ldap/ ./nl2sql_ldap/
 ENV PYTHONPATH=/opt/nl2sql \
     PYTHONUNBUFFERED=1
 
-# slapd's own user, for slapd and for the process that starts it. Root on
-# the directory is this user on the local socket (the peer credential), so
-# nothing in the container runs as root and there is no root password.
-USER ldap
+# Started as root, and only for a moment: the entry point gives the `ldap`
+# user the directories it writes, then becomes that user before it does
+# anything else, so slapd and everything it starts run as `ldap`. Root on the
+# directory is this user on the local socket (the peer credential), so there
+# is no root password. Not `USER ldap`: a named volume another container
+# mounts first -- the certificate's, when the retail database starts before
+# the directory, as it does under compose -- is created owned by root, and
+# only root can hand it over. A `docker exec` and the health check run as
+# root too, and the entry point gives root up for them the same way.
 
 # 389 for LDAP with StartTLS, 636 for LDAPS. Unprivileged ports would need
 # every client configured; Docker lets a container's user bind these.
@@ -56,6 +61,6 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=5 \
 
 LABEL org.opencontainers.image.title="nl2sql directory" \
       org.opencontainers.image.description="OpenLDAP for the nl2sql stack: standalone, or a read-only replica of another directory" \
-      org.opencontainers.image.version="6.0.0"
+      org.opencontainers.image.version="6.0.1"
 
 ENTRYPOINT ["python3", "-m", "nl2sql_ldap"]

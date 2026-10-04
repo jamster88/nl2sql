@@ -319,6 +319,7 @@ ldap_hba() {  # ldap_hba on|off -- write pg_hba.conf's sign-in lines, or take th
         -e NL2SQL_SIGNIN="$1" \
         -e NL2SQL_DB="$(compose_env POSTGRES_DB nl2sql_retail)" \
         -e NL2SQL_SERVICE_ROLES="$(compose_env POSTGRES_READER_USER nl2sql_reader),$(compose_env AUTH_ROLESYNC_USER nl2sql_rolesync)" \
+        -e NL2SQL_LDAP_HOST=nl2sql-ldap \
         -e NL2SQL_LDAP_BASE_DN="$(compose_env LDAP_BASE_DN dc=nl2sql,dc=local)" \
         postgres sh -s < docker/ldap_hba.sh >/dev/null
 }

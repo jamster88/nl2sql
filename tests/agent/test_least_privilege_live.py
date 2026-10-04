@@ -89,20 +89,32 @@ def test_the_reader_is_a_plain_login_role_with_no_special_attributes(reader):
     assert not any([row.rolsuper, row.rolcreatedb, row.rolcreaterole, row.rolreplication, row.rolbypassrls])
 
 
-def test_the_reader_is_a_member_of_no_other_role(reader):
+def test_the_reader_inherits_from_no_role_and_may_become_only_people(reader):
     """Membership is how a "read-only" role quietly inherits the owner's
-    rights. It has none, so its own grants are the whole story.
+    rights. It inherits from nothing, so its own grants are the whole story.
+
+    Since 6.0 it is a member of something: with sign-in on, it is granted
+    each signed-in person's role so a question can run as them (`SET LOCAL
+    ROLE`) -- WITH INHERIT FALSE, so it gains none of what they hold, and
+    only people's roles, never a group's or the owner's. Off, or with nobody
+    in the directory yet, it is a member of nothing at all.
     """
     with reader.connect() as conn:
         memberships = conn.execute(
             text(
-                "SELECT r.rolname FROM pg_auth_members m "
+                # pg_has_role is strict: with no nl2sql_ldap -- sign-in never
+                # prepared -- it is null, and nothing counts as a person.
+                "SELECT r.rolname, m.inherit_option, m.admin_option, "
+                "COALESCE(pg_has_role(r.oid, to_regrole('nl2sql_ldap'), 'MEMBER'), false) AS person "
+                "FROM pg_auth_members m "
                 "JOIN pg_roles r ON r.oid = m.roleid "
                 "JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = :name"
             ),
             {"name": READER},
-        ).scalars().all()
-    assert memberships == []
+        ).all()
+    assert [row.rolname for row in memberships if row.inherit_option] == [], "it inherits from nothing"
+    assert [row.rolname for row in memberships if row.admin_option] == [], "and can grant nothing"
+    assert [row.rolname for row in memberships if not row.person] == [], "and may become only people"
 
 
 def test_the_reader_owns_nothing(reader):

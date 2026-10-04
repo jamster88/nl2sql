@@ -160,14 +160,7 @@ public final class MainWindow {
 
     /** Ask the server what it is, and whether it is ready. */
     public void start() {
-        background.execute(() -> {
-            try {
-                Models.Meta meta = client.meta();
-                foreground.accept(() -> describe(meta));
-            } catch (ApiException cause) {
-                foreground.accept(() -> statusBar.showError(cause.getMessage()));
-            }
-        });
+        describeServer();
         background.execute(() -> {
             try {
                 Models.Readiness readiness = client.readiness();
@@ -179,6 +172,33 @@ public final class MainWindow {
                 // Readiness is a courtesy. Its failure is not shown as a
                 // connection failure -- `meta` above is what decides that, and
                 // reporting both would say the same thing twice.
+            }
+        });
+    }
+
+    /**
+     * Ask the server what it is.
+     *
+     * <p>A server with sign-in on answers only someone signed in, so a 401
+     * here is the server asking who this is -- not a server that cannot be
+     * reached -- and the answer is the sign-in panel, then the same question
+     * again. Reported as "Not connected" it would be a window that never
+     * offers the one thing that would fix it.
+     */
+    private void describeServer() {
+        background.execute(() -> {
+            try {
+                Models.Meta meta = client.meta();
+                foreground.accept(() -> describe(meta));
+            } catch (ApiException cause) {
+                foreground.accept(() -> {
+                    if (cause.status() == 401) {
+                        needsSignIn("This server asks who you are before it answers. Your questions run "
+                                + "as your own database account.", this::describeServer);
+                    } else {
+                        statusBar.showError(cause.getMessage());
+                    }
+                });
             }
         });
     }

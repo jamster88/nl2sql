@@ -81,8 +81,7 @@ def stack(docker_daemon_available):
         psql = ["exec", "-i", "-u", "postgres", names["pg"], "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail"]
         docker(*psql, "-v", "reader=nl2sql_reader", "-v", "reader_password=nl2sql_reader", "-v", "owner=nl2sql",
                "-f", "-", input=(REPO_ROOT / "docker" / "reader_role.sql").read_text())
-        docker(*psql, "-v", "reader=nl2sql_reader", "-v", "owner=nl2sql", "-v", "rolesync=nl2sql_rolesync",
-               "-v", "rolesync_password=sync-password-1", "-f", "-", input=(REPO_ROOT / "docker" / "auth_roles.sql").read_text())
+        apply_auth_roles(names["pg"])
         docker(
             "exec", "-i", "-u", "postgres", "-e", "NL2SQL_SIGNIN=on", "-e", "NL2SQL_DB=nl2sql_retail",
             "-e", "NL2SQL_SERVICE_ROLES=nl2sql_reader,nl2sql_rolesync", "-e", "NL2SQL_LDAP_HOST=nl2sql-ldap",
@@ -114,6 +113,15 @@ def stack(docker_daemon_available):
 
 
 #: Run inside the auth container, which has Python and nothing else needed.
+def apply_auth_roles(pg: str) -> None:
+    """docker/auth_roles.sql, as launch.sh applies it on every start."""
+    docker(
+        "exec", "-i", "-u", "postgres", pg, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail",
+        "-v", "reader=nl2sql_reader", "-v", "owner=nl2sql", "-v", "rolesync=nl2sql_rolesync",
+        "-v", "rolesync_password=sync-password-1", "-f", "-", input=(REPO_ROOT / "docker" / "auth_roles.sql").read_text(),
+    )
+
+
 REQUEST = """
 import json, os, urllib.request, urllib.error
 body = os.environ["BODY"]
@@ -164,6 +172,24 @@ def test_the_first_administrator_signs_in_through_the_database(stack):
     assert body["roles"] == ["nl2sql_admins", "nl2sql_curators", "nl2sql_reviewers", "nl2sql_users"]
     assert body["name"] == "Directory administrator"
     assert call(stack, "POST", "/auth/token", {"username": "admin", "password": "wrong"})[0] == 401
+
+
+def test_preparing_the_database_again_on_a_later_start_changes_no_membership(stack):
+    """launch.sh applies auth_roles.sql on every start, as the superuser. Its
+    repairs once granted again what the sync already had, which Postgres
+    records as a second membership, with the superuser as its grantor."""
+    memberships = [
+        "exec", "-u", "postgres", stack["pg"], "psql", "-X", "-At", "-d", "nl2sql_retail", "-c",
+        "SELECT r.rolname, u.rolname, g.rolname, m.admin_option, m.inherit_option, m.set_option "
+        "FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member "
+        "JOIN pg_roles g ON g.oid = m.grantor ORDER BY 1, 2, 3",
+    ]
+    wait_until(lambda: "admin|nl2sql_reader" in docker(*memberships).stdout, "the sync to make the administrator a role")
+    before = docker(*memberships).stdout
+    apply_auth_roles(stack["pg"])
+    assert docker(*memberships).stdout == before
+    reader_rows = [line for line in before.splitlines() if line.startswith("admin|nl2sql_reader|")]
+    assert len(reader_rows) == 1 and reader_rows[0].endswith("|f|f|t"), reader_rows
 
 
 def test_a_person_added_in_the_web_interface_can_sign_in_read_and_be_removed(stack):

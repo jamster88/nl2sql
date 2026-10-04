@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import json
 import socket
+import ssl
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 import uuid
@@ -35,6 +37,23 @@ API_IMAGE = "nl2sql-agent:pytest"
 NAME_PREFIX = "nl2sql-gui-test-"
 NETWORK_PREFIX = "nl2sql-gui-net-"
 VOLUME_PREFIX = "nl2sql-gui-tls-"
+
+#: What every page here is checked against: since 6.0 each serves HTTPS with
+#: the certificate the API writes, so a test that asked over plain HTTP was
+#: answered 400 -- and a test that skipped verification would not show the
+#: page presents the right one. Set by `_trust` once the API has written it.
+_PAGE_TLS: ssl.SSLContext | None = None
+
+
+def _trust(api: str) -> None:
+    """Verify every page against the certificate this API container wrote."""
+    global _PAGE_TLS
+    target = Path(tempfile.mkdtemp()) / "server.crt"
+    subprocess.run(
+        ["docker", "cp", f"{api}:/etc/nl2sql/tls/server.crt", str(target)],
+        check=True, capture_output=True, timeout=30,
+    )
+    _PAGE_TLS = ssl.create_default_context(cafile=str(target))
 
 
 def _build(dockerfile: str, tag: str, available: bool) -> str:
@@ -158,7 +177,7 @@ def stack(gui_image: str, api_image: str):
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, result.stderr
         started.append(name)
-        _wait_for(f"http://127.0.0.1:{port}/index.html", name)
+        _wait_for(f"https://127.0.0.1:{port}/index.html", name)
         return port
 
     try:
@@ -180,6 +199,7 @@ def stack(gui_image: str, api_image: str):
         assert result.returncode == 0, result.stderr
         started.append(api)
         _wait_for_api(api)
+        _trust(api)
         yield run_gui
     finally:
         for name in reversed(started):
@@ -214,7 +234,7 @@ def _wait_for_api(name: str) -> None:
 def _wait_for(url: str, name: str) -> None:
     for _ in range(60):
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            with urllib.request.urlopen(url, timeout=5, context=_PAGE_TLS) as response:
                 if response.status == 200:
                     return
         except Exception:
@@ -225,9 +245,9 @@ def _wait_for(url: str, name: str) -> None:
 
 
 def _get(port: int, path: str, **headers: str):
-    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
+    request = urllib.request.Request(f"https://127.0.0.1:{port}{path}", headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30, context=_PAGE_TLS) as response:
             return response.status, response.read().decode()
     except urllib.error.HTTPError as error:
         return error.code, error.read().decode()

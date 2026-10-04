@@ -309,6 +309,8 @@ def no_env(monkeypatch):
 
 def test_main_dispatches_each_command(monkeypatch, no_env, capsys):
     calls = []
+    became = []
+    monkeypatch.setattr(service, "become", lambda **kwargs: became.append(kwargs["own"]))
     monkeypatch.setattr(service, "health", lambda **kwargs: calls.append(("health", kwargs)) or 0)
     monkeypatch.setattr(service, "import_file", lambda path, settings: calls.append(("import", path)) or 0)
     monkeypatch.setattr(service, "sync", lambda settings: calls.append(("sync",)) or 0)
@@ -324,6 +326,69 @@ def test_main_dispatches_each_command(monkeypatch, no_env, capsys):
     ]
     assert service.main(["config"]) == 0
     assert capsys.readouterr().out.startswith("# Written by nl2sql_ldap")
+    # Every command gives root up; only serving hands the account what it writes.
+    serving = ("/var/lib/openldap/run", "/var/lib/openldap/openldap-data", "/etc/nl2sql/ldap-tls", "/etc/nl2sql/ldap-tls")
+    assert became == [(), (), (), serving, serving, ()]
+
+
+class _Entry:
+    pw_uid, pw_gid, pw_dir = 100, 101, "/var/lib/openldap"
+
+
+def _becoming(uid: int, *, refuse_chown: bool = False):
+    done: list = []
+
+    def chown(path, uid, gid):
+        if refuse_chown and path == "/etc/certs":
+            raise OSError(30, "Read-only file system")
+        done.append(("chown", path, uid, gid))
+
+    environ: dict = {}
+    service.become(
+        own=("/var/lib/openldap/run", "/etc/certs"),
+        getuid=lambda: uid,
+        lookup=lambda name: done.append(("lookup", name)) or _Entry,
+        makedirs=lambda path, exist_ok: done.append(("makedirs", path, exist_ok)),
+        chown=chown,
+        setgroups=lambda groups: done.append(("setgroups", groups)),
+        setgid=lambda gid: done.append(("setgid", gid)),
+        setuid=lambda uid: done.append(("setuid", uid)),
+        environ=environ,
+    )
+    return done, environ
+
+
+def test_root_hands_the_account_its_directories_then_becomes_it():
+    """A named volume another container mounted first is created owned by
+    root -- the certificate's, when the retail database starts first -- and
+    only root can hand it over. Then root is given up, groups first: the
+    other way round, setuid would leave no right to change the rest."""
+    done, environ = _becoming(0)
+    assert done == [
+        ("lookup", "ldap"),
+        ("makedirs", "/var/lib/openldap/run", True), ("chown", "/var/lib/openldap/run", 100, 101),
+        ("makedirs", "/etc/certs", True), ("chown", "/etc/certs", 100, 101),
+        ("setgroups", []), ("setgid", 101), ("setuid", 100),
+    ]
+    assert environ == {"HOME": "/var/lib/openldap"}
+
+
+def test_a_directory_that_cannot_be_handed_over_is_left_as_it_is():
+    """A certificate mounted read-only is the operator's; it is only written
+    when there is none, and `tls.ensure` says so when that fails."""
+    done, _ = _becoming(0, refuse_chown=True)
+    assert ("chown", "/etc/certs", 100, 101) not in done
+    assert done[-1] == ("setuid", 100)
+
+
+def test_anyone_but_root_is_left_as_they_are():
+    assert _becoming(100) == ([], {})
+
+
+def test_become_defaults_to_the_real_environment(monkeypatch):
+    """Not root here, so nothing is done -- which is what the defaults are
+    exercised for: the real calls, wired."""
+    assert service.become() is None
 
 
 def test_main_refuses_settings_it_cannot_use(monkeypatch, capsys):

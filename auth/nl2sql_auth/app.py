@@ -222,7 +222,10 @@ def create_app(
         recheck=membership_lookup(settings.rolesync_url, roles) if settings.rolesync_url else None,
         clock=clock,
     )
-    throttle = throttle or Throttle(settings.throttle_failures, settings.throttle_seconds)
+    throttle = throttle or Throttle(
+        settings.throttle_failures, settings.throttle_seconds,
+        per_kind={"address": settings.throttle_address_failures},
+    )
     basic_cache: dict[str, tuple[Identity, float]] = {}
     started = time.monotonic()
     stop = threading.Event()

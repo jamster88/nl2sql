@@ -14,6 +14,24 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v6_0_1 (6.0.1) -- 2026-10-04
+
+**Fixed**
+- The directory could not write its certificate when compose made the auth service's container after its own, restarted for ever, and nobody could sign in; it now takes its directories as root and then runs as `ldap`.
+- Five wrong passwords from one address -- everyone on one machine, or behind one proxy -- locked all sign-ins for fifteen minutes; an address now has its own limit of fifty (`AUTH_THROTTLE_ADDRESS_FAILURES`), a name still five.
+- The desktop client said "Not connected." to a server that only wanted to know who it was; it offers to sign in instead.
+- `launch.sh` did not pass `ldap_hba.sh` the directory's host, so the database was never prepared for sign-in.
+
+**Updated**
+- Version 6.0.1 in every declaration; `setup.sh` pins `v6_0_1`.
+
+**Published**
+- All seventeen tags as `v6_0_1`; `start.sh` upgraded a running stack to them and every sign-in check passed.
+
+**After publishing** (the checkout, not the `v6_0_1` images)
+- The container tests ask each page over HTTPS, verified; the least-privilege test says what it protects now that the reader may become people; `auth_roles.sql` no longer grants a second time what the role sync already granted.
+- The usage guide covers upgrading to 6.0 and troubleshooting sign-in; still 100% coverage of the Python, the shell scripts, the desktop client and the five web interfaces.
+
 ## v6_0 (6.0.0) -- 2026-10-03
 
 **Added**
@@ -32,6 +50,12 @@ their own and are listed under the release they shipped with. A version marked
 - `setup.sh` generates the directory's and the role sync's passwords into `.env`, which only its owner can read.
 - `--mlflow` brings the API up too: the front door presents its certificate.
 - Version 6.0.0 in every declaration; `setup.sh` pins `v6_0`, seventeen tags with the four new images'.
+
+**Published**
+- All seventeen tags as `v6_0`, the directory, the auth service, the directory page and MLflow's front door for the first time.
+
+**After publishing**
+- The stack run with `start.sh` found that nobody could sign in; corrected in `v6_0_1`.
 
 ## v5_6_1 (5.6.1) -- 2026-10-03
 

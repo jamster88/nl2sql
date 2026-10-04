@@ -146,7 +146,7 @@ Failures use the stack's one envelope, `{"error": {"code", "message"}}`:
 | Code | Status | |
 | --- | --- | --- |
 | `invalid_credentials` | 401 | the database did not accept that name and password |
-| `too_many_attempts` | 429 | `AUTH_THROTTLE_FAILURES` (5) wrong in `AUTH_THROTTLE_SECONDS` (900), per name and per address |
+| `too_many_attempts` | 429 | `AUTH_THROTTLE_FAILURES` (5) wrong for one name, or `AUTH_THROTTLE_ADDRESS_FAILURES` (50) from one address, in `AUTH_THROTTLE_SECONDS` (900) |
 | `sign_in_unavailable` | 503 | the database could not be asked |
 | `unauthorized`, `sign_in_required`, `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid`, `account_removed` | 401 | no session, or one that is not good |
 | `forbidden`, `cross_site`, `not_a_person` | 403 | signed in, but not allowed this |
@@ -196,7 +196,8 @@ The auth service's, read from the environment; compose passes each from
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | written beside it, for everyone else |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | the same on every service |
 | `AUTH_SESSION_HOURS` | `8` | |
-| `AUTH_THROTTLE_FAILURES` | `5` | |
+| `AUTH_THROTTLE_FAILURES` | `5` | wrong passwords for one name |
+| `AUTH_THROTTLE_ADDRESS_FAILURES` | `50` | wrong passwords from one address, higher because a proxy or NAT makes many people one address |
 | `AUTH_THROTTLE_SECONDS` | `900` | |
 | `AUTH_DB_HOST` | `nl2sql-postgres` | the database people sign in to |
 | `AUTH_DB_PORT` | `5432` | |
@@ -236,5 +237,5 @@ with the API's certificate unless `GUI_TLS_ENABLED=false`.
 | `tests/auth/test_identity_*.py` | the session format and the guard, at 100% |
 | `tests/auth/test_auth_*.py` | settings, keys, sign-in, throttling, the role sync's plan, the directory routes, the server -- offline, at 100% |
 | `tests/auth/test_auth_compose.py` | the four services as compose resolves them (`--run-docker`) |
-| `tests/auth/test_auth_image.py`, `test_auth_live.py` | the image, and sign-in end to end against a real database, directory and MLflow (`--run-docker`) |
+| `tests/auth/test_auth_image.py`, `test_auth_live.py` | the image, and sign-in end to end against a real database, directory and MLflow -- including the database's sign-in roles applied again, as on a later start, changing no membership (`--run-docker`) |
 | `tests/auth/test_directory_gui_*.py` | the page as a project, its types against these models, and its suite (`--run-node`) |

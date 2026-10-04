@@ -33,6 +33,55 @@ file where a file is new; the tests a version merely extended are summarised.
 
 ---
 
+## v6_0_1 (6.0.1) -- 2026-10-04
+
+A correction to 6.0, found by doing what a user does: `./start.sh` with every
+page, against the published `v6_0` images. Three things in the images were
+wrong and one in the checkout, and none of them could be seen by a test that
+ran a service on its own. Nobody could sign in: the directory restarted for
+ever, and `launch.sh` had not prepared the database. Once that was fixed, five
+wrong passwords from anyone on the machine locked everyone out for fifteen
+minutes; and the desktop client said it was not connected to a server that was
+only asking who it was.
+
+### Fixed
+- `ldap/nl2sql_ldap/service.py`, `ldap/Dockerfile`:
+  - **Before:** the image ran as `ldap` (`USER ldap`) and wrote its certificate into the `ldaptls` volume. Compose creates the directory's and the auth service's containers before it starts either, and creating a container on an empty volume copies that image's directory onto it, ownership included -- the last created wins. The auth image's `/etc/nl2sql/ldap-tls` is root's, so the directory started on a volume it could not write, failed with `PermissionError` on `ldap.key`, and restarted for ever. The live test had started the directory alone, first, and passed.
+  - **After:** no `USER`; the entry point starts as root only to give the `ldap` user the directories `serve` writes (`become`, not recursive, and a directory that cannot be given is left alone), then drops groups, group and user before anything else, so slapd and everything it starts run as `ldap`. A `docker exec` of the module and the health check give root up the same way.
+- `auth/nl2sql_auth/throttle.py`, `settings.py`, `app.py`:
+  - **Before:** five wrong passwords per name *and* five per address. Behind a page's nginx, or Docker's NAT, every browser on a machine is one address, so one person's typing locked everybody out of signing in for fifteen minutes -- which is how the live check found it.
+  - **After:** an address has its own limit, `AUTH_THROTTLE_ADDRESS_FAILURES` (50); a name's stays at five (`Throttle(per_kind=...)`).
+- `desktop/.../ui/MainWindow.java`:
+  - **Before:** `/v1/meta` is a `/v1` route and answers only someone signed in, so against a server with sign-in on the window's first call failed with 401 and the status bar said "Not connected." -- with no sign-in panel, which appeared only after a question was refused. The tests' fake server had answered `/v1/meta` to anyone.
+  - **After:** a 401 from `/v1/meta` brings up the sign-in panel, and the server is asked again once someone has signed in.
+- `launch.sh` -- `ldap_hba.sh` needs `NL2SQL_LDAP_HOST`, and `launch.sh` did not pass it, so the database was never given its sign-in lines; the fake `docker` the script is tested against takes any environment. It passes `nl2sql-ldap` now.
+- `tests/docker/test_published_images.py` -- its list of images was still the nine of 5.6, so the four new ones were never asked about; held to `setup.sh`'s thirteen families now, seventeen references.
+
+### Updated
+- `tests/ldap/test_ldap_image.py` -- the race itself, reproduced: the directory's container created, then one whose image owns the directory as root, on one volume; the directory is healthy, its certificate written, slapd and the supervisor running as `ldap`, and a root `docker exec` of the module works. `v6_0`'s image fails it with the same `PermissionError`. OpenLDAP's own tools are run with `-u ldap`.
+- `tests/ldap/test_service.py` -- `become`: hands over and drops in order, leaves a directory it cannot give, does nothing when not root; `main` hands over the directories only for `serve`. `tests/auth/test_auth_keys_login.py`, `test_auth_app.py` -- the address's own limit. `tests/docker/test_launch_script.py` -- every `${NAME:?}` `ldap_hba.sh` requires is passed. `MainWindowTest` -- a server that answers nobody until they sign in.
+- `docker-compose.yml` -- `AUTH_THROTTLE_ADDRESS_FAILURES`. `auth/README.md`, `ldap/README.md`, `README.md`, `desktop/README.md` -- the throttle, the entry point and root, test counts.
+- Version 6.0.1 in every declaration; `setup.sh` pins `v6_0_1`.
+
+### Checked live, before publishing
+On the user's stack, upgraded by `./start.sh --review --curate --console --mlflow` and then run with the fixed directory and auth images built here:
+- Every service healthy, with no warning; `pg_hba.conf` holds the sign-in lines; the role sync made two throwaway people -- loaded with the directory's own `import`, one in every group and one in `nl2sql-users` only -- into roles with their groups and a connection limit of five.
+- 39 checks through each published port: sign-in and its refusals; the API answering the asker as their own role, hiding their job from everyone else and refusing another principal; the web interface's cookie through its nginx, and a write from another site refused; the console running a statement as the person who typed it; review, curation and the directory page refusing an asker and serving their own group; another page's port refused as another origin; MLflow's front door sending a browser to sign in, letting a reviewer's Basic credentials through and refusing an asker; a person changing their own password.
+- The desktop client's own classes, driven from `jshell`: refused before signing in, a wrong password refused, signed in, and a question asked and answered as the person. `psql` straight to the retail database with a directory password: reads as the person, cannot write, refuses a wrong password itself. MLflow's Python client through the front door as a reviewer, and refused as an asker. The first administrator, with the password `setup.sh` generated. `--no-auth`, and back.
+- The throwaway people removed, and their roles gone with them.
+
+### Published
+- All seventeen tags as `v6_0_1` -- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-curate-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb`, `nl2sql-mlflow-proxy`, `nl2sql-ldap`, `nl2sql-auth`, `nl2sql-directory-gui` (amd64, arm64) and `nl2sql-desktop-build:v6_0_1-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-04 UTC), each checked absent just before its push. Checked after: every image labelled 6.0.1 on both architectures; the directory image has `become` and no `USER`, the auth image an address limit of fifty, and every desktop jar `describeServer`, 6.0.1 and its own platform's native code; `tests/docker/test_published_images.py`, 23 passed. Then a plain `./start.sh --review --curate --console --mlflow` re-pinned the user's `.env`, pulled the seventeen tags and brought every page up with no warning but the usual one about the kept database volume; the 39 live checks passed against the published images, and the published desktop jar for this machine signed in and was answered.
+
+### After publishing
+In the checkout, not in the `v6_0_1` images: the whole suite, Docker tests
+included, run against the published stack, and what it found.
+- `tests/docker/test_gui_container.py`, `tests/console/test_console_container.py` -- still asked each page over plain HTTP, which a page that is HTTPS since 6.0 answers 400; they speak HTTPS now, verified against the certificate the API container wrote, so they also show each page presents the right one.
+- `tests/agent/test_least_privilege_live.py` -- "the reader is a member of no other role" stopped being true by design in 6.0: it is granted each person's role to become them. Restated as what it was protecting: the reader inherits from nothing, can grant nothing, and may become only people.
+- `docker/auth_roles.sql` -- its two repairs granted again what the role sync already held, which Postgres records as a second membership with the superuser as grantor; they grant only what is missing now. `tests/auth/test_auth_live.py` -- applying it again on a later start changes no membership. The one duplicate on the user's database was revoked.
+- `USAGE_GUIDE.md` -- what upgrading to `v6_0_1` changes for a running stack, and why `v6_0` is not worth pinning; Troubleshooting rows for each sign-in warning `launch.sh` prints, the certificate warning, someone just added, the throttle, a locked account and an old desktop client; the new services among the log names; MLflow's front door. `agent/API.md` -- what `/v1/meta` says to a caller it will not answer yet. `desktop/README.md` -- how the window decides to ask. `README.md` -- the web interface's token with sign-in on, five web interfaces' thresholds, the new tests in the test table, test counts. `ldap/README.md`, `auth/README.md` -- their tests.
+- Measured on the published stack: every test, `--run-docker --run-node --run-java`, passes but `test_no_benchmark_question_is_a_golden_pair_verbatim` (benchmark question B03 is golden pair Q46 word for word, since 5.4). Python 100% the way `README.md` measures it, 14,266 statements and 3,410 branches; every shell script and nginx fragment 100%, 1,829 commands; the desktop client's 405 tests at 100% under JaCoCo; the five web interfaces at 100%. `tests/review/test_store_live.py` deadlocked once against the live staging database during one full run, and passed alone three times and in the next full run: it shares a role with the running review service.
+
 ## v6_0 (6.0.0) -- 2026-10-03
 
 Sign-in, on by default. A person signs in with the user name and password a
@@ -82,6 +131,12 @@ major version, because the defaults change under existing users.
 ### Checked live, before publishing
 - `tests/auth/test_auth_live.py`: the directory, the auth service and MLflow's front door built from this checkout, beside a copy of the published retail database on a private network, the database prepared as `launch.sh` prepares it. The first administrator signs in through the database; a person added on the directory page's API signs in once the sync has run, reads the retail tables as their own role, cannot write, and can no longer connect once removed; the reader becomes a person only for a transaction and never a group; a browser is sent to sign in at MLflow's door, an MLflow client's Basic credentials are let through, and a write from another site is refused.
 - `tests/ldap/test_ldap_image.py`: both modes' `slapd.conf` pass slaptest, and a replica copies a second directory, passes a sign-in through to it, and refuses to be edited.
+
+### Published
+- `nl2sql-agent`, `nl2sql-gui`, `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-curate-gui`, `nl2sql-console-gui`, `nl2sql-mlflow`, `nl2sql-mlflowdb` `:v6_0`, and for the first time `nl2sql-mlflow-proxy`, `nl2sql-ldap`, `nl2sql-auth` and `nl2sql-directory-gui` `:v6_0` (amd64, arm64); `nl2sql-desktop-build:v6_0-{mac-aarch64,mac,linux,linux-aarch64,win}` (2026-10-04 UTC), each checked absent just before its push. The `mac` desktop build failed once on Maven Central, pushing nothing, and was built again. Checked after: the agent, review and auth images report 6.0.0 on both architectures and carry the session guard, the directory imports its package and ldap3; every image is labelled 6.0.0 on both; every interface's bundle carries the sign-in and the front door its `auth_request`; every desktop jar is 6.0.0 with the sign-in classes and its own platform's native code; `tests/docker/test_published_images.py`, 23 passed once it asked about the four new images.
+
+### After publishing
+`./start.sh --review --curate --console --mlflow` against these images found three defects in them and one in `launch.sh`: nobody could sign in. They are corrected in `v6_0_1`, not by moving `v6_0`.
 
 ## v5_6_1 (5.6.1) -- 2026-10-03
 

@@ -48,7 +48,7 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8444
 
-ARG REVIEW_VERSION=6.0.0
+ARG REVIEW_VERSION=6.0.1
 ENV REVIEW_VERSION=${REVIEW_VERSION}
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \

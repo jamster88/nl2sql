@@ -842,8 +842,10 @@ agent could not answer. From the terminal, `--json` prints the run's
 Tracing is best effort. When MLflow is not up, questions are answered
 untraced, and the agent looks for it again thirty seconds later, so MLflow
 can be started or stopped under a running stack. `MLFLOW_TRACKING_URI=`
-(empty) in `.env` turns it off altogether. MLflow's interface has no login,
-and shows every question's rows, so it is published on this machine only.
+(empty) in `.env` turns it off altogether. MLflow's interface has no login
+of its own and shows every question's rows, so it is reached only through
+its front door, which asks who you are and lets in `nl2sql-reviewers` and
+`nl2sql-admins`, and is published on this machine only.
 [`README.md`](README.md#tracing) has the server's settings.
 
 ---
@@ -1072,6 +1074,23 @@ before `v4_1` has no REST API, so only the terminal can ask it questions.
 Upgrading to `v5_6` adds one container, `nl2sql-snippetsdb`, on an empty
 volume of its own; the first start loads the snippet document into it.
 
+Upgrading to `v6_0_1` turns sign-in on ([Signing in](#signing-in)). It adds
+three containers with the API -- the directory, the auth service and the
+directory page -- and MLflow's front door with `--mlflow`, which now starts
+the API too. `start.sh` generates the directory's and the role sync's
+passwords into `.env` and makes the file readable by you alone; nothing in
+the databases is lost, and the first start prepares the retail database for
+sign-in. Every page becomes HTTPS, so the browser warns until it trusts the
+certificate, and asks you to sign in -- as `admin` at first. Replace a
+desktop jar from before 6.0.1 (`./start.sh --desktop` fetches the current
+one). `./start.sh --no-auth`, or `./setup.sh --no-auth` for good, keeps the
+stack as it was. `v6_0` itself is not worth pinning: under compose its
+directory could not write its certificate, and nobody could sign in.
+
+An agent from before `v6_0` does not check sessions, so pinned with
+`--agent-tag`, its API answers according to its own `API_TOKEN`, signed in
+or not.
+
 [`README.md`](README.md) lists what each tag is, and
 [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what each version changed.
 
@@ -1097,7 +1116,10 @@ the first question.
 | `.env pins the agent image at ..., but this checkout ships ...` | You are running an older agent than the checkout | `./start.sh`, or `./setup.sh` |
 | `model routing: ...` and a note about another host | The catalog describes a different Ollama host, so every call goes to `OLLAMA_MODEL` | Fine as it is; or build and calibrate a catalog ([Models](#models)) |
 | `the REST API container did not become healthy` | It failed to start | `docker compose --profile api logs api` |
-| `no API_TOKEN is set` | Anything that can reach port 8443 may ask questions | Set `API_TOKEN` in `.env` before sharing the machine |
+| `no API_TOKEN is set` | Sign-in is off, and anything that can reach port 8443 may ask questions | Turn sign-in back on (take `AUTH_ENABLED=false` out of `.env`), or set `API_TOKEN` before sharing the machine |
+| `could not prepare the retail database for sign-in` | The group roles or the `pg_hba.conf` lines could not be written, so nobody can sign in | `docker compose logs postgres`; `./launch.sh` tries again on every start |
+| `the directory or the auth service did not become healthy` | Nobody can sign in. Most often a directory image older than `v6_0_1`, which cannot write its certificate under compose | `./start.sh`, which re-pins `.env`; otherwise `docker compose --profile api --profile auth logs ldap auth` |
+| `the directory page did not become healthy` | People cannot be added from a browser; everything else works | `docker compose --profile api --profile auth --profile directorygui logs directorygui`. Beside a replica it is never started, on purpose |
 | `... cannot reach the API through its proxy` | The proxy holds an old certificate | `launch.sh` restarts it; if that fails, `./start.sh --restart` |
 | `API_FEEDBACK_DB_URL is not set` | Verdicts will not be stored | Re-run `./setup.sh`, which writes it |
 | `MLFLOW_TRACKING_URI is not set` | Nothing will be traced | Re-run `./setup.sh`, which writes it |
@@ -1114,10 +1136,16 @@ Problems with answers rather than with the stack:
 | Retrieval returns irrelevant knowledge | The embedding model is not the one the knowledge base was built with: use `bge-m3` |
 | Questions take minutes | Normal is about a minute, on a host that is not busy with something else. `launch.sh`'s routing table shows which models are in play; `--reasoning` (`OLLAMA_REASONING`) is off by default and much slower when on |
 | Results stop at 50 rows | Raise `MAX_ROWS`, or ask for fewer rows |
+| The browser warns that the page's certificate is not trusted | Every page presents the API's development certificate: trust `nl2sql-api.crt` ([Signing in](#signing-in)), or mount a real one |
+| "That name and password were not accepted" for someone just added | The role sync makes them a database role within thirty seconds; try again then |
+| "Too many wrong passwords; try again in N seconds" | Five wrong for one name, or fifty from one address, in fifteen minutes. Wait, or restart the auth service, which forgets the count: `docker compose --profile api --profile auth restart auth` |
+| "Locked out after too many wrong passwords" on the directory page | The directory locked the account after five wrong in a row; **Unlock** on the page, or wait fifteen minutes |
+| The desktop client says "Not connected." to a server with sign-in on | A client older than 6.0.1; use the current jar (`./start.sh --desktop`) |
 
 The logs: `docker compose --profile '*' logs <service>`, with the service
 names in [Where everything is](#where-everything-is) (`api`, `gui`,
-`review`, `reviewgui`, `curategui`, `console`, `consolegui`, `mlflow`, `snippetsdb`, `postgres`, ...).
+`review`, `reviewgui`, `curategui`, `console`, `consolegui`, `mlflow`, `mlflowproxy`, `ldap`, `auth`,
+`directorygui`, `snippetsdb`, `postgres`, ...).
 
 ---
 

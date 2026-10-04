@@ -49,8 +49,12 @@ def test_the_overlays_each_mode_needs_are_installed(dockerfile: str):
         assert package in dockerfile, package
 
 
-def test_nothing_runs_as_root(dockerfile: str):
-    assert re.search(r"^USER ldap$", dockerfile, re.MULTILINE)
+def test_root_is_given_up_by_the_entry_point_not_the_image(dockerfile: str):
+    """No `USER ldap`: only root can hand over a named volume another
+    container created first, so the entry point starts as root and becomes
+    `ldap` itself (`service.become`). That it does is checked on a running
+    container below."""
+    assert not re.search(r"^USER ", dockerfile, re.MULTILINE)
 
 
 def test_only_the_directory_package_is_copied(dockerfile: str):
@@ -108,8 +112,10 @@ def _start(network, name: str, *env: str, alias: str, volume: str | None = None)
 
 
 def _ldap(container: str, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+    """An OpenLDAP tool in the container, as `ldap`: on the local socket that
+    user is the directory's root, and Docker would otherwise run it as root."""
     return _docker(
-        "exec", "-i", "-e", "LDAPTLS_CACERT=/etc/nl2sql/ldap-tls/ldap.crt", container, *args,
+        "exec", "-i", "-u", "ldap", "-e", "LDAPTLS_CACERT=/etc/nl2sql/ldap-tls/ldap.crt", container, *args,
         check=False, input=stdin,
     )
 
@@ -129,6 +135,49 @@ def test_a_standalone_directory_starts_with_its_first_administrator(network):
     assert "quality" in short.stderr + short.stdout, "the password policy's minimum length holds"
     stored = _ldap(ldap, "ldapsearch", "-LLL", "-o", "ldif-wrap=no", "-Y", "EXTERNAL", "-H", SOCKET, "-b", f"uid=admin,ou=people,{base}", "userPassword")
     assert "userPassword:: e0FSR09OMn0" in stored.stdout, "stored as {ARGON2}"
+
+
+@pytest.mark.docker
+def test_a_certificate_volume_another_image_owned_last_is_still_written_and_nothing_runs_as_root(network):
+    """What compose does, and 6.0.0's image could not survive. Compose creates
+    the directory's and the auth service's containers before it starts either,
+    and creating a container on an empty volume copies that image's directory
+    -- ownership included -- onto it: the last created wins. The auth image's
+    `/etc/nl2sql/ldap-tls` is root's, so the volume was root's when the
+    directory started as `ldap`, and it could not write its certificate."""
+    net, started = network
+    volume = f"{net}-race"
+    rootdir = "nl2sql-rootdir:pytest"
+    _docker("build", "-q", "-t", rootdir, "-", input="FROM alpine:3.22\nRUN mkdir -p /etc/nl2sql/ldap-tls\n")
+    _docker("volume", "create", volume)
+    ldap = f"{net}-race-ldap"
+    _docker(
+        "create", "--name", ldap, "--hostname", "nl2sql-ldap", "--network", net,
+        "-e", "LDAP_SERVICE_PASSWORD=svc-password-1", "-e", "LDAP_ADMIN_PASSWORD=admin-password-1",
+        "-v", f"{volume}:/etc/nl2sql/ldap-tls", IMAGE,
+    )
+    started.append(ldap)
+    other = f"{net}-race-other"
+    _docker("create", "--name", other, "-v", f"{volume}:/etc/nl2sql/ldap-tls:ro", rootdir, "true")
+    started.append(other)
+    owner = _docker("run", "--rm", "-v", f"{volume}:/v", "alpine:3.22", "stat", "-c", "%u", "/v").stdout.strip()
+    assert owner == "0", "the volume is root's when the directory starts, as under compose"
+    _docker("start", ldap)
+    for _ in range(60):
+        if _docker("inspect", "-f", "{{.State.Health.Status}}", ldap, check=False).stdout.strip() == "healthy":
+            break
+        time.sleep(1)
+    else:
+        pytest.fail(_docker("logs", ldap, check=False).stderr)
+    listing = _docker("exec", ldap, "ls", "-ln", "/etc/nl2sql/ldap-tls").stdout
+    assert "ldap.crt" in listing and "ldap.key" in listing
+    processes = _docker("exec", ldap, "ps", "-o", "user,args").stdout.splitlines()[1:]
+    running = [line for line in processes if "slapd" in line or "nl2sql_ldap" in line]
+    assert running and all(line.split()[0] == "ldap" for line in running), processes
+    # A command run with `docker exec`, as root, gives root up the same way.
+    assert _docker("exec", ldap, "python3", "-m", "nl2sql_ldap", "health", check=False).returncode == 0
+    _docker("rm", "-f", ldap, other, check=False)
+    _docker("volume", "rm", volume, check=False)
 
 
 @pytest.mark.docker

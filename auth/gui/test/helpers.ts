@@ -46,7 +46,7 @@ export function makeSync(overrides: Partial<SyncReport> = {}): SyncReport {
 
 export function makeMeta(overrides: Partial<DirectoryMeta> = {}): DirectoryMeta {
   return {
-    version: "6.0.0",
+    version: "6.0.1",
     mode: "standalone",
     base_dn: "dc=nl2sql,dc=local",
     people: 2,

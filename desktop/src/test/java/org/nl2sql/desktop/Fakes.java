@@ -111,7 +111,7 @@ public final class Fakes {
             "fact_vendor_allowances", "fact_store_traffic");
 
     public static Models.Meta meta(boolean feedback) {
-        return new Models.Meta("nl2sql-agent", "6.0.0", "qwen3.8-256k",
+        return new Models.Meta("nl2sql-agent", "6.0.1", "qwen3.8-256k",
                 List.of("aggregate"), TABLES, SCOPE,
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",

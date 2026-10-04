@@ -111,11 +111,14 @@ environment often enough for the difference to matter.
 
 ## Signing in
 
-A server with sign-in on -- the compose default -- says so in `/v1/meta`
-(`authentication: session`), and the window asks who you are before the
-first question: a panel above the question box, with the user name from
-`--user` already in it and a line saying where the password goes. Sign in
-and the status bar says as whom, with a link to sign out.
+A server with sign-in on -- the compose default -- answers `/v1/meta` only
+to someone signed in, so the window's first call is refused with `401`, and
+that refusal is what it takes as the question: before anything is asked it
+shows a panel above the question box, with the user name from `--user`
+already in it and a line saying where the password goes, and once you have
+signed in it asks `/v1/meta` again (a server that does answer it openly and
+says `authentication: session` gets the same panel). The status bar then
+says as whom, with a link to sign out.
 
 It posts to the auth service's `/auth/token` -- on the API's host, port
 8446, unless `--auth-url` says otherwise -- over the same TLS settings as
@@ -324,7 +327,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v6_0-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v6_0_1-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
@@ -377,7 +380,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-404 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+405 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

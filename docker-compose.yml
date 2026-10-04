@@ -997,6 +997,7 @@ services:
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-}
       AUTH_SESSION_HOURS: ${AUTH_SESSION_HOURS:-}
       AUTH_THROTTLE_FAILURES: ${AUTH_THROTTLE_FAILURES:-}
+      AUTH_THROTTLE_ADDRESS_FAILURES: ${AUTH_THROTTLE_ADDRESS_FAILURES:-}
       AUTH_THROTTLE_SECONDS: ${AUTH_THROTTLE_SECONDS:-}
       # The database a person signs in to, which is the one that checks
       # their password -- and the role that keeps its people in step with

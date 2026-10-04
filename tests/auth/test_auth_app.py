@@ -261,7 +261,9 @@ def test_a_wrong_password_is_401_and_too_many_are_429(world):
 
 
 def test_the_address_counted_is_the_last_hop_the_proxy_saw(world):
-    for hop in range(5):
+    """An address may fail ten times what a name may (50), so it takes
+    fifty guesses at fifty names from one place to stop the next."""
+    for hop in range(50):
         world.client.post(
             "/auth/token",
             json={"username": f"guess{hop}", "password": "x"},

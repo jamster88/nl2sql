@@ -113,11 +113,15 @@ class AuthSettings:
     public_key_file: str = DEFAULT_PUBLIC_KEY
     session_hours: float = 8.0
     cookie_name: str = SESSION_COOKIE
-    #: Wrong passwords per name, and per address, before signing in is
-    #: refused for `throttle_seconds`. The directory's own lockout (LDAP
+    #: Wrong passwords per name before signing in is refused for
+    #: `throttle_seconds`. The directory's own lockout (LDAP
     #: LDAP_LOCKOUT_FAILURES) is the one that also covers a direct psql;
     #: this one answers sooner and says so.
     throttle_failures: int = 5
+    #: And per address, ten times as many: behind a proxy or Docker's NAT a
+    #: whole office can be one address, and five would let one person's
+    #: typing lock everybody else out.
+    throttle_address_failures: int = 50
     throttle_seconds: int = 900
 
     # --- The retail database ----------------------------------------------
@@ -176,6 +180,7 @@ class AuthSettings:
             session_hours=_env_float("AUTH_SESSION_HOURS", 8.0),
             cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             throttle_failures=_env_int("AUTH_THROTTLE_FAILURES", 5),
+            throttle_address_failures=_env_int("AUTH_THROTTLE_ADDRESS_FAILURES", 50),
             throttle_seconds=_env_int("AUTH_THROTTLE_SECONDS", 900),
             db_host=_env_str("AUTH_DB_HOST", "nl2sql-postgres"),
             db_port=_env_int("AUTH_DB_PORT", 5432),

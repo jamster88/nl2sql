@@ -74,18 +74,29 @@ GRANT nl2sql_ldap, nl2sql_users, nl2sql_reviewers, nl2sql_curators, nl2sql_admin
 -- The roles the sync made before this start belong to the sync whatever the
 -- grantor of record. A superuser recreating the sync role (a new volume for
 -- the auth service, a renamed role) would otherwise leave every person made
--- by the old one beyond the new one's reach.
+-- by the old one beyond the new one's reach. Only where it is missing: a
+-- grant the sync already holds, made again here, is a second membership
+-- with the superuser as its grantor.
 SELECT format('GRANT %I TO %I WITH ADMIN TRUE, INHERIT FALSE, SET FALSE', person.rolname, :'rolesync')
 FROM pg_auth_members marker
 JOIN pg_roles person ON person.oid = marker.member
 WHERE marker.roleid = 'nl2sql_ldap'::regrole
-  AND person.rolname <> :'rolesync' \gexec
+  AND person.rolname <> :'rolesync'
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_auth_members held
+      WHERE held.roleid = person.oid AND held.member = :'rolesync'::regrole AND held.admin_option
+  ) \gexec
 
 -- And the agent's reader may become any of them for one transaction: that
 -- is how a question runs as the person who asked it. The sync grants this
--- as it makes each person; this repairs it for a reader recreated since.
+-- as it makes each person; this repairs it for a reader recreated since,
+-- and only there, for the same reason.
 SELECT format('GRANT %I TO %I WITH INHERIT FALSE, SET TRUE', person.rolname, :'reader')
 FROM pg_auth_members marker
 JOIN pg_roles person ON person.oid = marker.member
 WHERE marker.roleid = 'nl2sql_ldap'::regrole
-  AND person.rolname NOT IN (:'rolesync', :'reader') \gexec
+  AND person.rolname NOT IN (:'rolesync', :'reader')
+  AND NOT EXISTS (
+      SELECT 1 FROM pg_auth_members held
+      WHERE held.roleid = person.oid AND held.member = :'reader'::regrole
+  ) \gexec

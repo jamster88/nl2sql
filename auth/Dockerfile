@@ -36,7 +36,7 @@ RUN mkdir -p /etc/nl2sql/tls /etc/nl2sql/ldap-tls /etc/nl2sql/auth /var/lib/nl2s
 
 EXPOSE 8446
 
-ARG AUTH_VERSION=6.0.0
+ARG AUTH_VERSION=6.0.1
 ENV AUTH_VERSION=${AUTH_VERSION} \
     PYTHONUNBUFFERED=1
 

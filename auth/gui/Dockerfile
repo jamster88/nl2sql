@@ -64,4 +64,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql directory GUI" \
       org.opencontainers.image.description="React/TypeScript web interface for a standalone nl2sql directory: people, groups, passwords" \
-      org.opencontainers.image.version="6.0.0"
+      org.opencontainers.image.version="6.0.1"

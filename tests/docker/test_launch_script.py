@@ -1568,6 +1568,19 @@ def test_with_the_api_the_database_is_prepared_and_the_directory_and_auth_servic
     assert "Directory page is healthy at https://localhost:8084" in result.output
 
 
+def test_every_variable_ldap_hba_requires_is_passed(run_launch):
+    """The fake `docker` takes any environment it is given, so a variable
+    the script needs and launch.sh never passes looked fine here -- and
+    6.0.0's launch.sh left out NL2SQL_LDAP_HOST, which the real stack found:
+    nobody could sign in. Held to the script's own `${NAME:?}` list."""
+    required = set(re.findall(r"\$\{(NL2SQL_[A-Z_]+):\?", (REPO_ROOT / "docker" / "ldap_hba.sh").read_text()))
+    assert {"NL2SQL_DB", "NL2SQL_SERVICE_ROLES", "NL2SQL_LDAP_HOST", "NL2SQL_LDAP_BASE_DN"} <= required
+    [hba] = _ldap_hba_calls(run_launch("--api"))
+    passed = set(re.findall(r"-e (NL2SQL_[A-Z_]+)=\S", hba))
+    assert required <= passed, f"launch.sh does not pass {sorted(required - passed)}"
+    assert "NL2SQL_LDAP_HOST=nl2sql-ldap" in hba, "the name the directory's certificate is issued for"
+
+
 def test_the_closing_lines_say_who_signs_in_first_and_where_people_are_added(run_launch):
     output = " ".join(run_launch("--gui").output.split())
     assert "==> Sign-in is on. Every page asks who you are. The first person is admin," in output

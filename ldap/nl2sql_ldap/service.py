@@ -11,12 +11,21 @@ passes the stop signal on: a first process that installs no handler ignores
 SIGTERM, and `docker stop` would wait out its timeout and kill slapd mid-write.
 A replica's copy runs beside slapd in a thread of this process, so the
 container is one directory whichever mode it is in.
+
+Started as root, it gives root up before it does anything else (`become`):
+every command runs as the `ldap` user, slapd included, and so does a
+`docker exec` or the health check, which Docker runs as root. The one thing
+done as root first is to make the directories `serve` writes the ldap user's
+-- because a named volume another container mounted first is created empty
+and owned by root, which is what happens to the certificate's volume when the
+retail database starts before the directory, as it does under compose.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import pwd
 import signal
 import subprocess
 import sys
@@ -35,6 +44,46 @@ from .layout import Layout
 from .records import parse
 from .replica import Replicator
 from .settings import CONFIG_FILE, DATA_DIR, RUN_DIR, DirectorySettings, SettingsError
+
+#: Who slapd and this process run as: the account Alpine's openldap package
+#: makes, and the directory's root on its local socket by its peer credentials.
+ACCOUNT = "ldap"
+
+
+def become(
+    account: str = ACCOUNT,
+    *,
+    own: Sequence[str] = (),
+    getuid: Callable[[], int] = os.getuid,
+    lookup: Callable = pwd.getpwnam,
+    makedirs: Callable = os.makedirs,
+    chown: Callable = os.chown,
+    setgroups: Callable = os.setgroups,
+    setgid: Callable = os.setgid,
+    setuid: Callable = os.setuid,
+    environ: dict | None = None,
+) -> None:
+    """Run as `account` from here on, giving it `own` first, if started as root.
+
+    Not recursive: a directory is given to the account, and what is written
+    in it from then on is the account's anyway. A directory that cannot be
+    given -- a certificate mounted read-only, say -- is left as it is; it is
+    only written when there is no certificate to read, and `tls.ensure` says
+    so in words when that fails.
+    """
+    if getuid() != 0:
+        return
+    entry = lookup(account)
+    for path in own:
+        makedirs(path, exist_ok=True)
+        try:
+            chown(path, entry.pw_uid, entry.pw_gid)
+        except OSError:
+            pass
+    setgroups([])
+    setgid(entry.pw_gid)
+    setuid(entry.pw_uid)
+    (os.environ if environ is None else environ)["HOME"] = entry.pw_dir
 
 
 def local_connection() -> Connection:
@@ -197,6 +246,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     except SettingsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    # Settings first, as root: a password in a file Docker mounted for root
+    # alone is still read. Then root is given up, whatever the command.
+    serving = args.command in (None, "serve")
+    become(
+        own=(
+            RUN_DIR, DATA_DIR,
+            os.path.dirname(settings.tls_cert_file), os.path.dirname(settings.tls_key_file),
+        ) if serving else ()
+    )
     if args.command == "health":
         return health(base_dn=settings.base_dn)
     if args.command == "import":

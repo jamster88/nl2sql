@@ -21,7 +21,7 @@ RUN mkdir -p /etc/nl2sql/tls
 # `python -m nl2sql_agent.api`; the default entrypoint is still the CLI.
 EXPOSE 8443
 
-ARG AGENT_VERSION=6.0.0
+ARG AGENT_VERSION=6.0.1
 ENV AGENT_VERSION=${AGENT_VERSION}
 
 LABEL org.opencontainers.image.title="nl2sql RAG agent" \

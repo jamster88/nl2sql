@@ -22,12 +22,14 @@ import uuid
 
 import pytest
 
+from tests.docker import test_gui_container
 from tests.docker.test_gui_container import (
     API_IMAGE,
     _build,
     _get,
     _names,
     _remove_network,
+    _trust,
     _wait_for,
     _wait_for_api,
     free_port,
@@ -155,7 +157,7 @@ def stack(gui_image: str, api_image: str):
             f"gui-{uuid.uuid4().hex[:6]}", "-p", f"127.0.0.1:{port}:8082",
             "-v", f"{volume}:/etc/nl2sql/tls:ro", "-e", f"CONSOLE_UPSTREAM={upstream}", *flags, gui_image,
         )
-        _wait_for(f"http://127.0.0.1:{port}/index.html", name)
+        _wait_for(f"https://127.0.0.1:{port}/index.html", name)
         return port
 
     try:
@@ -176,6 +178,7 @@ def stack(gui_image: str, api_image: str):
             "--entrypoint", "python", api_image, "-m", "nl2sql_agent.api",
         )
         _wait_for_api(api)
+        _trust(api)
         console = run_console("nl2sql-console")
         _wait_for_console(console)
         yield {"gui": run_gui, "console": console, "run_console": run_console, "run": run}
@@ -188,11 +191,11 @@ def stack(gui_image: str, api_image: str):
 
 def _post(port: int, path: str, body: dict) -> tuple[int, dict]:
     request = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}",
+        f"https://127.0.0.1:{port}{path}",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
+    with urllib.request.urlopen(request, timeout=60, context=test_gui_container._PAGE_TLS) as response:
         return response.status, json.loads(response.read())
 
 

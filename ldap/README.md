@@ -204,14 +204,25 @@ file instead, for Docker secrets.
 docker compose --profile api --profile auth exec ldap python3 -m nl2sql_ldap sync
 ```
 
-Nothing runs as root. slapd and the process that starts it are the `ldap`
-user, which is also the directory's root -- on the local socket only, by its
-peer credentials -- so there is no root password to keep.
+Nothing runs as root for longer than it takes to start. The entry point
+begins as root only to hand the `ldap` user the directories it writes -- a
+named volume another container mounted first is created owned by root, which
+under compose is what happens to the certificate's -- and then becomes
+`ldap` before it does anything else, so slapd and everything it starts run
+as that user. A `docker exec` of `python3 -m nl2sql_ldap ...`, and the
+health check, start as root and give it up the same way; run OpenLDAP's own
+tools with `docker compose exec -u ldap`. The `ldap` user is also the
+directory's root -- on the local socket only, by its peer credentials -- so
+there is no root password to keep.
 
 ## Tests
 
 `tests/ldap/` -- the settings, the file formats, the directory's operations,
 `slapd.conf`, the replica's copy and the supervisor, offline and at 100%; and
 `tests/ldap/test_ldap_image.py` (`--run-docker`), which builds the image,
-checks both modes' `slapd.conf` with slaptest, and runs a replica against a
-second directory end to end.
+checks both modes' `slapd.conf` with slaptest, runs a replica against a
+second directory end to end, and repeats compose's order of creation -- the
+directory's container, then one whose image owns the certificate's folder as
+root, on the same volume -- to show the directory still writes its
+certificate and that slapd and the supervisor run as `ldap`. 6.0.0's image
+fails that last one, which is what the published stack found.

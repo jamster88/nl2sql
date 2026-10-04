@@ -65,7 +65,7 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.1"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
@@ -85,7 +85,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.1"));
             window.close();
         });
     }
@@ -625,6 +625,32 @@ class MainWindowTest {
             assertEquals("ada", window.signInView().user().getText());
             assertTrue(Nodes.says(window.root(), "sign-in required"));
             assertTrue(Nodes.says(window.root(), "Your questions run as your own database account."));
+            window.close();
+        });
+    }
+
+    @Test
+    void a_server_that_answers_nobody_until_they_sign_in_asks_who_you_are_and_then_describes_itself() {
+        // What the real API does: /v1/meta is a /v1 route, and with sign-in
+        // on it answers only someone signed in. That is not a server that
+        // cannot be reached, and the window must not say it is.
+        FxToolkit.onFx(() -> {
+            client.failMeta = new ApiException(401, "sign_in_required", "sign in to use this service");
+            client.meta = Fakes.meta(true, "session");
+            signIn.then = () -> client.failMeta = null;
+            MainWindow window = window();
+
+            window.start();
+
+            assertTrue(window.signInView().node().isVisible());
+            assertFalse(Nodes.says(window.root(), "Not connected."));
+            assertTrue(Nodes.says(window.root(), "Your questions run as your own database account."));
+
+            signInAs(window, "ada", "pw");
+
+            assertFalse(window.signInView().node().isVisible());
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.1"));
+            assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
             window.close();
         });
     }

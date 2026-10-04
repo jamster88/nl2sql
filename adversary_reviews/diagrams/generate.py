@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
-"""Generate the v6.x adversarial review's figures as draw.io files.
+"""Generate the adversarial reviews' figures as draw.io files.
 
     python adversary_reviews/diagrams/generate.py            # writes beside this file
     python adversary_reviews/diagrams/generate.py some/dir   # or somewhere disposable
 
-Ten diagrams, one `build_*` function each, every one an uncompressed `.drawio`
-document that draw.io opens and the `_enhanced` review documents embed through
-its SVG export. The `.drawio` file is the source and the only thing this
-script writes. The SVG and PNG beside each one are draw.io's own exports, made
-with the desktop application's command line after a regeneration:
+Nineteen diagrams over two review cycles -- ten tagged `v6_x_review` (the
+first cycle, at 5.6.1) and nine tagged `v6_1_review` (the second, at 6.0.1)
+-- one `build_*` function each, every one an uncompressed `.drawio` document
+that draw.io opens and the `_enhanced` review documents embed through its SVG
+export. A first-cycle figure is never edited for the second cycle: where the
+code it draws did not change, the second cycle's documents embed the first
+cycle's file and say so; where it did, the second cycle has a figure of its
+own. The `.drawio` file is the source and the only thing this script writes.
+The SVG and PNG beside each one are draw.io's own exports, made with the
+desktop application's command line after a regeneration:
 
     DRAWIO="/Applications/draw.io.app/Contents/MacOS/draw.io"
-    for f in adversary_reviews/diagrams/v6_x_review_*.drawio; do
+    for f in adversary_reviews/diagrams/v6_*_review_*.drawio; do
       "$DRAWIO" -x -f svg -b 10 --theme light --embed-svg-fonts false -o "${f%.drawio}.svg" "$f"
       "$DRAWIO" -x -f png -s 2 -b 20 --theme light -o "${f%.drawio}.png" "$f"
     done
@@ -89,10 +94,22 @@ class Diagram:
     the committed file with a fresh build.
     """
 
-    def __init__(self, name: str, width: int, height: int):
+    def __init__(
+        self,
+        name: str,
+        width: int,
+        height: int,
+        *,
+        agent: str = "nl2sql v6_x_review diagram generator",
+        stamp: str = "2026-10-03T00:00:00.000Z",
+    ):
         self.name = name
         self.width = width
         self.height = height
+        # The file's own account of who wrote it and when; the first cycle's
+        # figures keep the first cycle's values so their bytes do not move.
+        self.agent = agent
+        self.stamp = stamp
         self.cells: list[str] = []
         self.i = 1
 
@@ -195,7 +212,7 @@ class Diagram:
         """The whole page as an uncompressed draw.io document."""
         body = "\n".join(self.cells)
         return (
-            '<mxfile host="Electron" modified="2026-10-03T00:00:00.000Z" agent="nl2sql v6_x_review diagram generator" '
+            f'<mxfile host="Electron" modified="{self.stamp}" agent="{self.agent}" '
             'version="31.4.5" type="device">\n'
             f'  <diagram id="{self.name}" name="{self.name}">\n'
             f'    <mxGraphModel dx="0" dy="0" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" '
@@ -732,7 +749,495 @@ def build_duplication_matrix() -> str:
     return d.render()
 
 
-#: What `main` writes, in the order the reviews introduce them.
+# ===========================================================================
+# The second cycle: v6_1_review, at commit 9b0b340 (6.0.1)
+# ===========================================================================
+
+V6_1 = dict(agent="nl2sql v6_1_review diagram generator", stamp="2026-10-04T00:00:00.000Z")
+
+
+# ---------------------------------------------------------------------------
+# 11. Deployment topology at 6.0.1 (I-12, I-13, M-04, M-08, M-10, S-08, S-16)
+# ---------------------------------------------------------------------------
+def build_v6_1_deployment_topology() -> str:
+    """I-12, I-13, M-01, M-04, M-08, M-10, S-08, S-16: what listens where at 6.0.1."""
+    d = Diagram("v6_1_deployment_topology", 1560, 900, **V6_1)
+    title(d, "As-built compose topology at default settings, 6.0.1: what listens where, with what, as whom",
+          "docker-compose.yml at commit 9b0b340 (6.0.1): 23 services, 14 volumes. Fourteen of fifteen images run as root; "
+          "the directory's drops to the ldap user in its entry point. Service-to-store edges are omitted for legibility.")
+    lx = 40
+    for colour, text in (("red", "every interface; a session is required"),
+                         ("orange", "every interface; default password equal to the user name"),
+                         ("green", "loopback only"),
+                         ("grey", "not published"),
+                         ("purple", "TLS material")):
+        d.box(lx, 74, 16, 14, "", color=colour, rounded=False)
+        d.text(lx + 20, 70, 290, 20, text, font=10)
+        lx += 300
+
+    d.frame(40, 100, 1200, 760, "Published on every interface (0.0.0.0)")
+    y1, h1, w1 = 160, 104, 180
+    api = d.box(60, y1, w1, h1, "api :8443 (HTTPS)\nagent image, root\nsession (nl2sql_users)\npresents the shared key\nCORS * by default", "red", font=10)
+    gui = d.box(255, y1, w1, h1, "gui :8080 (nginx, HTTPS)\nholds no token with sign-in on\nproxies /auth/ and /v1/\nroot", "red", font=10)
+    review = d.box(450, y1, w1, h1, "review :8444 (HTTPS)\nsession (reviewers / curators)\npresents the shared key\nwrites ./context_questions as root", "red", font=10)
+    reviewgui = d.box(645, y1, w1, h1, "reviewgui :8081 (nginx)\ncurategui :8083 (nginx)\nno token with sign-in on\nroot", "red", font=10)
+    auth = d.box(840, y1, w1, h1, "auth :8446 (HTTPS)\nsign-in; /directory/v1 (admins)\nsigning key in its own volume\npresents the shared key; root\nrolesync: CREATEROLE", "red", font=10, stroke_width=2)
+    d.box(1035, y1, 190, h1, "apitest (smoke test)\nmounts apitls read-only\ncurl + jq, alpine:3.21", "grey", font=10)
+
+    y2, h2 = 320, 112
+    apitls = d.box(60, y2, 330, h2, "volume apitls\nserver.key (0600, root) + server.crt, written by api\npresented as their own identity by api, review, console, auth\nmounted into 11 containers; 7 need only the certificate", "purple", font=10, stroke_width=2)
+    authkeys = d.box(410, y2, 220, h2, "volume authkeys\nsession.pub, written by auth\nread-only in api, console, review\nre-read when it changes", "purple", font=10)
+    d.box(650, y2, 190, h2, "volume authdata\nsession.key (0600)\nmounted by auth alone", "purple", font=10)
+    ldaptls = d.box(860, y2, 200, h2, "volume ldaptls\nldap.crt + ldap.key, written by ldap\nread-only in postgres and auth", "purple", font=10)
+    ctx = d.box(1080, y2, 145, h2, "bind mount\n./context_questions (rw)\nroot-owned writes", "yellow", font=10)
+
+    y3, h3, w3 = 490, 130, 158
+    stores = [
+        ("retail db :5432 -- no TLS\nnl2sql / nl2sql\nsuperuser postgres / nl2sql\nrolesync: generated\npg_hba: sign-in block, then\nhost all all all scram", 2),
+        ("chunkdb :5433\nragproc / ragproc", 1),
+        ("vectordb :5434\nragproc / ragproc", 1),
+        ("feedbackdb :5435\nfeedback / feedback", 1),
+        ("correctionsdb :5436\ncorrections / corrections", 1),
+        ("completionsdb :5437\ncompletions / completions", 1),
+        ("snippetsdb :5438\nsnippets / snippets", 1),
+    ]
+    boxes = []
+    for i, (label, sw) in enumerate(stores):
+        boxes.append(d.box(60 + 168 * i, y3, w3, h3, label, "orange", font=10, stroke_width=sw))
+    retail = boxes[0]
+    d.text(60, 636, 1160, 44,
+           "pg_hba.conf after launch.sh: 'host all reader,rolesync all scram-sha-256', then 'host nl2sql_retail +nl2sql_ldap all ldap ...' (clear-text "
+           "password to the server, which has no certificate), then the image's own 'host all all all scram-sha-256' -- the catch-all that admits the superuser "
+           "from any address is still the last rule (ldap_hba.sh:76-77, init_db.sh:23, 34).", font=10, color="#7a2e2a")
+    d.text(60, 690, 1160, 56,
+           "No service has deploy.resources, read_only, cap_drop or no-new-privileges; restart: unless-stopped everywhere. Health checks skip certificate "
+           "verification in twelve places (four compose services, two Python Dockerfiles, six nginx Dockerfiles). AUTH_ENABLED defaults true in compose "
+           "(eight services) and false in every settings module (S-17).", font=10, color="#555555")
+
+    d.frame(1270, 100, 270, 380, "Published on 127.0.0.1 only")
+    console = d.box(1290, 150, 230, 80, "console :8445 (HTTPS)\nsession; presents the shared key; root", "green", font=10)
+    d.box(1290, 245, 230, 60, "consolegui :8082 (nginx)\nroot", "green", font=10)
+    dirgui = d.box(1290, 320, 230, 64, "directorygui :8084 (nginx)\nits API is /directory/v1 on auth :8446\n-- every interface (M-10)", "green", font=10)
+    mlproxy = d.box(1290, 400, 230, 64, "mlflowproxy :5001 (HTTPS)\nauth_request -> /auth/verify\nBasic or session", "green", font=10)
+
+    d.frame(1270, 500, 270, 360, "Not published")
+    ldap = d.box(1290, 540, 230, 110, "ldap :389 / :636 (OpenLDAP)\nruns as ldap (become); own key\nStartTLS required for a password\nArgon2; lockout after 5\nreplica: remoteauth to the primary", "grey", font=10, stroke_width=2)
+    mlflow = d.box(1290, 665, 230, 60, "mlflow :5000\nno login; every question's rows", "grey", font=10)
+    mlflowdb = d.box(1290, 740, 230, 50, "mlflowdb -- mlflow / mlflow", "grey", font=10)
+    d.edge(mlproxy, mlflow, "", color="#666666", style="orth", exit=(0.25, 1), entry=(0.25, 0))
+    d.edge(mlflow, mlflowdb, "", color="#666666", style="orth")
+
+    # proxies -> upstreams
+    d.edge(gui, api, "proxy, TLS verified", style="orth", exit=(0.5, 0), entry=(0.5, 0), points=((345, 140), (150, 140)))
+    d.edge(reviewgui, review, "proxy", style="orth", exit=(0.5, 0), entry=(0.5, 0), points=((735, 140), (540, 140)))
+    d.edge(gui, auth, "/auth/ (sign-in, cookie)", style="orth", exit=(0.8, 0), entry=(0.5, 0), points=((399, 130), (930, 130)), label_pos=(0.1, -9))
+    d.edge(dirgui, auth, "/directory/, /auth/", style="orth", exit=(0, 0.5), entry=(0.5, 1), points=((1250, 352), (1250, 290), (930, 290)), label_pos=(0.3, -9))
+    # sign-in path
+    d.edge(auth, retail, "signs in as the person: clear-text password, sslmode=prefer", color="#b85450", width=2, exit=(0.3, 1), entry=(0.5, 0),
+           points=((894, 470), (139, 470)), fontcolor="#b85450", label_pos=(0.3, -9))
+    d.edge(retail, ldap, "binds to the directory: StartTLS, verified (LDAPTLS_CACERT)", color="#82b366", width=2, exit=(0.5, 1), entry=(0.5, 1),
+           points=((139, 880), (1405, 880)), fontcolor="#4f7a45", label_pos=(0.2, -9))
+    d.edge(ldaptls, retail, "ro", color="#9673a6", dashed=True, exit=(0.2, 1), entry=(0.9, 0), points=((900, 460), (202, 460)), label_pos=(0.1, -9))
+    # key distribution: a few representative edges
+    P = "#9673a6"
+    d.edge(apitls, api, "rw", color=P, width=2, exit=(0.2, 0), entry=(0.5, 1))
+    d.edge(apitls, review, "ro; presented", color=P, dashed=True, exit=(0.7, 0), entry=(0.3, 1), points=((291, 300), (504, 300)), label_pos=(0.4, -9))
+    d.edge(apitls, auth, "ro; presented", color=P, dashed=True, exit=(1, 0.3), entry=(0.2, 1), points=((400, 354), (400, 290), (876, 290)), label_pos=(0.5, -9))
+    d.edge(apitls, console, "ro; presented", color=P, dashed=True, exit=(0.5, 1), entry=(0, 0.5), points=((225, 450), (1255, 450), (1255, 190)), label_pos=(-0.4, -9))
+    d.edge(authkeys, api, "ro", color=P, dashed=True, exit=(0.3, 0), entry=(0.8, 1), points=((476, 280), (204, 280)), label_pos=(0.5, -9))
+    d.edge(ctx, review, "rw, root-owned writes", color="#b85450", dashed=True, start="block", exit=(0.2, 0), entry=(0.85, 1),
+           points=((1109, 292), (603, 292)), fontcolor="#b85450", label_pos=(0.3, -9))
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 12. How a sign-in travels (S-16, S-17, S-18, S-19, S-20)
+# ---------------------------------------------------------------------------
+def build_v6_1_signin_flow() -> str:
+    """S-16, S-18, S-19, S-20: every hop a password or a session crosses, and which are in clear."""
+    d = Diagram("v6_1_signin_flow", 1560, 760, **V6_1)
+    title(d, "How a sign-in travels at 6.0.1, and where the password is in clear text",
+          "auth/nl2sql_auth/login.py, auth/nl2sql_identity/guard.py, docker/ldap_hba.sh, gui/nginx.conf.template. "
+          "Red: a clear-text password. Green: TLS, verified. Purple: a signed session. Grey: a static token.")
+    lx = 40
+    for colour, text in (("#b85450", "clear-text password"), ("#82b366", "TLS, certificate verified"),
+                         ("#9673a6", "signed session (Ed25519 JWT)"), ("#666666", "static service token")):
+        d.box(lx, 74, 16, 14, "", color=(colour, colour), rounded=False)
+        d.text(lx + 20, 70, 260, 20, text, font=10)
+        lx += 290
+
+    # columns
+    browser = d.box(40, 130, 170, 90, "Browser\nany page :8080 / :8081 / :8083\n(HTTPS, self-signed)", "white", font=10)
+    desktop = d.box(40, 250, 170, 80, "Desktop client\n--auth-url https://host:8446\ntoken kept in memory", "white", font=10)
+    psql = d.box(40, 370, 170, 80, "psql / a BI tool\non another machine\n(documented: rolesync.py:14)", "white", font=10)
+    mlclient = d.box(40, 490, 170, 80, "MLflow client\nMLFLOW_TRACKING_USERNAME\n/ _PASSWORD (Basic)", "white", font=10)
+
+    nginx = d.box(300, 130, 190, 90, "nginx (the page's)\nproxies /auth/ and /v1/\nX-Forwarded-Host, -Proto=$scheme\nholds no token", "blue", font=10)
+    mlproxy = d.box(300, 490, 190, 80, "mlflowproxy :5001\nauth_request\n-> /auth/verify (method in a header)", "blue", font=10)
+
+    authsvc = d.box(590, 130, 230, 440,
+                    "auth service :8446\n\nPOST /auth/login -> cookie\nPOST /auth/token -> token\nGET /auth/verify (Basic cached 5 min)\n\n"
+                    "throttle: 5 per name, 50 per address\n(address = last X-Forwarded-For hop,\nclient-controlled when direct: S-20)\n\n"
+                    "signs with session.key (Ed25519)\n8 hours; jti minted, never checked\nsign-out deletes the cookie only (S-18)",
+                    "purple", font=10, valign="top", stroke_width=2)
+
+    pg = d.box(920, 130, 230, 300,
+               "retail Postgres :5432\nno certificate, ssl off\n\npg_hba (ldap_hba.sh:76-77):\nhost all reader,rolesync all scram\n"
+               "host nl2sql_retail +nl2sql_ldap all ldap\n  ldapserver=nl2sql-ldap ldaptls=1\nhost all all all scram  (image's own)\n\n"
+               "the ldap method is AuthenticationCleartextPassword:\nthe client sends the password as typed",
+               "orange", font=10, valign="top", stroke_width=2)
+
+    ldap = d.box(1250, 130, 270, 180,
+                 "OpenLDAP (nl2sql-ldap) :389\nStartTLS required for a simple bind\n(security simple_bind=64)\nArgon2 hash; lockout 5 / 900 s\n"
+                 "replica: bind passed to the primary\n(no StartTLS by default: S-23)", "grey", font=10, valign="top")
+
+    guard = d.box(920, 470, 230, 150,
+                  "API / console / review\nGuard.identify -> Identity\nverifies with session.pub (authkeys)\nroles re-read via pg_has_role <= 60 s\n"
+                  "SET LOCAL ROLE <person>\n-- same SELECT as the reader; no RLS", "blue", font=10, valign="top")
+    token = d.box(1250, 470, 270, 150,
+                  "Static service token (if set)\nAPI_TOKEN / REVIEW_TOKEN / CONSOLE_TOKEN\nIdentity(kind=service, roles=every role\nof the service, name='service token')\n"
+                  "author falls back to X-Reviewer (S-19)", ("#f5f5f5", "#666666"), font=10, valign="top")
+
+    R, G, P, K = "#b85450", "#82b366", "#9673a6", "#666666"
+    # browser sign-in
+    d.edge(browser, nginx, "1. POST /auth/login (TLS)", color=G, width=2, exit=(1, 0.3), entry=(0, 0.3), label_pos=(0, -9))
+    d.edge(nginx, authsvc, "2. proxied, TLS verified", color=G, width=2, exit=(1, 0.3), entry=(0, 0.12), label_pos=(0, -9))
+    d.edge(authsvc, pg, "3. connect as the person\nsslmode=prefer -> plain TCP", color=R, width=3, exit=(1, 0.2), entry=(0, 0.25), fontcolor=R, label_pos=(0, -16))
+    d.edge(pg, ldap, "4. simple bind over StartTLS\nLDAPTLS_CACERT verifies", color=G, width=2, exit=(1, 0.3), entry=(0, 0.4), fontcolor="#4f7a45", label_pos=(0, -16))
+    d.edge(authsvc, nginx, "5. Set-Cookie nl2sql_session\nHttpOnly SameSite=Strict Secure", color=P, width=2, dashed=True, exit=(0, 0.3), entry=(1, 0.7), fontcolor=P, label_pos=(0, 16))
+    d.edge(nginx, guard, "6. /v1/... with the cookie\n(cross-site write check)", color=P, width=2, exit=(0.5, 1), entry=(0, 0.3), points=((395, 300), (860, 300), (860, 515)), fontcolor=P, label_pos=(0.3, -16))
+    # desktop
+    d.edge(desktop, authsvc, "POST /auth/token (TLS; X-Forwarded-For is the client's)", color=G, width=2, exit=(1, 0.5), entry=(0, 0.4), label_pos=(-0.1, 10))
+    d.edge(desktop, guard, "Authorization: Bearer <session>", color=P, width=2, exit=(1, 0.9), entry=(0, 0.6), points=((230, 330), (230, 560), (880, 560)), fontcolor=P, label_pos=(0.35, -9))
+    # direct psql
+    d.edge(psql, pg, "connect as the person over the LAN: clear-text password to a server with no TLS (S-16)", color=R, width=3,
+           exit=(1, 0.2), entry=(0.5, 0), points=((560, 386), (560, 110), (1035, 110)), fontcolor=R, label_pos=(0.2, -10))
+    # mlflow
+    d.edge(mlclient, mlproxy, "Basic (TLS)", color=G, width=2, exit=(1, 0.5), entry=(0, 0.5), label_pos=(0, -9))
+    d.edge(mlproxy, authsvc, "auth_request: Basic -> sign_in (then 3, 4)", color=G, width=2, exit=(1, 0.5), entry=(0, 0.88), label_pos=(0, 10))
+    # service token
+    d.edge(token, guard, "Bearer / X-API-Key\nhmac.compare_digest", color=K, width=2, dashed=True, exit=(0, 0.5), entry=(1, 0.5), fontcolor=K, label_pos=(0, -16))
+    d.text(40, 640, 1480, 70,
+           "What is right: the browser's hop, the proxy's hop and the directory's hop are all TLS with the certificate verified; the session cannot be forged "
+           "(fixed header, Ed25519, issuer and audience checked); a removed person is signed out within a minute. What is not: the one hop that carries the "
+           "password as typed, auth service to Postgres, is plain TCP because the server has no certificate and sslmode=prefer accepts that silently -- and the "
+           "same 'host ... ldap' rule answers a connection from anywhere on the network.", font=10, color="#555555")
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 13. Trust boundaries at 6.0.1 (D-16, I-13, I-18, S-08, S-18, S-19)
+# ---------------------------------------------------------------------------
+def build_v6_1_trust_boundaries() -> str:
+    """D-16, I-13, I-18, S-08, S-16, S-18, S-19: what each zone holds and what each credential is worth."""
+    d = Diagram("v6_1_trust_boundaries", 1560, 620, **V6_1)
+    title(d, "Trust boundaries as built at 6.0.1: what each zone holds, and what each credential is worth",
+          "A session now crosses every hop and the person reaches SET LOCAL ROLE. The boundaries that did not move are drawn in red.")
+    zones = [
+        (40, 110, 230, 440, "Outside the stack",
+         ["Browser: cookie nl2sql_session\n8 h, HttpOnly, SameSite=Strict\nno revocation (S-18)",
+          "Desktop / scripts: bearer session\nor a static token (S-19)",
+          "psql / BI tool: directory password\nin clear text to :5432 (S-16)",
+          "Anyone on the LAN: :5432-:5438\ndefault passwords; superuser\npostgres / nl2sql (S-08)"]),
+        (300, 110, 260, 440, "Pages (nginx, root)",
+         ["Six images, one pattern\nproxy_ssl_verify on\nhold no token with sign-in on",
+          "Mount apitls read-only:\nthe API's private key, needed\nonly for the certificate (I-13)",
+          "SameSite=Strict cookie is sent\nto every port of this host:\ncross-port writes refused by\nSec-Fetch-Site / Origin check"]),
+        (590, 110, 290, 440, "Services (Python, root)",
+         ["API, console, review:\nverify the session with session.pub\nre-read roles <= 60 s\nSET LOCAL ROLE person",
+          "Static token = Identity(service)\nevery role of the service, no name\nauthor = X-Reviewer header (S-19)",
+          "Present the API's key as their own\nTLS identity; run as root to read it\n(auth/Dockerfile:18-19)",
+          "Review: writes the checkout as root\nruns loaders as subprocesses"]),
+        (910, 110, 290, 440, "Auth service (Python, root)",
+         ["session.key: the one private key\nthat mints every session",
+          "nl2sql_rolesync: CREATEROLE,\nADMIN on five roles and no more",
+          "LDAP_SERVICE_PASSWORD: reads and,\nstandalone, writes every person",
+          "Throttle in memory; address =\nlast X-Forwarded-For hop (S-20)",
+          "/directory/v1 on every interface\nbehind an admin session (M-10)"]),
+        (1230, 110, 300, 440, "Data (Postgres, OpenLDAP; model host)",
+         ["retail Postgres: no TLS\nsuperuser postgres / nl2sql reachable\nfrom the LAN; catch-all hba rule last",
+          "persons: LOGIN, SELECT on every table\n(no RLS), 60 s timeout, 5 connections;\ncurrent_user is the person, session_user\nthe reader (I-18)",
+          "OpenLDAP: passwords, Argon2, lockout;\nStartTLS required; runs as ldap;\nown key; not published",
+          "Model host (remote by default):\nsample rows and result rows (I-05)"]),
+    ]
+    for x, y, w, h, label, items in zones:
+        d.frame(x, y, w, h, label)
+        yy = y + 36
+        for text in items:
+            colour = "red" if "(S-" in text or "(I-13)" in text or "(M-10)" in text or "(I-18)" in text or "(I-05)" in text else "white"
+            box_h = 18 + 15 * text.count("\n") + 20
+            d.box(x + 12, yy, w - 24, box_h, text, color=colour, font=9, bold_first=False, valign="middle")
+            yy += box_h + 10
+    d.text(40, 562, 1480, 40,
+           "Red: a boundary the first cycle drew that did not move (S-08), or a new one 6.0 introduced (S-16, S-18, S-19, S-20, M-10, I-18). "
+           "White: what 6.0 built. The identity model is implied by every box here and written down in none of multi-agent_arch_specs/ (D-16).",
+           font=10, color="#555555")
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 14. One key, four identities, eleven containers (I-13, M-01, M-05, M-11, S-09)
+# ---------------------------------------------------------------------------
+def build_v6_1_key_sharing() -> str:
+    """I-13, M-01, M-05, M-11, S-09: the apitls volume and why nothing but the directory drops root."""
+    d = Diagram("v6_1_key_sharing", 1300, 640, **V6_1)
+    title(d, "One private key, four TLS identities, eleven containers -- and why nothing drops root (I-13, M-11)",
+          "docker-compose.yml:445 (rw) and ten read-only mounts; auth/Dockerfile:18-19; ldap/nl2sql_ldap/service.py:53-86 (become).")
+    vol = d.box(500, 250, 300, 120, "volume apitls\nserver.key -- written 0600 by root, in the api container\nserver.crt -- the one certificate; API_TLS_HOSTNAMES names\nlocalhost, nl2sql-api, nl2sql-review, nl2sql-console, nl2sql-auth", "purple", font=10, stroke_width=2)
+    api = d.box(40, 110, 200, 70, "api :8443\nwrites the key (rw); root", "red", font=10)
+    presenters = [
+        ("review :8444\npresents it; root", 300, 110),
+        ("console :8445\npresents it; root", 560, 110),
+        ("auth :8446\npresents it; root", 820, 110),
+    ]
+    pbox = [d.box(x, y, 200, 70, label, "red", font=10) for label, x, y in presenters]
+    d.text(1040, 110, 230, 80,
+           "\"Root, as the review service and the console are, for the same reason: it presents the agent API's certificate, whose key that API writes 0600.\" -- auth/Dockerfile:18-19",
+           font=9, color="#7a2e2a")
+    mounters = ["gui :8080", "reviewgui :8081", "curategui :8083", "consolegui :8082", "directorygui :8084", "mlflowproxy :5001", "apitest"]
+    mboxes = []
+    for i, label in enumerate(mounters):
+        mboxes.append(d.box(40 + 178 * i, 450, 165, 54, f"{label}\nnginx, root; needs server.crt only", "yellow", font=9))
+    P = "#9673a6"
+    d.edge(api, vol, "rw", color=P, width=2, exit=(0.5, 1), entry=(0.1, 0), points=((140, 230), (530, 230)))
+    for b in pbox:
+        d.edge(b, vol, "ro; presented", color=P, width=2, dashed=True, exit=(0.5, 1), entry=(0.5, 0), label_pos=(-0.75, -9))
+    for b in mboxes:
+        d.edge(vol, b, "ro", color=P, dashed=True, exit=(0.5, 1), entry=(0.5, 0), label_pos=(0.8, -9))
+    d.box(40, 540, 600, 70,
+          "The dependency the first plan missed (M-11)\nV6-31 (non-root in every image) cannot land while four services must read a 0600 key written by another container's root. "
+          "V6-36 (each service its own key, certificates only into proxies) comes first.", "white", font=10)
+    d.box(680, 540, 580, 70,
+          "The template: ldap/\nOwn key in ldaptls (tls.py), created 0600 by the user that reads it; the entry point takes its volumes as root and drops to the ldap user (become); "
+          "the health check and docker exec drop the same way. The one image that does not run as root.", "green", font=10)
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 15. The first cycle's findings by status (the changes document, the summary)
+# ---------------------------------------------------------------------------
+def build_v6_1_finding_status() -> str:
+    """The 66 first-cycle findings by lens and status at 6.0.1, with the 19 new ones."""
+    d = Diagram("v6_1_finding_status", 1100, 520, **V6_1)
+    title(d, "The first cycle's 66 findings by status at 6.0.1, and the 19 new ones",
+          "Resolved · Improved · Mitigated (code unchanged; sign-in by default narrows who can reach it) · Unchanged · Worse · New")
+    rows = [("D  architecture as documented", (1, 1, 0, 8, 5, 2)), ("I  architecture as implemented", (1, 0, 1, 9, 6, 3)),
+            ("C  code hygiene", (1, 0, 0, 6, 3, 3)), ("M  containers and microservices", (0, 1, 0, 6, 2, 3)),
+            ("S  security controls", (5, 3, 2, 3, 2, 8)), ("All", (8, 5, 3, 32, 18, 19))]
+    colours = [("#d5e8d4", "#000000"), ("#b9e0b4", "#000000"), ("#fff2cc", "#000000"),
+               ("#f5f5f5", "#000000"), ("#f8cecc", "#000000"), ("#dae8fc", "#000000")]
+    scale = 8
+    for i, (label, counts) in enumerate(rows):
+        y = 94 + 50 * i
+        d.text(40, y + 6, 250, 30, label, font=11, bold=(label == "All"))
+        x = 300
+        for n, (fill, fc) in zip(counts, colours):
+            if n == 0:
+                continue
+            w = n * scale
+            d.box(x, y, w, 34, str(n), color=(fill, "#999999"), font=11, bold_first=False, rounded=False, fontcolor=fc)
+            x += w
+    lx = 300
+    for (fill, _), name in zip(colours, ("Resolved", "Improved", "Mitigated", "Unchanged", "Worse", "New")):
+        d.box(lx, 420, 16, 14, "", color=(fill, "#999999"), rounded=False)
+        d.text(lx + 20, 416, 120, 20, name, font=10)
+        lx += 125
+    d.text(40, 456, 1020, 40,
+           "Of the 17 Critical or High findings: 3 resolved (D-05, I-06, S-01), 1 mitigated (S-07), 10 unchanged -- both Criticals among them -- and 3 worse (D-01, D-03, I-12).",
+           font=10, color="#555555")
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 16. Severity matrix at 6.0.1
+# ---------------------------------------------------------------------------
+def build_v6_1_severity_matrix() -> str:
+    """The second cycle's count of findings by lens and severity."""
+    d = Diagram("v6_1_severity_matrix", 1040, 440, **V6_1)
+    title(d, "Findings by area and severity (77 findings, five lenses; the first cycle had 66)",
+          "D architecture as documented · I architecture as implemented · C code hygiene · M containers · S security controls. Resolved findings are not counted.")
+    rows = [("D  architecture as documented (16)", (0, 6, 7, 3)), ("I  architecture as implemented (19)", (0, 5, 11, 3)),
+            ("C  code hygiene (12)", (0, 0, 8, 4)), ("M  containers and microservices (12)", (1, 3, 6, 2)),
+            ("S  security controls (18)", (1, 1, 8, 8)), ("All (77)", (2, 15, 40, 20))]
+    colours = [("#b85450", "#ffffff"), ("#ea6b66", "#ffffff"), ("#ffe6cc", "#000000"), ("#d5e8d4", "#000000")]
+    scale = 9
+    for i, (label, counts) in enumerate(rows):
+        y = 90 + 46 * i
+        d.text(40, y + 6, 240, 30, label, font=11, bold=(label.startswith("All")))
+        x = 290
+        for n, (fill, fc) in zip(counts, colours):
+            if n == 0:
+                continue
+            w = n * scale
+            d.box(x, y, w, 32, str(n), color=(fill, "#ffffff"), font=11, bold_first=False, rounded=False, fontcolor=fc)
+            x += w
+    lx = 290
+    for (fill, _), name in zip(colours, ("Critical", "High", "Medium", "Low")):
+        d.box(lx, 380, 16, 14, "", color=(fill, "#999999"), rounded=False)
+        d.text(lx + 20, 376, 120, 20, name, font=10)
+        lx += 130
+    d.text(810, 376, 220, 40, "First cycle: 2 / 15 / 35 / 14 = 66", font=10, color="#555555")
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 17. Duplication matrix at 6.0.1 (C-01, I-09, I-14)
+# ---------------------------------------------------------------------------
+def build_v6_1_duplication_matrix() -> str:
+    """C-01, I-09, I-14: the same helper defined in several packages, counted again."""
+    cols = ["agent core", "agent/api", "agent/console", "review", "rag", "auth svc", "identity", "ldap",
+            "gui", "review/gui", "curate", "console GUI", "directory GUI", "mlflow proxy", "desktop"]
+    rows = [
+        ("env helpers (_env, _env_bool, _env_int, …)", {"agent core": 1, "agent/api": 1, "review": 1, "rag": 1, "auth svc": 1, "identity": 1, "ldap": 1}),
+        ("Embedder protocol", {"agent core": 3, "review": 1, "rag": 1}),
+        ("build_embedder()", {"agent core": 2, "rag": 1}),
+        ("pgvector literal (vector_literal)", {"agent core": 2, "review": 1, "rag": 3}),
+        ("FALLBACK_CODES error map", {"agent/api": 1, "review": 1, "auth svc": 1}),
+        ("Health / Readiness / ApiError models", {"agent/api": 1, "review": 1, "auth svc": 1}),
+        ("_redacted()", {"review": 2, "auth svc": 1}),
+        ("json_safe()", {"agent/console": 1, "review": 1}),
+        ("token check (was ×3; now one Guard)", {"identity": 1}),
+        ("plainText / Markup.plain", {"gui": 1, "review/gui": 1, "desktop": 1}),
+        ("HTTP client + ApiError / ApiException", {"gui": 1, "review/gui": 1, "curate": 1, "console GUI": 1, "directory GUI": 1, "desktop": 1}),
+        ("nginx image + 10-*.envsh (upstream_tls)", {"gui": 1, "review/gui": 1, "curate": 1, "console GUI": 1, "directory GUI": 1, "mlflow proxy": 1}),
+        ("session.ts + SignInGate.tsx (476 lines, identical)", {"gui": 1, "review/gui": 1, "curate": 1, "console GUI": 1, "directory GUI": 1}),
+    ]
+    d = Diagram("v6_1_duplication_matrix", 1560, 700, **V6_1)
+    title(d, "Copy-and-extend at 6.0.1: the same helper written in several packages (C-01, I-09, I-14)",
+          "Cell = number of independent definitions in that package (non-test code, confirmed by search). 53 copies of 13 things, up from 41 of 12; "
+          "the one shared package, nl2sql_identity, replaced the three token checks.")
+    x0, y0, rowh, colw = 40, 124, 34, 74
+    for j, c in enumerate(cols):
+        d.text(x0 + 330 + colw * j, 84, colw, 38, c, font=9, bold=True, align="center")
+    d.text(x0 + 330 + colw * len(cols), 84, 70, 38, "copies", font=9, bold=True, align="center")
+    shade = {1: ("#fff2cc", "#000000"), 2: ("#ffe6cc", "#000000"), 3: ("#f8cecc", "#000000")}
+    for i, (name, cells) in enumerate(rows):
+        y = y0 + rowh * i
+        d.text(x0, y + 7, 320, rowh, name, font=9)
+        total = 0
+        for j, c in enumerate(cols):
+            n = cells.get(c, 0)
+            total += n
+            if n:
+                fill, fc = shade[min(n, 3)]
+                colour = ("#d5e8d4", "#82b366") if name.startswith("token check") else (fill, "#cccccc")
+                d.box(x0 + 330 + colw * j, y, colw - 2, rowh - 4, str(n), color=colour, font=10, bold_first=False, rounded=False, fontcolor=fc)
+            else:
+                d.box(x0 + 330 + colw * j, y, colw - 2, rowh - 4, "", color=("#ffffff", "#eeeeee"), rounded=False)
+        d.box(x0 + 330 + colw * len(cols), y, 68, rowh - 4, str(total), color=("#f5f5f5", "#cccccc"), font=10, bold_first=False, rounded=False)
+    d.text(40, 586, 1480, 70,
+           "Green: the one helper that became shared. The first cycle asked for a shared Python package (V6-20) and a shared front-end package (V6-25) before the next "
+           "feature; the next feature added three Python packages with their own env helpers and five web interfaces with identical sign-in code. "
+           "A defect in the sign-in gate must be fixed in five places and the vitest suites give no signal when one is missed.", font=10, color="#555555")
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 18. The second plan's phases and the re-ordering (V6-36 before V6-31)
+# ---------------------------------------------------------------------------
+def build_v6_1_plan_dependencies() -> str:
+    """The v6.1 plan: phases, what is done, and the dependency the first plan missed."""
+    d = Diagram("v6_1_plan_dependencies", 1560, 760, **V6_1)
+    title(d, "The v6.1 plan: phases, status of the first plan's items, and the dependency it missed",
+          "Green: done in 6.0 (V6-01, V6-10, V6-21, V6-30; V6-09 superseded). Orange: partial. Black: open. Blue: new (V6-52 to V6-71). "
+          "The red edge is V6-36 -> V6-31, which moves separate TLS identities to Phase 1.")
+    # Each phase is one box whose lines are coloured by status, so the box is
+    # HTML built here rather than a plain label: `raw=True`.
+    STATUS_COLOUR = {"done": "#2e7d32", "partial": "#b26a00", "open": "#000000", "new": "#1f5fbf"}
+
+    def phase(x, y, w, h, heading, items, font=10):
+        lines = [f"<b>{html.escape(heading, quote=False)}</b>"]
+        for text, status in items:
+            lines.append(f'<font color="{STATUS_COLOUR[status]}">{html.escape(text, quote=False)}</font>')
+        return d.box(x, y, w, h, "<br>".join(lines), "white", font=font, valign="top", raw=True)
+
+    p0 = phase(40, 120, 220, 170, "Phase 0 -- decisions", [
+        ("V6-01 identity", "done"), ("V6-02 sensitive policy", "open"), ("V6-03 topology", "open"), ("V6-04 review writes", "open"),
+        ("V6-05 benchmark wording", "open"), ("V6-70 direct DB access", "new"), ("V6-71 revocation model", "new")])
+    p1 = phase(300, 120, 260, 300, "Phase 1 -- safe defaults, transport, secrets", [
+        ("V6-06 stores on loopback", "open"), ("V6-07 retail v1_2, no baked superuser", "open"), ("V6-52 TLS for the retail database", "new"),
+        ("V6-53 hostssl + verify-full", "new"), ("V6-08 generated secrets", "partial"), ("V6-54 secure default in the code", "new"),
+        ("V6-36 own TLS identities (moved here)", "open"), ("V6-10 constant-time", "done"), ("V6-11 log scrub", "partial"), ("V6-12 CORS none", "partial"),
+        ("V6-13 queue bound   V6-14 EXPLAIN timeout", "open"), ("V6-55..58 argv, X-Forwarded-Proto,", "new"), ("  replica TLS, directory API", "new"),
+        ("V6-59 red test   V6-60 default-deny test", "new")], font=9)
+    p2 = phase(600, 120, 220, 140, "Phase 2 -- pipeline", [
+        ("V6-15 per-attempt reset", "open"), ("V6-16 node_errors", "open"), ("V6-17 sensitive policy", "open"),
+        ("V6-18 trace fields over REST", "open"), ("V6-19 extra=forbid", "open")])
+    p3 = phase(600, 290, 220, 150, "Phase 3 -- foundations", [
+        ("V6-20 shared package", "partial"), ("V6-66 installed as a package", "new"), ("V6-21 Principal", "done"), ("V6-22 engine accessor", "open"),
+        ("V6-23 error taxonomy", "open"), ("V6-24 pins + hashes", "open"), ("V6-25 web package + sign-in gate", "open")])
+    p4 = phase(860, 120, 240, 320, "Phase 4 -- service refactors", [
+        ("V6-26 routers, default-deny", "open"), ("V6-27 review writes via library", "open"), ("V6-28 non-root review", "open"), ("V6-29 sequences", "open"),
+        ("V6-30 identity applied", "done"), ("V6-31 non-root images (1 of 15)", "partial"), ("  <- waits for V6-36", "partial"),
+        ("V6-32 operator-only detail", "open"), ("V6-33 cache reload (admins exist)", "open"), ("V6-61 session revocation", "new"),
+        ("V6-62 named service tokens", "new"), ("V6-63 trusted proxies", "new"), ("V6-64 application_name", "new")], font=9)
+    p5 = phase(1140, 120, 200, 200, "Phase 5 -- hardening, topology", [
+        ("V6-34 compose hardening", "open"), ("V6-35 digests, one Alpine", "open"), ("V6-65 no start-up dependency", "new"),
+        ("  on the API's certificate", "new"), ("V6-37 one proxy image", "open"), ("V6-38 compose secrets", "partial"),
+        ("V6-39 role limits", "partial"), ("V6-40 consolidation", "open"), ("V6-41 ops in Python", "open"), ("V6-42 provenance", "open")], font=9)
+    p6 = phase(1140, 350, 200, 170, "Phase 6 -- documentation", [
+        ("V6-43 arch6 (+ sign-in)", "open"), ("V6-68 sign-in design", "new"), ("V6-44 verified blueprint", "open"), ("V6-45 threat model, tiers", "open"),
+        ("V6-46 overstated controls", "partial"), ("V6-69 cost of direct access", "new"), ("V6-47 one home per fact", "open"),
+        ("V6-48 comment policy", "open")], font=9)
+    p7 = phase(1370, 120, 170, 170, "Phase 7 -- tests", [
+        ("V6-49 security tier", "open"), ("V6-67 acceptance tier", "new"), ("  -- land first", "new"), ("V6-50 drift tests", "open"),
+        ("V6-51 coverage exclusions", "open")])
+    # status swatches
+    for status, text, x in (("done", "done in 6.0", 40), ("partial", "partial", 170), ("open", "open", 290), ("new", "new this cycle", 400)):
+        d.box(x, 560, 16, 14, "", color=(STATUS_COLOUR[status], STATUS_COLOUR[status]), rounded=False)
+        d.text(x + 20, 556, 120, 20, text, font=10)
+    # highlighted edges
+    d.edge(p0, p1, "decisions", style="orth", exit=(1, 0.3), entry=(0, 0.2))
+    d.edge(p1, p2, "", style="orth", exit=(1, 0.2), entry=(0, 0.5))
+    d.edge(p2, p3, "", style="orth", exit=(0.5, 1), entry=(0.5, 0))
+    d.edge(p3, p4, "", style="orth", exit=(1, 0.5), entry=(0, 0.5))
+    d.edge(p4, p5, "", style="orth", exit=(1, 0.3), entry=(0, 0.5))
+    d.edge(p5, p6, "", style="orth", exit=(0.5, 1), entry=(0.5, 0))
+    d.edge(p6, p7, "", style="orth", exit=(1, 0.3), entry=(0.5, 1), points=((1455, 435),))
+    d.edge(p1, p4, "V6-36 (own TLS identities) -> V6-31 (non-root): the dependency the first plan missed", color="#b85450", width=3,
+           exit=(0.5, 1), entry=(0.4, 1), points=((430, 480), (956, 480)), fontcolor="#b85450", label_pos=(0, 12))
+    d.text(40, 600, 1480, 90,
+           "The first plan's release shape put Phase 1 and Phase 2 in 6.0.0 and identity in 6.1. What shipped as 6.0.0 was identity (V6-01, V6-21, V6-30), done larger than "
+           "recommended, with Phases 1 and 2 untouched: the Critical (V6-07) and ten Highs shipped unchanged under the major version. 6.1.0 should be Phase 1 and Phase 2, "
+           "which now also carry TLS for the retail database (V6-52, V6-53) and the secure default in the code (V6-54); the acceptance tier (V6-67) should be in place before it is published.",
+           font=10, color="#555555")
+    return d.render()
+
+
+# ---------------------------------------------------------------------------
+# 19. Spec lineage against releases, second cycle (D-01, D-02, D-03, D-16)
+# ---------------------------------------------------------------------------
+def build_v6_1_spec_lineage() -> str:
+    """D-01, D-16: the specs' dates against the releases', with the two review cycles marked."""
+    d = Diagram("v6_1_spec_lineage", 1500, 540, **V6_1)
+    title(d, "Architecture specs against releases, second cycle (D-01, D-16)",
+          "multi-agent_arch_specs/ has no file newer than 2026-09-28. Seven releases since, two of them after the first review, one of them a major.")
+    d.text(40, 96, 200, 24, "Specs (design authority)", font=11, bold=True)
+    specs = [("arch4", "09-25", 60), ("arch5", "09-25", 200), ("arch5.1", "09-26", 340), ("arch5.2\n\"Designed, not built\"\n\"connects as the owner\"", "09-27", 480)]
+    for label, date, x in specs:
+        d.box(x, 124, 130, 70, f"{label}\n{date}", "blue", font=10)
+    d.box(640, 124, 820, 70, "no spec\nthe design record for 5.3-5.6 is READMEs; for 6.0 it is auth/README.md, ldap/README.md, README.md Sign-in and compose comments", ("#f8cecc", "#b85450"), font=10, dashed=True)
+    d.text(40, 230, 200, 24, "Releases (what shipped)", font=11, bold=True)
+    releases = [("5.2 routing", "09-28", 480), ("5.3 console", "09-29", 610), ("5.4 reopen/undo", "10-01", 740), ("5.5 MLflow", "10-01", 870),
+                ("5.6 snippets\n5.6.1", "10-03", 1000), ("6.0 sign-in\n(major)", "10-03/04", 1130), ("6.0.1\ncorrection", "10-04", 1260)]
+    boxes = {}
+    for label, date, x in releases:
+        colour = "red" if label.startswith("6.0") else "white"
+        boxes[label] = d.box(x, 258, 115, 70, f"{label}\n{date}", colour, font=10)
+    d.text(40, 370, 200, 24, "Review cycles", font=11, bold=True)
+    d.box(1000, 400, 115, 50, "v6_x_review\n10-03, at 5.6.1", "purple", font=10)
+    d.box(1260, 400, 115, 50, "v6_1_review\n10-04, at 6.0.1", "purple", font=10)
+    d.edge(boxes["5.6 snippets\n5.6.1"], boxes["6.0 sign-in\n(major)"], "the first review sat between these two", color="#9673a6", dashed=True,
+           exit=(0.5, 1), entry=(0.5, 1), points=((1057, 350), (1187, 350)), fontcolor="#9673a6", label_pos=(0, 12))
+    d.text(40, 470, 1420, 50,
+           "What 6.0 changed without a design document: who may call what (four groups), where a password is checked (Postgres through pg_hba), what a session is "
+           "(an Ed25519 JWT, 8 h), who holds which key (one API certificate for four services; the auth service's signing key), what runs as whom (SET LOCAL ROLE), "
+           "and a directory that may be a replica of another organisation's. arch5.2 says the agent connects as the owner.", font=10, color="#555555")
+    return d.render()
+
+
+#: What `main` writes, in the order the reviews introduce them: the first
+#: cycle's ten, then the second cycle's nine.
 DIAGRAMS = (
     ("v6_x_review_deployment_topology.drawio", "build_deployment_topology"),
     ("v6_x_review_repair_loop_state.drawio", "build_repair_loop_state"),
@@ -744,6 +1249,15 @@ DIAGRAMS = (
     ("v6_x_review_plan_dependencies.drawio", "build_plan_dependencies"),
     ("v6_x_review_severity_matrix.drawio", "build_severity_matrix"),
     ("v6_x_review_duplication_matrix.drawio", "build_duplication_matrix"),
+    ("v6_1_review_deployment_topology.drawio", "build_v6_1_deployment_topology"),
+    ("v6_1_review_signin_flow.drawio", "build_v6_1_signin_flow"),
+    ("v6_1_review_trust_boundaries.drawio", "build_v6_1_trust_boundaries"),
+    ("v6_1_review_key_sharing.drawio", "build_v6_1_key_sharing"),
+    ("v6_1_review_finding_status.drawio", "build_v6_1_finding_status"),
+    ("v6_1_review_severity_matrix.drawio", "build_v6_1_severity_matrix"),
+    ("v6_1_review_duplication_matrix.drawio", "build_v6_1_duplication_matrix"),
+    ("v6_1_review_plan_dependencies.drawio", "build_v6_1_plan_dependencies"),
+    ("v6_1_review_spec_lineage.drawio", "build_v6_1_spec_lineage"),
 )
 
 

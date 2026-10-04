@@ -31,6 +31,7 @@ their own and are listed under the release they shipped with. A version marked
 **After publishing** (the checkout, not the `v6_0_1` images)
 - The container tests ask each page over HTTPS, verified; the least-privilege test says what it protects now that the reader may become people; `auth_roles.sql` no longer grants a second time what the role sync already granted.
 - The usage guide covers upgrading to 6.0 and troubleshooting sign-in; still 100% coverage of the Python, the shell scripts, the desktop client and the five web interfaces.
+- The second adversarial review cycle, `v6_1_review`, at 6.0.1: the five documents and their `_enhanced` editions again, every first-cycle finding given a status (8 resolved, 5 improved, 3 mitigated, 32 unchanged, 18 worse) and 19 new, the plan's 51 items tracked and 20 added, a comparison document, nine new figures; the first cycle's files untouched.
 
 ## v6_0 (6.0.0) -- 2026-10-03
 

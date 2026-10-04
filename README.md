@@ -1454,11 +1454,16 @@ content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 The adversarial reviews in [`adversary_reviews/`](adversary_reviews) are
 illustrated the same way:
 [`adversary_reviews/diagrams/generate.py`](adversary_reviews/diagrams/generate.py)
-writes their ten figures as draw.io files, draw.io's own command line exports
-the SVG and PNG beside each (the commands are in the script's docstring), and
+writes their nineteen figures as draw.io files -- ten for the first cycle
+(`v6_x_review`, at 5.6.1) and nine for the second (`v6_1_review`, at 6.0.1),
+a first-cycle figure never edited for the second -- draw.io's own command
+line exports the SVG and PNG beside each (the commands are in the script's
+docstring), and
 [`tests/docs/test_review_diagrams.py`](tests/docs/test_review_diagrams.py)
-holds the committed files to the script, the exports to the files, and the
-`_enhanced` editions of the reviews to the originals they add figures to.
+holds the committed files to the script, the exports to the files, the
+`_enhanced` editions of the reviews to the originals they add figures to,
+and the second cycle's comparison document to the finding ids both cycles
+use.
 
 ## Model catalog
 
@@ -1716,8 +1721,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 4363 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 5122, including ones that build and run containers
+pytest                                          # 4425 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 5184, including ones that build and run containers
 ```
 
 | Directory | Covers |

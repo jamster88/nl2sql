@@ -24,6 +24,7 @@ their own and are listed under the release they shipped with. A version marked
 
 **After publishing** (tests and documentation; no image changed)
 - A coverage and relevance audit: still 100% everywhere; the snippet store's and the curation page's compose settings are exercised and documented with their defaults; two review settings documented; a fake switch nobody set and two duplicate tests removed.
+- The first adversarial review (`adversary_reviews/`, tag `v6_x_review`): three reviews, one combined plan of 51 items, a summary of 66 findings, and figures generated as draw.io files, exported and tested.
 
 ## v5_6 (5.6.0) -- 2026-10-03
 

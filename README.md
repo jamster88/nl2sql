@@ -1349,6 +1349,15 @@ the nodes it drew in the SVG, which is what lets
 the pictures against `graph.py` and fail when a node is renamed. Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
+The adversarial reviews in [`adversary_reviews/`](adversary_reviews) are
+illustrated the same way:
+[`adversary_reviews/diagrams/generate.py`](adversary_reviews/diagrams/generate.py)
+writes their ten figures as draw.io files, draw.io's own command line exports
+the SVG and PNG beside each (the commands are in the script's docstring), and
+[`tests/docs/test_review_diagrams.py`](tests/docs/test_review_diagrams.py)
+holds the committed files to the script, the exports to the files, and the
+`_enhanced` editions of the reviews to the originals they add figures to.
+
 ## Model catalog
 
 [`models/`](models) holds the list arch5.2's model router routes from: every
@@ -1605,8 +1614,8 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3660 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 4362, including ones that build and run containers
+pytest                                          # 3726 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # all 4428, including ones that build and run containers
 ```
 
 | Directory | Covers |
@@ -1621,7 +1630,7 @@ pytest --run-docker --run-node --run-java       # all 4362, including ones that 
 | [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, a judgement taken back -- a promoted pair withdrawn from a real copy of the document and checked by the loader's parser, a fix deleted with its vector, the promotion log cleared and the row handed back to the public process -- the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 155-test review GUI suite run from here |
 | [`tests/curate/`](tests/curate) | The curation interface: its TypeScript types compared field by field against the review service's curation models, its nginx start-up script's branches, the project's pins and coverage gate, the compose wiring both ways -- every setting it reads, and the review service's token reaching it and never a browser -- and its own 81-test curation GUI suite run from here. The service behind it is in `tests/review/`: each snippet kind validated against the live retail database, every curation route, the snippet document round-tripped through the loader's parser, and golden pairs and fixes added and removed directly |
 | [`tests/console/`](tests/console) | The SQL console: the agent's gates in the agent's order against a scripted database -- what is refused before the database is asked, the read-only fence, the cost judged as the planner gate judges it -- every route and error code, the certificate it presents and refuses to start without, the real retail database as the real reader, including a write the transaction refuses and a timeout, the compose wiring both ways -- the agent's own URL and limits, one credential, loopback ports -- four real containers on a private network, the interface's types against the models, and its own 130-test console GUI suite run from here |
-| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
+| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together -- and the adversarial reviews' figures: each committed draw.io file held to the script that computes it, its SVG and PNG exports to the file, and the `_enhanced` review documents to the originals they add figures to |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 

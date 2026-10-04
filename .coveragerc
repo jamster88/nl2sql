@@ -47,6 +47,7 @@ include =
     data_gen/*
     chunking/*
     arch_diagrams/*
+    adversary_reviews/*
     docker/*
     multi-agent_arch_specs/*
     models/*

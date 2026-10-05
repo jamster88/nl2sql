@@ -1,0 +1,2 @@
+archives filter=lfs diff=lfs merge=lfs -text
+archives/nl2sql611-2026-10-04.tar.xz filter=lfs diff=lfs merge=lfs -text

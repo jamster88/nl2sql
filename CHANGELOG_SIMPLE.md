@@ -35,6 +35,9 @@ their own and are listed under the release they shipped with. A version marked
 - A deleted fix's id was given to the next fix; ids come from sequences.
 - The desktop client's sign-out told nobody; it ends the session at the auth service.
 
+**Published**
+- All seventeen tags as `v6_2`; the dataset images are unchanged. The acceptance tier passed first, and `start.sh` then upgraded a stack to them with every check passing, a signed-out session refused everywhere and nothing running as root among them.
+
 ## v6_1 (6.1.0) -- 2026-10-04
 
 **Added**

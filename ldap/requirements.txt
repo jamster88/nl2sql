@@ -1,0 +1,5 @@
+# The directory's Python dependencies, installed into its own venv (6.2): from
+# PyPI with hashes (ldap/requirements.lock) rather than from Alpine's index at
+# whatever version alpine carried that day. OpenLDAP itself is still Alpine's.
+ldap3==2.9.1
+cryptography==50.0.1

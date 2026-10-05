@@ -1,0 +1,32 @@
+# The code every nl2sql service shares, installed as a package (V6-66).
+#
+# Two import packages in one distribution: `nl2sql_identity`, the session
+# format and the guard every service puts in front of its routes, and
+# `nl2sql_common`, everything else -- settings, the error envelope, the
+# error taxonomy, embeddings, dropping root. Each image installs it with
+#
+#     pip install --no-deps ./common
+#
+# and records the version below in its own metadata, so `pip show
+# nl2sql-common` in a container says which revision it carries. It is
+# released with the images, at their version; `tests/docs/test_versions.py`
+# holds this file to it.
+#
+# No dependencies are declared: each image pins and hashes its own
+# (`requirements.lock`), and the package uses what they install --
+# pydantic and FastAPI in the services that answer HTTP, cryptography for
+# the session keys and certificates, psycopg for the role recheck.
+
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nl2sql-common"
+version = "6.2.0"
+description = "What every nl2sql service shares: identity, settings, errors, the API envelope"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools]
+packages = ["nl2sql_common", "nl2sql_identity"]

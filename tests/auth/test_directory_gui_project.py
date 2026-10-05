@@ -61,7 +61,7 @@ def test_the_page_is_for_administrators_only():
 
 def test_the_dev_proxy_and_nginx_both_send_the_page_to_the_auth_service(template: str):
     vite = (GUI / "vite.config.ts").read_text()
-    assert '"/directory": proxy, "/auth": proxy' in vite and "https://localhost:8446" in vite
+    assert 'paths: ["/directory"]' in vite and "auth: target" in vite and "https://localhost:8446" in vite
     assert "location /auth/ {" in template and "set $upstream ${DIRECTORY_UPSTREAM};" in template
     # V6-58: the directory's own API on the auth service's unpublished port.
     assert "location /directory/ {" in template and "set $upstream ${DIRECTORY_API_UPSTREAM};" in template

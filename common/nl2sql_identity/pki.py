@@ -31,6 +31,12 @@ docker-compose.yml). Each run, for every identity it is given:
 directory named, so a container that verifies others needs no second mount.
 The CA's own key never leaves the CA directory, which only this container
 mounts.
+
+An identity may name its owner (V6-31): the uid and gid of the account the
+service runs as, which then owns the key and may read it -- 0640, so its
+group may too -- while nothing else in the container can. Given on every
+run, kept certificate or new, so a volume from 6.1, whose key root wrote
+0600 for a service that ran as root, is handed over on the first start.
 """
 
 from __future__ import annotations
@@ -81,24 +87,54 @@ class Identity:
     name: str
     directory: Path
     hostnames: tuple[str, ...]
+    #: The uid and gid the service runs as, which own its key; None leaves
+    #: the key to whoever runs this, 0600.
+    owner: tuple[int, int] | None = None
 
 
 def parse_identity(text: str, *, also: Sequence[str] = ()) -> Identity:
-    """`NAME=DIRECTORY=HOST,HOST,...`, as compose writes them.
+    """`NAME=DIRECTORY=HOST,HOST,...[=UID:GID]`, as compose writes them.
 
     `=` rather than `:` between the parts because an IPv6 address is one of
     the names. `also` are names every identity covers besides its own: the
-    machine's name on the network, say, for a browser elsewhere.
+    machine's name on the network, say, for a browser elsewhere. The last
+    part, when there is one, is the account the service runs as.
     """
-    parts = text.split("=", 2)
-    if len(parts) != 3 or not parts[0] or not parts[1]:
-        raise PkiError(f"an identity is NAME=DIRECTORY=HOST,HOST,...; got {text!r}")
-    name, directory, hosts = parts
+    parts = text.split("=", 3)
+    if len(parts) < 3 or not parts[0] or not parts[1]:
+        raise PkiError(f"an identity is NAME=DIRECTORY=HOST,HOST,...[=UID:GID]; got {text!r}")
+    name, directory, hosts = parts[:3]
+    owner = _owner(name, parts[3]) if len(parts) == 4 else None
     names = [host.strip() for host in hosts.split(",") if host.strip()]
     names += [host for host in also if host and host not in names]
     if not names:
         raise PkiError(f"identity {name} names no host to be issued for")
-    return Identity(name=name, directory=Path(directory), hostnames=tuple(names))
+    return Identity(name=name, directory=Path(directory), hostnames=tuple(names), owner=owner)
+
+
+def _owner(name: str, text: str) -> tuple[int, int]:
+    uid, _, gid = text.partition(":")
+    if not (uid.isdigit() and gid.isdigit()):
+        raise PkiError(f"identity {name}'s owner is UID:GID, by number; got {text!r}")
+    return int(uid), int(gid)
+
+
+def hand_over(identity: Identity, *, chown=os.chown) -> str | None:
+    """Give the key and certificate to the account the service runs as.
+
+    The key 0640: the account reads it, and so may its group -- the review
+    service runs as whoever owns the checkout it writes and reads its key
+    through the group. Says to whom, or None when no owner was named.
+    """
+    if identity.owner is None:
+        return None
+    uid, gid = identity.owner
+    for name, mode in ((KEY_FILE, 0o640), (CERT_FILE, 0o644), (CA_FILE, 0o644)):
+        path = identity.directory / name
+        if path.is_file():
+            chown(path, uid, gid)
+            os.chmod(path, mode)
+    return f"{uid}:{gid}"
 
 
 def _now(now: dt.datetime | None) -> dt.datetime:
@@ -379,7 +415,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="comma-separated names every identity covers too (TLS_EXTRA_HOSTNAMES)",
     )
     parser.add_argument("--days", type=int, default=LEAF_DAYS, help="how long a certificate is good for")
-    parser.add_argument("identity", nargs="*", help="NAME=DIRECTORY=HOST,HOST,...")
+    parser.add_argument("identity", nargs="*", help="NAME=DIRECTORY=HOST,HOST,...[=UID:GID]")
     return parser.parse_args(argv)
 
 
@@ -391,7 +427,9 @@ def main(argv: Sequence[str] | None = None, *, now: dt.datetime | None = None) -
         ca_cert, ca_key, said = ensure_ca(Path(args.ca_dir), now=now)
         print(f"nl2sql-pki: {said}")
         for identity in identities:
-            print(f"nl2sql-pki: {ensure_identity(identity, ca_cert, ca_key, days=args.days, now=now)}")
+            done = ensure_identity(identity, ca_cert, ca_key, days=args.days, now=now)
+            owner = hand_over(identity)
+            print(f"nl2sql-pki: {done}" + (f"; the key is {owner}'s" if owner else ""))
         for directory in args.trust_dir:
             print(f"nl2sql-pki: {ensure_trust(Path(directory), ca_cert)}")
     except (PkiError, OSError) as exc:

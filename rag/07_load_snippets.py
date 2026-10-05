@@ -16,7 +16,8 @@ record is written last, and only when every snippet has a current vector, so
 a load the embedding host interrupted is one the next start finishes.
 
 It also (re)creates the role the agent reads the store as, which can SELECT
-and nothing else.
+and nothing else. The work is `ragproc.loaders.load_snippets`, which the review
+service calls itself after a curator changes the document.
 
 Examples:
     python 07_load_snippets.py
@@ -32,8 +33,9 @@ import os
 import sys
 from pathlib import Path
 
+from ragproc import loaders
 from ragproc import snippets as sn
-from ragproc.config import Settings, document_slug
+from ragproc.config import Settings
 from ragproc.embedder import build_embedder
 
 DEFAULT_DOCUMENT = Path(__file__).resolve().parent.parent / "context_questions" / "sql_snippets.md"
@@ -78,84 +80,49 @@ def main(argv: list[str] | None = None) -> int:
     if not path.is_file():
         raise SystemExit(f"error: not found: {path}")
 
-    text = path.read_text()
-    snippets = sn.parse_text(text, path.name)
-    kinds = ", ".join(
-        f"{sum(1 for s in snippets if s.kind == kind)} {kind}" for kind in sn.KINDS
+    report = loaders.load_snippets(
+        path,
+        args.db_url,
+        reader_role=args.reader_role,
+        reader_password=args.reader_password,
+        embedder=None if args.no_embed else lambda: build_embedder(args.backend, args.model, args.ollama_url),
+        model=args.model,
+        batch_size=args.batch_size,
+        force=args.force,
+        probe=args.probe,
+        dry_run=args.dry_run,
     )
-    print(f"{path} -> {sn.TABLE}: {len(snippets)} snippets ({kinds})")
+    kinds = ", ".join(f"{count} {kind}" for kind, count in report.kinds.items())
+    print(f"{path} -> {sn.TABLE}: {report.snippets} snippets ({kinds})")
 
     if args.dry_run:
-        for snippet in snippets[:3]:
+        for snippet in sn.parse_text(path.read_text(), path.name)[:3]:
             print(f"  {snippet.snippet_id} {snippet.kind:9s} {snippet.name}")
         print("\ndry run: nothing written")
         return 0
 
-    source_doc = document_slug(path.name)
-    conn = sn.connect(args.db_url)
-    try:
-        sn.ensure_tables(conn)
-        written = sn.upsert_snippets(conn, snippets, source_doc=source_doc)
-        removed = sn.delete_missing(conn, [s.chunk_id for s in snippets])
-        print(f"  {written} rows written, {removed} stale rows removed")
-        sn.ensure_reader(conn, args.reader_role, args.reader_password)
-        print(f"  role {args.reader_role} can read the store and write nothing")
-
-        if args.no_embed:
-            # The rows are current and the vectors may not be, so the store
-            # does not claim to hold this document: the next load embeds.
-            sn.forget_load(conn)
-            print("  vectors: skipped (--no-embed); the next load embeds them")
-            return 0
-
-        # Only what changed is embedded, so a load with nothing new never
-        # needs the embedding host at all -- which is what lets every start
-        # check the store against the document for the price of one query.
-        stored = sn.vector_state(conn)
-        pending = [
-            s for s in snippets if args.force or stored.get(s.chunk_id) != (s.content_hash, args.model)
-        ]
-        embedder = build_embedder(args.backend, args.model, args.ollama_url)
-        embedded = 0
-        try:
-            if pending:
-                embedder.check()
-                sn.ensure_vector_table(conn, embedder.dimension)
-                for start in range(0, len(pending), args.batch_size):
-                    batch = pending[start : start + args.batch_size]
-                    vectors = embedder.embed([s.search_text for s in batch])
-                    embedded += sn.upsert_vectors(conn, batch, vectors, args.model)
-        except Exception as exc:  # noqa: BLE001 - the rows are loaded; say why the vectors are not
-            conn.rollback()
-            sn.forget_load(conn)
-            print(f"  vectors -> {sn.VECTOR_TABLE}: FAILED: {exc}")
-            print("  the rows are loaded and searchable by keyword; the next load embeds them")
-            return 1
-        print(
-            f"  vectors -> {sn.VECTOR_TABLE}: {embedded} embedded, "
-            f"{len(snippets) - embedded} already current"
-        )
-        sn.record_load(
-            conn,
-            source_doc=source_doc,
-            digest=sn.document_hash(path.read_bytes()),
-            snippets=len(snippets),
-            embedded=len(snippets),
-            model=args.model,
-        )
-
-        if args.probe:
-            print(f"\n  by keyword for {args.probe!r}:")
-            hits = sn.search_keywords(conn, args.probe)
-            for snippet_id, name, score, matched in hits:
-                print(f"    {score:>8.4f}  {snippet_id}  {name}  [{matched}]")
-            if not hits:
-                print("    (no keyword phrase matched)")
-            print(f"\n  by meaning for {args.probe!r}:")
-            for snippet_id, name, similarity in sn.search_vectors(conn, embedder.embed([args.probe])[0]):
-                print(f"    {similarity:>8.4f}  {snippet_id}  {name}")
-    finally:
-        conn.close()
+    print(f"  {report.written} rows written, {report.removed} stale rows removed")
+    print(f"  role {args.reader_role} can read the store and write nothing")
+    if report.embedded is None:
+        print("  vectors: skipped (--no-embed); the next load embeds them")
+        return 0
+    if report.embed_error is not None:
+        print(f"  vectors -> {sn.VECTOR_TABLE}: FAILED: {report.embed_error}")
+        print("  the rows are loaded and searchable by keyword; the next load embeds them")
+        return 1
+    print(
+        f"  vectors -> {sn.VECTOR_TABLE}: {report.embedded} embedded, "
+        f"{report.snippets - report.embedded} already current"
+    )
+    if args.probe:
+        print(f"\n  by keyword for {args.probe!r}:")
+        for snippet_id, name, score, matched in report.keyword_probe:
+            print(f"    {score:>8.4f}  {snippet_id}  {name}  [{matched}]")
+        if not report.keyword_probe:
+            print("    (no keyword phrase matched)")
+        print(f"\n  by meaning for {args.probe!r}:")
+        for snippet_id, name, similarity in report.meaning_probe:
+            print(f"    {similarity:>8.4f}  {snippet_id}  {name}")
     return 0
 
 

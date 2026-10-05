@@ -11,8 +11,11 @@ ARG POSTGRES_IMAGE=postgres:18
 FROM --platform=$BUILDPLATFORM ${PYTHON_IMAGE} AS generator
 
 WORKDIR /app/data_gen
-COPY data_gen/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# At the versions, and with the hashes, the lock names (V6-24) -- the ones that
+# generated the published v1_2. The data comes from a fixed seed through
+# these libraries, so another numpy or Faker is another dataset.
+COPY data_gen/requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 COPY data_gen/ ./
 COPY docker/emit_load_sql.py /opt/emit_load_sql.py
 

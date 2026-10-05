@@ -11,7 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
- * {@code POST /auth/token} on the auth service.
+ * {@code POST /auth/token} on the auth service, and {@code POST /auth/logout}.
  *
  * <p>The route for a client that holds its own token. A browser signs in at
  * {@code /auth/login} and is handed a cookie it cannot read; this client has
@@ -71,8 +71,27 @@ public final class HttpSignIn implements SignIn {
         return token;
     }
 
+    /**
+     * Forget the session here, and end it at the auth service: {@code POST
+     * /auth/logout} with it as the bearer, so the token is refused by every
+     * service from then on (6.2). Sent in the background and not waited
+     * for -- the window is signed out whatever the service says, and one
+     * that cannot be reached leaves the token to expire, as every token did
+     * before 6.2.
+     */
     @Override
     public void signOut() {
+        Models.Token held = session.current();
         session.signOut();
+        // Never an empty token: signing in refuses one (above).
+        if (held == null) {
+            return;
+        }
+        HttpRequest request = HttpRequest.newBuilder(URI.create(settings.authUrl() + "/auth/logout"))
+                .header("Authorization", "Bearer " + held.token())
+                .timeout(Duration.ofSeconds(10))
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+        http.sendAsync(request, HttpResponse.BodyHandlers.discarding());
     }
 }

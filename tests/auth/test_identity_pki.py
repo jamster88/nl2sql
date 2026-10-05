@@ -50,7 +50,17 @@ def test_an_identity_is_a_name_a_directory_and_its_hosts(tmp_path):
     assert identity == pki.Identity("api", tmp_path, ("localhost", "nl2sql-api", "::1", "host.lan"))
 
 
-@pytest.mark.parametrize("text", ["api", "api=/x", "=/x=localhost", "api==localhost", "api=/x= , "])
+def test_an_identity_may_name_the_account_its_service_runs_as(tmp_path):
+    """V6-31: `=UID:GID`, by number, after the hosts -- whose IPv6 colons
+    are why the parts are separated by `=`."""
+    identity = pki.parse_identity(f"api={tmp_path}=localhost,::1=10001:10001")
+    assert identity.hostnames == ("localhost", "::1") and identity.owner == (10001, 10001)
+    assert pki.parse_identity(f"api={tmp_path}=localhost").owner is None
+
+
+@pytest.mark.parametrize(
+    "text", ["api", "api=/x", "=/x=localhost", "api==localhost", "api=/x= , ", "api=/x=localhost=nl2sql", "api=/x=h=1:"]
+)
 def test_a_malformed_identity_is_refused(text):
     with pytest.raises(pki.PkiError):
         pki.parse_identity(text)
@@ -256,6 +266,34 @@ def test_the_command_issues_every_identity_and_the_trust_directory(tmp_path, cap
     assert status == 0
     assert "made a CA" in said and "api: issued" in said and "gui: issued" in said and "trust:" in said
     assert "host.lan" in pki.covered_names(_cert(tmp_path / "gui" / "server.crt"))
+
+
+def test_each_key_is_handed_to_the_account_its_service_runs_as(tmp_path, ca):
+    """Kept or new -- a 6.1 volume's root-owned key is moved over on the
+    first start -- readable by the account and its group and nobody else."""
+    ca_cert, ca_key = ca
+    identity = pki.parse_identity(f"api={tmp_path / 'api'}=localhost=10001:10002")
+    pki.ensure_identity(identity, ca_cert, ca_key, now=NOW)
+    (tmp_path / "api" / "server.key").chmod(0o600)
+    given: list[tuple] = []
+    assert pki.hand_over(identity, chown=lambda path, uid, gid: given.append((Path(path).name, uid, gid))) == "10001:10002"
+    assert sorted(given) == [("ca.crt", 10001, 10002), ("server.crt", 10001, 10002), ("server.key", 10001, 10002)]
+    assert stat.S_IMODE((tmp_path / "api" / "server.key").stat().st_mode) == 0o640
+    assert stat.S_IMODE((tmp_path / "api" / "server.crt").stat().st_mode) == 0o644
+    assert pki.hand_over(pki.parse_identity(f"gui={tmp_path / 'gui'}=localhost")) is None
+    # A file that is not there -- a CA certificate someone removed -- is skipped, not an error.
+    (tmp_path / "api" / "ca.crt").unlink()
+    given.clear()
+    pki.hand_over(identity, chown=lambda path, uid, gid: given.append(Path(path).name))
+    assert sorted(given) == ["server.crt", "server.key"]
+
+
+def test_the_command_says_whose_each_key_is(tmp_path, capsys, monkeypatch):
+    import os
+
+    monkeypatch.setattr(os, "chown", lambda path, uid, gid: None)
+    status = pki.main([f"--ca-dir={tmp_path / 'ca'}", f"api={tmp_path / 'api'}=localhost={os.getuid()}:{os.getgid()}"], now=NOW)
+    assert status == 0 and f"the key is {os.getuid()}:{os.getgid()}'s" in capsys.readouterr().out
 
 
 def test_the_command_says_what_went_wrong_and_exits_two(tmp_path, capsys):

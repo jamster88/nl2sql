@@ -99,11 +99,20 @@ LDAP_HBA = "docker/ldap_hba.sh"
 #: tests/docker/test_retail_entrypoint.py.
 RETAIL_ENTRYPOINT = "docker/entrypoint.sh"
 
+#: MLflow's start (6.2): root only long enough to give the account the
+#: artifact volume. Driven against fake `id`, `find` and `setpriv` in
+#: tests/docker/test_mlflow_entrypoint.py.
+MLFLOW_ENTRYPOINT = "docker/mlflow/entrypoint.sh"
+
+#: The desktop image's one command (6.2): the jar copied out as the owner of
+#: where it lands. Driven in tests/docker/test_desktop_copy_out.py.
+DESKTOP_COPY_OUT = "desktop/copy-out.sh"
+
 #: Everything that parses a flag or prints a message a user reads.
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB, LDAP_HBA, DIRECTORY_GUI_ENVSH, MLFLOW_PROXY_ENVSH, RETAIL_ENTRYPOINT)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB, LDAP_HBA, DIRECTORY_GUI_ENVSH, MLFLOW_PROXY_ENVSH, RETAIL_ENTRYPOINT, MLFLOW_ENTRYPOINT, DESKTOP_COPY_OUT)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from nl2sql_agent.console import models
 from nl2sql_agent.console.query import MODES
 from nl2sql_agent.state import PLANNER, RUNTIME, STATIC
+from nl2sql_common import envelope
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TYPES_TS = REPO_ROOT / "console" / "src" / "api" / "types.ts"
@@ -37,9 +38,9 @@ MIRRORED = {
     "AgentVerdict": models.AgentVerdict,
     "ResultColumn": models.ResultColumn,
     "QueryResult": models.QueryResult,
-    "Health": models.Health,
-    "Check": models.Check,
-    "Readiness": models.Readiness,
+    "Health": envelope.Health,
+    "Check": envelope.Check,
+    "Readiness": envelope.Readiness,
 }
 
 
@@ -74,6 +75,9 @@ def test_every_wire_model_has_a_typescript_interface():
         and issubclass(getattr(models, name), BaseModel)
         and name != "ApiError"
     }
+    # The envelope every API shares, declared once in the shared package
+    # since 6.2 and so not among the console's own models.
+    wire |= {"Health", "Check", "Readiness"}
     assert wire == set(MIRRORED)
 
 

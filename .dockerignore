@@ -25,6 +25,11 @@ curate/coverage
 auth/gui/node_modules
 auth/gui/dist
 auth/gui/coverage
+# The shared web package (6.2) installs nothing; should anyone run npm in it,
+# what that brings is not for the daemon either.
+web/node_modules
+web/dist
+web/coverage
 
 # The desktop client's build output: a jar of about ten megabytes, built from
 # the sources beside it.

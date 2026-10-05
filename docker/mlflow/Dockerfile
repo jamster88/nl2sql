@@ -10,13 +10,21 @@
 # release's images are one set: pulling them never mixes in another release's
 # MLflow, and nothing has to be fetched from a second registry.
 #
-# Nothing is added. How it is served -- the store, the artifact volume, the
-# hosts it answers to -- is the `mlflow` service's command in
-# docker-compose.yml, where it can change without a rebuild.
+# One thing is added: an account to run as (V6-31), and the entrypoint that
+# gives it the artifact volume and drops to it (`entrypoint.sh`). How it is
+# served -- the store, the artifact volume, the hosts it answers to -- is
+# the `mlflow` service's command in docker-compose.yml, where it can change
+# without a rebuild.
 FROM ghcr.io/mlflow/mlflow:v3.16.1-full
+
+RUN groupadd --system --gid 10002 mlflow \
+ && useradd --system --uid 10002 --gid mlflow --home-dir /home/mlflow --create-home --shell /usr/sbin/nologin mlflow \
+ && mkdir -p /mlflow/artifacts && chown mlflow:mlflow /mlflow/artifacts
+COPY --chmod=755 docker/mlflow/entrypoint.sh /usr/local/bin/nl2sql-mlflow-entrypoint
+ENTRYPOINT ["/usr/local/bin/nl2sql-mlflow-entrypoint"]
 
 EXPOSE 5000
 
 LABEL org.opencontainers.image.title="nl2sql MLflow server" \
       org.opencontainers.image.description="MLflow tracking server for the nl2sql agent's traces, the verdicts on them and the benchmark's runs" \
-      org.opencontainers.image.version="6.1.0"
+      org.opencontainers.image.version="6.2.0"

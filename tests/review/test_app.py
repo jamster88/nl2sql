@@ -15,7 +15,9 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 
-from nl2sql_review.app import __version__, create_app, seed_draft
+from nl2sql_review import __version__
+from nl2sql_review.app import create_app
+from nl2sql_review.routes import seed_draft
 from nl2sql_review.promote import Promotion, PromotionError, StepResult
 from nl2sql_review.store import STATES, Submission
 
@@ -63,6 +65,14 @@ def test_readiness_reports_an_unreachable_staging_database(make_client, reposito
     assert response.status_code == 503
     assert response.json()["checks"]["staging_database"]["ok"] is False
     assert "OSError" in response.json()["checks"]["staging_database"]["detail"]
+
+
+def test_readiness_tells_anyone_but_an_operator_only_what_is_up(make_client, settings):
+    """V6-32: a token that may review is not an operator."""
+    client = make_client(settings=replace(settings, token_roles=("nl2sql_reviewers",)))
+    body = client.get("/readyz").json()
+    assert body["checks"] and all(check["detail"] == "" for check in body["checks"].values())
+    assert body["warnings"] == []
 
 
 def test_readiness_never_publishes_the_database_password(make_client, settings):
@@ -136,7 +146,7 @@ def test_every_route_but_the_open_ones_refuses_an_anonymous_caller(settings, rep
     anonymous = TestClient(app, raise_server_exceptions=False)
 
     checked = 0
-    for route in app.routes:
+    for route in flattened(app.routes):
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
         if not path or not methods or path in open_by_design:
@@ -317,7 +327,7 @@ def test_a_submission_can_be_accepted(client):
         "/v1/submissions/sub-1", json={"state": "accepted", "reviewer": "sam", "review_note": "good"}
     ).json()
     assert body["state"] == "accepted"
-    assert body["reviewer"] == "sam"
+    assert body["reviewer"] == "token:review-token", "the token, not the name its body claims (V6-62)"
 
 
 def test_a_draft_can_be_saved_without_a_judgement(client, draft):
@@ -447,14 +457,23 @@ def test_promoting_writes_the_pair_and_records_it(client, draft, document, repos
 
     assert repository.submissions["sub-1"].state == "promoted"
     assert repository.submissions["sub-1"].promoted_pair_id == NEXT_ID
-    assert repository.promotion_log[0]["reviewer"] == "sam"
+    assert repository.promotion_log[0]["reviewer"] == "token:review-token"
 
 
-def test_the_reviewer_falls_back_to_the_one_on_the_record(make_client, draft, submission):
+def test_the_reviewer_falls_back_to_the_one_on_the_record(make_client, settings, draft, submission):
+    """Only where nobody can be told apart: sign-in off and no token."""
     submission.reviewer = "already-known"
-    client = make_client()
+    client = make_client(settings=replace(settings, token=None))
+    del client.headers["Authorization"]
     client.post("/v1/submissions/sub-1/promote", json={"draft": complete(draft)})
     assert client.app.state.repository.promotion_log[0]["reviewer"] == "already-known"
+
+
+def test_without_sign_in_or_a_token_the_name_given_is_the_only_one_there_is(make_client, settings, draft):
+    client = make_client(settings=replace(settings, token=None))
+    del client.headers["Authorization"]
+    client.post("/v1/submissions/sub-1/promote", json={"draft": complete(draft)}, headers={"X-Reviewer": "sam"})
+    assert client.app.state.repository.promotion_log[0]["reviewer"] == "sam"
 
 
 def test_a_draft_that_cannot_become_a_pair_is_refused_with_every_reason(client, document):
@@ -647,6 +666,8 @@ from nl2sql_review.validation import Validation  # noqa: E402
 
 from .conftest import FakeValidator  # noqa: E402
 
+from tests.route_table import flattened
+
 GOOD_SQL = "SELECT sku_id, product_name FROM dim_product"
 
 
@@ -715,12 +736,12 @@ def test_a_wrong_answer_is_fixed_into_the_corrections_store(fixing, fix_stores, 
     assert stored.incorrect_answer.startswith("| sku_id |")
     assert (stored.incorrect_columns, stored.incorrect_row_count) == (["sku_id"], 10)
     assert (stored.corrected_rows, stored.corrected_row_count) == ([["SKU1", "Whole Milk"]], 1)
-    assert (stored.user_comment, stored.reviewer, stored.review_note) == ("no names", "ada", "no product names")
+    assert (stored.user_comment, stored.reviewer, stored.review_note) == ("no names", "token:review-token", "no product names")
     assert fix_stores["completions"].saved == []
     assert fix_stores["corrections"].embedders == ["an embedder"]
 
     after = repo.get("sub-w")
-    assert (after.state, after.promoted_pair_id, after.reviewer) == ("corrected", "W0001", "ada")
+    assert (after.state, after.promoted_pair_id, after.reviewer) == ("corrected", "W0001", "token:review-token")
     assert body["submission"]["state"] == "corrected"
 
 
@@ -981,7 +1002,7 @@ def test_reopening_a_judged_submission_puts_it_back_unjudged(judged):
     assert body["submission"]["state"] == "pending"
     assert body["submission"]["reviewed_at"] is None
     # Who looked at it last, and why, is history worth keeping.
-    assert (body["submission"]["reviewer"], body["submission"]["review_note"]) == ("ada", "dupe")
+    assert (body["submission"]["reviewer"], body["submission"]["review_note"]) == ("token:review-token", "dupe")
 
 
 def test_a_pending_submission_has_nothing_to_reopen(judged):

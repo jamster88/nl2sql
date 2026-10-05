@@ -179,8 +179,9 @@ def parse_document(path: Path) -> list[GoldenPair]:
 # --- storage ---------------------------------------------------------------
 
 
-def connect(url: str) -> psycopg.Connection:
-    return psycopg.connect(url)
+def connect(url: str, *, connect_timeout: int | None = None) -> psycopg.Connection:
+    options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}
+    return psycopg.connect(url, **options)
 
 
 def ensure_tables(conn: psycopg.Connection) -> None:

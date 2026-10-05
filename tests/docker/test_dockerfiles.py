@@ -324,7 +324,7 @@ def test_agent_entrypoint_matches_the_cli_module(agent_dockerfile: str):
 
 def test_agent_requirements_are_installed_before_source_is_copied(agent_dockerfile: str):
     lines = agent_dockerfile.splitlines()
-    req_idx = next(i for i, l in enumerate(lines) if "COPY agent/requirements.txt" in l)
+    req_idx = next(i for i, l in enumerate(lines) if "COPY agent/requirements.lock" in l)
     src_idx = next(i for i, l in enumerate(lines) if "COPY agent/nl2sql_agent" in l)
     assert req_idx < src_idx, "requirements should be copied (and installed) before source, for layer caching"
 
@@ -434,10 +434,10 @@ def test_the_image_installs_what_the_api_needs(agent_dockerfile: str):
     """An image built before these were added starts and then fails on the
     first import, which is the failure launch.sh has a branch for.
     """
-    requirements = (DOCKER_DIR.parent / "agent" / "requirements.txt").read_text()
-    for package in ("fastapi", "uvicorn", "cryptography"):
+    requirements = (DOCKER_DIR.parent / "agent" / "requirements.lock").read_text()
+    for package in ("fastapi==", "uvicorn==", "cryptography=="):
         assert package in requirements, f"{package} is not installed in the image"
-    assert "COPY agent/requirements.txt" in agent_dockerfile
+    assert "COPY agent/requirements.lock" in agent_dockerfile
 
 
 def test_the_image_prepares_somewhere_to_keep_the_certificate(agent_dockerfile: str):
@@ -617,7 +617,9 @@ def test_the_dockerignore_keeps_what_the_images_actually_need():
     root = DOCKER_DIR.parent
     ignored = set((root / ".dockerignore").read_text().split())
     needed = [
-        "review/nl2sql_review", "review/requirements.txt", "review/gui/src",
+        "review/nl2sql_review", "review/requirements.lock", "review/gui/src", "common/pyproject.toml",
+        "common/nl2sql_common", "common/nl2sql_identity", "agent/requirements.lock", "auth/requirements.lock",
+        "ldap/requirements.lock", "data_gen/requirements.lock",
         "review/gui/package.json", "agent/nl2sql_agent", "gui/src",
         "console/src", "console/package.json",
         "rag/ragproc", "context_questions",

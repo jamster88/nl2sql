@@ -173,16 +173,24 @@ own settings as well as in compose (6.1) -- both are accepted:
       Authorization: Bearer <token>
 
   The token is checked here against the auth service's public key, and the
-  groups in it against Postgres, at most a minute old. Every `/v1` route
-  needs `nl2sql_users`, which every group includes. A person's questions
-  run as their own database role (`SET LOCAL ROLE`), and each sees only the
-  questions they asked: anyone else's job is a `404`, because whether a job
-  id exists is itself something only its owner should learn.
+  groups in it against Postgres, at most a minute old -- and, in the same
+  question, whether this session is still theirs (6.2): one signed out, or
+  signed in before their password was changed or set, their account locked
+  or removed, is refused with `401 session_revoked` within that minute. Every
+  `/v1` route needs `nl2sql_users`, which every group includes. A person's
+  questions run as their own database role (`SET LOCAL ROLE`), with their
+  name in the transaction's `application_name` (`nl2sql:agent:<person>`, 6.2)
+  so `pg_stat_activity` and the database's log say who asked; and each sees
+  only the questions they asked: anyone else's job is a `404`, because
+  whether a job id exists is itself something only its owner should learn.
 
 - **A service**, with `API_TOKEN`: a static token for a script, a smoke
   test, a service in front -- `setup.sh --tokens` generates one. It is not a
   person, so its questions run as the agent's reader -- or as the
   `principal` it names, with `API_ALLOW_PRINCIPAL` -- and it sees every job.
+  Since 6.2 it is a caller of its own: named by `API_TOKEN_NAME` (`api-token`)
+  and holding the roles `API_TOKEN_ROLES` gives it (`nl2sql_users`) and no
+  others -- not `nl2sql_admins` unless it is named there.
 
 With sign-in switched off by name (`AUTH_ENABLED=false`) only the second
 kind exists, and only if `API_TOKEN` is set: unset, the API is open, and
@@ -201,7 +209,17 @@ A static token or a session token is sent the same ways:
     ?access_token=<token>               # the static token, on event streams only, see below
 
 `/`, `/healthz`, `/readyz` and `/openapi.json` stay open so an orchestrator's
-probes and a client's code generation keep working.
+probes and a client's code generation keep working. Every other route is on
+a router that carries the guard (6.2), so a route added to one is refused to
+a stranger before anybody thinks to refuse it.
+
+What a failure says depends on who asks (6.2). An administrator
+(`nl2sql_admins`) -- or anyone, on a server started with `API_DEBUG_DETAIL`
+-- sees it in its own words: the driver's error, the host and port, the
+readiness detail. Anyone else sees which part failed and not how to reach
+it: `/readyz` says whether each dependency is up, with no detail and no
+warnings; an answer's `retrieval_errors` and `node_errors` say `unavailable`,
+`disabled` or `failed`; a crashed job's `error` names the exception's type.
 
 The query-string form exists because a browser's `EventSource` cannot set
 headers, and a GUI that cannot stream progress is back to a spinner. Use a
@@ -245,7 +263,7 @@ rather than run for a caller who has very likely gone.
 | --- | --- | --- | --- |
 | `GET` | `/` | no | Service banner and where everything is |
 | `GET` | `/healthz` | no | The process is alive. Touches nothing else |
-| `GET` | `/readyz` | no | It can answer a question *now*. `503` when it cannot, with the reason per dependency |
+| `GET` | `/readyz` | no | It can answer a question *now*. `503` when it cannot, with each dependency's state -- and, to an administrator, the reason |
 | `GET` | `/openapi.json` | no | The schema. Generate your client from this |
 | `GET` | `/docs` | no | The same thing, browsable (`API_DOCS_ENABLED=false` to remove) |
 | `GET` | `/redoc` | no | The same schema again, as reference documentation (same switch) |
@@ -257,6 +275,7 @@ rather than run for a caller who has very likely gone.
 | `DELETE` | `/v1/questions/{job_id}` | yes | Cancel a queued question, forget a finished one |
 | `POST` | `/v1/questions/{job_id}/feedback` | yes | Say whether the answer was right |
 | `DELETE` | `/v1/questions/{job_id}/feedback` | yes | Withdraw a verdict |
+| `POST` | `/v1/admin/reload` | `nl2sql_admins` | Read again what the agent read once -- the literal catalog, the label map and calendar, the foreign keys, the knowledge collections -- and ask Postgres about every session again. For an operator who changed the retail data or loaded a knowledge document; a promotion needs none |
 
 `/healthz` and `/readyz` are separate because the failures want different
 responses: a wedged process should be restarted, a database that has not
@@ -331,8 +350,9 @@ list is a list, so nothing needs a null check before it is rendered.
     "trace":     [{"node": "generate_sql", "ms": 8123.4, "model_calls": 1,
                    "detail": "...", "model": "...", "rung": "standard",
                    "route": "attempt 1, ...", "hops": []}],
-    "retrieval_errors": {},          // a retriever that could not reach its store
-    "node_errors": {}                // the supervisor or narrator, failed and survived
+    "retrieval_errors": {},          // a retriever that could not reach its store: "unavailable",
+                                     // or the driver's words to an administrator
+    "node_errors": {}                // the supervisor or narrator, failed and survived: "failed"
   },
   "error": null,
   "links": {"self": "/v1/questions/3f2c...", "events": "/v1/questions/3f2c.../events"}
@@ -358,8 +378,8 @@ Notes a client author will want:
   markdown, or draw `narrative`, `claims` and `result` yourself, as text.
   Before 5.1.1 the narrative and claims could carry `&amp;` as well: the
   narrator was shown escaped rows and copied what it read. A client that has
-  to work against an older server can undo the three entities, as
-  [`gui/src/api/text.ts`](../gui/src/api/text.ts) does.
+  to work against an older server can undo the three entities, as every
+  page of this stack does ([`web/src/text.ts`](../web/src/text.ts)).
 * **`chart` is a suggestion, not a rendering.** Its fields name columns of
   `result`; the GUI owns the chart library.
 * **`trace` is per-node cost.** Useful for a debug panel, and it is what the
@@ -504,6 +524,7 @@ Branch on `code`; the message is for a person.
 | `sign_in_required` | 401 | Sign-in is on and there is no session or token |
 | `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid` | 401 | A session token that is not good: sign in again |
 | `account_removed` | 401 | The person is no longer in the directory |
+| `session_revoked` | 401 | This session was ended -- signed out, or signed in before a password change or set, a lock or a removal: sign in again |
 | `forbidden` | 403 | Signed in, but in no group that may ask |
 | `cross_site` | 403 | A cookie-authenticated write from another site |
 | `sign_in_unavailable` | 503 | The auth service has not written its key yet |
@@ -662,8 +683,11 @@ an unset variable through as an empty string, and empty is read as absent.
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against. Read when it appears and again when it changes |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
 | `API_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
+| `API_TOKEN_NAME` | `api-token` | Who the token is: its questions are recorded under `token:<name>` |
+| `API_TOKEN_ROLES` | `nl2sql_users` | The roles it holds, and no others. `nl2sql_admins` here lets it reload |
 | `API_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly |
 | `API_ALLOW_PRINCIPAL` | `false` | Let callers choose the database role rows are read as (`SET LOCAL ROLE`, for row-level security). Only with something authenticating them in front |
+| `API_DEBUG_DETAIL` | `false` | Show every caller a failure in its own words -- the driver's error, hosts, the readiness detail -- not only an administrator. For a development server (`--debug-detail`) |
 
 ### Feedback
 

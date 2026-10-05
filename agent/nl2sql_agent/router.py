@@ -49,6 +49,7 @@ from typing import Any, Callable, Sequence
 from . import tracing
 from .complexity import RUNGS
 from .config import Settings
+from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
 
 log = logging.getLogger(__name__)
 
@@ -131,7 +132,9 @@ def listed_models(base_url: str, timeout: float) -> set[str] | None:
     try:
         with urllib.request.urlopen(f"{base_url.rstrip('/')}/api/tags", timeout=timeout) as response:
             return {m["name"] for m in json.loads(response.read()).get("models", []) if m.get("name")}
-    except Exception:
+    # A host that is down, and one that answers in some other shape -- not a
+    # dict, or models that are not dicts -- are both a host that cannot say.
+    except NETWORK_ERRORS + PARSE_ERRORS + (AttributeError, TypeError):
         return None
 
 
@@ -490,7 +493,7 @@ class RoutedModel:
             self.answered_by = name
             try:
                 answer = self._traced_call(name, call, messages, schema)
-            except Exception as exc:
+            except MODEL_ERRORS as exc:
                 self.hops.append(f"{name}: {_reason(exc)}")
                 continue
             if not empty(answer):

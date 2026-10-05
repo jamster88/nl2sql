@@ -14,6 +14,27 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v6_2 (6.2.0) -- 2026-10-04
+
+**Added**
+- A session can be ended: signing out, a password changed or set, a lock or a removal ends it for every service within a minute.
+- A service token is named and holds only the roles it is given; what it does is recorded under its name, never a header's.
+- An administrator can make the agent read its catalogs again (`POST /v1/admin/reload`).
+- The sign-in throttle believes `X-Forwarded-For` only from the page proxies (`AUTH_TRUSTED_PROXIES`).
+- A person's name in each transaction's `application_name`, where the database's own views and log show it.
+- The code every service shares is one package, installed as one, at the release's version; what every page shares is one source package, `web/`.
+- Every Python image installs a hash-checked lock.
+
+**Updated**
+- Nothing runs as root but the one-shot `pki` service; each key belongs to its service's account, and the review service writes the checkout as the person who owns it.
+- Every route is on a router that carries its guard.
+- The review service loads the stores in its own process, under a lock, with no password on a command line.
+- A failure's own words -- hosts, drivers, configuration -- are an administrator's to see.
+
+**Fixed**
+- A deleted fix's id was given to the next fix; ids come from sequences.
+- The desktop client's sign-out told nobody; it ends the session at the auth service.
+
 ## v6_1 (6.1.0) -- 2026-10-04
 
 **Added**

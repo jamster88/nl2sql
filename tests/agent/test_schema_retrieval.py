@@ -30,6 +30,7 @@ from nl2sql_agent.schema_retrieval import (
 
 from .conftest import FakeDatabase, FakeKnowledgeBase, make_chunk
 from tests import live_stores
+from sqlalchemy.exc import ProgrammingError
 
 # The 19 tables of data_gen/ddl.sql.
 RETAIL_TABLES = [
@@ -294,6 +295,10 @@ def test_the_foreign_key_graph_is_read_once_and_reused():
     retriever.select(B15)
     retriever.select(B15)
     assert len(reads) == 1
+    # Until an operator's reload says the catalog changed (V6-33).
+    assert retriever.forget() is True and retriever.forget() is False
+    retriever.select(B15)
+    assert len(reads) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -410,7 +415,7 @@ def test_an_empty_store_falls_back_without_calling_it_an_error():
 
 def test_a_catalog_that_will_not_answer_costs_the_bridges_not_the_run():
     def explode():
-        raise RuntimeError("permission denied for pg_constraint")
+        raise ProgrammingError("SELECT conrelid", None, Exception("permission denied for pg_constraint"))
 
     retriever = SchemaRetriever(
         FakeKnowledgeBase(chunks=ddl_chunks(["fact_ad_performance", "dim_ad_channel"])),
@@ -464,7 +469,7 @@ def test_read_foreign_keys_asks_only_for_the_configured_schema():
     unrelated graphs into one and invent join paths that do not exist.
     """
     engine = _RecordingEngine([("fact_ad_performance", "dim_ad_placement")])
-    database = SimpleNamespace(_engine=engine, _schema="retail")
+    database = SimpleNamespace(engine=engine, _schema="retail")
 
     assert read_foreign_keys(database) == [("fact_ad_performance", "dim_ad_placement")]
     statement, params = engine.connection.calls[0]
@@ -474,7 +479,7 @@ def test_read_foreign_keys_asks_only_for_the_configured_schema():
 
 def test_read_foreign_keys_defaults_to_public():
     engine = _RecordingEngine([])
-    read_foreign_keys(SimpleNamespace(_engine=engine))
+    read_foreign_keys(SimpleNamespace(engine=engine))
     assert engine.connection.calls[0][1] == {"schema": "public"}
 
 

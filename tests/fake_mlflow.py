@@ -21,6 +21,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Iterator
+from mlflow.exceptions import MlflowException
 
 
 @dataclass
@@ -143,7 +144,8 @@ class FakeMlflow:
 
     def _assess(self, trace_id: str, name: str, value: Any, rationale: str | None, source: Any) -> FakeAssessment:
         if trace_id not in self.traces:
-            raise LookupError(f"no trace {trace_id}")
+            # As the real server answers a trace it does not have.
+            raise MlflowException(f"no trace {trace_id}")
         assessment = FakeAssessment(f"a-{next(self._ids)}", name, value, rationale, source)
         self.traces[trace_id].assessments.append(assessment)
         return assessment

@@ -243,21 +243,29 @@ def test_an_unreadable_or_unwritable_document_is_a_refusal(settings, snippet_dra
 
 
 def test_the_reload_runs_the_loader_against_the_store_with_the_readers_credentials(settings, monkeypatch):
+    """In this process, the reader's password an argument rather than an
+    environment variable a loader's process would inherit (V6-27)."""
     seen = {}
 
-    def run(config, script, args, *, enabled, env=None):
-        seen.update(script=script, args=args, enabled=enabled, env=env)
-        return StepResult(name="load_snippets", ran=True, ok=True, detail="32 rows written")
+    class Loaders:
+        def load_snippets(self, document, db_url, **options):
+            seen.update(document=str(document), db_url=db_url, **options)
 
-    monkeypatch.setattr(promotion_module, "_run_loader", run)
+            class Done:
+                complete = True
+
+                def summary(self):
+                    return "32 snippets; 32 rows written"
+
+            return Done()
+
+    monkeypatch.setattr(promotion_module, "_loaders", lambda config: Loaders())
     configured = replace(settings, reload_snippets=True, snippets_reader_user="r", snippets_reader_password="pw")
     [step] = sn.reload(configured)
-    assert step.ok and seen["script"] == "07_load_snippets.py" and seen["enabled"] is True
-    assert seen["args"] == [
-        configured.snippets_document, "--db-url", configured.snippets_db_url,
-        "--ollama-url", configured.ollama_url, "--model", configured.embed_model,
-    ]
-    assert (seen["env"]["SNIPPETS_READER_USER"], seen["env"]["SNIPPETS_READER_PASSWORD"]) == ("r", "pw")
+    assert step.ok and step.name == "load_snippets" and "32 rows written" in step.detail
+    assert (seen["document"], seen["db_url"]) == (str(configured.snippets_document_path), configured.snippets_db_url)
+    assert (seen["reader_role"], seen["reader_password"], seen["model"]) == ("r", "pw", configured.embed_model)
+    assert callable(seen["embedder"]), "built only when something needs embedding"
 
 
 def test_preview_shows_the_section_or_says_why_not(settings, snippet_draft):

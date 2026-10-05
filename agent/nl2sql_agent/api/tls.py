@@ -142,7 +142,7 @@ def describe_certificate(path: str | os.PathLike[str]) -> CertificateInfo:
         cert = x509.load_pem_x509_certificate(file.read_bytes())
     except FileNotFoundError as exc:
         raise TlsError(f"no certificate at {file}") from exc
-    except Exception as exc:  # a truncated file, a key pasted in its place
+    except (ValueError, OSError) as exc:  # a truncated file, a key pasted in its place
         raise TlsError(f"{file} is not a readable PEM certificate: {exc}") from exc
 
     return CertificateInfo(

@@ -9,7 +9,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
-import { SignInGate } from "./auth/SignInGate";
+import { SignInGate } from "@nl2sql/web/auth/SignInGate";
 import "./styles.css";
 
 const root = document.getElementById("root");

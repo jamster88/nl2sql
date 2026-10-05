@@ -401,7 +401,7 @@ def test_anyone_but_root_is_left_as_they_are():
 def test_become_defaults_to_the_real_environment(monkeypatch):
     """Not root here, so nothing is done -- which is what the defaults are
     exercised for: the real calls, wired."""
-    assert service.become() is None
+    assert service.become() is False
 
 
 def test_main_refuses_settings_it_cannot_use(monkeypatch, capsys):

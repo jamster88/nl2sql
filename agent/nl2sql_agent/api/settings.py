@@ -16,9 +16,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 
-from nl2sql_identity import DEFAULT_PUBLIC_KEY_FILE, SESSION_COOKIE
+from nl2sql_identity import DEFAULT_PUBLIC_KEY_FILE, SESSION_COOKIE, USERS
 
-from ..config import _env, _env_bool, _env_float, _env_int, _env_str
+from nl2sql_common.env import env as _env
+from nl2sql_common.env import env_bool as _env_bool
+from nl2sql_common.env import env_float as _env_float
+from nl2sql_common.env import env_int as _env_int
+from nl2sql_common.env import env_str as _env_str
+from nl2sql_common.env import env_tuple as _env_tuple
 
 #: Where the dummy certificate is written inside the container. A directory
 #: rather than the working tree: it is a volume in compose, so a regenerated
@@ -36,14 +41,6 @@ DEFAULT_PORT = 8443
 #: service, which is how another container reaches it; the rest are how the
 #: machine running Docker does.
 DEFAULT_HOSTNAMES = ("localhost", "nl2sql-api", "api", "127.0.0.1", "::1")
-
-
-def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    """A comma-separated list, with empty read as unset rather than empty list."""
-    raw = _env(name)
-    if raw is None:
-        return default
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 @dataclass
@@ -79,6 +76,12 @@ class ApiSettings:
     # A static token for scripts and other services: with it set, every /v1
     # route also accepts `Authorization: Bearer ...` or `X-API-Key: ...`.
     token: str | None = None
+    # Who the token is, and what it may do (V6-62): its questions and jobs
+    # are recorded under `token:<name>`, and it holds these roles and no
+    # others. Asking takes nl2sql_users; reloading the caches takes
+    # nl2sql_admins, which a token holds only when it is named here.
+    token_name: str = "api-token"
+    token_roles: tuple[str, ...] = (USERS,)
     # Browser origins allowed to call this API directly. None by default:
     # every page of this stack reaches the API through its own nginx, on its
     # own origin, so a cross-origin browser call is something to allow by
@@ -89,6 +92,10 @@ class ApiSettings:
     # otherwise: the default identity is the agent's own read-only role.
     # Never for a signed-in person, whose principal is themselves.
     allow_principal: bool = False
+    # Who sees a failure in its own words -- a driver's error, a host, a
+    # port, the readiness detail (V6-32). An administrator does; anyone else
+    # sees which part failed. True shows everyone, for a development server.
+    debug_detail: bool = False
     # Sign-in (the auth service). On -- the default, here as well as in
     # compose, so a server started any other way is not open by accident --
     # a person's session (the cookie a GUI sends, or the bearer the desktop
@@ -164,8 +171,11 @@ class ApiSettings:
             tls_hostnames=_env_tuple("API_TLS_HOSTNAMES", DEFAULT_HOSTNAMES),
             tls_days=_env_int("API_TLS_DAYS", 365),
             token=_env("API_TOKEN"),
+            token_name=_env_str("API_TOKEN_NAME", "api-token"),
+            token_roles=_env_tuple("API_TOKEN_ROLES", (USERS,)),
             cors_origins=_env_tuple("API_CORS_ORIGINS", ()),
             allow_principal=_env_bool("API_ALLOW_PRINCIPAL", False),
+            debug_detail=_env_bool("API_DEBUG_DETAIL", False),
             auth_enabled=_env_bool("AUTH_ENABLED", True),
             auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
             auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),

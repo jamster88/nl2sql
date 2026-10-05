@@ -6,7 +6,8 @@ writes two independent pgvector tables -- one for each embedded field -- so the
 ensemble retriever can score them separately and weight them differently.
 
 Re-running is incremental: a pair is re-embedded only when its content hash or
-the embedding model changed.
+the embedding model changed. The work is `ragproc.loaders.embed_golden_pairs`,
+which the review service calls itself after a promotion.
 
 Examples:
     python 06_embed_golden_pairs.py
@@ -20,12 +21,11 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ragproc import golden_pairs as gp
-from ragproc import golden_vectors as gv
+from ragproc import loaders
 from ragproc.config import Settings
 from ragproc.embedder import build_embedder
 
-FIELDS = ("question", "reasoning_target")
+FIELDS = loaders.PAIR_FIELDS
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,66 +48,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     fields = tuple(dict.fromkeys(args.field)) if args.field else FIELDS
-
-    chunk_conn = gp.connect(args.chunk_db_url)
-    try:
-        pairs = gp.load_pairs(chunk_conn)
-    finally:
-        chunk_conn.close()
-    if not pairs:
-        raise SystemExit(
-            f"error: no rows in {gp.TABLE} -- run 05_load_golden_pairs.py first"
-        )
-    print(f"{len(pairs)} golden pairs in the context store")
-
     embedder = build_embedder(args.backend, args.model, args.ollama_url)
-    if hasattr(embedder, "check"):
-        embedder.check()
-    dimension = embedder.dimension
-    print(f"embedding with {args.backend}:{embedder.model_name} ({dimension} dimensions)")
-
-    conn = gv.connect(args.vector_db_url)
     try:
-        for field in fields:
-            table = gv.ensure_table(conn, field, dimension)
-            stored = gv.current_state(conn, field)
-
-            pending = [
-                pair
-                for pair in pairs
-                if args.force
-                or stored.get(pair["chunk_id"]) != (pair["content_hash"], embedder.model_name)
-            ]
-            records = []
-            for start in range(0, len(pending), args.batch_size):
-                batch = pending[start : start + args.batch_size]
-                vectors = embedder.embed([p[field] for p in batch])
-                for pair, vector in zip(batch, vectors):
-                    records.append(
-                        {
-                            "chunk_id": pair["chunk_id"],
-                            "pair_id": pair["pair_id"],
-                            "ordinal": pair["ordinal"],
-                            "content": pair[field],
-                            "content_hash": pair["content_hash"],
-                            "embedding": vector,
-                        }
-                    )
-            written = gv.upsert(conn, field, records, embedder.model_name)
-            removed = gv.delete_missing(conn, field, [p["chunk_id"] for p in pairs])
-            print(
-                f"  {field:16s} -> {table}: {written} embedded, "
-                f"{len(pairs) - written} already current, {removed} removed"
-            )
-
-        if args.probe:
-            vector = embedder.embed([args.probe])[0]
-            for field in fields:
-                print(f"\n  nearest by {field} for {args.probe!r}:")
-                for hit in gv.search(conn, field, vector, limit=5):
-                    print(f"    {hit['distance']:.4f}  {hit['pair_id']}  {hit['content'][:72]}")
-    finally:
-        conn.close()
+        report = loaders.embed_golden_pairs(
+            args.chunk_db_url,
+            args.vector_db_url,
+            embedder,
+            fields=fields,
+            batch_size=args.batch_size,
+            force=args.force,
+            probe=args.probe,
+        )
+    except loaders.NothingToEmbed as exc:
+        raise SystemExit(f"error: {exc}") from exc
+    print(f"{report.pairs} golden pairs in the context store")
+    print(f"embedding with {args.backend}:{report.model} ({report.dimension} dimensions)")
+    for done in report.fields:
+        print(
+            f"  {done.field:16s} -> {done.table}: {done.written} embedded, "
+            f"{report.pairs - done.written} already current, {done.removed} removed"
+        )
+    for name, hits in report.probe.items():
+        print(f"\n  nearest by {name} for {args.probe!r}:")
+        for hit in hits:
+            print(f"    {hit['distance']:.4f}  {hit['pair_id']}  {hit['content'][:72]}")
     return 0
 
 

@@ -50,18 +50,19 @@ def test_the_directory_types_match(name: str):
     assert actual == expected, f"{name}: missing {sorted(expected - actual)}, extra {sorted(actual - expected)}"
 
 
-@pytest.mark.parametrize("page", ["gui", "review/gui", "curate", "console", "auth/gui"])
 @pytest.mark.parametrize("name", sorted(SESSION))
-def test_every_pages_sign_in_types_match(page: str, name: str):
-    actual = _interfaces(REPO_ROOT / page / "src" / "auth" / "session.ts")[name]
-    assert actual == set(SESSION[name].model_fields), page
+def test_the_shared_sign_in_types_match(name: str):
+    actual = _interfaces(REPO_ROOT / "web" / "src" / "auth" / "session.ts")[name]
+    assert actual == set(SESSION[name].model_fields)
 
 
-@pytest.mark.parametrize("page", ["review/gui", "curate", "console", "auth/gui"])
-@pytest.mark.parametrize("name", ["session.ts", "SignInGate.tsx"])
-def test_every_page_carries_the_same_sign_in(page: str, name: str):
-    """Copied rather than shared, by the repository's design -- so held equal here."""
-    assert (REPO_ROOT / page / "src" / "auth" / name).read_text() == (REPO_ROOT / "gui" / "src" / "auth" / name).read_text()
+@pytest.mark.parametrize("page", ["gui", "review/gui", "curate", "console", "auth/gui"])
+def test_every_page_signs_in_with_the_one_shared_gate(page: str):
+    """Five identical copies until 6.2 (V6-25); one, in `web/`, since."""
+    assert not (REPO_ROOT / page / "src" / "auth").exists(), page
+    assert 'import { SignInGate } from "@nl2sql/web/auth/SignInGate";' in (REPO_ROOT / page / "src" / "main.tsx").read_text()
+    client = (REPO_ROOT / page / "src" / "api" / "client.ts").read_text()
+    assert 'from "@nl2sql/web/auth/session"' in client and 'from "@nl2sql/web/api/errors"' in client, page
 
 
 def test_the_page_asks_for_every_directory_route_the_service_has():

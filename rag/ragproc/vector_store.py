@@ -10,6 +10,7 @@ from pgvector.psycopg import register_vector
 from psycopg import sql
 
 from .config import embedding_table
+from nl2sql_common.vectors import vector_literal
 
 
 @dataclass
@@ -115,17 +116,6 @@ def delete_missing(conn: psycopg.Connection, slug: str, keep_ids: list[str]) -> 
     )
     conn.commit()
     return result.rowcount or 0
-
-
-def vector_literal(vector) -> str:
-    """pgvector's text input format.
-
-    A plain list of floats binds as `double precision[]`, which has no `<=>`
-    operator at all, so the query fails rather than returning something wrong.
-    The text form plus an explicit cast avoids needing a client-side vector
-    type, and matches what the agent-side retrievers do.
-    """
-    return "[" + ",".join(repr(float(v)) for v in vector) + "]"
 
 
 def search(

@@ -18,7 +18,13 @@
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+
+    "paths": {
+      "@nl2sql/web/*": ["../web/src/*"],
+      "*": ["./node_modules/@types/*", "./node_modules/*"]
+    }
   },
-  "include": ["src", "test", "vite.config.ts", "vitest.setup.ts"]
+  "include": ["src", "test", "../web/src", "../web/test", "vite.config.ts", "vitest.config.ts", "vitest.setup.ts"]
 }

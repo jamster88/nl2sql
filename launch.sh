@@ -440,11 +440,14 @@ fi
 GOLDEN_DOCUMENT="context_questions/translated_questions.md"
 
 load_golden() {  # load_golden -- what the loaders said; fails when either did
-    docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+    # As the image's account, the stores' URLs from the environment the
+    # loaders read them from (CHUNK_DB_URL, VECTOR_DB_URL), never a command
+    # line (V6-31, V6-27).
+    docker compose --profile feedback --profile review run --rm --no-deps -T --user 10001:10001 \
+        --entrypoint sh review -c '
         cd "$REVIEW_RAG_DIR" &&
-        python 05_load_golden_pairs.py "$REVIEW_DOCUMENT" --db-url "$CHUNK_DB_URL" &&
-        python 06_embed_golden_pairs.py --chunk-db-url "$CHUNK_DB_URL" \
-            --vector-db-url "$VECTOR_DB_URL" --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
+        python 05_load_golden_pairs.py "$REVIEW_DOCUMENT" &&
+        python 06_embed_golden_pairs.py --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
 }
 
 if [[ $WITH_LOAD_GOLDEN -eq 1 && $WITH_RAG -eq 0 ]]; then
@@ -478,9 +481,13 @@ snippets_query() {  # snippets_query SQL -- one value out of the snippet store, 
 }
 
 load_snippets() {  # load_snippets -- what the loader said; fails when it did
-    docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+    # As the image's account, not root (V6-31); the store's URL, password and
+    # all, from the environment the loader reads it from, never its command
+    # line, which `ps` shows to anyone on the host.
+    docker compose --profile feedback --profile review run --rm --no-deps -T --user 10001:10001 \
+        --entrypoint sh review -c '
         cd "$REVIEW_RAG_DIR" &&
-        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL" \
+        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" \
             --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
 }
 

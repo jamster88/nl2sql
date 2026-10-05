@@ -25,10 +25,11 @@ from nl2sql_identity.guard import (
     Guard,
     GuardSettings,
     IdentityError,
+    Standing,
     check_origin,
     env_roles,
 )
-from nl2sql_identity.tokens import ANONYMOUS, SERVICE, SESSION, public_key_pem
+from nl2sql_identity.tokens import ANONYMOUS, SERVICE, SESSION, Identity, public_key_pem
 
 from .conftest import NOW
 
@@ -114,7 +115,8 @@ def bearer(token: str) -> dict[str, str]:
 def test_settings_default_to_sign_in_on(monkeypatch):
     """V6-54: the secure default is the code's, not only compose's, so a
     service started any other way is not open by accident."""
-    for name in ("AUTH_ENABLED", "AUTH_PUBLIC_KEY_FILE", "AUTH_COOKIE_NAME", "SOME_TOKEN"):
+    for name in ("AUTH_ENABLED", "AUTH_PUBLIC_KEY_FILE", "AUTH_COOKIE_NAME", "SOME_TOKEN", "SOME_TOKEN_NAME",
+                 "SOME_TOKEN_ROLES"):
         monkeypatch.delenv(name, raising=False)
     settings = GuardSettings.from_env(token_variable="SOME_TOKEN", service_roles={USERS})
     assert GuardSettings().enabled is True
@@ -124,7 +126,18 @@ def test_settings_default_to_sign_in_on(monkeypatch):
         cookie_name=SESSION_COOKIE,
         service_token=None,
         service_roles=frozenset({USERS}),
+        service_name="some-token",
     )
+
+
+def test_a_service_token_is_named_and_holds_the_roles_it_is_given(monkeypatch):
+    """V6-62: a token is somebody -- what it does is recorded under its
+    name -- and holds what the deployment says, not every role there is."""
+    monkeypatch.setenv("SOME_TOKEN_NAME", " nightly-import ")
+    monkeypatch.setenv("SOME_TOKEN_ROLES", f"{REVIEWERS}, ")
+    settings = GuardSettings.from_env(token_variable="SOME_TOKEN", service_roles={REVIEWERS, CURATORS})
+    assert settings.service_name == "nightly-import"
+    assert settings.service_roles == frozenset({REVIEWERS})
 
 
 def test_settings_read_the_environment_and_treat_empty_as_unset(monkeypatch):
@@ -219,7 +232,8 @@ def test_a_session_without_the_role_is_forbidden_and_told_which_it_needs(signed_
 
 def test_the_service_token_still_works_and_holds_only_its_roles(signed_in):
     client = signed_in()
-    assert client.get("/users", headers=bearer(SERVICE_TOKEN)).json()["kind"] == SERVICE
+    found = client.get("/users", headers=bearer(SERVICE_TOKEN)).json()
+    assert found["kind"] == SERVICE and found["user"] == "service-token"
     assert client.get("/users", headers={"X-API-Key": SERVICE_TOKEN}).json()["principal"] is None
     assert client.get(f"/events?access_token={SERVICE_TOKEN}").status_code == 200
     assert client.post("/review", headers=bearer(SERVICE_TOKEN)).status_code == 403
@@ -355,8 +369,8 @@ def test_check_with_sign_in_off_is_always_ready():
 def test_roles_are_read_again_from_postgres(signed_in, token_for):
     asked = []
 
-    def recheck(user):
-        asked.append(user)
+    def recheck(identity):
+        asked.append(identity.user)
         return frozenset({REVIEWERS, USERS})
 
     client = signed_in(recheck=recheck)
@@ -366,32 +380,91 @@ def test_roles_are_read_again_from_postgres(signed_in, token_for):
     assert asked == ["alice"]
 
 
-def test_the_answer_is_cached_for_a_minute_per_user(signed_in, token_for, clock):
+def test_the_answer_is_cached_for_a_minute_per_session(signed_in, token_for, clock):
     asked = []
-    client = signed_in(recheck=lambda user: asked.append(user) or frozenset({USERS}))
+    client = signed_in(recheck=lambda identity: asked.append(identity.token_id) or frozenset({USERS}))
     token = token_for("alice")
     for _ in range(3):
         client.get("/users", headers=bearer(token))
-    assert asked == ["alice"]
+    assert len(asked) == 1
     clock.now += 61
     client.get("/users", headers=bearer(token))
-    assert asked == ["alice", "alice"]
+    assert len(asked) == 2 and asked[0] == asked[1]
+    client.get("/users", headers=bearer(token_for("alice")))
+    assert len(asked) == 3 and asked[2] != asked[0], "her other session is a session of its own"
+
+
+def test_a_revoked_session_is_signed_out(signed_in, token_for):
+    """V6-61: signed out, or signed in before a password change, a lock or
+    a removal -- Postgres says so, and the session ends here too."""
+    seen = []
+
+    def recheck(identity):
+        seen.append((identity.user, identity.issued_at, bool(identity.token_id)))
+        return Standing(frozenset({USERS}), revoked=True)
+
+    answer = signed_in(recheck=recheck).get("/users", headers=bearer(token_for("alice")))
+    assert answer.status_code == 401
+    assert answer.json()["code"] == "session_revoked"
+    assert answer.headers["www-authenticate"] == "Bearer"
+    assert seen == [("alice", NOW, True)], "asked about this session, by its id and when it was issued"
+
+
+def test_forget_asks_again_for_one_person_or_everyone(public_key, token_for, clock):
+    asked = []
+    guard = Guard(
+        GuardSettings(enabled=True),
+        public_key=public_key,
+        recheck=lambda identity: asked.append(identity.user) or frozenset({USERS}),
+        clock=clock,
+    )
+    client = TestClient(make_app(guard))
+    alice, bob = bearer(token_for("alice")), bearer(token_for("bob"))
+    for headers in (alice, bob, alice, bob):
+        client.get("/users", headers=headers)
+    assert asked == ["alice", "bob"]
+    assert guard.forget("alice") == 1
+    for headers in (alice, bob):
+        client.get("/users", headers=headers)
+    assert asked == ["alice", "bob", "alice"]
+    assert guard.forget() == 2
+    assert guard.forget() == 0
+
+
+def test_stale_answers_are_swept_once_there_are_many(public_key, clock, monkeypatch):
+    monkeypatch.setattr(guard_module, "RECHECK_CACHE_SWEEP", 2)
+    guard = Guard(GuardSettings(enabled=True), public_key=public_key, recheck=lambda identity: frozenset(), clock=clock)
+    guard.current(Identity(user="a", token_id="1"))
+    clock.now += 61
+    guard.current(Identity(user="b", token_id="2"))
+    guard.current(Identity(user="c", token_id="3"))
+    assert sorted(user for user, _, _ in guard._standing) == ["b", "c"], "a's answer was a minute old"
+
+
+def test_a_bug_in_the_recheck_is_a_bug_not_an_outage(signed_in, token_for):
+    """V6-23: only the database not answering is a 503."""
+
+    def broken(identity):
+        raise KeyError("rolname")
+
+    with pytest.raises(KeyError):
+        signed_in(recheck=broken).get("/users", headers=bearer(token_for()))
 
 
 def test_a_user_removed_from_the_directory_is_signed_out(signed_in, token_for):
-    answer = signed_in(recheck=lambda user: None).get("/users", headers=bearer(token_for()))
+    answer = signed_in(recheck=lambda identity: None).get("/users", headers=bearer(token_for()))
     assert answer.status_code == 401
     assert answer.json()["code"] == "account_removed"
 
 
 def test_a_user_demoted_since_signing_in_loses_the_role_now(signed_in, token_for):
-    client = signed_in(recheck=lambda user: frozenset({USERS}))
+    client = signed_in(recheck=lambda identity: frozenset({USERS}))
     answer = client.post("/review", headers=bearer(token_for("rita", roles=(REVIEWERS, USERS))))
     assert answer.status_code == 403
 
 
 def test_a_database_that_cannot_be_asked_is_a_503_not_a_guess(signed_in, token_for):
-    def broken(user):
+    def broken(identity):
         raise ConnectionError("down")
 
     answer = signed_in(recheck=broken).get("/users", headers=bearer(token_for()))
@@ -400,7 +473,7 @@ def test_a_database_that_cannot_be_asked_is_a_503_not_a_guess(signed_in, token_f
 
 
 def test_the_service_token_is_not_rechecked(signed_in):
-    def fail(user):
+    def fail(identity):
         raise AssertionError("asked about a service token")
 
     assert signed_in(recheck=fail).get("/users", headers=bearer(SERVICE_TOKEN)).status_code == 200
@@ -419,3 +492,42 @@ def test_the_service_token_is_not_rechecked(signed_in):
 )
 def test_describe_names_the_scheme(settings, said):
     assert Guard(settings).describe() == said
+
+
+# --- who is an operator (V6-32) ----------------------------------------------------
+
+
+def _request(headers=None, identity=None):
+    from starlette.requests import Request as StarletteRequest
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/readyz",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+        "query_string": b"",
+        "state": {} if identity is None else {"identity": identity},
+    }
+    return StarletteRequest(scope)
+
+
+def test_an_administrator_is_an_operator_and_nobody_else_is(public_key, token_for, clock):
+    guard = Guard(GuardSettings(enabled=True, service_token=SERVICE_TOKEN, service_roles=frozenset({USERS})),
+                  public_key=public_key, clock=clock)
+    assert guard.operator(_request(bearer(token_for("ada", roles=(ADMINS, USERS))))) is True
+    assert guard.operator(_request(bearer(token_for("uma", roles=(USERS,))))) is False
+    assert guard.operator(_request(bearer(SERVICE_TOKEN))) is False, "a token holds what it was given"
+    assert guard.operator(_request()) is False, "nothing presented is nobody, and not refused here"
+    assert guard.operator(_request(bearer("not.a.token"))) is False
+    assert guard.operator(_request(), debug=True) is True, "a development server shows everyone"
+
+
+def test_the_identity_a_route_already_checked_is_used(public_key):
+    guard = Guard(GuardSettings(enabled=True), public_key=public_key)
+    admin = Identity(user="ada", roles=frozenset({ADMINS}))
+    assert guard.operator(_request(identity=admin)) is True
+
+
+def test_with_nobody_to_tell_apart_everyone_is_an_operator():
+    """Sign-in off and no token: every caller could already do everything."""
+    assert Guard(GuardSettings(enabled=False)).operator(_request()) is True

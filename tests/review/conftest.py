@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from dataclasses import replace
 
+from nl2sql_identity import ADMINS, CURATORS, REVIEWERS
 from nl2sql_review import snippets as snippets_module
 from nl2sql_review.app import create_app
 from nl2sql_review.corrections import COMPLETIONS, CORRECTIONS, AlreadyFixed, EmbedResult, Kind
@@ -88,6 +89,9 @@ def settings(document: Path, snippet_document: Path) -> ReviewSettings:
         snippets_db_url="postgresql://snippets:secret@nowhere:5432/nl2sql_snippets",
         reload_snippets=False,
         token="test-token",
+        # Every role there is, an administrator's among them: the readiness
+        # tests read what only an operator is told (V6-32).
+        token_roles=(REVIEWERS, CURATORS, ADMINS),
         # The token-guarded service of 5.x; sign-in has its own file.
         auth_enabled=False,
     )

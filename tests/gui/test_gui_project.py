@@ -180,7 +180,11 @@ def test_the_dev_proxy_does_not_verify_the_development_certificate(vite_config: 
 
 
 def test_the_dev_proxy_adds_the_token_so_the_browser_never_holds_it(vite_config: str):
-    assert 'setHeader("Authorization", `Bearer ${token}`)' in vite_config
+    """The proxies every page builds the same way (web/src/vite.ts, V6-25):
+    this one with the API token, streaming."""
+    assert "devProxies({" in vite_config and "token: env.API_TOKEN" in vite_config and "stream: true" in vite_config
+    shared = (Path(__file__).resolve().parent.parent.parent / "web" / "src" / "vite.ts").read_text()
+    assert 'setHeader("Authorization", `Bearer ${token}`)' in shared
 
 
 # ---------------------------------------------------------------------------

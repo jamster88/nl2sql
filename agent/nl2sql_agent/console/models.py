@@ -18,22 +18,18 @@ from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 
-from ..api.models import ApiError, Check, Health, Readiness, Wire
+from nl2sql_common.envelope import Wire
 from .settings import MAX_SQL_LENGTH
 
 __all__ = [
     "AgentVerdict",
-    "ApiError",
-    "Check",
     "ColumnModel",
     "ConsoleLimits",
     "ConsoleMeta",
-    "Health",
     "IssueModel",
     "PromptModel",
     "QueryRequest",
     "QueryResult",
-    "Readiness",
     "ResultColumn",
     "SchemaModel",
     "TableModel",

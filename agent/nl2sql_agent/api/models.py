@@ -26,7 +26,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import ConfigDict, Field, field_validator
+from nl2sql_common.envelope import Wire
 
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
@@ -52,12 +53,6 @@ MAX_METADATA_ENTRIES = 20
 #: How long a single metadata key and value may be.
 MAX_METADATA_KEY_LENGTH = 64
 MAX_METADATA_VALUE_LENGTH = 256
-
-
-class Wire(BaseModel):
-    """Every model in this contract: no field it does not declare."""
-
-    model_config = ConfigDict(extra="forbid")
 
 
 class AskRequest(Wire):
@@ -259,6 +254,19 @@ class Answer(Wire):
     )
 
 
+class Reloaded(Wire):
+    """What an administrator's reload dropped, to be read again (V6-33)."""
+
+    reloaded: list[str] = Field(
+        default_factory=list,
+        description="What the agent had read once and now reads again: literals, contract, "
+        "schema_edges, knowledge_collections. Empty when it had read none of them yet.",
+    )
+    sessions_forgotten: int = Field(
+        default=0, description="Sessions whose roles and revocation this service will ask Postgres about again."
+    )
+
+
 class JobLinks(Wire):
     self: str
     events: str
@@ -406,52 +414,3 @@ class Meta(Wire):
         ),
     )
 
-
-class Health(Wire):
-    status: Literal["ok"] = "ok"
-    version: str
-    uptime_seconds: float
-
-
-class Check(Wire):
-    ok: bool
-    detail: str = ""
-
-
-class Readiness(Wire):
-    """Whether this server can actually answer a question right now.
-
-    Separate from `/healthz` because the two failures are different and want
-    different responses: a process that is wedged should be restarted, while
-    a database that has not finished starting should just be waited for.
-    """
-
-    ready: bool
-    checks: dict[str, Check]
-    warnings: list[str] = Field(default_factory=list)
-
-
-class ApiError(Wire):
-    """One error shape for every failure, so a client parses one thing."""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "error": {
-                        "code": "job_running",
-                        "message": "a question already in flight cannot be cancelled",
-                    }
-                }
-            ]
-        }
-    )
-
-    error: dict[str, Any]
-
-    @classmethod
-    def of(cls, code: str, message: str, **detail: Any) -> "ApiError":
-        payload: dict[str, Any] = {"code": code, "message": message}
-        if detail:
-            payload["detail"] = detail
-        return cls(error=payload)

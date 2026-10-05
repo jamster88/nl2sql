@@ -151,8 +151,7 @@ def test_nginx_proxies_the_same_paths_the_dev_server_does(nginx_template: str, v
 
 
 def test_the_dev_proxy_adds_the_token_so_the_browser_never_holds_it(vite_config: str):
-    assert "REVIEW_TOKEN" in vite_config
-    assert 'setHeader("Authorization"' in vite_config
+    assert "token: env.REVIEW_TOKEN" in vite_config and "devProxies({" in vite_config
 
 
 def test_the_dev_proxy_does_not_verify_the_development_certificate(vite_config: str):

@@ -128,8 +128,7 @@ def test_nginx_proxies_the_same_paths_the_dev_server_does(nginx_template: str, v
 
 
 def test_the_dev_proxy_adds_the_token_and_does_not_verify_the_development_certificate(vite_config: str):
-    assert "CONSOLE_TOKEN" in vite_config
-    assert 'setHeader("Authorization"' in vite_config
+    assert "token: env.CONSOLE_TOKEN" in vite_config and "devProxies({" in vite_config
     assert re.search(r"NL2SQL_CONSOLE_TLS_VERIFY.*?\"false\"", vite_config, re.S)
 
 

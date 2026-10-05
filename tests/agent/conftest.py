@@ -120,7 +120,9 @@ class _StructuredBinding:
         self._llm.structured_invocations.append((self._schema, messages))
         if self._schema is TableSelection:
             if self._llm.table_selection is None:
-                raise AssertionError("with_structured_output(TableSelection) invoked but no response scripted")
+                # Set to None on purpose by a test that wants the model to
+                # fail: as a model host that cannot answer would.
+                raise ConnectionError("with_structured_output(TableSelection): the model could not answer")
             return self._llm.table_selection
         if self._schema is Screening:
             return self._llm.screening or Screening(verdict="proceed", intent="aggregate")

@@ -19,6 +19,8 @@ from nl2sql_auth import app as app_module
 from nl2sql_auth.access import DirectoryUnavailable, PasswordRefused
 from nl2sql_auth.app import create_app
 from nl2sql_auth.login import SignInError
+from nl2sql_auth.proxies import TrustedProxies
+from nl2sql_auth.revocation import Revocations
 from nl2sql_auth.rolesync import RoleSync, SyncResult
 from nl2sql_auth.settings import AuthSettings
 from nl2sql_identity import ADMINS, REVIEWERS, USERS, Guard, GuardSettings, Identity
@@ -74,7 +76,18 @@ class FakeSync:
 class World:
     """The app and everything around it, for one test."""
 
-    def __init__(self, *, settings=None, sync="fake", database_check="ok", guard=None, password_changer=None):
+    def __init__(
+        self,
+        *,
+        settings=None,
+        sync="fake",
+        database_check="ok",
+        guard=None,
+        password_changer=None,
+        revocations=None,
+        clock=None,
+        proxies=None,
+    ):
         self.settings = settings or AuthSettings(session_hours=1)
         self.login = FakeLogin()
         self.conn = mock_connection()
@@ -106,9 +119,11 @@ class World:
             directory=lend,
             password_changer=password_changer or changer,
             rolesync=self.sync,
+            revocations=revocations,
+            proxies=proxies,
             guard=guard,
             database_check=checks.get(database_check, database_check),
-            clock=lambda: NOW,
+            clock=clock or (lambda: NOW),
         )
         # On the directory's own port, so its routes answer; what the
         # published port does with them has its own test below.
@@ -119,6 +134,10 @@ class World:
         answer = self.client.post("/auth/login", json={"username": name, "password": password}, headers=SAME)
         assert answer.status_code == 200, answer.text
         return self.client
+
+    def readiness(self):
+        """`/readyz` as an administrator sees it: every word (V6-32)."""
+        return self.client.get("/readyz", headers=self.token("admin"))
 
     def token(self, name="admin") -> dict:
         answer = self.client.post("/auth/token", json={"username": name, "password": f"{name}-password"})
@@ -145,7 +164,7 @@ def test_health(world):
 
 def test_ready_when_the_directory_the_database_and_the_sync_answer(world):
     world.sync.last = SyncResult(at="t", ok=True, people=2)
-    answer = world.client.get("/readyz")
+    answer = world.readiness()
     assert answer.status_code == 200
     checks = answer.json()["checks"]
     assert checks["directory"] == {"ok": True, "detail": "2 people, standalone"}
@@ -154,10 +173,22 @@ def test_ready_when_the_directory_the_database_and_the_sync_answer(world):
     assert "AUTH_ROLESYNC_DB_URL" in " ".join(answer.json()["warnings"])
 
 
+def test_anyone_else_is_told_what_is_up_and_not_why(world):
+    """V6-32: `/readyz` asks for no credential, so what it says to anyone
+    is whether each part answers -- not the directory's address, the
+    database's role or the configuration's warnings."""
+    world.sync.last = SyncResult(at="t", ok=True, people=2)
+    body = world.client.get("/readyz").json()
+    assert body["ready"] is True and body["warnings"] == []
+    assert body["checks"] == {name: {"ok": True, "detail": ""} for name in ("directory", "database", "role_sync")}
+    rita = world.client.get("/readyz", headers=world.token("rita")).json()
+    assert rita["checks"]["directory"] == {"ok": True, "detail": ""}, "nor to someone signed in who is no administrator"
+
+
 def test_not_ready_says_which_part_is_not(world):
     world.ldap_down = True
     world.sync.last = SyncResult(at="t", ok=False, errors=["a", "b", "c", "d"])
-    answer = world.client.get("/readyz")
+    answer = world.readiness()
     assert answer.status_code == 503
     checks = answer.json()["checks"]
     assert not checks["directory"]["ok"] and "cannot reach" in checks["directory"]["detail"]
@@ -169,14 +200,14 @@ def test_a_database_check_that_fails_and_a_sync_that_has_not_run(world):
         raise ConnectionError("refused")
 
     other = World(database_check=broken)
-    checks = other.client.get("/readyz").json()["checks"]
+    checks = other.readiness().json()["checks"]
     assert checks["database"] == {"ok": False, "detail": "ConnectionError: refused"}
     assert checks["role_sync"] == {"ok": True, "detail": "not run yet"}
 
 
 def test_without_a_sync_or_a_database_check_readiness_says_so():
     world = World(sync=None, database_check=None)
-    checks = world.client.get("/readyz").json()["checks"]
+    checks = world.readiness().json()["checks"]
     assert "database" not in checks
     assert checks["role_sync"] == {"ok": False, "detail": "not configured: nobody can be made a role"}
 
@@ -192,7 +223,7 @@ def test_without_a_sync_or_a_database_check_readiness_says_so():
 def test_a_replica_reports_its_last_copy(monkeypatch, status, ok, detail):
     monkeypatch.setattr(access, "replica_status", lambda found: status)
     world = World(settings=AuthSettings(ldap_mode="replica"))
-    assert world.client.get("/readyz").json()["checks"]["replica"] == {"ok": ok, "detail": detail}
+    assert world.readiness().json()["checks"]["replica"] == {"ok": ok, "detail": detail}
 
 
 def test_meta_tells_a_form_what_it_needs(world):
@@ -262,21 +293,35 @@ def test_a_wrong_password_is_401_and_too_many_are_429(world):
     assert world.login.calls == 5, "a throttled attempt is not even tried"
 
 
-def test_the_address_counted_is_the_last_hop_the_proxy_saw(world):
+def test_the_address_counted_is_the_last_hop_a_trusted_proxy_saw():
     """An address may fail ten times what a name may (50), so it takes
     fifty guesses at fifty names from one place to stop the next."""
+    world = World(proxies=TrustedProxies(["10.9.0.0/16"]))
+    proxy = TestClient(world.app, client=("10.9.0.5", 40000))
     for hop in range(50):
-        world.client.post(
+        proxy.post(
             "/auth/token",
             json={"username": f"guess{hop}", "password": "x"},
             headers={"X-Forwarded-For": f"10.0.0.{hop}, 203.0.113.9"},
         )
-    blocked = world.client.post(
+    blocked = proxy.post(
         "/auth/token", json={"username": "rita", "password": "rita-password"}, headers={"X-Forwarded-For": "203.0.113.9"}
     )
     assert blocked.status_code == 429
-    elsewhere = world.client.post("/auth/token", json={"username": "rita", "password": "rita-password"})
-    assert elsewhere.status_code == 200
+    elsewhere = proxy.post("/auth/token", json={"username": "rita", "password": "rita-password"})
+    assert elsewhere.status_code == 200, "nothing forwarded: the proxy's own address, which failed nothing"
+
+
+def test_a_caller_with_no_proxy_in_front_cannot_choose_the_address_counted(world):
+    """V6-63: on the published port the whole header is the caller's own."""
+    for hop in range(50):
+        world.client.post(
+            "/auth/token", json={"username": f"guess{hop}", "password": "x"}, headers={"X-Forwarded-For": f"10.0.0.{hop}"}
+        )
+    blocked = world.client.post(
+        "/auth/token", json={"username": "rita", "password": "rita-password"}, headers={"X-Forwarded-For": "198.51.100.1"}
+    )
+    assert blocked.status_code == 429
 
 
 def test_a_database_that_cannot_be_reached_is_503(world):
@@ -612,9 +657,14 @@ def test_the_defaults_are_the_real_collaborators(monkeypatch):
     from nl2sql_identity import sign
 
     token = sign(Identity(user="rita", roles=frozenset({USERS})), KEY, lifetime_seconds=60)
-    monkeypatch.setattr(app.state.guard, "_recheck", lambda user: frozenset({USERS}))
+    monkeypatch.setattr(app.state.guard, "_recheck", lambda identity: frozenset({USERS}))
+    assert isinstance(app.state.revocations, Revocations), "sessions can be ended"
+    assert app.state.rolesync.revocations is app.state.revocations, "and locks end them"
+    cut = []
+    monkeypatch.setattr(app.state.revocations, "cut_off", lambda user, reason: cut.append((user, reason)) or 1)
     answer = client.post("/auth/password", json={"current": "a", "new": "b"}, headers={"Authorization": f"Bearer {token}"})
     assert answer.status_code == 204 and changed == [("rita", "a", "b")]
+    assert cut == [("rita", "password changed")]
     login = app_module.create_app.__globals__["PostgresLogin"]
     assert login is not None
 

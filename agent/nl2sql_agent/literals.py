@@ -44,6 +44,7 @@ from typing import Any, Iterable, Sequence
 from sqlalchemy import text
 
 from .state import LiteralMatch
+from nl2sql_common.errors import DATABASE_ERRORS, Unavailable
 
 #: Per candidate, the best entry found in each (table, column) and its score.
 _ByColumn = dict[tuple[str, str], tuple["CatalogEntry", float]]
@@ -156,16 +157,17 @@ def normalize(value: str) -> str:
 
 
 def _engine(database: Any) -> Any:
-    """The SQLAlchemy engine behind a `Database`.
+    """The SQLAlchemy engine behind a `Database`: its public `engine`.
 
-    `Database` keeps its engine private and exposes only capped, single-
-    statement helpers: `run_select` stops at 50 rows, which is a tenth of the
-    500 values a catalogued column may hold. Cataloguing therefore needs the
-    engine itself. A public `engine` property is preferred if one ever appears.
+    `run_select` stops at 50 rows, a tenth of the 500 values a catalogued
+    column may hold, so cataloguing reads through the pool itself -- by the
+    one accessor every module uses (V6-22), never the private attribute.
     """
-    engine = getattr(database, "engine", None) or getattr(database, "_engine", None)
+    engine = getattr(database, "engine", None)
     if engine is None:
-        raise TypeError(f"{database!r} exposes no SQLAlchemy engine to read the catalog from")
+        # A database the catalog cannot be read from, said in the taxonomy's
+        # terms so the matcher's caller handles it as it handles one that is down.
+        raise Unavailable(f"{database!r} exposes no SQLAlchemy engine to read the catalog from")
     return engine
 
 
@@ -277,14 +279,18 @@ def trigram_available(database: Any) -> bool:
     installed only at image build time, and the agent's read-only role cannot
     install it, so the same code meets databases both ways. An unreachable
     database answers False rather than raising -- the only consequence of the
-    answer is which of two scorers runs.
+    answer is which of two scorers runs -- and so does one with no pool to
+    ask at all.
     """
+    engine = getattr(database, "engine", None)
+    if engine is None:
+        return False
     try:
-        with _engine(database).connect() as conn:
+        with engine.connect() as conn:
             found = conn.execute(
                 text("SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")
             ).scalar()
-    except Exception:
+    except DATABASE_ERRORS:
         return False
     return bool(found)
 
@@ -553,7 +559,7 @@ class LiteralMatcher:
         if self.use_trigram:
             try:
                 return self._score_trigram(candidates)
-            except Exception:
+            except DATABASE_ERRORS:
                 # A dropped extension or a dead connection costs precision,
                 # not the question: keep going on the pure-Python scorer.
                 self.use_trigram = False

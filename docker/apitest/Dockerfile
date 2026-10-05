@@ -25,4 +25,8 @@ RUN mkdir -p /etc/nl2sql/tls
 LABEL org.opencontainers.image.title="nl2sql API smoke test" \
       org.opencontainers.image.description="curl-only external client for the nl2sql agent REST API"
 
+# Nobody: it reads the stack's CA certificate and talks to the API, and
+# writes nothing (V6-31).
+USER nobody
+
 ENTRYPOINT ["/usr/local/bin/smoke.sh"]

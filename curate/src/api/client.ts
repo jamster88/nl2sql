@@ -35,19 +35,14 @@ import type {
   ValidationModel,
 } from "./types";
 
-import { notifyUnauthorized } from "../auth/session";
+import { ApiError } from "@nl2sql/web/api/errors";
+import { notifyUnauthorized } from "@nl2sql/web/auth/session";
 
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
-
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-  }
-}
+/**
+ * A failure the service described -- the error every page throws for one
+ * (`web/src/api/errors.ts`): branch on `code`, show `message`.
+ */
+export { ApiError };
 
 export interface ClientOptions {
   /** Empty means same origin, which is the normal case: nginx proxies /v1. */

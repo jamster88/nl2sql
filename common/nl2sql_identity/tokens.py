@@ -17,7 +17,10 @@ radius the review service was split out to avoid.
 A token says who someone is and which of the nl2sql roles Postgres said they
 held when they signed in. It is not the last word on the roles: a service that
 can ask Postgres again does (see `guard.Guard`), so a user removed from a
-group in the directory loses it within a minute rather than at expiry.
+group in the directory loses it within a minute rather than at expiry. Nor is
+it the last word on itself: its `jti` names it, and a session signed out, or
+signed in before its holder's password changed or their account was locked or
+removed, is refused within the same minute (`postgres.REVOKED_SQL`).
 """
 
 from __future__ import annotations
@@ -52,8 +55,9 @@ LEEWAY_SECONDS = 30
 
 #: What kind of caller an `Identity` is. A *session* is a person who signed
 #: in; a *service* presented the static token a deployment configured for
-#: machines (`API_TOKEN` and its siblings); *anonymous* is what every caller
-#: is when sign-in is off and no token is configured.
+#: machines (`API_TOKEN` and its siblings), and is the name and the roles
+#: configured beside it; *anonymous* is what every caller is when sign-in is
+#: off and no token is configured.
 SESSION = "session"
 SERVICE = "service"
 ANONYMOUS = "anonymous"
@@ -98,6 +102,21 @@ class Identity:
         did before there was sign-in.
         """
         return self.user if self.kind == SESSION and self.user else None
+
+    @property
+    def actor(self) -> str | None:
+        """Who did it, for a record that keeps a name.
+
+        A person is their role name. A service token is the name the
+        deployment gave it (`REVIEW_TOKEN_NAME` and its siblings), marked as
+        a token so it is never mistaken for a person who happens to share
+        it. Anonymous is nobody: no caller could be told apart.
+        """
+        if self.kind == SESSION:
+            return self.user or None
+        if self.kind == SERVICE:
+            return f"token:{self.user or 'service'}"
+        return None
 
     def has_any(self, roles: Iterable[str]) -> bool:
         """True when the caller holds one of `roles` -- or none were asked for.

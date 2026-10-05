@@ -289,6 +289,12 @@ services:
       dockerfile: agent/Dockerfile
     image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
     container_name: ${NL2SQL_INSTANCE:-nl2sql}-pki
+    # Root, alone of the services this image runs: it writes every other
+    # service's key into that service's volume and gives it to the account
+    # the service runs as -- 10001 for the Python ones, nginx's 101 for the
+    # pages (the last part of each identity below, V6-31). It runs once and
+    # exits; nothing it serves.
+    user: "0:0"
     networks:
       default:
         aliases: [nl2sql-pki]
@@ -300,16 +306,16 @@ services:
       - --ca-dir=/etc/nl2sql/pki
       - --trust-dir=/etc/nl2sql/identities/trust
       - --also=${TLS_EXTRA_HOSTNAMES:-}
-      - api=/etc/nl2sql/identities/api=${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,127.0.0.1,::1}
-      - review=/etc/nl2sql/identities/review=${REVIEW_TLS_HOSTNAMES:-localhost,nl2sql-review,review,127.0.0.1,::1}
-      - console=/etc/nl2sql/identities/console=${CONSOLE_TLS_HOSTNAMES:-localhost,nl2sql-console,console,127.0.0.1,::1}
-      - auth=/etc/nl2sql/identities/auth=${AUTH_TLS_HOSTNAMES:-localhost,nl2sql-auth,auth,127.0.0.1,::1}
-      - gui=/etc/nl2sql/identities/gui=localhost,nl2sql-gui,127.0.0.1,::1
-      - reviewgui=/etc/nl2sql/identities/reviewgui=localhost,nl2sql-review-gui,127.0.0.1,::1
-      - curategui=/etc/nl2sql/identities/curategui=localhost,nl2sql-curate-gui,127.0.0.1,::1
-      - consolegui=/etc/nl2sql/identities/consolegui=localhost,nl2sql-console-gui,127.0.0.1,::1
-      - directorygui=/etc/nl2sql/identities/directorygui=localhost,nl2sql-directory-gui,127.0.0.1,::1
-      - mlflowproxy=/etc/nl2sql/identities/mlflowproxy=localhost,nl2sql-mlflow-proxy,127.0.0.1,::1
+      - api=/etc/nl2sql/identities/api=${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,127.0.0.1,::1}=10001:10001
+      - review=/etc/nl2sql/identities/review=${REVIEW_TLS_HOSTNAMES:-localhost,nl2sql-review,review,127.0.0.1,::1}=10001:10001
+      - console=/etc/nl2sql/identities/console=${CONSOLE_TLS_HOSTNAMES:-localhost,nl2sql-console,console,127.0.0.1,::1}=10001:10001
+      - auth=/etc/nl2sql/identities/auth=${AUTH_TLS_HOSTNAMES:-localhost,nl2sql-auth,auth,127.0.0.1,::1}=10001:10001
+      - gui=/etc/nl2sql/identities/gui=localhost,nl2sql-gui,127.0.0.1,::1=101:101
+      - reviewgui=/etc/nl2sql/identities/reviewgui=localhost,nl2sql-review-gui,127.0.0.1,::1=101:101
+      - curategui=/etc/nl2sql/identities/curategui=localhost,nl2sql-curate-gui,127.0.0.1,::1=101:101
+      - consolegui=/etc/nl2sql/identities/consolegui=localhost,nl2sql-console-gui,127.0.0.1,::1=101:101
+      - directorygui=/etc/nl2sql/identities/directorygui=localhost,nl2sql-directory-gui,127.0.0.1,::1=101:101
+      - mlflowproxy=/etc/nl2sql/identities/mlflowproxy=localhost,nl2sql-mlflow-proxy,127.0.0.1,::1=101:101
     volumes:
       - pkica:/etc/nl2sql/pki
       - tlstrust:/etc/nl2sql/identities/trust
@@ -521,8 +527,16 @@ services:
       AUTH_PUBLIC_KEY_FILE: ${AUTH_PUBLIC_KEY_FILE:-/etc/nl2sql/auth/session.pub}
       AUTH_COOKIE_NAME: ${AUTH_COOKIE_NAME:-}
       API_TOKEN: ${API_TOKEN:-}
+      # Who the token is (its jobs are recorded as token:<name>) and what it
+      # holds: nl2sql_users unless named here (V6-62).
+      API_TOKEN_NAME: ${API_TOKEN_NAME:-}
+      API_TOKEN_ROLES: ${API_TOKEN_ROLES:-}
       API_CORS_ORIGINS: ${API_CORS_ORIGINS:-}
       API_ALLOW_PRINCIPAL: ${API_ALLOW_PRINCIPAL:-}
+      # A failure in its own words -- a driver's error, a host, a port, the
+      # readiness detail -- is an administrator's to see; true shows everyone,
+      # for a development server (V6-32).
+      API_DEBUG_DETAIL: ${API_DEBUG_DETAIL:-}
       # --- work ------------------------------------------------------
       API_MAX_CONCURRENCY: ${API_MAX_CONCURRENCY:-}
       API_JOB_TTL_SECONDS: ${API_JOB_TTL_SECONDS:-}
@@ -687,6 +701,11 @@ services:
       # endpoint says so loudly when it is unset; with sign-in on (the
       # default) a person's session is what every route needs.
       REVIEW_TOKEN: ${REVIEW_TOKEN:-}
+      # What the token does is recorded as token:<name>, never as the
+      # X-Reviewer it sends; with sign-in on it reviews and does not curate
+      # unless REVIEW_TOKEN_ROLES says so (V6-62).
+      REVIEW_TOKEN_NAME: ${REVIEW_TOKEN_NAME:-}
+      REVIEW_TOKEN_ROLES: ${REVIEW_TOKEN_ROLES:-}
       REVIEW_CORS_ORIGINS: ${REVIEW_CORS_ORIGINS:-}
       # Sign-in, as for the API: reviewing is nl2sql_reviewers' and writing
       # directly is nl2sql_curators', each configurable, and a reviewer's
@@ -923,6 +942,8 @@ services:
       CONSOLE_TLS_KEY_FILE: ${CONSOLE_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
       # --- who may call ----------------------------------------------
       CONSOLE_TOKEN: ${CONSOLE_TOKEN:-}
+      CONSOLE_TOKEN_NAME: ${CONSOLE_TOKEN_NAME:-}
+      CONSOLE_TOKEN_ROLES: ${CONSOLE_TOKEN_ROLES:-}
       CONSOLE_CORS_ORIGINS: ${CONSOLE_CORS_ORIGINS:-}
       # Sign-in: the console is reviewers' and curators' by default, and
       # each statement runs as the person who typed it.
@@ -1148,6 +1169,10 @@ services:
       AUTH_THROTTLE_FAILURES: ${AUTH_THROTTLE_FAILURES:-}
       AUTH_THROTTLE_ADDRESS_FAILURES: ${AUTH_THROTTLE_ADDRESS_FAILURES:-}
       AUTH_THROTTLE_SECONDS: ${AUTH_THROTTLE_SECONDS:-}
+      # The page proxies, by their aliases on this network: the only callers
+      # whose X-Forwarded-For counts as where a sign-in came from. A desktop
+      # client on the published port is counted by its own address (V6-63).
+      AUTH_TRUSTED_PROXIES: ${AUTH_TRUSTED_PROXIES:-nl2sql-gui,nl2sql-review-gui,nl2sql-curate-gui,nl2sql-console-gui,nl2sql-directory-gui,nl2sql-mlflow-proxy}
       # The database a person signs in to, which is the one that checks
       # their password -- and the role that keeps its people in step with
       # the directory: it can create and drop them, and nothing else.

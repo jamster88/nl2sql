@@ -38,6 +38,9 @@ curate/coverage/
 auth/gui/node_modules/
 auth/gui/dist/
 auth/gui/coverage/
+web/node_modules/
+web/dist/
+web/coverage/
 
 # The copy the review service keeps beside the golden question document --
 # and, since 5.6, beside the SQL snippet document -- before it replaces it. Useful when a promotion turns out to be wrong;

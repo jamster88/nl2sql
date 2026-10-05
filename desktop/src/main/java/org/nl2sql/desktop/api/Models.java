@@ -245,6 +245,16 @@ public final class Models {
     }
 
     /**
+     * What an administrator's {@code POST /v1/admin/reload} dropped, to be
+     * read again. Mirrored for completeness: this client does not reload.
+     */
+    public record Reloaded(List<String> reloaded, int sessions_forgotten) {
+        public Reloaded {
+            reloaded = list(reloaded);
+        }
+    }
+
+    /**
      * What this server will not let a client exceed.
      *
      * <p>{@code max_question_length} and {@code max_metadata_entries} are here

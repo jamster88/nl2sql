@@ -32,6 +32,7 @@ from nl2sql_agent.contract import (
     stated_measure,
 )
 from nl2sql_agent.state import AnswerContract, EntityRef
+import psycopg
 
 
 def table(name: str, columns: list[str], constraints: list[str]) -> SimpleNamespace:
@@ -349,12 +350,12 @@ def test_resources_are_read_from_the_catalog_and_the_calendar():
 
 
 def test_each_half_of_the_resources_fails_on_its_own():
-    loaded = load_resources(_Database(catalog_error=RuntimeError("no catalog"),
+    loaded = load_resources(_Database(catalog_error=psycopg.OperationalError("no catalog"),
                                       latest=(2025, date(2024, 4, 1), date(2025, 3, 31))))
     assert loaded.errors == {"label_map": "no catalog"}
     assert len(loaded.label_map) == 0 and loaded.fiscal_year == 2025
 
-    loaded = load_resources(_Database(catalog=CATALOG, calendar_error=RuntimeError("no dim_date")))
+    loaded = load_resources(_Database(catalog=CATALOG, calendar_error=psycopg.errors.UndefinedTable("no dim_date")))
     assert loaded.errors == {"fiscal_calendar": "no dim_date"}
     assert loaded.fiscal_year is None and len(loaded.label_map) == 12
 

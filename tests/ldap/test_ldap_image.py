@@ -43,10 +43,11 @@ def test_the_overlays_each_mode_needs_are_installed(dockerfile: str):
         "openldap-overlay-remoteauth",
         "openldap-passwd-argon2",
         "openldap-passwd-sha2",
-        "py3-ldap3",
-        "py3-cryptography",
     ):
         assert package in dockerfile, package
+    # Its Python libraries come from the hash-checked lock, not Alpine.
+    lock = (DOCKERFILE.parent / "requirements.lock").read_text()
+    assert "ldap3==" in lock and "cryptography==" in lock
 
 
 def test_root_is_given_up_by_the_entry_point_not_the_image(dockerfile: str):
@@ -57,8 +58,12 @@ def test_root_is_given_up_by_the_entry_point_not_the_image(dockerfile: str):
     assert not re.search(r"^USER ", dockerfile, re.MULTILINE)
 
 
-def test_only_the_directory_package_is_copied(dockerfile: str):
-    assert re.findall(r"^COPY (\S+)", dockerfile, re.MULTILINE) == ["ldap/nl2sql_ldap/"]
+def test_only_the_directory_package_its_lock_and_the_shared_package_are_copied(dockerfile: str):
+    assert re.findall(r"^COPY (\S+)", dockerfile, re.MULTILINE) == [
+        "ldap/requirements.lock",
+        "common/",
+        "ldap/nl2sql_ldap/",
+    ]
 
 
 def test_the_image_says_when_it_is_ready_and_what_version_it_is(dockerfile: str):

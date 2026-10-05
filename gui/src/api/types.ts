@@ -148,6 +148,12 @@ export interface JobList {
   count: number;
 }
 
+/** What an administrator's `POST /v1/admin/reload` dropped, to be read again. */
+export interface Reloaded {
+  reloaded: string[];
+  sessions_forgotten: number;
+}
+
 /**
  * What a client may not exceed, so it can stop before the server does.
  *

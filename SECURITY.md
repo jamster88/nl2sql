@@ -2,9 +2,12 @@
 
 What this stack protects, from whom, where its boundaries are, what each
 credential is worth, and which deployments its defaults are built for. As of
-**6.1.0**. The sign-in design these rest on -- why it is built this way, the
+**6.2.0**. The sign-in design these rest on -- why it is built this way, the
 alternatives rejected, the limits chosen -- is section 20 of
-[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md);
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md),
+with what 6.2 added -- revocation, named tokens, the accounts each service
+runs as -- in
+[`Multi-Agent_NL2SQL_arch6_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_2.md);
 how to switch each control on and off is in
 [`USAGE_GUIDE.md`](USAGE_GUIDE.md#security).
 
@@ -71,8 +74,8 @@ them, and nothing claims to.
 | --- | --- | --- |
 | `nl2sql-pki` (one-shot) | the stack's CA key (`pkica`, mounted nowhere else) | issue a certificate every client of the stack trusts |
 | each server (API, review, console, auth, six pages) | its own TLS key, in a volume only it mounts (6.1) | impersonate that server, and only that one |
-| `nl2sql-auth` | the session signing key; the role sync's password; the directory service account's password | sign a session for anyone; make and drop people's roles (nothing else in the database); read and, standalone, edit the directory |
-| `nl2sql-api`, `nl2sql-console` | the reader's password; with feedback, the INSERT-only writer's; any service token | read the retail data as the agent does; become any person for a transaction; insert a verdict |
+| `nl2sql-auth` | the session signing key; the role sync's password; the directory service account's password | sign a session for anyone; make and drop people's roles, and write the revoked-session lists (nothing else in the database); read and, standalone, edit the directory |
+| `nl2sql-api`, `nl2sql-console` | the reader's password; with feedback, the INSERT-only writer's; any service token | read the retail data as the agent does; become any person for a transaction; insert a verdict; ask whether a session was revoked (yes or no, one session at a time) |
 | `nl2sql-review` | the staging, corrections, completions, snippet, context and vector stores' owners; the reader's password; `REVIEW_TOKEN` if set | rewrite what the agent learns from; read every submission |
 | `nl2sql-postgres` | its own TLS key | nothing over the network: the superuser has no password and is refused there |
 | `nl2sql-ldap` | its own TLS key; Argon2 hashes of every password | serve the directory |
@@ -83,12 +86,12 @@ them, and nothing claims to.
 | Credential | Grants | For how long | Limited by |
 | --- | --- | --- | --- |
 | a directory password | everything the person's groups allow, everywhere; a direct database login as them | until changed | 5 wrong tries per name and 50 per address in 15 minutes at the auth service; the directory's own lockout, 5 in a row for 15 minutes, which also covers a direct `psql` |
-| a session | the person's groups, as Postgres says they are now | `AUTH_SESSION_HOURS` (8) | groups re-read at most once a minute per service: someone removed loses access within a minute. **Not revocable** otherwise |
-| a service token (`API_TOKEN`, `REVIEW_TOKEN`, `CONSOLE_TOKEN`) | every role that service grants, unattributed; with sign-in off, everything | until changed | only configured when asked for (`setup.sh --tokens`) |
+| a session | the person's groups, as Postgres says they are now | `AUTH_SESSION_HOURS` (8), or until it is ended | groups and the session's standing re-read at most once a minute per service: someone removed, a session signed out, one from before a password change or set or a lock, is refused within a minute (6.2) |
+| a service token (`API_TOKEN`, `REVIEW_TOKEN`, `CONSOLE_TOKEN`) | the roles its `_TOKEN_ROLES` names, recorded under its `_TOKEN_NAME` (6.2); with sign-in off, everything | until changed | only configured when asked for (`setup.sh --tokens`); the review token reviews and does not curate unless granted |
 | a store's owner password | that store, entirely | until changed | the store's port is this machine's by default; generated per installation |
 | the reader's password | read every retail table; become any person for a transaction | until changed | generated per installation; `SELECT` only, read-only transactions |
 | the CA key | a certificate any client of this stack trusts | ten years | mounted by the pki service alone. Delete the `pkica` volume to replace it: every server is reissued on the next start, and every client must be given the new `nl2sql-ca.crt` |
-| the signing key | a session for anyone | until replaced | the auth service's alone. Deleting it signs everyone out: the one revocation there is |
+| the signing key | a session for anyone | until replaced | the auth service's alone. Deleting it signs everyone out at once; one person's sessions are ended by their revocation lists (6.2) |
 
 ## Deployment tiers
 
@@ -118,7 +121,10 @@ What `./setup.sh && ./start.sh` gives you:
 - every password generated per installation, in `.env`, readable by its
   owner alone; no service token unless asked for;
 - TLS on every connection to the retail database, required by the server;
-  a person's password accepted only over it, and verified end to end.
+  a person's password accepted only over it, and verified end to end;
+- every service running as an account of its own, not root, and reading
+  only its own key (6.2); a session that can be ended -- by signing out, a
+  password change, a lock or a removal -- for every service at once (6.2).
 
 What it asks of you: give people `nl2sql-ca.crt` to trust (their browser
 warns until they do), add this machine's name to `TLS_EXTRA_HOSTNAMES` so
@@ -162,6 +168,13 @@ And the work in *Known limits*, which no setting replaces.
 | A cookie-carrying write from another site is refused | `tests/auth/test_identity_guard.py` |
 | The agent's reader cannot write, cannot reach another database, and cannot signal another session | `tests/agent/test_least_privilege_live.py` (`--run-docker`) |
 | A person removed from the directory loses access within a minute | `tests/auth/test_identity_guard.py`, `tests/auth/test_auth_rolesync.py` |
+| A session signed out, or from before a password change or set, a lock or a removal, is refused within a minute; the lists are the auth service's to write and nobody's to read | `tests/auth/test_auth_revocation.py`, `tests/auth/test_auth_live.py` (`--run-docker`) |
+| A service token is named and holds only the roles it is given; a header never names who did something | `tests/auth/test_identity_guard.py`, `tests/review/test_signin.py` |
+| Nothing runs as root but the one-shot pki service: every image names its account or drops to one, and each key is its account's | `tests/security/test_unprivileged.py`, `tests/auth/test_identity_pki.py` |
+| Every broad `except` says why it is broad | `tests/security/test_error_taxonomy.py` |
+| Every Python image installs a hash-checked lock | `tests/security/test_supply_chain.py` |
+| A failure's own words -- hosts, drivers, configuration -- are an administrator's to see | `tests/api/test_signin.py`, `tests/auth/test_identity_guard.py` |
+| The sign-in throttle counts by a trusted proxy's word or the connection's own address | `tests/auth/test_auth_proxies.py`, `tests/auth/test_auth_app.py` |
 
 `tests/security/` is the tier for posture: what the stack exposes by
 default, read from the files that decide it.
@@ -172,29 +185,25 @@ Each is a finding of the latest review
 ([`adversary_reviews/v6_1_review_summary.md`](adversary_reviews/v6_1_review_summary.md))
 with its plan item.
 
-- **A session cannot be revoked.** Signing out deletes the cookie; a copy
-  works until it expires, eight hours at most. Changing a password, locking
-  an account and an administrator's reset leave existing sessions valid.
-  The role recheck catches a person removed from a group or the directory
-  within a minute; nothing catches a stolen token. (S-18; V6-71, V6-61.)
-- **A service token is an identity with every role and no name.** Its
-  actions are recorded under whatever `X-Reviewer` says. (S-19; V6-62.)
+- **A revoked session works for up to a minute more** at a service that
+  checked it within the minute: each service asks Postgres about a session
+  once a minute (6.2; S-18 was "cannot be revoked" until then). The auth
+  service forgets at once, and an administrator's `POST /v1/admin/reload`
+  makes the API forget too. A lockout ends the sessions from before it,
+  which lets someone who can trigger one sign that person out; the per-name
+  throttle slows that.
 - **"Runs as the person" is attribution, not isolation.** Every person's
   role reads what the agent's reader reads -- there are no row-level
-  policies -- and the connection is the reader's, so the server log and
-  `pg_stat_activity` name the reader; only `current_user`, inside the
-  transaction, names the person. (I-18; V6-64.)
-- **Every application image but the directory's runs as root**, and no
-  container has a memory limit, a read-only root or dropped capabilities.
-  6.1 removed the reason they could not (the shared key); the change itself
-  is next. (M-01, M-03; V6-31, V6-34.)
+  policies. The connection is the reader's, so `session_user` names the
+  reader; since 6.2 the transaction's `application_name` names the person
+  (`nl2sql:agent:alice`) for `pg_stat_activity` and the log's `%a`. (I-18.)
+- **No container has a memory limit, a read-only root or dropped
+  capabilities.** Since 6.2 nothing runs as root but the one-shot pki
+  service. (M-03; V6-34.)
 - **Health checks do not verify the certificate they connect to.** They
   check the container's own socket. (S-15; V6-37.)
-- **The per-address sign-in throttle trusts `X-Forwarded-For`** on the
-  sign-in port, which is published for the desktop client; the per-name
-  limit and the directory's lockout still hold. (S-20; V6-63.)
-- **Dependencies are not hashed and base images are not pinned by digest.**
-  (C-07, M-02; V6-24, V6-35.)
+- **Base images are not pinned by digest.** Every Python dependency is
+  installed from a hash-checked lock since 6.2. (M-02; V6-35.)
 - **The directory's own API answers inside the stack only** (port 8447, not
   published), and still needs an administrator's session there.
 

@@ -15,12 +15,20 @@ variable the host has not set as an empty string, so empty reads as unset.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from nl2sql_identity import ADMINS, CURATORS, REVIEWERS, SESSION_COOKIE, USERS
+from nl2sql_common.env import (
+    env as _env,
+    env_str as _env_str,
+    env_int as _env_int,
+    env_float as _env_float,
+    env_bool as _env_bool,
+    env_tuple as _env_tuple,
+    secret as _secret,
+)
 
 DEFAULT_PORT = 8446
 #: The directory's own API: the routes that make and change people,
@@ -60,40 +68,6 @@ DEFAULT_GROUP_ROLES = {
     "nl2sql-curators": CURATORS,
     "nl2sql-admins": ADMINS,
 }
-
-
-def _env(name: str) -> str | None:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return None
-    return raw.strip()
-
-
-def _env_str(name: str, default: str) -> str:
-    return _env(name) or default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = _env(name)
-    return default if raw is None else int(raw)
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = _env(name)
-    return default if raw is None else float(raw)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name)
-    return default if raw is None else raw.lower() in {"1", "true", "yes", "on"}
-
-
-def _secret(name: str) -> str | None:
-    """`NAME`, or the contents of the file `NAME_FILE` names (Docker secrets)."""
-    path = _env(f"{name}_FILE")
-    if path:
-        return Path(path).read_text().strip() or None
-    return _env(name)
 
 
 def group_roles(raw: str | None) -> dict[str, str]:
@@ -138,6 +112,11 @@ class AuthSettings:
     #: typing lock everybody else out.
     throttle_address_failures: int = 50
     throttle_seconds: int = 900
+    #: Whose X-Forwarded-For is believed when counting by address: the page
+    #: proxies, by address, network or name (`proxies.TrustedProxies`).
+    #: Nobody's by default -- a direct caller on the published port writes
+    #: that header themselves.
+    trusted_proxies: tuple[str, ...] = ()
 
     # --- The retail database ----------------------------------------------
     #: Where a person's password is checked: a connection as them.
@@ -203,6 +182,7 @@ class AuthSettings:
             cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             throttle_failures=_env_int("AUTH_THROTTLE_FAILURES", 5),
             throttle_address_failures=_env_int("AUTH_THROTTLE_ADDRESS_FAILURES", 50),
+            trusted_proxies=_env_tuple("AUTH_TRUSTED_PROXIES", ()),
             throttle_seconds=_env_int("AUTH_THROTTLE_SECONDS", 900),
             db_host=_env_str("AUTH_DB_HOST", "nl2sql-postgres"),
             db_port=_env_int("AUTH_DB_PORT", 5432),
@@ -287,7 +267,8 @@ class AuthSettings:
         if not self.rolesync_url:
             found.append(
                 "AUTH_ROLESYNC_DB_URL is not set: nobody in the directory can be made a "
-                "role in the retail database, so nobody can sign in"
+                "role in the retail database, so nobody can sign in -- and a session cannot "
+                "be revoked, so signing out only forgets this browser's copy"
             )
         if not self.ldap_service_password:
             found.append(

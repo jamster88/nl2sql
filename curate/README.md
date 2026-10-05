@@ -176,9 +176,9 @@ npm test         # vitest, with coverage
 
 | File | Covers |
 |---|---|
-| [`test/`](test) | The page itself, in vitest against a scripted client -- curation GUI: 101 tests, at 100% of statements, branches, functions and lines, with only `main.tsx` excluded |
+| [`test/`](test) | The page itself, in vitest against a scripted client -- curation GUI: 108 tests, at 100% of statements, branches, functions and lines, with only `main.tsx` excluded |
 | [`test_curate_gui_contract.py`](../tests/curate/test_curate_gui_contract.py) | The TypeScript types, field by field, against the review service's models |
 | [`test_curate_project.py`](../tests/curate/test_curate_project.py) | The npm project's pins and coverage gate, nginx's template, and the start-up script's branches |
 | [`test_curate_compose.py`](../tests/curate/test_curate_compose.py) | The snippet store and this page as compose resolves them: the store's own volume and port, the agent reading it as the loader's role and only the review service holding the owner, the page in its own profile waiting for and verifying the review service, the token held by the proxy, and every setting the proxy reads both ways |
-| [`test_curate_gui_suite.py`](../tests/curate/test_curate_gui_suite.py) | Runs the 101-test curation GUI suite from pytest, with `--run-node`, and holds the counts these documents quote to it |
+| [`test_curate_gui_suite.py`](../tests/curate/test_curate_gui_suite.py) | Runs the 108-test curation GUI suite from pytest, with `--run-node`, and holds the counts these documents quote to it |
 | [`tests/review/test_curation.py`](../tests/review/test_curation.py), [`test_snippet_validation.py`](../tests/review/test_snippet_validation.py), [`test_snippets.py`](../tests/review/test_snippets.py) | The service behind it: every curation route, each snippet kind validated against the live retail database, and the snippet document written and round-tripped through the loader's parser |

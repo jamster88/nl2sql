@@ -80,6 +80,22 @@ def test_a_start_makes_the_key_builds_the_app_and_serves_it(capsys, monkeypatch,
     assert served["ssl_certfile"] is None and served["ssl_keyfile"] is None
 
 
+def test_root_gives_the_account_both_key_directories_before_anything_is_read(capsys, monkeypatch, tmp_path):
+    """V6-31: root only long enough to hand over what it writes -- with what
+    an older release wrote there as root -- and the key is read as the account."""
+    monkeypatch.setenv("AUTH_SIGNING_KEY_FILE", str(tmp_path / "data" / "session.key"))
+    monkeypatch.setenv("AUTH_PUBLIC_KEY_FILE", str(tmp_path / "keys" / "session.pub"))
+    asked = []
+
+    def become(account, *, own, recursive):
+        asked.append((account, tuple(own), recursive))
+        return True
+
+    assert server.main(["--no-tls"], run=lambda *a, **k: None, become=become) == 0
+    assert asked == [("nl2sql", (str(tmp_path / "data"), str(tmp_path / "keys")), True)]
+    assert "running as nl2sql" in capsys.readouterr().out
+
+
 def test_the_real_server_is_uvicorn(monkeypatch, tmp_path):
     """With no directory port of its own, one socket, as before 6.1."""
     import uvicorn

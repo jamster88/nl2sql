@@ -74,6 +74,12 @@ def test_self_signed_can_be_refused_from_the_command_line():
     assert api_settings_from_args(parse_args(["--no-allow-self-signed"])).tls_allow_self_signed is False
 
 
+def test_a_development_server_can_show_everyone_a_failure_in_its_own_words(monkeypatch):
+    monkeypatch.delenv("API_DEBUG_DETAIL", raising=False)
+    assert api_settings_from_args(parse_args([])).debug_detail is False
+    assert api_settings_from_args(parse_args(["--debug-detail"])).debug_detail is True
+
+
 def test_repeatable_flags_replace_the_defaults_rather_than_adding_to_them():
     settings = api_settings_from_args(
         parse_args(["--hostname", "api.internal", "--hostname", "10.0.0.5",
@@ -97,7 +103,7 @@ def test_every_flag_names_the_environment_variable_it_overrides():
         parse_args(["--help"])
     text = buffer.getvalue()
     for name in ("API_HOST", "API_PORT", "API_TLS_ENABLED", "API_TOKEN",
-                 "API_TLS_ALLOW_SELF_SIGNED", "API_ALLOW_PRINCIPAL"):
+                 "API_TLS_ALLOW_SELF_SIGNED", "API_ALLOW_PRINCIPAL", "API_DEBUG_DETAIL"):
         assert name in text, f"--help never mentions {name}"
 
 

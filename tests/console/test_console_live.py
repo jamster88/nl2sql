@@ -78,6 +78,7 @@ def test_a_write_the_validator_does_not_know_is_refused_by_the_transaction(inspe
     assert outcome.error == "cannot execute lo_create() in a read-only transaction"
 
 
+@pytest.mark.usefixtures("inspector")  # so a stack that is down is a skip, as for the rest
 def test_a_query_that_runs_too_long_is_cancelled_at_the_agents_timeout():
     outcome = _inspector(statement_timeout_ms=300).run(
         "SELECT count(*) FROM fact_pos_retail_sales a CROSS JOIN dim_store b CROSS JOIN dim_store c"
@@ -86,6 +87,7 @@ def test_a_query_that_runs_too_long_is_cancelled_at_the_agents_timeout():
     assert outcome.error == "canceling statement due to statement timeout"
 
 
+@pytest.mark.usefixtures("inspector")  # so a stack that is down is a skip, as for the rest
 def test_the_sales_fact_is_read_as_far_as_it_is_shown_and_no_further():
     """With a client-side cursor this pulls 1.29 million rows into the
     process first; the server-side one it uses fetches eleven."""
@@ -96,6 +98,7 @@ def test_the_sales_fact_is_read_as_far_as_it_is_shown_and_no_further():
     assert outcome.verdict.notes == [], "ten rows is inside the agent's fifty"
 
 
+@pytest.mark.usefixtures("inspector")  # so a stack that is down is a skip, as for the rest
 def test_a_plan_over_the_ceiling_is_the_planner_gates_refusal():
     outcome = _inspector(max_plan_cost=10.0).run("SELECT count(*) FROM fact_pos_retail_sales", "plan")
     assert outcome.verdict.stage == "planner"

@@ -12,7 +12,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from nl2sql_agent.api.app import default_guard
 from nl2sql_agent.api.settings import ApiSettings
 from nl2sql_agent.config import Settings
-from nl2sql_identity import REVIEWERS, USERS, Guard, GuardSettings, Identity, sign
+from nl2sql_identity import ADMINS, REVIEWERS, USERS, Guard, GuardSettings, Identity, sign
+
+from .conftest import ANSWERED, make_runner
 
 KEY = Ed25519PrivateKey.generate()
 SERVICE = "machine-token"
@@ -112,26 +114,117 @@ def test_meta_and_readiness_report_sign_in(signed_in):
 
 def test_without_the_auth_services_key_the_api_is_not_ready(make_client, tmp_path):
     guard = Guard(GuardSettings(enabled=True, public_key_file=str(tmp_path / "missing.pub")))
-    readiness = make_client(guard=guard).get("/readyz").json()
+    readiness = make_client(guard=guard, api=ApiSettings(debug_detail=True)).get("/readyz").json()
     assert readiness["ready"] is False
     assert "writes it on its first start" in readiness["checks"]["sign_in"]["detail"]
 
 
-def test_a_reviewer_may_ask_too():
-    assert Identity(user="r", roles=frozenset({REVIEWERS, USERS})).has_any({USERS})
+# --- operator-only detail (V6-32) -----------------------------------------------
 
 
-def test_the_default_guard_follows_the_settings():
-    off = default_guard(Settings(), ApiSettings(auth_enabled=False, token="t"))
-    assert not off.settings.enabled and off.settings.service_token == "t" and off._recheck is None
-    on = default_guard(Settings(), ApiSettings(auth_enabled=True, auth_cookie_name="sid"))
-    assert on.settings.enabled and on.settings.cookie_name == "sid" and on._recheck is not None
+def test_readiness_says_what_is_up_to_anyone_and_why_to_an_administrator(signed_in):
+    anyone = signed_in.get("/readyz").json()
+    assert anyone["checks"] and all(check["detail"] == "" for check in anyone["checks"].values())
+    assert anyone["warnings"] == []
+    person = signed_in.get("/readyz", headers=bearer("uma")).json()
+    assert all(check["detail"] == "" for check in person["checks"].values())
+    admin = signed_in.get("/readyz", headers=bearer("ada", (ADMINS, USERS))).json()
+    assert admin["checks"]["sign_in"]["detail"].startswith("sign-in verified")
+    assert {name: check["ok"] for name, check in admin["checks"].items()} == {
+        name: check["ok"] for name, check in anyone["checks"].items()
+    }
 
 
-def test_sign_in_settings_come_from_the_environment(monkeypatch):
-    monkeypatch.setenv("AUTH_ENABLED", "true")
-    monkeypatch.setenv("AUTH_PUBLIC_KEY_FILE", "/keys/session.pub")
-    monkeypatch.setenv("AUTH_COOKIE_NAME", "sid")
-    api = ApiSettings.from_env()
-    assert (api.auth_enabled, api.auth_public_key_file, api.auth_cookie_name) == (True, "/keys/session.pub", "sid")
-    assert not any("No API_TOKEN" in note for note in api.warnings())
+FAILED_PARTS = {
+    **ANSWERED,
+    "retrieval_errors": {
+        "knowledge": 'connection to server at "nl2sql-vectordb" (172.18.0.5), port 5432 failed',
+        "examples": "examples are disabled",
+    },
+    "node_errors": {"narrator": "ResponseError: model 'x' not found at http://nl2sql-ollama:11434"},
+}
+
+
+def test_an_answer_says_which_part_failed_to_anyone_and_how_to_an_administrator(make_client):
+    guard = Guard(GuardSettings(enabled=True), public_key=KEY.public_key())
+    client = make_client(make_runner(state=FAILED_PARTS), guard=guard)
+    person = ask_as(client, bearer("uma"))["answer"]
+    assert person["retrieval_errors"] == {"knowledge": "unavailable", "examples": "disabled"}
+    assert person["node_errors"] == {"narrator": "failed"}
+    admin = ask_as(client, bearer("ada", (ADMINS, USERS)))["answer"]
+    assert admin["retrieval_errors"] == FAILED_PARTS["retrieval_errors"]
+    assert admin["node_errors"] == FAILED_PARTS["node_errors"]
+
+
+def test_a_crash_is_named_to_anyone_and_described_to_an_administrator(make_client):
+    guard = Guard(GuardSettings(enabled=True), public_key=KEY.public_key())
+    client = make_client(make_runner(raises=OSError("cannot open /etc/nl2sql/secret")), guard=guard)
+    person = ask_as(client, bearer("uma"))
+    assert person["error"] == "the question could not be answered: OSError"
+    listed = client.get("/v1/questions", headers=bearer("ada", (ADMINS, USERS))).json()["jobs"]
+    assert listed == [], "someone else's question is not listed, administrator or not"
+    admin = ask_as(client, bearer("ada", (ADMINS, USERS)))
+    assert admin["error"] == "OSError: cannot open /etc/nl2sql/secret"
+    events = client.get(f"/v1/questions/{admin['id']}/events", headers=bearer("ada", (ADMINS, USERS))).text
+    assert "cannot open /etc/nl2sql/secret" in events
+    events = client.get(f"/v1/questions/{person['id']}/events", headers=bearer("uma")).text
+    assert "event: done" in events and "/etc/nl2sql/secret" not in events
+
+
+def test_a_development_server_can_show_everyone_everything(make_client):
+    guard = Guard(GuardSettings(enabled=True), public_key=KEY.public_key())
+    client = make_client(make_runner(state=FAILED_PARTS), guard=guard, api=ApiSettings(debug_detail=True))
+    assert ask_as(client, bearer("uma"))["answer"]["node_errors"] == FAILED_PARTS["node_errors"]
+
+
+
+# --- the reload signal (V6-33) --------------------------------------------------
+
+
+class Reloadable:
+    def __init__(self):
+        self.reloads = 0
+
+    def reload(self):
+        self.reloads += 1
+        return ["literals", "schema_edges"]
+
+
+def test_only_an_administrator_may_have_the_agent_read_again(make_client):
+    agent = Reloadable()
+    guard = Guard(GuardSettings(enabled=True), public_key=KEY.public_key())
+    client = make_client(guard=guard, agent_factory=lambda: agent)
+    assert client.post("/v1/admin/reload").status_code == 401
+    refused = client.post("/v1/admin/reload", headers=bearer("uma"))
+    assert refused.status_code == 403 and refused.json()["error"]["code"] == "forbidden"
+    assert agent.reloads == 0
+    client.get("/v1/meta", headers=bearer("ada", (ADMINS, USERS)))  # builds the agent
+    answer = client.post("/v1/admin/reload", headers=bearer("ada", (ADMINS, USERS)))
+    assert answer.status_code == 200 and agent.reloads == 1
+    assert answer.json()["reloaded"] == ["literals", "schema_edges"]
+    assert answer.json()["sessions_forgotten"] == 0, "this guard asks Postgres nothing, so holds nothing"
+
+
+def test_before_the_agent_has_read_anything_there_is_nothing_to_reload(make_client):
+    def never():
+        raise AssertionError("a reload must not build the agent")
+
+    guard = Guard(GuardSettings(enabled=True), public_key=KEY.public_key())
+    client = make_client(guard=guard, agent_factory=never)
+    answer = client.post("/v1/admin/reload", headers=bearer("ada", (ADMINS, USERS)))
+    assert answer.status_code == 200 and answer.json() == {"reloaded": [], "sessions_forgotten": 0}
+
+
+def test_a_reload_makes_the_guard_ask_about_every_session_again(make_client):
+    asked = []
+    guard = Guard(
+        GuardSettings(enabled=True),
+        public_key=KEY.public_key(),
+        recheck=lambda identity: asked.append(identity.user) or frozenset({ADMINS, USERS}),
+    )
+    client = make_client(guard=guard, agent_factory=lambda: Reloadable())
+    admin = bearer("ada", (ADMINS, USERS))
+    answer = client.post("/v1/admin/reload", headers=admin)
+    assert answer.json()["sessions_forgotten"] == 1 and asked == ["ada"]
+    client.post("/v1/admin/reload", headers=admin)
+    assert asked == ["ada", "ada"], "asked again after the reload forgot the answer"

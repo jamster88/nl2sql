@@ -88,7 +88,8 @@ def test_an_exception_inside_the_pipeline_is_a_failed_job_not_a_lost_worker(stor
     jobs = store(make_runner(raises=RuntimeError("ollama went away")))
     job = finished(jobs, jobs.submit("q"))
     assert job.status == "failed"
-    assert job.error == "RuntimeError: ollama went away"
+    assert job.error == "the question could not be answered: RuntimeError"
+    assert job.fault == "RuntimeError: ollama went away", "in its own words, for an operator (V6-32)"
     # The pool survives it: the next question still runs.
     assert finished(jobs, jobs.submit("q2")).status == "failed"
 

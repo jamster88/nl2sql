@@ -30,9 +30,9 @@ def test_the_base_image_is_pinned(dockerfile: str):
 def test_it_carries_its_three_packages_and_nothing_of_the_agents(dockerfile: str):
     copied = re.findall(r"^COPY (\S+)", dockerfile, re.MULTILINE)
     assert copied == [
-        "auth/requirements.txt",
+        "auth/requirements.lock",
+        "common/",
         "auth/nl2sql_auth/",
-        "auth/nl2sql_identity/",
         "ldap/nl2sql_ldap/",
     ]
 

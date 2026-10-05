@@ -41,7 +41,7 @@ from ldap3.utils.conv import escape_filter_chars
 from ldap3.utils.dn import parse_dn
 
 from .directory import PERSON_CLASSES, Directory, DirectoryError
-from .layout import Layout, login_problem, normalise_login
+from .layout import login_problem, normalise_login
 from .settings import UpstreamSettings
 
 #: How deep nested groups are followed. A cycle is stopped by the visited

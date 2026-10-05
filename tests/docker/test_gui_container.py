@@ -64,11 +64,13 @@ def _issue(volume: str, api_image: str, hostnames: str) -> None:
     for `hostnames` from a development CA made for this test, and the CA's
     certificate beside them as `ca.crt`. One identity shared by the test's
     containers, where compose gives each its own -- what is under test here
-    is the hop, not which key each server holds."""
+    is the hop, not which key each server holds. As root, as compose runs
+    pki, and given to the API's account with nginx's group (6.2): the API
+    reads the key as its owner, the page through its group."""
     result = subprocess.run(
         [
-            "docker", "run", "--rm", "-v", f"{volume}:/etc/nl2sql/tls", "--entrypoint", "python", api_image,
-            "-m", "nl2sql_identity.pki", "--ca-dir=/tmp/ca", f"shared=/etc/nl2sql/tls={hostnames}",
+            "docker", "run", "--rm", "--user", "0:0", "-v", f"{volume}:/etc/nl2sql/tls", "--entrypoint", "python",
+            api_image, "-m", "nl2sql_identity.pki", "--ca-dir=/tmp/ca", f"shared=/etc/nl2sql/tls={hostnames}=10001:101",
         ],
         capture_output=True, text=True, timeout=120,
     )

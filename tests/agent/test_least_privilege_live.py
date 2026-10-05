@@ -308,8 +308,10 @@ def test_the_reader_may_connect_to_the_retail_database_and_no_other(reader):
 
 
 @pytest.mark.parametrize("database", ["postgres", "template1"])
-def test_the_readers_password_opens_no_other_database(database):
-    """The catalog says no; this is the server saying it at the door."""
+def test_the_readers_password_opens_no_other_database(reader, database):
+    """The catalog says no; this is the server saying it at the door. (With
+    `reader`, so a stack that is down is a skip here as everywhere else in
+    this file, not a refusal it never got.)"""
     other = sqlalchemy.create_engine(make_url(POSTGRES_URL).set(database=database))
     try:
         with pytest.raises(sqlalchemy.exc.OperationalError, match="CONNECT privilege"):
@@ -518,3 +520,14 @@ def test_a_principal_the_reader_may_not_become_is_refused_by_the_server(reader):
     db = Database(POSTGRES_URL)
     with pytest.raises(sqlalchemy.exc.DatabaseError):
         db.run_select("SELECT 1", principal=OWNER)
+
+
+def test_postgres_is_told_whose_statement_it_is_for_that_transaction_only(reader):
+    """V6-64: inside the transaction `current_user` is the person; the
+    application name puts them in pg_stat_activity and the log as well, and
+    is gone from the pooled connection once the transaction is."""
+    db = Database(POSTGRES_URL)
+    named = db.run_select("SELECT current_setting('application_name'), current_user", principal=READER)
+    assert tuple(named.rows[0]) == (f"nl2sql:agent:{READER}", READER)
+    after = db.run_select("SELECT current_setting('application_name')")
+    assert after.rows[0][0] != f"nl2sql:agent:{READER}"

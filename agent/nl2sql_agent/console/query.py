@@ -32,25 +32,24 @@ changed anything, and a rollback says so to the server as well.
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass, field
-from datetime import date, datetime, time as clock, timedelta
-from decimal import Decimal
 from typing import Any, Literal
 
 from sqlalchemy import text
 
 from ..config import Settings
-from ..database import Database, _quote_identifier, plan_cost_problem, strip_sql, total_cost
+from ..database import Database, _as_person, plan_cost_problem, strip_sql, total_cost
 from ..state import PLANNER, RUNTIME, STATIC
 from ..validate import validate
+from nl2sql_common.values import json_safe
+from nl2sql_common.errors import DATABASE_ERRORS, Unavailable
 
 Mode = Literal["run", "plan", "analyze"]
 MODES: tuple[Mode, ...] = ("run", "plan", "analyze")
 
 
-class DatabaseUnavailable(RuntimeError):
+class DatabaseUnavailable(Unavailable, RuntimeError):
     """The database could not be reached at all -- not a query that failed."""
 
 
@@ -113,33 +112,6 @@ class Identity:
         return not (self.superuser or self.can_write)
 
 
-def json_safe(value: Any) -> Any:
-    """A cell as JSON can carry it without losing what it said.
-
-    Decimals become strings rather than floats: `719279.97` is the answer
-    being checked, and a float would show `719279.9699999999`. A float that
-    is not finite is a string too, because JSON has no spelling for NaN and
-    the response would otherwise fail to serialise at all.
-    """
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-    if isinstance(value, float):
-        return value if math.isfinite(value) else str(value)
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, (datetime, date, clock)):
-        return value.isoformat()
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return "\\x" + bytes(value).hex()
-    if isinstance(value, (list, tuple)):
-        return [json_safe(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): json_safe(item) for key, item in value.items()}
-    if isinstance(value, timedelta):
-        return str(value)
-    return str(value)
-
-
 def error_message(exc: BaseException) -> str:
     """The database's words, as the agent's gates record them."""
     return str(getattr(exc, "orig", exc)).strip() or type(exc).__name__
@@ -163,13 +135,13 @@ class Inspector:
     def tables(self) -> list[str]:
         try:
             return self.db.table_names()
-        except Exception as exc:  # noqa: BLE001 - the caller answers 503
+        except DATABASE_ERRORS as exc:  # the caller answers 503
             raise DatabaseUnavailable(error_message(exc)) from exc
 
     def catalog(self) -> list:
         try:
             return self.db.catalog()
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             raise DatabaseUnavailable(error_message(exc)) from exc
 
     def prompt(self, table: str) -> str:
@@ -179,7 +151,7 @@ class Inspector:
         """
         try:
             return self.db.schema_and_samples([table], self.agent.sample_rows)
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             raise DatabaseUnavailable(error_message(exc)) from exc
 
     def identity(self) -> Identity:
@@ -213,7 +185,7 @@ class Inspector:
                     ),
                     {"schema": self.agent.db_schema},
                 ).one()
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             raise DatabaseUnavailable(error_message(exc)) from exc
         return Identity(
             role=row.role,
@@ -253,7 +225,7 @@ class Inspector:
                     outcome = self._staged(conn, cleaned, mode, found, principal)
                 finally:
                     transaction.rollback()
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             raise DatabaseUnavailable(error_message(exc)) from exc
         outcome.elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         return outcome
@@ -268,11 +240,11 @@ class Inspector:
         if principal:
             # As the executor does for a question: the plan, the run and the
             # privilege errors are the person's own.
-            conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
+            _as_person(conn, principal, "console")
 
         try:
             plan = conn.exec_driver_sql(f"EXPLAIN (FORMAT JSON) {sql}").scalar()
-        except Exception as exc:  # noqa: BLE001 - the planner's refusal is the answer
+        except DATABASE_ERRORS as exc:  # the planner's refusal is the answer
             message = error_message(exc)
             return Outcome(
                 sql=sql,
@@ -296,14 +268,14 @@ class Inspector:
                 outcome.plan = conn.exec_driver_sql(
                     f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {sql}"
                 ).scalar()
-            except Exception as exc:  # noqa: BLE001 - the executor's refusal is the answer
+            except DATABASE_ERRORS as exc:  # the executor's refusal is the answer
                 return _failed(outcome, found, exc)
             outcome.executed = True
             return outcome
 
         try:
             described, fetched = self._fetch(conn, sql)
-        except Exception as exc:  # noqa: BLE001 - the executor's refusal is the answer
+        except DATABASE_ERRORS as exc:  # the executor's refusal is the answer
             return _failed(outcome, found, exc)
         # Outside the executor's `try`: the query has run, and a failure to
         # name its types is the connection's, not the query's.

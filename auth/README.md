@@ -9,9 +9,11 @@ this directory or beside it:
 | the auth service | `auth/nl2sql_auth`, container `nl2sql-auth`, port 8446 | signs people in, issues the session, keeps the database's roles in step with the directory, serves the directory page's API |
 | the directory page | `auth/gui`, container `nl2sql-directory-gui`, port 8084 | people and groups, for `nl2sql-admins`; standalone only |
 
-and one package every other service imports, `auth/nl2sql_identity`: the
+and one package every other service imports, `nl2sql_identity`: the
 session format and the guard the API, the SQL console and the review
-service put in front of their routes.
+service put in front of their routes. It lives in
+[`common/`](../common/README.md) since 6.2.0, beside `nl2sql_common`, and
+each image installs it as a package.
 
 Sign-in is on by default. `AUTH_ENABLED=false` in `.env` -- or
 `./launch.sh --no-auth` / `./start.sh --no-auth` for one run -- turns it off
@@ -68,13 +70,41 @@ from a group -- or from the directory -- loses what it gave them within a
 minute, not when their session ends: a person who no longer exists is told
 `401 account_removed`.
 
+A session can also be ended before it expires (6.2). The same question asks
+Postgres whether this session is still its holder's, and one that is not is
+refused with `401 session_revoked`:
+
+| What happened | What is ended | How |
+| --- | --- | --- |
+| Signing out (`POST /auth/logout`, the pages' and the desktop client's sign-out) | that session, wherever a copy of it is | its `jti`, kept until it would have expired anyway |
+| A password changed (`POST /auth/password`) | every session signed in before it -- the browser that changed it gets a new one | a cut-off for the person, a second after the change |
+| A password set by an administrator | every session that person signed in before it | the same |
+| An account the directory locked after too many wrong passwords | every session from before the lock | the role sync records the directory's own lock time |
+| Someone removed | every session they had | a cut-off, so a person later re-created under the same name does not get them back |
+
+The lists live in the retail database, in a schema the sync's login writes
+and nobody reads: the reader -- and so the services' rechecks -- may only
+call `nl2sql_auth.session_revoked(user, jti, issued_at)`, which answers yes
+or no about one session (`docker/auth_roles.sql`). This service forgets its
+own answers at once; every other service within its minute, or at once on
+an administrator's `POST /v1/admin/reload` to the API. A token counts whole
+seconds, so a sign-in in the second a password changed is signed at the
+cut-off rather than refused by it. Without `AUTH_ROLESYNC_DB_URL` nothing can
+be revoked, and signing out forgets only the browser's cookie -- which the
+start-up says.
+
 And what they do runs as them. The API, the console and the review service
 connect as the agent's read-only reader and, for each question or
 statement, `SET LOCAL ROLE` to the person -- which the reader may do, and do
 only that: it is granted each person's role `WITH INHERIT FALSE, SET TRUE`,
 so it can become them for a transaction without ever holding what they
-hold. The database's own logs, grants and row-level rules then see a
-person, not a service.
+hold. The database's own grants and row-level rules then see a person, not
+a service -- inside that transaction. The connection is still the reader's,
+so `session_user` and the connection log say the reader; since 6.2 the
+transaction's `application_name` says whom it was for --
+`nl2sql:agent:alice`, `nl2sql:console:alice`, `nl2sql:review:alice` -- which is
+what `pg_stat_activity` shows while it runs and `%a` puts in the database's
+own log.
 
 ### The four groups
 
@@ -157,7 +187,7 @@ traces to MLflow directly, on the stack's network.
 | `GET /auth/meta` | anyone | what a sign-in form needs: the mode, the session length, the shortest password |
 | `POST /auth/login` | anyone | sign a browser in: `{"username", "password"}` in, the session as a cookie |
 | `POST /auth/token` | anyone | sign a client in: the same in, the session and its token out |
-| `POST /auth/logout` | anyone | forget the cookie |
+| `POST /auth/logout` | anyone | sign out: the session presented -- the bearer, else the cookie -- is ended everywhere, and the cookie forgotten |
 | `GET /auth/session` | signed in | who, with the roles Postgres says they hold now |
 | `POST /auth/password` | a person | change your own password: `{"current", "new"}` (standalone) |
 | `GET /auth/verify` | a proxy | may this request through? `?role=` for groups other than MLflow's |
@@ -183,7 +213,7 @@ Failures use the stack's one envelope, `{"error": {"code", "message"}}`:
 | `invalid_credentials` | 401 | the database did not accept that name and password |
 | `too_many_attempts` | 429 | `AUTH_THROTTLE_FAILURES` (5) wrong for one name, or `AUTH_THROTTLE_ADDRESS_FAILURES` (50) from one address, in `AUTH_THROTTLE_SECONDS` (900) |
 | `sign_in_unavailable` | 503 | the database could not be asked |
-| `unauthorized`, `sign_in_required`, `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid`, `account_removed` | 401 | no session, or one that is not good |
+| `unauthorized`, `sign_in_required`, `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid`, `account_removed`, `session_revoked` | 401 | no session, or one that is not good |
 | `forbidden`, `cross_site`, `not_a_person` | 403 | signed in, but not allowed this |
 | `wrong_password` | 403 | the current password, when changing it |
 | `password_too_short` | 422 | shorter than `LDAP_MIN_PASSWORD_LENGTH` |
@@ -191,6 +221,7 @@ Failures use the stack's one envelope, `{"error": {"code", "message"}}`:
 | `cannot_remove_yourself`, `cannot_demote_yourself`, `replica_read_only` | 409 | |
 | `not_found` | 404 | no such person |
 | `directory_unavailable`, `role_sync_unavailable`, `roles_unavailable` | 503 | |
+| `revocation_unavailable` | 503 | done -- signed out of this browser, the password changed or set, the person removed -- but the sessions from before could not be ended; try again, or they end when they expire |
 
 ## The directory page
 
@@ -210,9 +241,18 @@ edited on its primary, so there is no page to serve.
 open https://localhost:8084
 ```
 
-The directory GUI: 54 tests, at 100% of statements, branches, functions and
+The directory GUI: 61 tests, at 100% of statements, branches, functions and
 lines (`cd auth/gui && npm test`, or `pytest --run-node
 tests/auth/test_directory_gui_suite.py`).
+
+## Running unprivileged
+
+Since 6.2 the service starts as root only long enough to give the account
+`nl2sql` (10001) the two directories it writes -- the signing key's and the
+public key's, with whatever an older release wrote there as root -- and runs
+as it from then on; the start-up says `running as nl2sql`. Its TLS key is
+that account's already: the pki service hands each key to the account its
+service runs as (`docker-compose.yml`, the last part of each identity).
 
 ## Settings
 
@@ -235,6 +275,7 @@ The auth service's, read from the environment; compose passes each from
 | `AUTH_THROTTLE_FAILURES` | `5` | wrong passwords for one name |
 | `AUTH_THROTTLE_ADDRESS_FAILURES` | `50` | wrong passwords from one address, higher because a proxy or NAT makes many people one address |
 | `AUTH_THROTTLE_SECONDS` | `900` | |
+| `AUTH_TRUSTED_PROXIES` | -- (compose: the six page proxies) | addresses, networks or names whose `X-Forwarded-For` counts as where a sign-in came from; anyone else -- a desktop client on the published port -- is counted by the address it connected from, since it writes that header itself |
 | `AUTH_DB_HOST` | `nl2sql-postgres` | the database people sign in to |
 | `AUTH_DB_PORT` | `5432` | |
 | `AUTH_DB_NAME` | `nl2sql_retail` | compose passes `POSTGRES_DB` |

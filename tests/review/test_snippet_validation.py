@@ -28,6 +28,16 @@ from nl2sql_review.snippet_validation import (
     validate_snippet,
 )
 from tests import live_stores
+import psycopg
+
+
+class Refusal(psycopg.Error):
+    """A database refusing a statement, as the driver raises it. `diag` is a
+    plain attribute here so a test can say what the server said."""
+
+    diag = None
+
+
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 KNOWN = ["dim_date", "dim_product", "fact_pos_retail_sales"]
@@ -229,7 +239,7 @@ def test_a_static_problem_never_reaches_the_database():
 
 
 def test_the_databases_refusal_is_the_problem():
-    error = Exception("x")
+    error = Refusal("x")
     error.diag = SimpleNamespace(message_primary='column d.date_ky does not exist', message_hint="Perhaps you meant d.date_key.")
     result, conn = run(conn=Conn(fail=error))
     assert not result.valid

@@ -14,7 +14,10 @@ interface changes someone:
 * a person's own login is read-only and time-limited when they connect
   directly, with psql or a BI tool;
 * a person no longer in any mapped group, or no longer in the directory, has
-  their role dropped -- or, if Postgres will not drop it, disabled.
+  their role dropped -- or, if Postgres will not drop it, disabled;
+* a person the password policy has locked has every session from before the
+  lock refused (`revocation.Revocations.locked`), and the revocation lists
+  are swept of what refuses only expired tokens.
 
 Only roles this made are touched: they are the members of `nl2sql_ldap`, and
 the sync's login holds ADMIN on nothing else. A directory person whose name is
@@ -36,6 +39,8 @@ import psycopg
 from psycopg import sql
 
 from nl2sql_ldap.layout import login_problem
+
+from .revocation import Revocations
 
 MARKER = "nl2sql_ldap"
 
@@ -101,6 +106,8 @@ class SyncResult:
     conflicts: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: People locked by the password policy, whose earlier sessions are refused.
+    locked: list[str] = field(default_factory=list)
 
 
 def comment_for(name: str, mail: str) -> str:
@@ -166,6 +173,7 @@ class RoleSync:
         connection_limit: int = 5,
         connect: Callable = psycopg.connect,
         clock: Callable[[], dt.datetime] = lambda: dt.datetime.now(dt.timezone.utc),
+        revocations: Revocations | None = None,
     ) -> None:
         self.rolesync_url = rolesync_url
         self.people = people
@@ -175,6 +183,7 @@ class RoleSync:
         self.connection_limit = connection_limit
         self._connect = connect
         self._clock = clock
+        self.revocations = revocations
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self.last: SyncResult | None = None
@@ -305,6 +314,13 @@ class RoleSync:
                     result.errors.append(f"{person}: {_first_line(exc)}")
                     continue
                 result.removed.append(f"{person} ({outcome})")
+            if self.revocations is not None:
+                try:
+                    result.locked = self.revocations.locked(people, conn=conn)
+                    self.revocations.purge(conn=conn)
+                except psycopg.Error as exc:
+                    result.ok = False
+                    result.errors.append(f"the revoked-session lists: {_first_line(exc)}")
         return result
 
     # --- the loop ------------------------------------------------------------

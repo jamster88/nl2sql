@@ -19,6 +19,8 @@
 --                      change only roles it holds ADMIN on, so the sync can
 --                      make and remove people but cannot touch the owner, the
 --                      reader, or any role it did not create.
+--   nl2sql_sessions    owns the revoked-session lists (schema nl2sql_auth,
+--                      at the end of this file). Never logs in.
 --
 -- Run it as the superuser on every start, after reader_role.sql, with three
 -- psql variables and the sync's password in the environment, never on a
@@ -101,3 +103,61 @@ WHERE marker.roleid = 'nl2sql_ldap'::regrole
       SELECT 1 FROM pg_auth_members held
       WHERE held.roleid = person.oid AND held.member = :'reader'::regrole
   ) \gexec
+
+-- Revoked sessions (V6-61). A session is a signed token, good until it
+-- expires; these two lists are how one ends sooner. The auth service writes
+-- them, as the sync's login: a session's `jti` when it is signed out, and a
+-- person's cut-off -- every session they signed in before it -- when their
+-- password is changed or set, their account is locked, or they are removed.
+-- Every service's guard asks about the session in front of it once a minute
+-- (nl2sql_identity.postgres.REVOKED_SQL).
+--
+-- The lists belong to nl2sql_sessions, a role nobody logs in as. The sync
+-- may read and write them; the reader may only call session_revoked(), which
+-- answers yes or no about one session -- the lists themselves, who signed
+-- out and when, are not the reader's to read, nor any SQL it runs. Times are
+-- seconds since 1970, the clock the tokens are signed with.
+SELECT 'CREATE ROLE nl2sql_sessions NOLOGIN'
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'nl2sql_sessions') \gexec
+ALTER ROLE nl2sql_sessions NOLOGIN;
+
+CREATE SCHEMA IF NOT EXISTS nl2sql_auth AUTHORIZATION nl2sql_sessions;
+ALTER SCHEMA nl2sql_auth OWNER TO nl2sql_sessions;
+REVOKE ALL ON SCHEMA nl2sql_auth FROM PUBLIC;
+
+CREATE TABLE IF NOT EXISTS nl2sql_auth.revoked_sessions (
+    jti         text PRIMARY KEY,
+    username    text NOT NULL,
+    reason      text NOT NULL,
+    revoked_at  bigint NOT NULL,
+    -- When the token would have expired anyway: the row is useless after.
+    expires_at  bigint NOT NULL
+);
+CREATE TABLE IF NOT EXISTS nl2sql_auth.session_cutoffs (
+    username    text PRIMARY KEY,
+    -- A session issued before this second is refused.
+    not_before  bigint NOT NULL,
+    reason      text NOT NULL,
+    -- When every session that predates the cut-off has expired anyway.
+    expires_at  bigint NOT NULL
+);
+ALTER TABLE nl2sql_auth.revoked_sessions OWNER TO nl2sql_sessions;
+ALTER TABLE nl2sql_auth.session_cutoffs OWNER TO nl2sql_sessions;
+
+CREATE OR REPLACE FUNCTION nl2sql_auth.session_revoked(username text, jti text, issued_at bigint)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+    SELECT EXISTS (SELECT 1 FROM nl2sql_auth.revoked_sessions r WHERE r.jti = session_revoked.jti)
+        OR EXISTS (SELECT 1 FROM nl2sql_auth.session_cutoffs c
+                   WHERE c.username = session_revoked.username
+                     AND session_revoked.issued_at < c.not_before)
+$$;
+ALTER FUNCTION nl2sql_auth.session_revoked(text, text, bigint) OWNER TO nl2sql_sessions;
+REVOKE ALL ON FUNCTION nl2sql_auth.session_revoked(text, text, bigint) FROM PUBLIC;
+
+GRANT USAGE ON SCHEMA nl2sql_auth TO :"reader", :"rolesync";
+GRANT EXECUTE ON FUNCTION nl2sql_auth.session_revoked(text, text, bigint) TO :"reader", :"rolesync";
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON nl2sql_auth.revoked_sessions, nl2sql_auth.session_cutoffs TO :"rolesync";

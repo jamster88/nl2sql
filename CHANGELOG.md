@@ -33,6 +33,59 @@ file where a file is new; the tests a version merely extended are summarised.
 
 ---
 
+## v6_2 (6.2.0) -- 2026-10-04
+
+Phases 3 and 4 of the second adversarial review's mitigation plan
+(`adversary_reviews/v6_1_review_mitigation_plan.md`): the shared foundations,
+and the service refactors that consume them. Before it, a session could not
+be ended (S-18), a service token was an identity with every role and the
+name a header claimed (S-19), every application image but the directory's
+ran as root (M-01), every route was guarded by a dependency added by hand
+(C-03), the review service ran its loaders as scripts with the stores'
+passwords on their command line (I-10, S-21), and five pages each carried a
+copy of the same sign-in. The plan item each change closes is named beside it.
+
+### Added
+- `common/` -- the shared package, installed as one (V6-20, V6-66): `nl2sql_identity`, moved here from `auth/`, beside `nl2sql_common` -- settings from the environment, the error envelope, the error taxonomy, embeddings, dropping root, a person's name for Postgres -- with a `pyproject.toml` at the release's version, which every image installs with pip and records. `common/README.md`, `tests/common/`.
+- Session revocation (V6-61, V6-71's option (a)). `docker/auth_roles.sql` makes schema `nl2sql_auth`, owned by a `NOLOGIN` role, with two lists -- a session's `jti` signed out, and a person's cut-off -- that the role sync's login may write and nobody may read, and `nl2sql_auth.session_revoked(user, jti, issued_at)`, a `SECURITY DEFINER` function the reader and the sync may call, which answers yes or no about one session. The auth service writes the lists (`auth/nl2sql_auth/revocation.py`): `POST /auth/logout` ends the session presented, bearer or cookie; `POST /auth/password` and an administrator's password set cut off every session from before -- the browser that changed it gets a new one, signed at the cut-off; a removal cuts off too; and the role sync records the directory's own lock time for a person the password policy locked (`Person.locked_since`). Rows are swept once nothing they refuse could still be presented. Every service's guard asks in its once-a-minute recheck, now per session rather than per person, and answers `401 session_revoked`; the auth service forgets its answers at once. `revocation_unavailable` (503) when the lists cannot be written. `tests/auth/test_auth_revocation.py`, and four live tests in `tests/auth/test_auth_live.py`.
+- `auth/nl2sql_auth/proxies.py` -- `AUTH_TRUSTED_PROXIES` (V6-63): the addresses, networks or names whose `X-Forwarded-For` counts as where a sign-in came from; names are looked up every half minute. Anyone else is counted by the address it connected from. Compose names the six page proxies. `tests/auth/test_auth_proxies.py`.
+- Named service tokens (V6-62): `API_TOKEN_NAME`/`_ROLES`, `REVIEW_TOKEN_NAME`/`_ROLES`, `CONSOLE_TOKEN_NAME`/`_ROLES`. A token is a caller named `token:<name>` -- what it does is recorded so, never as the `X-Reviewer` it sends, which only an open service with no token records -- holding the roles it is given: `nl2sql_users` for the API's, the console's allowed roles for the console's, and for the review service's the reviewer roles with sign-in on (curating by token is granted by name) and both with it off.
+- `POST /v1/admin/reload` -- for `nl2sql_admins` (V6-33): the agent reads again what it read once -- the literal catalog, the label map and calendar, the foreign keys, the knowledge collections (`Nl2SqlAgent.reload`) -- and the guard asks Postgres about every session again. A promotion needs none: the pairs, snippets and fixes it writes are read from their stores on every question. `Reloaded` is mirrored in the web interface's types and the desktop's records.
+- `API_DEBUG_DETAIL` and `--debug-detail` (V6-32): every caller sees a failure in its own words, for a development server.
+- `rag/ragproc/loaders.py` -- steps 5, 6 and 7 as functions (`load_golden_pairs`, `embed_golden_pairs`, `load_snippets`), returning reports; the three scripts are command lines over them (V6-27). `tests/rag/test_loaders.py`.
+- `web/` -- the shared web package (V6-25): the sign-in gate and session client, `ApiError`, `plainText` and `counted`, the dev server's proxies, and how a page's configuration takes it in. Source, with no dependencies of its own; each page resolves `@nl2sql/web` to it and compiles it with its own toolchain, its tests run in every page's suite, and its sources count towards every page's coverage. `web/README.md`, `tests/web/`.
+- `nl2sql_common/attribution.py` -- the person's name in the transaction's `application_name` (`nl2sql:agent:alice`, `:console:`, `:review:`), set beside each `SET LOCAL ROLE` (V6-64), so `pg_stat_activity` and the database's log say whom a statement was for.
+- Hash-checked locks for every Python image (V6-24): `agent/`, `review/`, `auth/`, `ldap/` and `data_gen/` each have a `requirements.lock`, compiled with hashes from its `requirements.txt` and installed with `--require-hashes`; the directory's Alpine packages pinned to their release. `tests/security/test_supply_chain.py`.
+- `tests/security/test_unprivileged.py`, `test_error_taxonomy.py`; `tests/route_table.py`.
+
+### Fixed
+- The review service's loads -- the stores' URLs, passwords and all, were on the loaders' command lines, which `ps` shows anyone on the host (S-21); `launch.sh` passed them the same way to its one-off loads. Both pass nothing secret on a command line now.
+- Fix ids -- the highest plus one, so deleting the newest fix gave its id to the next, and anything that had quoted it then meant another fix (V6-29). Each store draws them from a sequence, moved past the highest id on every start; a store whose schema someone else manages keeps the old way.
+- The desktop client's sign-out forgot its token and told nobody; it ends the session at the auth service too.
+- `tests/agent/test_least_privilege_live.py` -- a test that refused when the stack was down rather than skipping; and the docs tests' route walks, which passed with nothing in them once a router held the routes.
+
+### Updated
+- Every service's routes are on routers, each carrying its guard (V6-26): `agent/nl2sql_agent/api/routes.py`, `console/routes.py`, `review/nl2sql_review/routes.py`, `auth/nl2sql_auth/routes.py`. The routes open by design are on one router of their own; every other route is refused to anyone the router's guard refuses before anyone thinks to guard it. What a route can reach is an explicit context rather than `create_app`'s locals. `tests/security/test_routes_guarded.py` holds that no route is added to an application directly and that every router but the open one carries a guard.
+- Nothing runs as root but the one-shot `pki` (V6-31, V6-28). The agent image -- the API, the console, the CLI -- runs as `nl2sql` (10001); the six page proxies as nginx's own account (101), with the `user` directive gone and what nginx writes at start made theirs; the smoke test as `nobody`. The auth service starts as root only long enough to give `nl2sql` its two key directories and what an older release wrote there (`privileges.become(..., recursive=True)`); MLflow gives its artifact volume to `mlflow` (10002) and drops to it with `setpriv` (`docker/mlflow/entrypoint.sh`); the desktop image copies its jar out as the owner of where it lands (`desktop/copy-out.sh`). The review service becomes the owner of the mounted `context_questions/` -- the person who cloned the checkout -- keeping `nl2sql`'s group to read its key, and writes as `nl2sql` when the directory is root's. The pki service runs as root in compose and hands each key to its service's account, 0640, on every run, so a 6.1 volume's root-owned key is moved over on the first start (`NAME=DIR=HOSTS=UID:GID`).
+- The review service writes through a library with a lock (V6-27, V6-04): a promotion, a withdrawal and a snippet write call `ragproc.loaders` in its own process, with each store an argument, holding a lock in the process and an advisory lock on the documents' directory between processes, from reading the document to the last load. `REVIEW_RELOAD_TIMEOUT_SECONDS` is how long one request to the embedding host may take. A load that breaks is reported beside the written pair, not raised.
+- Operator-only detail (V6-32): `/readyz` gives each dependency's state to anyone and the reason only to an administrator, in all four services; an answer's `retrieval_errors` and `node_errors` say `unavailable`, `disabled` or `failed` to anyone else; a crashed job's `error` names the exception's type, with its words kept for an administrator; and the progress stream never carries a driver's words.
+- Engine and `SET` hygiene (V6-22); the error taxonomy (V6-23) -- 79 `except Exception` in the agent and the review service catch the family they mean, and the boundaries left say why on the line.
+- `docker-compose.yml` -- `pki` as root, each identity's owner; `AUTH_TRUSTED_PROXIES`; the token names and roles; `API_DEBUG_DETAIL`.
+- `launch.sh` -- its one-off loads run as `10001:10001`, with the stores' URLs from their environment.
+- Version 6.2.0 in every declaration, `web/package.json` among them (thirty-five places); `setup.sh` pins `v6_2`.
+
+### Documentation
+- `agent/API.md`, `auth/README.md`, `review/README.md`, `console/README.md`, `USAGE_GUIDE.md`, `SECURITY.md` (as of 6.2.0) -- revocation and `session_revoked`, the named tokens and their settings, the reload route, who sees a failure's words, the trusted proxies, running unprivileged, the in-process loads and the lock, the fix-id sequence, `application_name`; `common/README.md` and `web/README.md`; `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_2.md`, what 6.2 changed in arch6.
+
+### Verified
+Before publishing, against images built from this checkout.
+- The acceptance tier (`--run-acceptance`): 9 passed, none skipped, from a clean start -- every image built from the checkout, the stack started with the user's two commands beside nothing else, the administrator signed in on every page, a question answered through the web interface, its verdict promoted into the golden set through the review service's in-process loads, SQL through the console, the question's trace through MLflow's front door, and the desktop client signing in.
+- Each changed image built and started as its account: the agent as `nl2sql` (10001), the six pages as nginx (101), the smoke test as `nobody`, MLflow as `mlflow` (10002); the auth service dropping to `nl2sql` with its key directories handed over and its keys written as the account's; the review service dropping to the owner of a mounted `context_questions/`, which it could write; the desktop image copying its jar out.
+- The sign-in tier against a real retail database and directory (`tests/auth/test_auth_live.py`): 14 passed, the four new ones among them -- the reader may ask about one session and read neither list, a session signed out is refused by the lookup every service runs and only that session, a password an administrator set ends that person's sessions while the sign-in straight after is kept, and the directory's lockout ends the sessions from before it.
+- The fix stores against a throwaway pgvector: 37 passed, the sequence among them.
+- Every page's suite (`--run-node`, 50) and the desktop client's (`--run-java`, 411 tests), each at 100%; the shell scripts at 100% of 1,990 commands; the offline suite, 4,859.
+- Not run here: the live tests that read the running stack's own stores (`tests/live_stores.py`), which need a stack `launch.sh` started -- it sets the stores' passwords -- and the published-tag checks, which wait for the push.
+
 ## v6_1 (6.1.0) -- 2026-10-04
 
 Phase 1 and Phase 2 of the second adversarial review's mitigation plan

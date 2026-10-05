@@ -13,11 +13,13 @@ from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from nl2sql_common.attribution import APPLICATION_NAME_SQL, application_name
+from nl2sql_common.errors import DATABASE_ERRORS, Invalid
 
 _SELECT_START = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
-class UnsafeQueryError(ValueError):
+class UnsafeQueryError(Invalid, ValueError):
     """Raised for SQL that is not a single read-only statement."""
 
 
@@ -301,11 +303,11 @@ class Database:
                     conn.exec_driver_sql("SET TRANSACTION READ ONLY")
                     conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
                     if principal:
-                        conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
+                        _as_person(conn, principal)
                     row = conn.exec_driver_sql(
                         f"EXPLAIN (FORMAT JSON) {cleaned}"
                     ).scalar()
-        except Exception as exc:  # surfaced to the Repair Agent as feedback
+        except DATABASE_ERRORS as exc:  # surfaced to the Repair Agent as feedback
             return None, str(getattr(exc, "orig", exc)).strip()
         return total_cost(row), None
 
@@ -324,9 +326,7 @@ class Database:
                 conn.exec_driver_sql("SET TRANSACTION READ ONLY")
                 conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
                 if principal:
-                    # Parameters are not allowed here, so the identifier is
-                    # quoted rather than interpolated raw.
-                    conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
+                    _as_person(conn, principal)
                 cursor = conn.exec_driver_sql(cleaned)
                 columns = list(cursor.keys())
                 rows = cursor.fetchmany(self._max_rows + 1)
@@ -337,6 +337,16 @@ class Database:
 def _quote_identifier(name: str) -> str:
     """Escape an identifier for use inside double quotes."""
     return name.replace('"', '""')
+
+
+def _as_person(conn: Any, principal: str, service: str = "agent") -> None:
+    """The rest of this transaction is `principal`'s, and Postgres says so.
+
+    `SET LOCAL ROLE` takes no parameters, so the identifier is quoted rather
+    than interpolated raw; the application name is a parameter (V6-64).
+    """
+    conn.exec_driver_sql(APPLICATION_NAME_SQL, {"name": application_name(service, principal)})
+    conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
 
 
 def plan_cost_problem(cost: float | None, ceiling: float) -> str | None:

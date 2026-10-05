@@ -24,6 +24,8 @@ from nl2sql_agent.api.settings import ApiSettings
 from nl2sql_agent.config import Settings
 from nl2sql_agent.llm import LlmUnavailableError
 
+from tests.route_table import flattened
+
 from .conftest import ask, make_runner
 
 
@@ -261,7 +263,7 @@ def test_the_openapi_document_describes_every_route(client):
     assert set(document["paths"]) == {
         "/", "/healthz", "/readyz", "/v1/meta",
         "/v1/questions", "/v1/questions/{job_id}", "/v1/questions/{job_id}/events",
-        "/v1/questions/{job_id}/feedback",
+        "/v1/questions/{job_id}/feedback", "/v1/admin/reload",
     }
     assert document["info"]["version"] == __version__
 
@@ -568,7 +570,7 @@ def test_every_other_route_refuses_an_anonymous_caller(secured):
     opening it deliberately means editing OPEN_BY_DESIGN above.
     """
     checked = 0
-    for route in secured.app.routes:
+    for route in flattened(secured.app.routes):
         path = getattr(route, "path", None)
         methods = (getattr(route, "methods", None) or set()) - {"HEAD", "OPTIONS"}
         if not path or not methods or path in OPEN_BY_DESIGN:
@@ -751,7 +753,7 @@ def test_a_keepalive_is_a_comment_line_rather_than_an_event():
     """Clients must not see it as data. An SSE comment keeps the connection
     warm and is invisible to `EventSource`.
     """
-    from nl2sql_agent.api.app import _sse
+    from nl2sql_agent.api.routes import _sse
     from nl2sql_agent.api.jobs import StreamChunk
 
     assert _sse(StreamChunk("keepalive"), base="") == ": keep-alive\n\n"
@@ -761,7 +763,7 @@ def test_a_timed_out_stream_says_how_to_come_back():
     """Rather than closing silently, which a client cannot tell apart from a
     dropped network.
     """
-    from nl2sql_agent.api.app import _sse
+    from nl2sql_agent.api.routes import _sse
     from nl2sql_agent.api.jobs import StreamChunk
 
     body = _sse(StreamChunk("timeout"), base="")

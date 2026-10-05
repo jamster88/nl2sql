@@ -52,6 +52,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from .state import AUDIT, AuditReport, ChartSpec, Claim, CompletenessReport, Issue, QueryResult
+from nl2sql_common.errors import Invalid
 
 # The row cap in the section 7.1 shape table, and the cap on what the narrator
 # is shown. Above it a chart is unreadable and a "total" is a total of a
@@ -507,7 +508,7 @@ def narrate(
 # ---------------------------------------------------------------------------
 
 
-class FormulaError(ValueError):
+class FormulaError(Invalid, ValueError):
     """A formula the checker refuses to evaluate.
 
     Refusal is the safe outcome and the common one: the claim is dropped, the
@@ -604,7 +605,7 @@ def evaluate_formula(formula: str, cells: Sequence[float]) -> float:
                 args.append(value_of(arg))
         try:
             return float(_FORMULA_FUNCTIONS[func.id](*args))
-        except Exception as exc:  # a wrong arity or type is the model's error
+        except (TypeError, ValueError, ArithmeticError) as exc:  # a wrong arity, type or value is the model's error
             raise FormulaError(f"{func.id}() could not be applied: {exc}") from exc
 
     return float(value_of(tree.body))

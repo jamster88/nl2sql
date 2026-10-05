@@ -24,10 +24,8 @@ export function isNumericType(dataType: string): boolean {
   return NUMERIC.test(dataType);
 }
 
-/** `1 row`, `2 rows`: a count and its noun, agreeing. */
-export function counted(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count.toLocaleString("en-US")} ${count === 1 ? singular : plural}`;
-}
+/** `1 row`, `1,204 rows`: a count and its noun, agreeing -- every page's (`web/src/text.ts`). */
+export { counted } from "@nl2sql/web/text";
 
 /** A cost or a time, grouped and rounded the way EXPLAIN reads. */
 export function formatNumber(value: number, digits = 2): string {

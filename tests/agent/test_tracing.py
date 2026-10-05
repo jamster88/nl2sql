@@ -24,6 +24,7 @@ from nl2sql_agent.tracing import Tracer
 from pydantic import BaseModel
 
 from tests.fake_mlflow import FakeMlflow
+from mlflow.exceptions import MlflowException
 
 URI = "http://mlflow.test:5000"
 
@@ -118,7 +119,7 @@ def test_a_server_that_does_not_answer_costs_the_trace_and_is_asked_again_later(
 def test_an_experiment_the_server_will_not_set_is_a_server_that_did_not_answer():
     class DeletedExperiment(FakeMlflow):
         def set_experiment(self, name):
-            raise RuntimeError("Cannot set a deleted experiment 'nl2sql-agent' as the active experiment.")
+            raise MlflowException("Cannot set a deleted experiment 'nl2sql-agent' as the active experiment.")
 
     tracer = make_tracer(client=DeletedExperiment())
     assert not tracer.ready()
@@ -508,7 +509,7 @@ def test_a_trace_the_server_does_not_have_is_logged_not_raised(caplog):
 def test_a_verdict_the_server_refuses_is_logged_not_raised(caplog):
     class Refuses(FakeMlflow):
         def log_feedback(self, **kwargs):
-            raise RuntimeError("503 Service Unavailable")
+            raise MlflowException("503 Service Unavailable")
 
     client = Refuses()
     tracer = make_tracer(client=client)
@@ -538,7 +539,7 @@ def test_a_job_id_that_is_not_one_is_never_quoted_into_a_filter():
 def test_a_search_the_server_refuses_is_logged_not_raised(caplog):
     class Refuses(FakeMlflow):
         def search_traces(self, **kwargs):
-            raise RuntimeError("bad filter")
+            raise MlflowException("bad filter")
 
     tracer = make_tracer(client=Refuses())
     with caplog.at_level(logging.WARNING, logger="nl2sql_agent.tracing"):

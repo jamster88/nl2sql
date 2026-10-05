@@ -20,9 +20,15 @@ arrive.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
+from nl2sql_common.env import (
+    env as _env,
+    env_str as _env_str,
+    env_int as _env_int,
+    env_bool as _env_bool,
+    env_tuple as _env_tuple,
+    secret,
+)
 
 STANDALONE = "standalone"
 REPLICA = "replica"
@@ -82,46 +88,6 @@ DEFAULT_GROUPS = ("nl2sql-users", "nl2sql-reviewers", "nl2sql-curators", "nl2sql
 
 class SettingsError(ValueError):
     """A configuration the directory refuses to start with, and why."""
-
-
-def _env(name: str) -> str | None:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return None
-    return raw.strip()
-
-
-def _env_str(name: str, default: str) -> str:
-    return _env(name) or default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = _env(name)
-    return default if raw is None else int(raw)
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name)
-    return default if raw is None else raw.lower() in {"1", "true", "yes", "on"}
-
-
-def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    raw = _env(name)
-    if raw is None:
-        return default
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
-
-
-def secret(name: str) -> str | None:
-    """`NAME`, or the contents of the file `NAME_FILE` names.
-
-    The file wins when both are set: a secret mounted on purpose is a
-    stronger statement than a variable that may have been inherited.
-    """
-    path = _env(f"{name}_FILE")
-    if path:
-        return Path(path).read_text().strip() or None
-    return _env(name)
 
 
 def group_map(raw: str | None, default: tuple[str, ...]) -> dict[str, str]:

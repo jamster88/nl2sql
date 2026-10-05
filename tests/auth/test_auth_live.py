@@ -14,7 +14,10 @@ docker/auth_roles.sql, docker/ldap_hba.sh), and then signs people in:
 * the agent's reader, which keeps its own password, and becomes a person
   only for a transaction (SET ROLE);
 * MLflow behind its proxy: a browser sent to sign in, an MLflow client's
-  Basic credentials accepted, a write from another site refused.
+  Basic credentials accepted, a write from another site refused;
+* a session ended before it expires (V6-61): signed out, signed in before a
+  password an administrator set, or before the directory locked the account
+  -- refused by the lookup every service's guard runs, as the reader.
 
 The database is the `v1_2` image as `setup.sh` runs it: passwords from the
 environment and none in the image, a certificate of its own, nothing over
@@ -24,6 +27,7 @@ the auth service checks passwords against it with `verify-full`.
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import time
@@ -308,3 +312,107 @@ def test_mlflow_is_behind_sign_in(stack):
     assert curl(stack, "-b", "/tmp/jar", "-H", "Sec-Fetch-Site: cross-site", *body, create).startswith("403")
     assert curl(stack, "-b", "/tmp/jar", "-H", "Sec-Fetch-Site: same-origin", *body, create).startswith("200")
 
+
+
+# --- ending a session before it expires (V6-61) ----------------------------------
+
+
+def claims(headers: dict[str, str]) -> dict:
+    """The claims of the bearer token in `headers`, unverified: only read."""
+    payload = headers["Authorization"].split()[1].split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+
+
+#: The recheck the API, the console and the review service run, as they run
+#: it: as the reader, over verified TLS. Inside the auth container, which has
+#: the same package installed.
+LOOKUP = """
+import json, os
+from nl2sql_identity import Identity
+from nl2sql_identity.postgres import membership_lookup
+lookup = membership_lookup(os.environ["URL"])
+standing = lookup(Identity(user=os.environ["WHO"], token_id=os.environ["JTI"], issued_at=int(os.environ["IAT"])))
+print(json.dumps([sorted(standing.roles or []), standing.revoked]))
+"""
+
+
+def standing(stack, user: str, headers: dict[str, str]) -> tuple[list[str], bool]:
+    session = claims(headers)
+    url = (
+        f"postgresql://nl2sql_reader:{READER_PASSWORD}@nl2sql-postgres:5432/nl2sql_retail"
+        f"?sslmode=verify-full&sslrootcert={PG_TLS}/server.crt"
+    )
+    result = docker(
+        "exec", "-i", "-e", f"URL={url}", "-e", f"WHO={user}", "-e", f"JTI={session['jti']}",
+        "-e", f"IAT={session['iat']}", stack["auth"], "python", "-", input=LOOKUP,
+    )
+    roles, revoked = json.loads(result.stdout.strip().splitlines()[-1])
+    return roles, revoked
+
+
+def add_person(stack, admin: dict[str, str], uid: str, password: str) -> None:
+    status, body = call(
+        stack, "POST", "/directory/v1/people",
+        {"uid": uid, "given_name": uid.title(), "surname": "Test", "groups": ["nl2sql-users"], "password": password},
+        admin,
+    )
+    assert status == 201, body
+    wait_until(lambda: call(stack, "POST", "/auth/token", {"username": uid, "password": password})[0] == 200,
+               f"the sync to make {uid} a role")
+
+
+def refused_as_revoked(stack, headers: dict[str, str]) -> bool:
+    status, body = call(stack, "GET", "/auth/session", headers=headers)
+    return status == 401 and body["error"]["code"] == "session_revoked"
+
+
+def test_the_reader_may_ask_about_one_session_and_read_no_list(stack):
+    asked = sql_as(stack, "nl2sql_reader", READER_PASSWORD, "SELECT nl2sql_auth.session_revoked('nobody', 'none', 0)")
+    assert asked.stdout.strip() == "f", asked.stderr
+    for table in ("revoked_sessions", "session_cutoffs"):
+        refused = sql_as(stack, "nl2sql_reader", READER_PASSWORD, f"SELECT count(*) FROM nl2sql_auth.{table}")
+        assert "permission denied" in refused.stderr, (table, refused.stderr)
+    wait_until(lambda: sql_as(stack, "admin", "admin-password-1", "SELECT 1").returncode == 0, "the administrator's role")
+    person = sql_as(stack, "admin", "admin-password-1", "SELECT nl2sql_auth.session_revoked('admin', 'x', 0)")
+    assert "permission denied" in person.stderr, "a person's own SQL cannot ask"
+
+
+def test_a_signed_out_session_is_refused_everywhere_and_only_that_one(stack):
+    admin = token(stack, "admin", "admin-password-1")
+    assert call(stack, "GET", "/auth/session", headers=admin)[0] == 200
+    assert standing(stack, "admin", admin)[1] is False
+    assert call(stack, "POST", "/auth/logout", headers=admin)[0] == 204
+    assert refused_as_revoked(stack, admin), "here at once"
+    assert standing(stack, "admin", admin)[1] is True, "and by every service's recheck"
+    again = token(stack, "admin", "admin-password-1")
+    assert call(stack, "GET", "/auth/session", headers=again)[0] == 200, "the other sessions are not touched"
+
+
+def test_a_password_an_administrator_sets_ends_that_persons_sessions(stack):
+    admin = token(stack, "admin", "admin-password-1")
+    add_person(stack, admin, "bob", "bob-password-1")
+    before = token(stack, "bob", "bob-password-1")
+    assert call(stack, "GET", "/auth/session", headers=before)[0] == 200
+    assert call(stack, "POST", "/directory/v1/people/bob/password", {"password": "bob-password-2"}, admin)[0] == 204
+    assert refused_as_revoked(stack, before)
+    assert standing(stack, "bob", before) == (["nl2sql_users"], True)
+    after = token(stack, "bob", "bob-password-2")
+    assert call(stack, "GET", "/auth/session", headers=after)[0] == 200, "signed in straight after, and kept"
+    assert call(stack, "DELETE", "/directory/v1/people/bob", headers=admin)[0] == 204
+
+
+def test_a_lockout_ends_the_sessions_from_before_it(stack):
+    admin = token(stack, "admin", "admin-password-1")
+    add_person(stack, admin, "carol", "carol-password-1")
+    before = token(stack, "carol", "carol-password-1")
+    time.sleep(1.1)  # the lock is after the second this was signed in
+    for _ in range(5):
+        sql_as(stack, "carol", "wrong-password", "SELECT 1")
+    status, body = call(stack, "GET", "/directory/v1/people/carol", headers=admin)
+    assert status == 200 and body["locked"], "the directory locked her after five wrong passwords"
+    wait_until(lambda: standing(stack, "carol", before)[1], "the role sync to record the lock", seconds=30)
+    assert refused_as_revoked(stack, before)
+    assert call(stack, "POST", "/directory/v1/people/carol/unlock", headers=admin)[0] == 204
+    after = token(stack, "carol", "carol-password-1")
+    assert call(stack, "GET", "/auth/session", headers=after)[0] == 200, "a session after the unlock is not refused"
+    assert call(stack, "DELETE", "/directory/v1/people/carol", headers=admin)[0] == 204

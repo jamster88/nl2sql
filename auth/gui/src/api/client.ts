@@ -7,7 +7,8 @@
  * auth service, and the session cookie goes with every call.
  */
 
-import { notifyUnauthorized } from "../auth/session";
+import { ApiError } from "@nl2sql/web/api/errors";
+import { notifyUnauthorized } from "@nl2sql/web/auth/session";
 import type {
   ApiErrorBody,
   DirectoryMeta,
@@ -20,17 +21,11 @@ import type {
   SyncReport,
 } from "./types";
 
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
-
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-  }
-}
+/**
+ * A failure the service described -- the error every page throws for one
+ * (`web/src/api/errors.ts`): branch on `code`, show `message`.
+ */
+export { ApiError };
 
 export interface ClientOptions {
   baseUrl?: string;

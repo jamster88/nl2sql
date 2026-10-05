@@ -40,12 +40,14 @@ RUN mvn -B -q -Djavafx.platform=${JAVAFX_PLATFORM} -DskipTests package
 # variant of. The jar inside is byte-identical in both, because the builder
 # above produced it once.
 FROM alpine:3.21
+RUN apk add --no-cache su-exec~0.2
+COPY --chmod=755 desktop/copy-out.sh /usr/local/bin/nl2sql-copy-out
 
 COPY --from=build /src/target/nl2sql-desktop.jar /opt/nl2sql/nl2sql-desktop.jar
 
 LABEL org.opencontainers.image.title="nl2sql-desktop build" \
       org.opencontainers.image.description="Carries the nl2sql desktop client's jar, built for one JavaFX platform." \
-      org.opencontainers.image.version="6.1.0" \
+      org.opencontainers.image.version="6.2.0" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # The default command copies the jar to a bind mount, which is the whole of
@@ -53,4 +55,6 @@ LABEL org.opencontainers.image.title="nl2sql-desktop build" \
 #
 #     docker compose --profile desktop run --rm desktop
 WORKDIR /opt/nl2sql
-CMD ["cp", "/opt/nl2sql/nl2sql-desktop.jar", "/out/nl2sql-desktop.jar"]
+# Copied out as the owner of the directory it lands in, not root (V6-31):
+# `copy-out.sh`, with su-exec, the smallest way Alpine has to become a uid.
+CMD ["/usr/local/bin/nl2sql-copy-out"]

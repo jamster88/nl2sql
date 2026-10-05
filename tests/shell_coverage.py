@@ -74,6 +74,12 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     "auth/gui/10-nl2sql-directory-config.envsh": ("tests/auth/test_directory_gui_project.py",),
     # MLflow's front door; writes the auth_request when sign-in is on.
     "docker/mlflow-proxy/10-nl2sql-mlflow-proxy.envsh": ("tests/docker/test_mlflow_proxy.py",),
+    # MLflow's own start (6.2): gives the account the artifact volume, then
+    # drops to it; against fake id, find, chown and setpriv.
+    "docker/mlflow/entrypoint.sh": ("tests/docker/test_mlflow_entrypoint.py",),
+    # The desktop image's one command (6.2): the jar copied out as the owner
+    # of where it lands; against fake id, stat, su-exec and cp.
+    "desktop/copy-out.sh": ("tests/docker/test_desktop_copy_out.py",),
 }
 
 #: Lines bash never attributes a line number to, so counting them as missed

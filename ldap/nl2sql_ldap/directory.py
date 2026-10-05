@@ -61,6 +61,9 @@ class Person:
     #: The primary's DN for a replica's copy; empty in a standalone one.
     upstream: str = ""
     locked: bool = False
+    #: When the password policy locked them (`pwdAccountLockedTime`, LDAP
+    #: generalized time); empty when it has not.
+    locked_since: str = ""
 
     @property
     def name(self) -> str:
@@ -214,6 +217,7 @@ class Directory:
                     groups=tuple(memberships.get(uid, ())),
                     upstream=_first(attributes, "seeAlso"),
                     locked=bool(_first(attributes, "pwdAccountLockedTime")),
+                    locked_since=_first(attributes, "pwdAccountLockedTime"),
                 )
             )
         return sorted(people, key=lambda person: person.uid)

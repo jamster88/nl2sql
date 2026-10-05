@@ -77,10 +77,12 @@ def test_the_loaders_are_in_the_image(dockerfile: str):
     assert "07_load_snippets.py" in dockerfile
 
 
-def test_the_loader_a_snippet_write_runs_is_the_one_the_image_carries(dockerfile: str):
-    from nl2sql_review.snippets import LOADER
-
-    assert f"rag/{LOADER}" in dockerfile
+def test_the_loaders_a_write_calls_are_the_ones_the_image_carries(dockerfile: str):
+    """A promotion and a snippet write call `ragproc.loaders` in this
+    process (V6-27); launch.sh still runs 07 in a one-off container."""
+    assert "COPY rag/ragproc/ ./rag/ragproc/" in dockerfile
+    assert (REPO_ROOT / "rag" / "ragproc" / "loaders.py").is_file()
+    assert "rag/07_load_snippets.py" in dockerfile
 
 
 def test_the_loaders_land_where_the_settings_look_for_them(dockerfile: str):
@@ -136,7 +138,7 @@ def test_it_has_a_health_check_that_follows_its_own_tls_setting(dockerfile: str)
 
 
 def test_the_dependency_layer_is_cached_separately(dockerfile: str):
-    requirements = dockerfile.index("review/requirements.txt")
+    requirements = dockerfile.index("review/requirements.lock")
     source = dockerfile.index("review/nl2sql_review/")
     assert requirements < source
 
@@ -147,7 +149,7 @@ def test_it_is_labelled(dockerfile: str):
 
 
 def test_the_version_matches_the_package(dockerfile: str):
-    from nl2sql_review.app import __version__
+    from nl2sql_review import __version__
 
     assert f"REVIEW_VERSION={__version__}" in dockerfile
 
@@ -155,7 +157,7 @@ def test_the_version_matches_the_package(dockerfile: str):
 def test_the_review_gui_version_matches_the_service():
     import json
 
-    from nl2sql_review.app import __version__
+    from nl2sql_review import __version__
 
     package = json.loads((REVIEW / "gui" / "package.json").read_text())
     assert package["version"] == __version__

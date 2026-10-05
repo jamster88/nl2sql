@@ -309,7 +309,7 @@ that matches nothing, and only the reviewer knows which.
 
 | Field | From |
 | --- | --- |
-| `fix_id` | `W0001`, `W0002`... for a correction, `I0001`... for a completion, so a record says which store it came from wherever it is quoted |
+| `fix_id` | `W0001`, `W0002`... for a correction, `I0001`... for a completion, so a record says which store it came from wherever it is quoted. Drawn from a sequence per store (6.2), so a deleted fix's id is never given to another |
 | `question` | The submission |
 | `incorrect_sql`, `incorrect_answer`, `incorrect_columns`, `incorrect_row_count` | What the agent generated and the user was shown |
 | `corrected_sql` | The reviewer's query, as it was validated |
@@ -512,7 +512,7 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `POST` | `/v1/submissions/{id}/preview` | yes | The markdown a draft would add, without writing |
 | `POST` | `/v1/submissions/{id}/promote` | yes | Write the pair into the golden set. Correct answers only |
 | `POST` | `/v1/submissions/{id}/validate` | yes | Run a corrected query against the live retail database. Wrong and incomplete answers only |
-| `POST` | `/v1/submissions/{id}/fix` | yes | Validate again and store the fix in its store. `X-Reviewer` names who |
+| `POST` | `/v1/submissions/{id}/fix` | yes | Validate again and store the fix in its store, recorded as the caller's |
 | `GET` | `/v1/fixes/{kind}` | yes | `corrections` or `completions`: what the store holds, newest first. `?limit=` |
 | `GET` | `/v1/golden` | yes | The set as the document holds it |
 | `GET` | `/v1/promotions` | yes | What has been promoted, newest first |
@@ -521,7 +521,7 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `POST` | `/v1/golden` | yes | Validate a hand-written pair's SQL, then write it into the golden set |
 | `DELETE` | `/v1/golden/{pair_id}` | yes | Take a pair out of the golden set, reopening the submission it came from |
 | `POST` | `/v1/fixes/{kind}/validate` | yes | Run a fix's SQL against the live retail database |
-| `POST` | `/v1/fixes/{kind}` | yes | Validate a fix with no submission behind it, then store it. `X-Reviewer` names who |
+| `POST` | `/v1/fixes/{kind}` | yes | Validate a fix with no submission behind it, then store it, recorded as the caller's |
 | `DELETE` | `/v1/fixes/{kind}/{fix_id}` | yes | Take a fix out of its store, reopening the submission it came from |
 | `GET` | `/v1/snippets` | yes | The snippets as their document holds them, the next id, and what the store holds |
 | `POST` | `/v1/snippets/validate` | yes | Run a snippet inside its probe query |
@@ -600,13 +600,24 @@ names it covers are `REVIEW_TLS_HOSTNAMES`, which must include
 | `REVIEW_REVIEWER_ROLES` | `nl2sql_reviewers` | Who may work the review queue: judge, promote, fix, reopen, delete |
 | `REVIEW_CURATOR_ROLES` | `nl2sql_curators` | Who may write directly: snippets, golden pairs, corrections and completions |
 | `REVIEW_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
+| `REVIEW_TOKEN_NAME` | `review-token` | Who the token is: what it does is recorded as `token:<name>` |
+| `REVIEW_TOKEN_ROLES` | *(see below)* | The roles it holds, and no others. Unset: with sign-in on the reviewer roles only; with it off both, because the pages' proxies send it for everyone |
 | `REVIEW_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly; its pages reach it through their own nginx |
 
 With sign-in on, a reviewer's or curator's own name is what is recorded on
 everything they decide -- not a name typed into a form -- and the SQL they
-validate runs as their own database role. Reading the queue and the stores
-is open to either group; changing anything takes the group the route
-belongs to. A static token is a service, and may do both.
+validate runs as their own database role, with their name in the
+transaction's `application_name` (`nl2sql:review:<person>`, 6.2). Reading
+the queue and the stores is open to either group; changing anything takes
+the group the route belongs to, and each route is on a router that carries
+that group's guard (6.2). A static token is a caller of its own since 6.2:
+recorded as `token:<name>` -- never as the `X-Reviewer` it sends, which only
+an open service with no token records -- and holding `REVIEW_TOKEN_ROLES`:
+with sign-in on it reviews, and curating by token is something to grant
+there by name. A session signed out, or from before a password change or a
+lock, is refused with `401 session_revoked` within a minute
+([`auth/README.md`](../auth/README.md)). `/readyz` gives the reason a
+dependency is down to an administrator only.
 
 With sign-in off, the token is not optional the way the agent's is. A caller
 here can edit the question set the agent is measured against; `/readyz` and
@@ -629,18 +640,31 @@ never has to go somewhere that ends up in an access log.
 | Variable | Default | What |
 | --- | --- | --- |
 | `REVIEW_DOCUMENT` | `/app/context_questions/translated_questions.md` | The golden question set |
-| `REVIEW_RAG_DIR` | `/app/rag` | Where the loader scripts live |
-| `REVIEW_RELOAD_CONTEXT` | `true` | Run `05_load_golden_pairs.py` after writing |
-| `REVIEW_RELOAD_VECTORS` | `true` | Run `06_embed_golden_pairs.py` after that |
-| `REVIEW_RELOAD_TIMEOUT_SECONDS` | `600` | Give up on a loader that hangs |
+| `REVIEW_RAG_DIR` | `/app/rag` | Where `ragproc` lives |
+| `REVIEW_RELOAD_CONTEXT` | `true` | Load the context store (step 5) after writing |
+| `REVIEW_RELOAD_VECTORS` | `true` | Embed what changed (step 6) after that |
+| `REVIEW_RELOAD_TIMEOUT_SECONDS` | `600` | How long one request to the embedding host may take |
 | `CHUNK_DB_URL` | the compose chunkdb | Context store |
 | `VECTOR_DB_URL` | the compose vectordb | Vector store |
 | `OLLAMA_URL` / `EMBED_MODEL` | `http://localhost:11434` / `bge-m3` | For embedding |
 
-The loaders are run **as scripts**, not imported. They already handle the
-upsert, the delete of pairs no longer in the document, the BM25 rebuild and
-incremental re-embedding; a second implementation here would be a second set
-of rules to keep in agreement with the first.
+The loaders are `rag/`'s own, `ragproc.loaders` -- the code of steps 5, 6
+and 7 -- called in this process (6.2; they ran as scripts until then). They
+already handle the upsert, the delete of pairs no longer in the document,
+the BM25 rebuild and incremental re-embedding; a second implementation here
+would be a second set of rules to keep in agreement with the first. Each
+store's URL, password and all, is an argument to a function rather than
+something on a command line `ps` shows anyone on the host. Everything from
+reading the document to the last load is done holding the write lock -- in
+this process, and an advisory lock on the documents' directory between
+processes -- so two curators cannot both take Q47.
+
+The service writes the checkout's documents as whoever owns them (6.2):
+started as root, it becomes the owner of the mounted `context_questions/`
+before it reads anything, so a promoted pair in the working tree is theirs,
+as if they had typed it. A directory root owns -- the copy in the image,
+with nothing mounted -- is written as the image's account, `nl2sql` (10001),
+which is also the group its TLS key is read through.
 
 ### Fixes
 
@@ -666,7 +690,7 @@ warn that nothing will be retrievable from them until they are embedded.
 | `REVIEW_SNIPPETS_DOCUMENT` | `/app/context_questions/sql_snippets.md` | The snippet document |
 | `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5438/nl2sql_snippets` | The snippet store, as its owner |
 | `SNIPPETS_READER_USER` / `SNIPPETS_READER_PASSWORD` | `snippets_reader` / `snippets_reader` | The read-only role the loader (re)creates for the agent |
-| `REVIEW_RELOAD_SNIPPETS` | `true` | Run `07_load_snippets.py` after writing |
+| `REVIEW_RELOAD_SNIPPETS` | `true` | Load the snippet store (step 7) after writing |
 
 Snippets are validated with `RETAIL_DB_URL` and the two limits above, and
 embedded with `OLLAMA_URL` / `EMBED_MODEL`. Compose takes the store's URL as
@@ -721,7 +745,7 @@ whether the stores caught up.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 175 tests, 100% coverage
+npm run test     # review GUI: 182 tests, 100% coverage
 ```
 
 ## Tests

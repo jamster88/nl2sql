@@ -151,7 +151,7 @@ class Down:
     """A routed model the host cannot run."""
 
     def invoke(self, messages):
-        raise RuntimeError("model 'broken:7b' not found, try pulling it first")
+        raise ConnectionError("model 'broken:7b' not found, try pulling it first")
 
 
 def test_a_routed_model_that_cannot_answer_hops_to_the_anchor_and_the_trace_says_so():

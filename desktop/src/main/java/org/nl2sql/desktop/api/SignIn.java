@@ -17,6 +17,10 @@ public interface SignIn {
      */
     Models.Token signIn(String username, String password);
 
-    /** Forget the session. The server's copy expires on its own. */
+    /**
+     * Forget the session, and end it at the auth service, so a copy of the
+     * token stops working too. The window is signed out whatever the
+     * service answers.
+     */
     void signOut();
 }

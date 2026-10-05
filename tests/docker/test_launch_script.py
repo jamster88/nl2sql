@@ -1298,7 +1298,7 @@ def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
 # document has grown is answered from fewer pairs than it holds until it is
 # loaded -- which is what this flag does, and what the check below says.
 
-LOAD = "--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review"
+LOAD = "--profile feedback --profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review"
 
 
 def _golden_document(tmp_path: Path, pairs: int) -> None:
@@ -1322,8 +1322,9 @@ def test_load_golden_runs_both_loaders_in_the_review_image_before_the_stores_are
     # The script is passed to `sh -c` across several lines, which the call log
     # records as several entries.
     script = "\n".join(result.calls[result.index_of(LOAD):][:6])
-    assert '05_load_golden_pairs.py "$REVIEW_DOCUMENT" --db-url "$CHUNK_DB_URL"' in script
-    assert '06_embed_golden_pairs.py --chunk-db-url "$CHUNK_DB_URL"' in script
+    assert '05_load_golden_pairs.py "$REVIEW_DOCUMENT" &&' in script
+    assert '06_embed_golden_pairs.py --ollama-url "$OLLAMA_URL"' in script
+    assert "DB_URL" not in script, "a store's URL, password and all, is the loader's environment, not its argv"
 
 
 def test_load_golden_starts_nothing_of_the_review_system(run_launch):
@@ -1403,7 +1404,8 @@ def test_a_store_behind_its_document_is_loaded_in_the_review_image(run_launch):
     assert "vectors -> sql_snippet_vectors: 3 embedded, 29 already current" in result.output
     assert result.called(LOAD)
     script = "\n".join(result.calls[result.index_of(SNIPPET_LOAD) - 2:][:4])
-    assert '07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL"' in script
+    assert '07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT"' in script
+    assert "DB_URL" not in script, "a store's URL, password and all, is the loader's environment, not its argv"
     # Counted after the load had its chance, so the count is what the agent sees.
     assert result.index_of(SNIPPET_LOAD) < result.index_of("SELECT count(*) FROM sql_snippets")
 

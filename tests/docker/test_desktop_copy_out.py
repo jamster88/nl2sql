@@ -7,6 +7,7 @@ whom it would have become before running the copy as the test's own user.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -44,7 +45,16 @@ def run(tmp_path):
             "NL2SQL_OUT": str(out),
             "NL2SQL_JAR": str(jar),
         }
-        result = subprocess.run(["sh", str(SCRIPT)], env=env, capture_output=True, text=True)
+        command = ["sh", str(SCRIPT)]
+        trace = os.environ.get("NL2SQL_SHELL_TRACE")
+        if trace:
+            # What tests/shell_coverage.py reads: every line run, by script.
+            env["PS4"] = "+@${BASH_SOURCE##*/}@${LINENO}@ "
+            command = ["bash", "-x", *command[1:]]
+        result = subprocess.run(command, env=env, capture_output=True, text=True)
+        if trace:
+            with open(os.path.join(trace, "trace.log"), "a") as handle:
+                handle.write(result.stderr)
         assert result.returncode == 0, result.stderr
         assert (out / "nl2sql-desktop.jar").read_text() == "the jar"
         return log.read_text().splitlines() if log.exists() else []

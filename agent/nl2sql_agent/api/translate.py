@@ -63,13 +63,26 @@ def result_table(result: Any) -> ResultTable | None:
     )
 
 
-def answer_from_state(state: dict[str, Any] | None) -> Answer:
+def _codes(errors: Any, failed: str) -> dict[str, str]:
+    """Which parts failed, without their words: a retriever that is switched
+    off says so; anything else says only that it `failed`."""
+    return {
+        name: "disabled" if str(message).endswith("disabled") else failed
+        for name, message in dict(errors or {}).items()
+    }
+
+
+def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> Answer:
     """The public answer for a finished run.
 
     A state that refused the question, or gave up inside its retry budget,
     translates just as completely as one that succeeded -- the caller finds
     out which from `verdict`, `answer` and the absence of `result`, not from
     a different response shape.
+
+    Without `detail` -- anyone but an operator (V6-32) -- `retrieval_errors`
+    and `node_errors` say which part failed and not the driver's words for
+    it, which name hosts and ports.
     """
     state = state or {}
     audit = to_jsonable(state.get("audit")) or {}
@@ -91,8 +104,10 @@ def answer_from_state(state: dict[str, Any] | None) -> Answer:
         plan_cost=state.get("plan_cost"),
         attempts=int(state.get("attempts") or 0),
         trace=[TraceEntry(**t) for t in _dicts(state.get("trace"))],
-        retrieval_errors=dict(state.get("retrieval_errors") or {}),
-        node_errors=dict(state.get("node_errors") or {}),
+        retrieval_errors=(
+            dict(state.get("retrieval_errors") or {}) if detail else _codes(state.get("retrieval_errors"), "unavailable")
+        ),
+        node_errors=dict(state.get("node_errors") or {}) if detail else _codes(state.get("node_errors"), "failed"),
     )
 
 
@@ -106,11 +121,12 @@ def progress_event(record: ProgressRecord) -> ProgressEvent:
     )
 
 
-def job_model(job: Job, *, base: str = "") -> JobModel:
+def job_model(job: Job, *, base: str = "", detail: bool = True) -> JobModel:
     """A job as the client sees it, with the two URLs it needs next.
 
     `base` is the server's root path, so the links stay correct when the API
-    is mounted under a prefix by a reverse proxy in front of a GUI.
+    is mounted under a prefix by a reverse proxy in front of a GUI. `detail`
+    is whether the caller is an operator, who sees a crash in its own words.
     """
     href = f"{base}/v1/questions/{job.id}"
     return JobModel(
@@ -123,7 +139,7 @@ def job_model(job: Job, *, base: str = "") -> JobModel:
         finished_at=job.finished_at,
         duration_ms=job.duration_ms,
         progress=[progress_event(record) for record in job.progress],
-        answer=answer_from_state(job.state) if job.state is not None else None,
-        error=job.error,
+        answer=answer_from_state(job.state, detail=detail) if job.state is not None else None,
+        error=(job.fault or job.error) if detail else job.error,
         links=JobLinks(self=href, events=f"{href}/events"),
     )

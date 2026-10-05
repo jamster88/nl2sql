@@ -23,6 +23,7 @@ from ..api.tls import CertificateInfo, certificate_notes, describe_certificate
 from ..config import Settings
 from .app import create_app
 from .settings import SERVICE_HOSTNAME, ConsoleSettings
+from nl2sql_common.urls import redacted
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -77,16 +78,6 @@ def settings_from_args(args: argparse.Namespace) -> ConsoleSettings:
         docs_enabled=args.docs,
         log_level=args.log_level,
     )
-
-
-def redacted(url: str) -> str:
-    """A connection URL with its password taken out, for printing."""
-    if "@" not in url:
-        return url
-    scheme, _, rest = url.partition("://")
-    credentials, _, host = rest.rpartition("@")
-    user = credentials.partition(":")[0]
-    return f"{scheme}://{user}:***@{host}" if user else f"{scheme}://{host}"
 
 
 def load_certificate(console: ConsoleSettings) -> CertificateInfo | None:

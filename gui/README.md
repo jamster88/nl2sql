@@ -77,7 +77,7 @@ skips the last step; `BROWSER` chooses what does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 
-    docker pull mcfaddja/nl2sql-gui:v6_1
+    docker pull mcfaddja/nl2sql-gui:v6_2
     ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -85,7 +85,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v6_1 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v6_2 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -345,7 +345,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-333 tests, 100% of statements, branches, functions and lines -- matching the
+340 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

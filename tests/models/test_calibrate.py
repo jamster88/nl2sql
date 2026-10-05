@@ -48,7 +48,7 @@ class Model:
 
     def invoke(self, messages):
         if self.fail:
-            raise RuntimeError("down")
+            raise ConnectionError("down")
         return SimpleNamespace(content=self.diagnosis)
 
     def with_structured_output(self, schema):
@@ -58,7 +58,7 @@ class Model:
             def invoke(self, messages):
                 text = str(messages[-1].content)
                 if model.fail:
-                    raise RuntimeError("down")
+                    raise ConnectionError("down")
                 if schema is Screening:
                     if model.injections and "Ignore" in text:
                         return Screening(verdict="injection", intent="lookup")

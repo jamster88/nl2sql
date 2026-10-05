@@ -632,10 +632,12 @@ def test_every_set_of_profiles_named_is_a_project_compose_accepts(profiles: str,
 
 
 def _identities(config: dict) -> dict[str, tuple[str, list[str]]]:
+    """Each identity's directory and names; its owner, the last part since
+    6.2, is `test_unprivileged.py`'s to check."""
     found = {}
     for arg in config["services"]["pki"]["command"]:
         if "=" in arg and not arg.startswith("-"):
-            name, directory, hosts = arg.split("=", 2)
+            name, directory, hosts = arg.split("=", 3)[:3]
             found[name] = (directory, hosts.split(","))
     return found
 

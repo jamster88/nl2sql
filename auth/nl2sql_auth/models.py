@@ -9,56 +9,21 @@ that already reads one reads this.
 
 from __future__ import annotations
 
-from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+from nl2sql_common.envelope import Wire
 
 #: A file pasted or uploaded into the web interface's import: a few thousand
 #: people as CSV is well under this.
 MAX_IMPORT_BYTES = 5_000_000
 
 
-class _Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class ApiErrorBody(_Strict):
-    code: str
-    message: str
-    detail: dict[str, Any] | None = None
-
-
-class ApiError(_Strict):
-    error: ApiErrorBody
-
-    @classmethod
-    def of(cls, code: str, message: str, **detail: Any) -> "ApiError":
-        return cls(error=ApiErrorBody(code=code, message=message, detail=detail or None))
-
-
-class Health(_Strict):
-    status: str = "ok"
-    version: str
-    uptime_seconds: float
-
-
-class Check(_Strict):
-    ok: bool
-    detail: str
-
-
-class Readiness(_Strict):
-    ready: bool
-    checks: dict[str, Check]
-    warnings: list[str] = Field(default_factory=list)
-
-
-class SignIn(_Strict):
+class SignIn(Wire):
     username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=1024)
 
 
-class Session(_Strict):
+class Session(Wire):
     """Who is signed in, and until when (seconds since the epoch)."""
 
     user: str
@@ -74,12 +39,12 @@ class Token(Session):
     token: str
 
 
-class PasswordChange(_Strict):
+class PasswordChange(Wire):
     current: str = Field(min_length=1, max_length=1024)
     new: str = Field(min_length=1, max_length=1024)
 
 
-class AuthMeta(_Strict):
+class AuthMeta(Wire):
     """What a sign-in form needs to know before anyone has signed in."""
 
     version: str
@@ -94,7 +59,7 @@ class AuthMeta(_Strict):
 # --- the directory's web interface ------------------------------------------
 
 
-class Person(_Strict):
+class Person(Wire):
     uid: str
     name: str
     cn: str
@@ -106,12 +71,12 @@ class Person(_Strict):
     locked: bool
 
 
-class PersonList(_Strict):
+class PersonList(Wire):
     people: list[Person]
     count: int
 
 
-class NewPerson(_Strict):
+class NewPerson(Wire):
     uid: str = Field(min_length=1, max_length=63)
     given_name: str = Field(default="", max_length=256)
     surname: str = Field(default="", max_length=256)
@@ -121,7 +86,7 @@ class NewPerson(_Strict):
     password: str | None = Field(default=None, max_length=1024)
 
 
-class PersonChange(_Strict):
+class PersonChange(Wire):
     given_name: str | None = Field(default=None, max_length=256)
     surname: str | None = Field(default=None, max_length=256)
     display_name: str | None = Field(default=None, max_length=256)
@@ -129,27 +94,27 @@ class PersonChange(_Strict):
     groups: list[str] | None = None
 
 
-class NewPassword(_Strict):
+class NewPassword(Wire):
     password: str = Field(min_length=1, max_length=1024)
 
 
-class Group(_Strict):
+class Group(Wire):
     name: str
     #: The Postgres role membership grants, or None for a group no role maps to.
     role: str | None
     members: list[str]
 
 
-class GroupList(_Strict):
+class GroupList(Wire):
     groups: list[Group]
 
 
-class ImportRequest(_Strict):
+class ImportRequest(Wire):
     filename: str = Field(min_length=1, max_length=256)
     content: str = Field(max_length=MAX_IMPORT_BYTES)
 
 
-class ImportResult(_Strict):
+class ImportResult(Wire):
     created: list[str]
     updated: list[str]
     passwords: list[str]
@@ -157,7 +122,7 @@ class ImportResult(_Strict):
     problems: list[str]
 
 
-class SyncReport(_Strict):
+class SyncReport(Wire):
     at: str
     ok: bool
     people: int
@@ -169,7 +134,7 @@ class SyncReport(_Strict):
     errors: list[str]
 
 
-class DirectoryMeta(_Strict):
+class DirectoryMeta(Wire):
     version: str
     mode: str
     base_dn: str

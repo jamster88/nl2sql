@@ -274,10 +274,10 @@ public final class MainWindow {
     /**
      * Forget the session, and say so by asking again.
      *
-     * <p>Only this window's copy: the token itself stays valid until it
-     * expires, because there is no list of issued tokens to strike it from --
-     * which is also why it is never written anywhere this window does not
-     * control.
+     * <p>The auth service is told too, and strikes the token from then on
+     * ({@link SignIn#signOut}); it is still never written anywhere this
+     * window does not control, so a service that cannot be reached leaves
+     * nothing behind but a token nobody holds.
      */
     public void signOut() {
         signIn.signOut();

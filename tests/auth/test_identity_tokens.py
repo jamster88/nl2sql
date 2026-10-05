@@ -251,3 +251,14 @@ def test_a_service_token_holds_only_the_roles_it_was_given():
     service = Identity(user="", kind=SERVICE, roles=frozenset({"nl2sql_users"}))
     assert service.has_any({"nl2sql_users"})
     assert not service.has_any({"nl2sql_reviewers"})
+
+
+def test_who_did_it_is_a_person_a_named_token_or_nobody():
+    """V6-62: what a record keeps for its author."""
+    from nl2sql_identity.tokens import ANONYMOUS, SERVICE, Identity
+
+    assert Identity(user="alice").actor == "alice"
+    assert Identity(user="").actor is None
+    assert Identity(user="nightly", kind=SERVICE).actor == "token:nightly"
+    assert Identity(user="", kind=SERVICE).actor == "token:service"
+    assert Identity(user="", kind=ANONYMOUS).actor is None

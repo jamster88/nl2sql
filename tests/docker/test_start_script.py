@@ -1367,7 +1367,7 @@ def test_load_golden_is_handed_to_launch_sh(run_start):
     result = run_start("--load-golden", env_file=_PINNED_FOR_REVIEW)
 
     assert result.returncode == 0
-    assert result.called("--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review")
+    assert result.called("--profile feedback --profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review")
     assert "Loading the golden pairs" in result.output
     assert "Fetching the images" not in result.output
     assert pages(result) == ["https://localhost:8080"], "the review page is --review's, not this flag's"

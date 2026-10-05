@@ -43,6 +43,7 @@ include =
     agent/nl2sql_agent/*
     review/nl2sql_review/*
     auth/*
+    common/*
     ldap/*
     benchmarks/*
     rag/*

@@ -16,10 +16,11 @@ own database.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from cryptography import x509
 from nl2sql_identity import pki
@@ -28,6 +29,9 @@ from .app import __version__, create_app
 from .corrections import COMPLETIONS, CORRECTIONS, FixStore
 from .settings import SERVICE_HOSTNAME, ReviewSettings
 from .store import WRITER_ROLE, Repository
+from nl2sql_common import privileges
+from nl2sql_common.urls import redacted as _redacted
+from nl2sql_common.errors import DATABASE_ERRORS
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -158,15 +162,6 @@ def banner(settings: ReviewSettings, *, version: str = __version__) -> str:
     return "\n".join(lines)
 
 
-def _redacted(url: str) -> str:
-    if "@" not in url:
-        return url
-    scheme, _, rest = url.partition("://")
-    credentials, _, host = rest.rpartition("@")
-    user = credentials.partition(":")[0]
-    return f"{scheme}://{user}:***@{host}" if user else f"{scheme}://{host}"
-
-
 def prepare(settings: ReviewSettings) -> list[str]:
     """Create the schema and reset the writer role. Returns what happened.
 
@@ -181,7 +176,7 @@ def prepare(settings: ReviewSettings) -> list[str]:
     try:
         Repository(settings.feedback_db_url).setup(settings.writer_password)
         notes.append(f"schema: ready, {WRITER_ROLE} reset to INSERT-only")
-    except Exception as exc:  # noqa: BLE001 - reported in the banner and /readyz
+    except DATABASE_ERRORS as exc:  # reported in the banner and /readyz
         notes.append(f"schema: NOT ready -- {type(exc).__name__}: {exc}")
     # Each store on its own: one being down does not stop the other, or the
     # golden-set work that needs neither.
@@ -192,7 +187,7 @@ def prepare(settings: ReviewSettings) -> list[str]:
         try:
             FixStore(kind, url).setup()
             notes.append(f"{kind.slug}: ready")
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             notes.append(f"{kind.slug}: NOT ready -- {type(exc).__name__}: {exc}")
     return notes
 
@@ -203,13 +198,27 @@ def build(argv: Sequence[str] | None = None):
     return create_app(settings=settings), settings
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+#: Who this service runs as when the documents' directory is root's: an image
+#: started without the checkout mounted, writing the copy inside it (V6-28).
+ACCOUNT = "nl2sql"
+
+
+def main(argv: Sequence[str] | None = None, *, become: Callable | None = None) -> int:
     args = parse_args(argv)
     settings = settings_from_args(args)
 
     if args.print_settings:
         print(banner(settings))
         return 0
+
+    # Root only long enough to see who owns the checkout's documents, then
+    # that person (V6-28): a promoted pair in the working tree is theirs, as
+    # if they had typed it, and nothing here is root's to write as. The
+    # account's group is kept beside theirs, which is how the TLS key the pki
+    # service gave it is read.
+    directory = str(settings.document_path.parent)
+    if (become or privileges.become_owner_of)(directory, fallback=ACCOUNT):
+        print(f"  running as uid {os.getuid()}, the owner of {directory}")
 
     for note in prepare(settings):
         print(note)

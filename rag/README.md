@@ -323,7 +323,7 @@ docker run -d --name v32-chunkdb  --network v32 mcfaddja/nl2sql-rag-chunkdb:v3_1
 docker run -d --name v32-vectordb --network v32 mcfaddja/nl2sql-rag-vectordb:v3_1
 docker run --rm --network v32 --add-host host.docker.internal:host-gateway \
   -v "$PWD/../context_questions:/app/context_questions:ro" --entrypoint sh \
-  mcfaddja/nl2sql-review:v6_1 -c 'cd /app/rag &&
+  mcfaddja/nl2sql-review:v6_2 -c 'cd /app/rag &&
     python 05_load_golden_pairs.py /app/context_questions/translated_questions.md \
       --db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks &&
     python 06_embed_golden_pairs.py --model bge-m3 --ollama-url http://host.docker.internal:11434 \
@@ -437,7 +437,7 @@ pip install -r rag/requirements.txt
 pytest tests/rag --run-docker
 ```
 
-322 tests: the parser against the real document, the BM25 ranking compared
+337 tests: the parser against the real document, the BM25 ranking compared
 score for score against an independent Okapi implementation, the pgvector
 storage layer, all three loader scripts as command line programs, the snippet
 document's parser and the snippet store -- the phrase matcher's ranking, the

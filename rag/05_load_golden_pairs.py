@@ -8,7 +8,8 @@ keyword column gets a BM25 index built alongside it.
 
 Re-running is safe: rows are upserted on `chunk_id`, pairs deleted from the
 document are removed, and the BM25 statistics are rebuilt from whatever ends up
-in the table.
+in the table. The work is `ragproc.loaders.load_golden_pairs`, which the review
+service calls itself after a promotion; this is its command line.
 
 Examples:
     python 05_load_golden_pairs.py
@@ -24,7 +25,8 @@ import sys
 from pathlib import Path
 
 from ragproc import golden_pairs as gp
-from ragproc.config import Settings, document_slug
+from ragproc import loaders
+from ragproc.config import Settings
 
 DEFAULT_DOCUMENT = Path(__file__).resolve().parent.parent / "context_questions" / "translated_questions.md"
 
@@ -58,53 +60,33 @@ def main(argv: list[str] | None = None) -> int:
     if not path.is_file():
         raise SystemExit(f"error: not found: {path}")
 
-    pairs = gp.parse_document(path)
-    suites = len({p.suite for p in pairs})
-    print(f"{path} -> {gp.TABLE}: {len(pairs)} pairs across {suites} suites")
+    report = loaders.load_golden_pairs(path, args.db_url, k1=args.k1, b=args.b, probe=args.probe, dry_run=args.dry_run)
+    print(f"{path} -> {gp.TABLE}: {report.pairs} pairs across {report.suites} suites")
     print(
         "  fields: chunk_id, type, tables, keywords, question, "
         "reasoning_target, sql_code, result"
     )
 
     if args.dry_run:
-        for pair in pairs[:3]:
+        for pair in gp.parse_document(path)[:3]:
             print(f"  {pair.pair_id} {pair.chunk_id}: {pair.title}")
         print("  ...")
         print("\ndry run: nothing written")
         return 0
 
-    conn = gp.connect(args.db_url)
-    try:
-        gp.ensure_tables(conn)
-        written = gp.upsert_pairs(conn, pairs, source_doc=document_slug(path.name))
-        removed = gp.delete_missing(conn, [p.chunk_id for p in pairs])
-        print(f"  {written} rows written, {removed} stale rows removed")
-
-        stats = gp.rebuild_bm25_index(conn, k1=args.k1, b=args.b)
-        gp.ensure_bm25_function(conn)
-        print(
-            f"  BM25 over {gp.TS_CONFIG} lexemes: {stats['documents']} documents, "
-            f"{stats['distinct_terms']} distinct terms, "
-            f"avg keyword length {stats['avg_doc_len']} (k1={args.k1}, b={args.b})"
-        )
-
-        if args.probe:
-            rows = conn.execute(
-                f"""
-                SELECT b.chunk_id, g.pair_id, round(b.score::numeric, 4), g.title
-                FROM {gp.BM25_FUNCTION}(%s) b
-                JOIN {gp.TABLE} g USING (chunk_id)
-                ORDER BY b.score DESC LIMIT 5
-                """,
-                (args.probe,),
-            ).fetchall()
-            print(f"\n  BM25 probe {args.probe!r}:")
-            for chunk_id, pair_id, score, title in rows:
-                print(f"    {score:>8}  {pair_id}  {title}")
-            if not rows:
-                print("    (no keyword overlap)")
-    finally:
-        conn.close()
+    print(f"  {report.written} rows written, {report.removed} stale rows removed")
+    stats = report.bm25
+    print(
+        f"  BM25 over {gp.TS_CONFIG} lexemes: {stats['documents']} documents, "
+        f"{stats['distinct_terms']} distinct terms, "
+        f"avg keyword length {stats['avg_doc_len']} (k1={args.k1}, b={args.b})"
+    )
+    if args.probe:
+        print(f"\n  BM25 probe {args.probe!r}:")
+        for chunk_id, pair_id, score, title in report.probe:
+            print(f"    {score:>8}  {pair_id}  {title}")
+        if not report.probe:
+            print("    (no keyword overlap)")
     return 0
 
 

@@ -708,7 +708,7 @@ textarea.input {
   white-space: nowrap;
 }
 
-/* --- Sign-in (src/auth/SignInGate.tsx) ---------------------------------- */
+/* --- Sign-in (web/src/auth/SignInGate.tsx) ---------------------------------- */
 
 .signin {
   display: grid;

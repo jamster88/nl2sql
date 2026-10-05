@@ -8,31 +8,41 @@
  */
 
 import react from "@vitejs/plugin-react";
-import { defineConfig, type ProxyOptions } from "vite";
+import { defineConfig } from "vite";
+
+import { sharedPackage } from "../../web/src/config.ts";
+import { devProxies } from "../../web/src/vite.ts";
+
+const shared = sharedPackage(import.meta.url);
 
 const env = process.env;
-
-/** The auth service: the compose default, overridable for a local process. */
 const target = env.NL2SQL_AUTH_URL ?? "https://localhost:8446";
 
 /**
- * Whether to check its certificate. False by default because the default is
- * the development certificate the agent API wrote for itself, on a
- * developer's own machine; in the image the equivalent is on.
+ * The auth service, its certificate unchecked by default on a developer's
+ * own machine (in the image the equivalent is on), and
+ * sign-in to the auth service -- the proxies every page's dev server builds
+ * the same way (../../web/src/vite.ts).
  */
-const secure = (env.NL2SQL_AUTH_TLS_VERIFY ?? "false").toLowerCase() === "true";
-
-const proxy: ProxyOptions = { target, changeOrigin: true, secure };
+const proxies = devProxies({
+  paths: ["/directory"],
+  target,
+  // `/auth` is this same service: sign-in and the directory are one.
+  auth: target,
+  secure: (env.NL2SQL_AUTH_TLS_VERIFY ?? "false").toLowerCase() === "true",
+});
 
 export default defineConfig({
   plugins: [react()],
+  resolve: shared.resolve,
   server: {
+    fs: shared.server.fs,
     port: Number(env.DIRECTORY_GUI_PORT ?? 5177),
-    proxy: { "/directory": proxy, "/auth": proxy },
+    proxy: proxies,
   },
   preview: {
     port: Number(env.DIRECTORY_GUI_PORT ?? 5177),
-    proxy: { "/directory": proxy, "/auth": proxy },
+    proxy: proxies,
   },
   build: { outDir: "dist", sourcemap: true },
 });

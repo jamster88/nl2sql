@@ -17,6 +17,7 @@ from __future__ import annotations
 import psycopg
 from pgvector.psycopg import register_vector
 from psycopg import sql
+from nl2sql_common.vectors import vector_literal
 
 QUESTION_TABLE = "golden_pair_question_vectors"
 REASONING_TABLE = "golden_pair_reasoning_vectors"
@@ -28,8 +29,9 @@ FIELD_TABLES = {
 }
 
 
-def connect(url: str) -> psycopg.Connection:
-    conn = psycopg.connect(url)
+def connect(url: str, *, connect_timeout: int | None = None) -> psycopg.Connection:
+    options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}
+    conn = psycopg.connect(url, **options)
     conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
     conn.commit()
     register_vector(conn)
@@ -122,16 +124,6 @@ def delete_missing(conn: psycopg.Connection, field: str, keep_ids: list[str]) ->
     )
     conn.commit()
     return result.rowcount or 0
-
-
-def vector_literal(vector) -> str:
-    """pgvector's text input format.
-
-    A plain list of floats is sent as `double precision[]`, which has no `<=>`
-    operator; the text form plus an explicit cast avoids needing a client-side
-    vector type at all, and is what the agent-side retriever uses too.
-    """
-    return "[" + ",".join(repr(float(v)) for v in vector) + "]"
 
 
 def search(conn: psycopg.Connection, field: str, query_vector, limit: int = 5) -> list[dict]:

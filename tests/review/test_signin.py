@@ -12,9 +12,11 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from nl2sql_identity import CURATORS, REVIEWERS, USERS, Guard, GuardSettings, Identity, sign
-from nl2sql_identity.tokens import SERVICE
+from nl2sql_identity.tokens import ANONYMOUS, SERVICE
+from nl2sql_common.attribution import APPLICATION_NAME_SQL
 from nl2sql_review import snippet_validation, validation
-from nl2sql_review.app import author, default_guard
+from nl2sql_review.app import default_guard
+from nl2sql_review.routes import author
 from nl2sql_review.settings import ReviewSettings
 
 from .conftest import FakeRepository, complete
@@ -88,14 +90,16 @@ def test_a_promotion_is_recorded_as_the_signed_in_reviewers_whatever_the_header_
     assert client.app.state.repository.promotion_log[0]["reviewer"] == "rita"
 
 
-def test_a_script_with_the_token_still_names_itself_with_the_header(signed, draft):
+def test_a_script_with_the_token_is_recorded_as_the_token_not_as_its_header(signed, draft):
+    """V6-62: the token is somebody, and a header naming somebody else is
+    not who did it."""
     client = signed()
     client.post(
         "/v1/submissions/sub-1/promote",
         json={"draft": complete(draft)},
         headers={"Authorization": "Bearer test-token", "X-Reviewer": "nightly-job"},
     )
-    assert client.app.state.repository.promotion_log[0]["reviewer"] == "nightly-job"
+    assert client.app.state.repository.promotion_log[0]["reviewer"] == "token:service-token"
 
 
 def test_a_review_is_recorded_as_the_reviewers(signed, submission):
@@ -148,15 +152,21 @@ def test_readiness_counts_sign_in(make_client, tmp_path):
 def test_the_default_guard_follows_the_settings():
     off = default_guard(ReviewSettings(auth_enabled=False, token="t"))
     assert not off.settings.enabled and off._recheck is None
-    assert off.settings.service_roles == {REVIEWERS, CURATORS}
+    assert off.settings.service_roles == {REVIEWERS, CURATORS}, "the pages' proxies send it for everyone"
+    assert off.settings.service_name == "review-token"
     on = default_guard(ReviewSettings(auth_enabled=True, reviewer_roles=("x",), curator_roles=("y",)))
-    assert on.settings.enabled and on._recheck is not None and on.settings.service_roles == {"x", "y"}
+    assert on.settings.enabled and on._recheck is not None
+    assert on.settings.service_roles == {"x"}, "a script reviews; curating by token is granted by name"
+    named = default_guard(ReviewSettings(token="t", token_name="nightly", token_roles=(CURATORS,)))
+    assert named.settings.service_name == "nightly" and named.settings.service_roles == {CURATORS}
 
 
-def test_the_author_is_the_person_when_there_is_one():
+def test_the_author_is_the_person_or_the_token_and_never_the_claim():
     assert author(Identity(user="rita"), "claimed") == "rita"
-    assert author(Identity(user="", kind=SERVICE), "claimed") == "claimed"
-    assert author(Identity(user="", kind=SERVICE), None) is None
+    assert author(Identity(user="nightly", kind=SERVICE), "claimed") == "token:nightly"
+    assert author(Identity(user="", kind=SERVICE), None) == "token:service"
+    assert author(Identity(user="", kind=ANONYMOUS), "claimed") == "claimed", "nobody can be told apart"
+    assert author(Identity(user="", kind=ANONYMOUS), None) is None
 
 
 # --- the validators themselves -------------------------------------------------
@@ -167,14 +177,21 @@ class Recording:
 
     def __init__(self):
         self.statements: list[str] = []
+        self.named: list[str] = []
 
     def execute(self, query, params=None):
         text = query if isinstance(query, str) else query.as_string(None)
         self.statements.append(text)
+        if text == APPLICATION_NAME_SQL:
+            self.named.append(params["name"])
         return self
 
     def fetchone(self):
-        return [[{"Plan": {"Total Cost": 1.0}}]]
+        # The plan for an EXPLAIN; for a snippet's before-and-after count,
+        # the two counts.
+        if self.statements[-1].lstrip().upper().startswith("EXPLAIN"):
+            return [[{"Plan": {"Total Cost": 1.0}}]]
+        return (10, 8)
 
     def fetchall(self):
         return [("dim_date",)]
@@ -202,6 +219,7 @@ def test_a_fix_is_run_as_the_person_who_checks_it(principal):
     validation.validate("SELECT 1", url="x", principal=principal, connect=lambda url, **k: conn)
     roles = [s for s in conn.statements if s.startswith("SET LOCAL ROLE")]
     assert roles == ([] if principal is None else ['SET LOCAL ROLE "rita"'])
+    assert conn.named == ([] if principal is None else ["nl2sql:review:rita"]), "Postgres is told whose it is"
     assert conn.statements[:2] == ["SET TRANSACTION READ ONLY", "SET LOCAL statement_timeout = 30000"]
 
 
@@ -213,6 +231,7 @@ def test_a_snippet_is_run_as_the_person_who_checks_it(principal):
     )
     roles = [s for s in conn.statements if s.startswith("SET LOCAL ROLE")]
     assert roles == ([] if principal is None else ['SET LOCAL ROLE "cora"'])
+    assert conn.named == ([] if principal is None else ["nl2sql:review:cora"])
 
 
 def test_settings_say_nothing_about_a_missing_token_once_sign_in_is_on():

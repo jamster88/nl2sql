@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from nl2sql_common.attribution import APPLICATION_NAME_SQL
 from nl2sql_agent.database import Database, UnsafeQueryError, ensure_read_only, strip_sql
 
 # ---------------------------------------------------------------------------
@@ -232,8 +233,8 @@ class _RecordingConnection:
     def begin(self):
         return self
 
-    def exec_driver_sql(self, sql: str):
-        self.sent.append(sql)
+    def exec_driver_sql(self, sql: str, params=None):
+        self.sent.append(sql if params is None else (sql, params))
         return self
 
     def scalar(self):
@@ -255,9 +256,23 @@ def test_the_planner_gate_runs_under_the_statement_timeout(monkeypatch):
     monkeypatch.setattr(db, "_engine", engine)
 
     assert db.explain_plan("SELECT 1", principal="ann") == (12.5, None)
-    assert engine.sent[:3] == [
+    assert engine.sent[:4] == [
         "SET TRANSACTION READ ONLY",
         "SET LOCAL statement_timeout = 2500",
+        (APPLICATION_NAME_SQL, {"name": "nl2sql:agent:ann"}),
         'SET LOCAL ROLE "ann"',
     ]
     assert engine.sent[-1] == "EXPLAIN (FORMAT JSON) SELECT 1"
+
+
+def test_the_person_a_statement_is_for_is_where_an_operator_looks(monkeypatch):
+    """V6-64: `current_user` is the person only inside the transaction; the
+    application name puts them in pg_stat_activity and the log too."""
+    db = Database("postgresql+psycopg://u:p@127.0.0.1:1/db")
+    engine = _RecordingEngine()
+    monkeypatch.setattr(db, "_engine", engine)
+    db.explain_plan("SELECT 1", principal='o"brien')
+    assert (APPLICATION_NAME_SQL, {"name": 'nl2sql:agent:o"brien'}) in engine.sent
+    assert 'SET LOCAL ROLE "o""brien"' in engine.sent
+    db.explain_plan("SELECT 1")
+    assert sum(1 for sent in engine.sent if isinstance(sent, tuple)) == 1, "nobody to name without a person"

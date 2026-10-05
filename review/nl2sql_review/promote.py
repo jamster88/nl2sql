@@ -23,30 +23,73 @@ modes are all survivable:
    means the agent cannot retrieve it yet. Saying so precisely is more use
    than rolling back something that was correct.
 
-Step 5 runs `rag/`'s scripts as scripts rather than importing them. They
-already handle the upsert, the delete of pairs no longer in the document,
-the BM25 rebuild and incremental re-embedding; a second implementation here
-would be a second set of rules to keep in agreement with the first.
+Step 5 calls `rag/`'s loaders, `ragproc.loaders`, in this process (V6-27).
+They already handle the upsert, the delete of pairs no longer in the
+document, the BM25 rebuild and incremental re-embedding; a second
+implementation here would be a second set of rules to keep in agreement with
+the first. Until 6.2 they ran as scripts, with the stores' URLs -- passwords
+and all -- on a command line anyone on the host could read in `ps`; now the
+credentials are arguments to a function.
+
+All of it, from reading the document to the last load, is done holding the
+write lock (`writing`): one promotion at a time, so two curators cannot
+both take Q47, and a load never reads a document another is half way
+through changing.
 """
 
 from __future__ import annotations
 
+import fcntl
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable, Iterator
+
+from nl2sql_common.errors import described
 
 from . import render
 from .render import Draft
 from .settings import ReviewSettings
 
-#: `rag/`'s scripts start with digits, so they cannot be imported as modules
-#: and are named as files throughout.
-CONTEXT_LOADER = "05_load_golden_pairs.py"
-VECTOR_LOADER = "06_embed_golden_pairs.py"
+#: What each load is called in a step's report: the loader script's name, as
+#: the steps were called when they ran as scripts.
+CONTEXT_STEP = "load_golden_pairs"
+VECTOR_STEP = "embed_golden_pairs"
+
+#: One writer at a time in this process. `writing` adds the lock between
+#: processes.
+_WRITING = threading.Lock()
+
+
+@contextmanager
+def writing(directory: Path) -> Iterator[None]:
+    """Hold the write lock for the documents in `directory` (V6-27).
+
+    In this process, a lock; between processes -- a second replica of this
+    service, a script that writes through this module -- an advisory lock on
+    the directory itself. Not on the document: an atomic write replaces it,
+    and a lock held on the file that was replaced guards nothing. A
+    filesystem that cannot lock (some network mounts) leaves the first.
+    """
+    with _WRITING:
+        try:
+            handle = os.open(str(directory), os.O_RDONLY)
+        except OSError:
+            yield
+            return
+        try:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+            except OSError:
+                pass
+            yield
+        finally:
+            os.close(handle)
 
 
 class PromotionError(Exception):
@@ -136,6 +179,53 @@ def _reloaded(steps: list[StepResult]) -> bool:
     return bool(ran) and all(step.ok for step in ran)
 
 
+def _loaders(settings: ReviewSettings) -> Any:
+    """`ragproc.loaders`, from `rag/` -- None when this image has no `rag/`."""
+    if not (Path(settings.rag_dir) / "ragproc").is_dir():
+        return None
+    _ensure_importable(settings.rag_dir)
+    from ragproc import loaders  # type: ignore[import-not-found]
+
+    return loaders
+
+
+def embedder_factory(settings: ReviewSettings) -> Callable[[], Any]:
+    """The embedding host the loaders use, built when first needed.
+
+    `REVIEW_RELOAD_TIMEOUT_SECONDS` is how long one request to it may take:
+    the loads run in this process now, and the embedding host is the one
+    part of them that can take minutes.
+    """
+
+    def build() -> Any:
+        from ragproc.embedder import build_embedder  # type: ignore[import-not-found]
+
+        return build_embedder(
+            "ollama", settings.embed_model, settings.ollama_url, timeout=int(settings.reload_timeout_seconds)
+        )
+
+    return build
+
+
+def run_step(settings: ReviewSettings, name: str, work: Callable[[Any], Any], *, enabled: bool) -> StepResult:
+    """One load, reported rather than raised.
+
+    The document is the source of truth and it is already written: whatever
+    the load does wrong -- a store down, an embedding host gone, a bug -- is
+    said beside the pair, not raised over it.
+    """
+    if not enabled:
+        return StepResult(name=name, ran=False)
+    loaders = _loaders(settings)
+    if loaders is None:
+        return StepResult(name=name, ran=True, ok=False, detail=f"{Path(settings.rag_dir) / 'ragproc'} is not there")
+    try:
+        report = work(loaders)
+    except Exception as exc:  # noqa: BLE001 - the document is written; a load that failed is reported beside it
+        return StepResult(name=name, ran=True, ok=False, detail=_tail(described(exc, limit=2000)))
+    return StepResult(name=name, ran=True, ok=getattr(report, "complete", True), detail=_tail(report.summary()))
+
+
 def _parser():
     """`ragproc.golden_pairs`, imported the way the loaders see it.
 
@@ -172,6 +262,11 @@ def preview(settings: ReviewSettings, draft: Draft) -> tuple[str, str, list[str]
 
 def promote(settings: ReviewSettings, draft: Draft) -> Promotion:
     """Add the pair to the document, then bring the stores up to date."""
+    with writing(settings.document_path.parent):
+        return _promote(settings, draft)
+
+
+def _promote(settings: ReviewSettings, draft: Draft) -> Promotion:
     _ensure_importable(settings.rag_dir)
     path = settings.document_path
     document = _read(path)
@@ -209,6 +304,11 @@ def withdraw(settings: ReviewSettings, pair_id: str) -> Withdrawal:
     the rows and vectors of a pair the document no longer holds, so the
     stores need nothing but the reload promotion runs.
     """
+    with writing(settings.document_path.parent):
+        return _withdraw(settings, pair_id)
+
+
+def _withdraw(settings: ReviewSettings, pair_id: str) -> Withdrawal:
     _ensure_importable(settings.rag_dir)
     path = settings.document_path
     document = _read(path)
@@ -386,75 +486,24 @@ def _reload(settings: ReviewSettings) -> list[StepResult]:
     so running it after a failure produces a confusing error about the wrong
     thing.
     """
-    steps: list[StepResult] = []
-    context = _run_loader(
+    context = run_step(
         settings,
-        CONTEXT_LOADER,
-        [settings.document, "--db-url", settings.chunk_db_url],
+        CONTEXT_STEP,
+        lambda loaders: loaders.load_golden_pairs(settings.document_path, settings.chunk_db_url),
         enabled=settings.reload_context,
     )
-    steps.append(context)
-
     vectors_enabled = settings.reload_vectors and context.ran and context.ok
-    vectors = _run_loader(
+    vectors = run_step(
         settings,
-        VECTOR_LOADER,
-        [
-            "--chunk-db-url",
-            settings.chunk_db_url,
-            "--vector-db-url",
-            settings.vector_db_url,
-            "--ollama-url",
-            settings.ollama_url,
-            "--model",
-            settings.embed_model,
-        ],
+        VECTOR_STEP,
+        lambda loaders: loaders.embed_golden_pairs(
+            settings.chunk_db_url, settings.vector_db_url, embedder_factory(settings)()
+        ),
         enabled=vectors_enabled,
     )
     if settings.reload_vectors and not vectors_enabled:
         vectors.detail = "not attempted: the context load did not succeed"
-    steps.append(vectors)
-    return steps
-
-
-def _run_loader(
-    settings: ReviewSettings,
-    script: str,
-    args: list[str],
-    *,
-    enabled: bool,
-    env: dict[str, str] | None = None,
-) -> StepResult:
-    name = script.split("_", 1)[-1].removesuffix(".py")
-    if not enabled:
-        return StepResult(name=name, ran=False)
-
-    path = Path(settings.rag_dir) / script
-    if not path.is_file():
-        return StepResult(name=name, ran=True, ok=False, detail=f"{path} is not there")
-
-    try:
-        completed = subprocess.run(
-            [sys.executable, script, *args],
-            cwd=settings.rag_dir,
-            capture_output=True,
-            text=True,
-            timeout=settings.reload_timeout_seconds,
-            check=False,
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return StepResult(
-            name=name,
-            ran=True,
-            ok=False,
-            detail=f"timed out after {settings.reload_timeout_seconds:g}s",
-        )
-    except OSError as exc:  # the interpreter itself could not be started
-        return StepResult(name=name, ran=True, ok=False, detail=str(exc))
-
-    output = _tail((completed.stdout or "") + (completed.stderr or ""))
-    return StepResult(name=name, ran=True, ok=completed.returncode == 0, detail=output)
+    return [context, vectors]
 
 
 def _tail(text: str, limit: int = 600) -> str:

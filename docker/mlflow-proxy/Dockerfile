@@ -31,6 +31,15 @@ ENV NGINX_ENVSUBST_FILTER="^(MLFLOW_|AUTH_)" \
 
 RUN mkdir -p /etc/nl2sql/tls
 
+# Unprivileged (V6-31): nginx's own account, uid 101, which the pki service
+# gives this page's key to. What the start writes -- the templates rendered
+# into conf.d, the include files beside nginx.conf, the pid, the cache -- is
+# made that account's here, and the `user` directive goes: a master that is
+# not root cannot switch to it.
+RUN sed -i -e '/^user /d' -e 's#^pid .*#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
+ && chown nginx:nginx /etc/nginx /etc/nginx/conf.d /var/cache/nginx
+USER 101:101
+
 EXPOSE 5001
 
 # MLflow's own health route, through the proxy and without sign-in: it says
@@ -42,4 +51,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql MLflow proxy" \
       org.opencontainers.image.description="nginx in front of the nl2sql MLflow server: sign-in through the auth service for every request" \
-      org.opencontainers.image.version="6.1.0"
+      org.opencontainers.image.version="6.2.0"

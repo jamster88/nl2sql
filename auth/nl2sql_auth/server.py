@@ -12,6 +12,7 @@ directory's own API, which is not, and which the app answers nowhere else.
 from __future__ import annotations
 
 import argparse
+import os
 import socket
 import sys
 from dataclasses import replace
@@ -22,6 +23,8 @@ import psycopg
 from . import __version__, keys
 from .app import create_app
 from .settings import SERVICE_HOSTNAME, AuthSettings
+from nl2sql_common import privileges
+from nl2sql_common.urls import redacted
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -50,13 +53,7 @@ def settings_from_args(args: argparse.Namespace) -> AuthSettings:
 
 
 def _redacted(url: str | None) -> str:
-    if not url:
-        return "(not set)"
-    scheme, _, rest = url.partition("://")
-    credentials, at, host = rest.rpartition("@")
-    if not at:
-        return url
-    return f"{scheme}://{credentials.partition(':')[0]}:***@{host}"
+    return redacted(url, missing="(not set)")
 
 
 def _directory_api(settings: AuthSettings) -> str:
@@ -97,12 +94,26 @@ def database_check(url: str | None, *, connect: Callable = psycopg.connect) -> C
     return check
 
 
-def main(argv: Sequence[str] | None = None, *, run: Callable | None = None) -> int:
+#: The account this service runs as once it has its directories (V6-31).
+ACCOUNT = "nl2sql"
+
+
+def main(argv: Sequence[str] | None = None, *, run: Callable | None = None, become: Callable | None = None) -> int:
     args = parse_args(argv)
     settings = settings_from_args(args)
     print(banner(settings))
     if args.print_settings:
         return 0
+    # Root only long enough to give the account the two directories it
+    # writes -- the signing key's, the public key's -- with what an older
+    # release wrote there as root (V6-31). Everything after, the key read
+    # and the server, is the account's.
+    if (become or privileges.become)(
+        ACCOUNT,
+        own=(os.path.dirname(settings.signing_key_file), os.path.dirname(settings.public_key_file)),
+        recursive=True,
+    ):
+        print(f"  running as {ACCOUNT}")
     if settings.tls_enabled and not settings.certificate_present:
         print(
             f"error: TLS is on but {settings.tls_cert_file} is not readable.\n"

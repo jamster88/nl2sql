@@ -128,15 +128,29 @@ def test_both_are_built_here_and_named_as_the_release_publishes_them(config: dic
     assert built["image"] == f"nl2sql-{service}:latest"
 
 
-@pytest.mark.parametrize("dockerfile", ["docker/mlflow/Dockerfile", "docker/mlflowdb/Dockerfile"])
-def test_the_images_add_nothing_to_what_they_are_built_from(dockerfile: str):
-    """How the server is run is compose's command, which changes without a
-    rebuild; an image that baked any of it in would be a second copy."""
-    instructions = {
-        line.split()[0] for line in (REPO_ROOT / dockerfile).read_text().splitlines()
+def _instructions(dockerfile: str) -> list[str]:
+    return [
+        line for line in (REPO_ROOT / dockerfile).read_text().splitlines()
         if line and not line.startswith(("#", " "))
-    }
-    assert instructions <= {"FROM", "EXPOSE", "LABEL"}
+    ]
+
+
+def test_the_store_adds_nothing_to_what_it_is_built_from():
+    """How a server is run is compose's command, which changes without a
+    rebuild; an image that baked any of it in would be a second copy."""
+    assert {line.split()[0] for line in _instructions("docker/mlflowdb/Dockerfile")} <= {"FROM", "EXPOSE", "LABEL"}
+
+
+def test_the_server_adds_an_account_to_run_as_and_nothing_of_how_it_is_served():
+    """6.2 (V6-31): the account `mlflow` and the entrypoint that drops to
+    it. How it is served -- the store, the artifacts, the hosts -- is still
+    compose's command alone."""
+    added = [line for line in _instructions("docker/mlflow/Dockerfile") if line.split()[0] not in {"FROM", "EXPOSE", "LABEL"}]
+    assert [line.split()[0] for line in added] == ["RUN", "COPY", "ENTRYPOINT"]
+    assert added[0].startswith("RUN groupadd --system --gid 10002 mlflow")
+    assert added[1] == "COPY --chmod=755 docker/mlflow/entrypoint.sh /usr/local/bin/nl2sql-mlflow-entrypoint"
+    assert added[2] == 'ENTRYPOINT ["/usr/local/bin/nl2sql-mlflow-entrypoint"]'
+    assert "CMD" not in {line.split()[0] for line in _instructions("docker/mlflow/Dockerfile")}
 
 
 def test_the_server_is_mlflows_own_image_with_a_postgres_driver():

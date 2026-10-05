@@ -6,8 +6,14 @@ Ollama host, a different model, or a different database without a rebuild.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+
+from nl2sql_common.env import (
+    env_bool as _env_bool,
+    env_float as _env_float,
+    env_int as _env_int,
+    env_str as _env_str,
+)
 
 DEFAULT_OLLAMA_BASE_URL = "http://192.168.10.82:11434"
 DEFAULT_OLLAMA_MODEL = "qwen3.8-256k"
@@ -48,44 +54,6 @@ DEFAULT_SNIPPET_DB_URL = "postgresql+psycopg://snippets_reader:snippets_reader@s
 # the agent wherever it runs -- the CLI, the API, the benchmark -- so its
 # traces can be compared side by side; the trace's tags say which it was.
 DEFAULT_MLFLOW_EXPERIMENT = "nl2sql-agent"
-
-
-def _env(name: str) -> str | None:
-    """An environment variable, with empty and whitespace read as unset.
-
-    Docker Compose forwards a variable the host has not set as an empty
-    string, so without this every knob compose passes through would override
-    its own default with nothing: `OLLAMA_MODEL=""` becomes a model with no
-    name, and `SCHEMA_RETRIEVAL=""` is neither `vector` nor `llm`. Treating
-    empty as absent is what lets compose forward a setting without also
-    having to repeat its default and keep the two in step.
-    """
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return None
-    return raw.strip()
-
-
-def _env_str(name: str, default: str) -> str:
-    raw = _env(name)
-    return default if raw is None else raw
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name)
-    if raw is None:
-        return default
-    return raw.lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = _env(name)
-    return default if raw is None else int(raw)
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = _env(name)
-    return default if raw is None else float(raw)
 
 
 @dataclass

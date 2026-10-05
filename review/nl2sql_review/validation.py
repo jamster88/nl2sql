@@ -35,12 +35,13 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, time as clock
-from decimal import Decimal
 from typing import Any
 
 import psycopg
 from psycopg import sql as pgsql
+from nl2sql_common.values import json_safe
+from nl2sql_common.attribution import APPLICATION_NAME_SQL, application_name
+from nl2sql_common.errors import DATABASE_ERRORS
 
 #: How many rows of the result are sent back to the browser and stored with
 #: the fix: enough to see that it is the right answer, not the whole answer.
@@ -101,21 +102,6 @@ def static_problems(statement: str, reference: str = "") -> list[str]:
     return problems
 
 
-def json_safe(value: Any) -> Any:
-    """A cell as JSON can carry it without losing what it said.
-
-    Decimals become strings rather than floats: `719279.97` is the answer a
-    reviewer checked, and a float would store `719279.9699999999`.
-    """
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
-    if isinstance(value, Decimal):
-        return str(value)
-    if isinstance(value, (datetime, date, clock)):
-        return value.isoformat()
-    return str(value)
-
-
 def _plan_cost(plan: Any) -> float | None:
     try:
         return float(plan[0]["Plan"]["Total Cost"])
@@ -165,7 +151,7 @@ def validate(
     started = time.perf_counter()
     try:
         conn = connect(url, connect_timeout=10)
-    except Exception as exc:  # noqa: BLE001 - reported to the reviewer, not raised
+    except DATABASE_ERRORS as exc:  # reported to the reviewer, not raised
         return Validation(
             sql=cleaned,
             valid=False,
@@ -179,12 +165,13 @@ def validate(
         if principal:
             # Signed in, a person's SQL runs as them -- the role their
             # questions run as -- so what they keep is what they can read.
+            conn.execute(APPLICATION_NAME_SQL, {"name": application_name("review", principal)})
             conn.execute(pgsql.SQL("SET LOCAL ROLE {}").format(pgsql.Identifier(principal)))
         plan = conn.execute(f"EXPLAIN (FORMAT JSON) {cleaned}").fetchone()[0]
         cursor = conn.execute(cleaned)
         columns = [column.name for column in (cursor.description or [])]
         fetched: Sequence[Sequence[Any]] = cursor.fetchmany(max_rows + 1)
-    except Exception as exc:  # noqa: BLE001 - the database's refusal is the answer
+    except DATABASE_ERRORS as exc:  # the database's refusal is the answer
         return Validation(
             sql=cleaned,
             valid=False,

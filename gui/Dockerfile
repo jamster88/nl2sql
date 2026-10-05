@@ -26,6 +26,10 @@ RUN npm ci
 
 COPY gui/tsconfig.json gui/vite.config.ts gui/index.html ./
 COPY gui/src/ ./src/
+# What every page shares (V6-25), where its configuration looks for it:
+# beside the page in the checkout, so `../web` (or `../../web`) from /build.
+COPY web/package.json /web/package.json
+COPY web/src/ /web/src/
 RUN npm run build
 
 
@@ -65,6 +69,15 @@ ENV NGINX_ENVSUBST_FILTER="^(API_|GUI_|AUTH_)" \
 # certificate can also be placed here by `docker cp`.
 RUN mkdir -p /etc/nl2sql/tls
 
+# Unprivileged (V6-31): nginx's own account, uid 101, which the pki service
+# gives this page's key to. What the start writes -- the templates rendered
+# into conf.d, the include files beside nginx.conf, the pid, the cache -- is
+# made that account's here, and the `user` directive goes: a master that is
+# not root cannot switch to it.
+RUN sed -i -e '/^user /d' -e 's#^pid .*#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
+ && chown nginx:nginx /etc/nginx /etc/nginx/conf.d /var/cache/nginx
+USER 101:101
+
 EXPOSE 8080
 
 # HTTPS unless the page was told otherwise. Unverified, and only here: this is
@@ -76,4 +89,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql GUI" \
       org.opencontainers.image.description="React/TypeScript web interface for the nl2sql agent REST API" \
-      org.opencontainers.image.version="6.1.0"
+      org.opencontainers.image.version="6.2.0"

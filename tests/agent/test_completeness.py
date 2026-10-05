@@ -496,7 +496,7 @@ def test_the_reflection_names_at_most_three_columns():
 
 
 def test_a_reflection_that_fails_or_says_nothing_costs_nothing_but_its_note():
-    gaps, note, calls = reflect(_Reflector([RuntimeError("model away")]), question="q", intent="",
+    gaps, note, calls = reflect(_Reflector([ConnectionError("model away")]), question="q", intent="",
                                 contract=AnswerContract(), result=TEN_FULL, query=read_query("SELECT 1"),
                                 schema="")
     assert (gaps, calls) == ([], 0) and "model away" in note

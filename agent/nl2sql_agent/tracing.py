@@ -37,10 +37,18 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Callable, Iterator, Mapping
 
+from nl2sql_common.errors import NETWORK_ERRORS, Nl2SqlError, Refused, _family, _optional
+
 from .config import Settings
 from .state import TraceEntry, to_jsonable
 
 log = logging.getLogger(__name__)
+
+#: What talking to MLflow fails with: the network, the server's refusal as
+#: MLflow raises it, and a reply it could not use. Tracing is best effort --
+#: a question is answered whether or not its trace is kept -- but a bug in
+#: this module is still a bug, not a server that is down (V6-23).
+TRACING_ERRORS = _family(NETWORK_ERRORS, [ValueError, Nl2SqlError], _optional("mlflow.exceptions.MlflowException"))
 
 #: How long the health check waits for the tracking server. A server that is
 #: up answers in milliseconds; this bounds the one that is routed and silent.
@@ -196,7 +204,7 @@ class Tracer:
                 mlflow = self.mlflow()
                 mlflow.set_tracking_uri(self.uri)
                 mlflow.set_experiment(self.experiment)
-            except Exception as exc:
+            except TRACING_ERRORS as exc:
                 self._retry_at = now + RETRY_SECONDS
                 self.status = f"MLflow at {self.uri} did not answer ({_reason(exc)}); runs are not traced"
                 log.warning("%s; asking again in %gs", self.status, RETRY_SECONDS)
@@ -261,7 +269,7 @@ class Tracer:
                 mlflow.log_feedback(
                     trace_id=trace_id, name=VERDICT, value=verdict, rationale=comment, source=source
                 )
-        except Exception as exc:
+        except TRACING_ERRORS as exc:
             log.warning("could not record the verdict on trace %s: %s", trace_id, _reason(exc))
             return False
         return True
@@ -274,7 +282,7 @@ class Tracer:
         try:
             for assessment in self._verdicts(mlflow, trace_id):
                 mlflow.delete_assessment(trace_id=trace_id, assessment_id=assessment.assessment_id)
-        except Exception as exc:
+        except TRACING_ERRORS as exc:
             log.warning("could not withdraw the verdict on trace %s: %s", trace_id, _reason(exc))
             return False
         return True
@@ -293,7 +301,7 @@ class Tracer:
                 return_type="list",
                 include_spans=False,
             )
-        except Exception as exc:
+        except TRACING_ERRORS as exc:
             log.warning("could not look up the trace of job %s: %s", job_id, _reason(exc))
             return None
         return found[0].info.trace_id if found else None
@@ -307,7 +315,7 @@ class Tracer:
         """
         trace = mlflow.get_trace(trace_id, flush=True)
         if trace is None:
-            raise LookupError(f"no trace {trace_id} on the server")
+            raise Refused(f"no trace {trace_id} on the server")
         return [a for a in trace.info.assessments or [] if a.name == VERDICT]
 
 

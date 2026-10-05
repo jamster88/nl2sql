@@ -10,42 +10,38 @@
  */
 
 import react from "@vitejs/plugin-react";
-import { defineConfig, type ProxyOptions } from "vite";
+import { defineConfig } from "vite";
+
+import { sharedPackage } from "../web/src/config.ts";
+import { devProxies } from "../web/src/vite.ts";
+
+const shared = sharedPackage(import.meta.url);
 
 /** Paths the console owns. Everything else is this app's own asset. */
 const API_PATHS = ["/v1", "/healthz", "/readyz", "/openapi.json"];
 
 const env = process.env;
 const target = env.NL2SQL_CONSOLE_URL ?? "https://localhost:8445";
-const secure = (env.NL2SQL_CONSOLE_TLS_VERIFY ?? "false").toLowerCase() === "true";
-const token = env.CONSOLE_TOKEN ?? "";
-
-const proxy: ProxyOptions = {
-  target,
-  changeOrigin: true,
-  secure,
-  configure(server) {
-    server.on("proxyReq", (request) => {
-      if (token) request.setHeader("Authorization", `Bearer ${token}`);
-    });
-  },
-};
 
 /**
- * Sign-in, which the auth service answers. Its cookie comes back through
- * this proxy, so it is the dev server's own, as it is nginx's in the image.
+ * The console, its certificate unchecked by default on a developer's
+ * own machine (in the image the equivalent is on), its token as the bearer, and
+ * sign-in to the auth service -- the proxies every page's dev server builds
+ * the same way (../web/src/vite.ts).
  */
-const auth: ProxyOptions = {
-  target: env.NL2SQL_AUTH_URL ?? "https://localhost:8446",
-  changeOrigin: true,
-  secure,
-};
-
-const proxies = { ...Object.fromEntries(API_PATHS.map((path) => [path, proxy])), "/auth": auth };
+const proxies = devProxies({
+  paths: API_PATHS,
+  target,
+  auth: env.NL2SQL_AUTH_URL ?? "https://localhost:8446",
+  secure: (env.NL2SQL_CONSOLE_TLS_VERIFY ?? "false").toLowerCase() === "true",
+  token: env.CONSOLE_TOKEN ?? "",
+});
 
 export default defineConfig({
   plugins: [react()],
+  resolve: shared.resolve,
   server: {
+    fs: shared.server.fs,
     port: Number(env.CONSOLE_GUI_PORT ?? 5175),
     proxy: proxies,
   },

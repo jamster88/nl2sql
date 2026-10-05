@@ -30,7 +30,10 @@ from dataclasses import dataclass, field, fields
 from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
 
 from ..api.settings import DEFAULT_CERT_FILE, DEFAULT_KEY_FILE, _env_tuple
-from ..config import _env, _env_bool, _env_int, _env_str
+from nl2sql_common.env import env as _env
+from nl2sql_common.env import env_bool as _env_bool
+from nl2sql_common.env import env_int as _env_int
+from nl2sql_common.env import env_str as _env_str
 
 #: 8445: the API is 8443 and the review service 8444, and this is the third
 #: of the same kind of process.
@@ -87,6 +90,11 @@ class ConsoleSettings:
     # machine and a warning everywhere else: anyone who can reach the port
     # can run SQL as the agent's role.
     token: str | None = None
+    # Who the token is, and what it may do (V6-62). Empty roles are the
+    # console's own `allowed_roles`: it does one thing, and a token that may
+    # do it holds what a person who may would.
+    token_name: str = "console-token"
+    token_roles: tuple[str, ...] = ()
     # Empty by default, unlike the API. The interface is same-origin behind
     # its own nginx, and a SQL runner that any page in the browser could
     # call is not something to offer without being asked.
@@ -124,6 +132,8 @@ class ConsoleSettings:
             tls_cert_file=_env_str("CONSOLE_TLS_CERT_FILE", DEFAULT_CERT_FILE),
             tls_key_file=_env_str("CONSOLE_TLS_KEY_FILE", DEFAULT_KEY_FILE),
             token=_env("CONSOLE_TOKEN"),
+            token_name=_env_str("CONSOLE_TOKEN_NAME", "console-token"),
+            token_roles=_env_tuple("CONSOLE_TOKEN_ROLES", ()),
             cors_origins=_env_tuple("CONSOLE_CORS_ORIGINS", ()),
             auth_enabled=_env_bool("AUTH_ENABLED", True),
             auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
@@ -144,6 +154,10 @@ class ConsoleSettings:
     def public_url(self) -> str:
         shown = "localhost" if self.host in ("0.0.0.0", "::", "") else self.host
         return f"{self.scheme}://{shown}:{self.port}{self.root_path}"
+
+    def token_holds(self) -> frozenset[str]:
+        """The roles CONSOLE_TOKEN holds: CONSOLE_TOKEN_ROLES, or what a person needs here."""
+        return frozenset(self.token_roles or self.allowed_roles)
 
     def warnings(self) -> list[str]:
         """Configurations that will work and probably should not.

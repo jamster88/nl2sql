@@ -38,26 +38,14 @@ import type {
   Verdict,
 } from "./types";
 
-import { notifyUnauthorized } from "../auth/session";
+import { ApiError } from "@nl2sql/web/api/errors";
+import { notifyUnauthorized } from "@nl2sql/web/auth/session";
 
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
-  readonly detail: Record<string, unknown> | undefined;
-
-  constructor(status: number, code: string, message: string, detail?: Record<string, unknown>) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-    this.detail = detail;
-  }
-
-  /** True when retrying the same request might work. */
-  get retryable(): boolean {
-    return this.status === 503 || this.status === 0;
-  }
-}
+/**
+ * A failure the service described -- the error every page throws for one
+ * (`web/src/api/errors.ts`): branch on `code`, show `message`.
+ */
+export { ApiError };
 
 export interface ClientOptions {
   /** Empty means same origin, which is the normal case: nginx proxies /v1. */

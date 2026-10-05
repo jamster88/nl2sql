@@ -66,6 +66,16 @@ class ModelsTest {
     }
 
     @Test
+    void a_reload_says_what_was_read_again_and_nothing_is_a_null() {
+        // Mirrored for completeness: this client does not reload.
+        Models.Reloaded reloaded = Json.read(
+                "{\"reloaded\": [\"literals\"], \"sessions_forgotten\": 2}", Models.Reloaded.class);
+        assertEquals(List.of("literals"), reloaded.reloaded());
+        assertEquals(2, reloaded.sessions_forgotten());
+        assertEquals(List.of(), Json.read("{}", Models.Reloaded.class).reloaded());
+    }
+
+    @Test
     void a_field_the_server_did_not_send_arrives_as_a_list_rather_than_a_null() {
         // The server promises it; this keeps the promise even against one
         // older than the field being read. A GUI that null-checks a list it

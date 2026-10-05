@@ -31,8 +31,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 #: lockfile holds a dependency's version as well as the project's.
 DECLARATIONS = {
     "agent/nl2sql_agent/__init__.py": r'^__version__ = "([\d.]+)"',
-    "review/nl2sql_review/app.py": r'^__version__ = "([\d.]+)"',
+    "review/nl2sql_review/__init__.py": r'^__version__ = "([\d.]+)"',
     "auth/nl2sql_auth/__init__.py": r'^__version__ = "([\d.]+)"',
+    # The shared package, released with the images and recorded in each (6.2).
+    "common/nl2sql_common/__init__.py": r'^__version__ = "([\d.]+)"',
+    "common/pyproject.toml": r'^version = "([\d.]+)"',
     "agent/Dockerfile": r"^ARG AGENT_VERSION=([\d.]+)",
     "review/Dockerfile": r"^ARG REVIEW_VERSION=([\d.]+)",
     "auth/Dockerfile": r"^ARG AUTH_VERSION=([\d.]+)",
@@ -52,6 +55,8 @@ DECLARATIONS = {
     "console/package.json": r'^  "version": "([\d.]+)"',
     "curate/package.json": r'^  "version": "([\d.]+)"',
     "auth/gui/package.json": r'^  "version": "([\d.]+)"',
+    # What every page shares (6.2): source, but a release's, so it says which.
+    "web/package.json": r'^  "version": "([\d.]+)"',
 }
 
 #: The lockfiles, which say it twice and are read as JSON rather than by
@@ -104,10 +109,14 @@ def test_a_lockfile_is_listed_for_every_npm_project():
     assert _tracked("*package-lock.json") == set(LOCKFILES)
 
 
+_ONES = ["", "-one", "-two", "-three", "-four", "-five", "-six", "-seven", "-eight", "-nine"]
 _NUMBER_WORDS = {
     "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
-    "eighteen": 18, "nineteen": 19, "twenty": 20, "twenty-two": 22, "twenty-four": 24, "twenty-six": 26,
-    "twenty-eight": 28, "thirty": 30, "thirty-two": 32, "thirty-four": 34, "thirty-six": 36,
+    "eighteen": 18, "nineteen": 19,
+    # Every one from twenty to forty-nine: a count is not always even (6.2's
+    # shared web package made it thirty-five).
+    **{f"{tens}{ones}": base + index for tens, base in (("twenty", 20), ("thirty", 30), ("forty", 40))
+       for index, ones in enumerate(_ONES)},
 }
 
 

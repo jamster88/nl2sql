@@ -191,7 +191,7 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
     started = time.perf_counter()
     try:
         state = agent.run(question.question)
-    except Exception as exc:  # a crash is a benchmark result, not a benchmark failure
+    except Exception as exc:  # noqa: BLE001 - a crash is a benchmark result, not a benchmark failure
         return QuestionResult(
             question_id=question.id, category=question.category, question=question.question,
             outcome=FAILED, wall_seconds=time.perf_counter() - started, timing=timer.timing,

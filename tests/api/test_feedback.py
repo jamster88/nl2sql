@@ -25,6 +25,7 @@ from nl2sql_agent.api.feedback import (
 from nl2sql_agent.api.settings import ApiSettings
 
 from .conftest import ANSWERED, ask, make_runner
+import psycopg
 
 
 class FakeSink:
@@ -483,12 +484,8 @@ def test_the_postgres_sink_deletes_before_inserting():
     assert conn.committed
 
 
-class Duplicate(Exception):
-    sqlstate = "23505"
-
-
 def test_a_duplicate_key_means_the_verdict_was_already_reviewed():
-    conn = FakeConnection(on_insert=Duplicate())
+    conn = FakeConnection(on_insert=psycopg.errors.UniqueViolation("duplicate key value"))
     sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
 
     with pytest.raises(AlreadyReviewed):
@@ -497,10 +494,10 @@ def test_a_duplicate_key_means_the_verdict_was_already_reviewed():
 
 
 def test_any_other_driver_failure_is_reported_as_unavailable():
-    conn = FakeConnection(on_insert=RuntimeError("boom"))
+    conn = FakeConnection(on_insert=psycopg.OperationalError("boom"))
     sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
 
-    with pytest.raises(FeedbackUnavailable, match="RuntimeError"):
+    with pytest.raises(FeedbackUnavailable, match="OperationalError"):
         sink.record(Capture(job_id="j", verdict="yes", question="q"))
 
 
@@ -523,7 +520,7 @@ def test_a_withdrawal_reports_whether_it_removed_anything():
 
 def test_a_withdrawal_that_throws_is_reported_as_unavailable():
     def explode(url):
-        raise RuntimeError("no route to host")
+        raise psycopg.OperationalError("no route to host")
 
     with pytest.raises(FeedbackUnavailable, match="cannot withdraw"):
         PostgresSink("postgresql://x/y", connect=explode).withdraw("j")
@@ -531,11 +528,11 @@ def test_a_withdrawal_that_throws_is_reported_as_unavailable():
 
 def test_the_check_reports_the_reason_rather_than_raising():
     def explode(url):
-        raise RuntimeError("no route to host")
+        raise psycopg.OperationalError("no route to host")
 
     ok, detail = PostgresSink("postgresql://x/y", connect=explode).check()
     assert ok is False
-    assert "RuntimeError" in detail
+    assert "OperationalError" in detail
 
 
 def test_a_reachable_database_checks_out():

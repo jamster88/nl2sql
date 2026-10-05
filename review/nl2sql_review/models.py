@@ -23,13 +23,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-class Wire(BaseModel):
-    """Every model in this contract: no field it does not declare."""
-
-    model_config = ConfigDict(extra="forbid")
-
+from pydantic import ConfigDict, Field, field_validator
+from nl2sql_common.envelope import Wire
 
 #: Correct, wrong, correct but incomplete: `store.VERDICTS`, as a type.
 Verdict = Literal["yes", "no", "incomplete"]
@@ -586,38 +581,3 @@ class ReviewMeta(Wire):
     authentication: Literal["none", "bearer", "session"] = "none"
     warnings: list[str] = Field(default_factory=list)
 
-
-class Health(Wire):
-    status: Literal["ok"] = "ok"
-    version: str
-    uptime_seconds: float
-
-
-class Check(Wire):
-    ok: bool
-    detail: str = ""
-
-
-class Readiness(Wire):
-    ready: bool
-    checks: dict[str, Check]
-    warnings: list[str] = Field(default_factory=list)
-
-
-class ApiError(Wire):
-    """The same error envelope the agent API uses, so one client parses both."""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "error": {
-                        "code": "not_promotable",
-                        "message": "keywords is empty -- needs keywords for the BM25 index",
-                    }
-                }
-            ]
-        }
-    )
-
-    error: dict[str, Any]

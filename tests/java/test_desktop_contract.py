@@ -26,6 +26,8 @@ import pytest
 
 from nl2sql_agent.api import models
 from nl2sql_auth import models as auth_models
+from nl2sql_common import envelope
+from pydantic import BaseModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "api" / "Models.java"
@@ -50,16 +52,23 @@ MIRRORED = {
     "JobLinks": models.JobLinks,
     "Job": models.Job,
     "JobList": models.JobList,
+    "Reloaded": models.Reloaded,
     "Limits": models.Limits,
     "Pipeline": models.Pipeline,
     "Meta": models.Meta,
-    "Health": models.Health,
-    "Check": models.Check,
-    "Readiness": models.Readiness,
+    # The health envelope every service shares (`nl2sql_common.envelope`).
+    "Health": envelope.Health,
+    "Check": envelope.Check,
+    "Readiness": envelope.Readiness,
     "AskRequest": models.AskRequest,
     "FeedbackRequest": models.FeedbackRequest,
     "FeedbackModel": models.FeedbackModel,
 }
+
+
+#: The health envelope's models, which the API imports from the shared
+#: package rather than defining.
+_ENVELOPE = {model.__name__: model for model in (envelope.Health, envelope.Check, envelope.Readiness)}
 
 
 #: The auth service's shapes, which this client sends (`SignIn`) or reads
@@ -134,10 +143,10 @@ def test_every_wire_model_has_a_java_record():
     """A model the client has no record for is one it cannot read."""
     wire = {
         name
-        for name, value in vars(models).items()
+        for name, value in {**vars(models), **_ENVELOPE}.items()
         if isinstance(value, type)
-        and issubclass(value, models.BaseModel)
-        and value is not models.BaseModel
+        and issubclass(value, BaseModel)
+        and value is not BaseModel
         # The strict base every model shares, not a shape of its own.
         and value is not models.Wire
         # ApiError is the error envelope; the client mirrors it as

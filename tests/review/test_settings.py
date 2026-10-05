@@ -21,6 +21,7 @@ from nl2sql_identity import pki
 from nl2sql_review import server
 from nl2sql_review.settings import SERVICE_HOSTNAME, SETTING_FIELDS, ReviewSettings
 from nl2sql_review.store import WRITER_ROLE
+from tests.route_table import flattened
 
 ENVIRONMENT = {
     "REVIEW_HOST": "127.0.0.1",
@@ -30,6 +31,8 @@ ENVIRONMENT = {
     "REVIEW_TLS_CERT_FILE": "/tls/c.crt",
     "REVIEW_TLS_KEY_FILE": "/tls/c.key",
     "REVIEW_TOKEN": "s3cret",
+    "REVIEW_TOKEN_NAME": "nightly-import",
+    "REVIEW_TOKEN_ROLES": "nl2sql_curators",
     "REVIEW_CORS_ORIGINS": "https://a.example, https://b.example",
     "FEEDBACK_DB_URL": "postgresql://u:p@host/db",
     "FEEDBACK_WRITER_PASSWORD": "wpw",
@@ -248,7 +251,7 @@ def test_every_flag_reaches_its_setting(flags, field, expected):
 def test_build_returns_an_app_without_binding_a_socket():
     app, settings = server.build(["--no-tls", "--port", "9999"])
     assert settings.port == 9999
-    assert any(getattr(r, "path", None) == "/v1/meta" for r in app.routes)
+    assert any(getattr(r, "path", None) == "/v1/meta" for r in flattened(app.routes))
 
 
 def test_the_banner_says_what_is_on_and_what_is_open():
@@ -457,6 +460,22 @@ def test_main_starts_the_server(monkeypatch, capsys):
     assert started["port"] == 9001
     assert started["ssl_certfile"] is None
     assert "schema: ready" in capsys.readouterr().out
+
+
+def test_main_runs_as_whoever_owns_the_documents_it_writes(monkeypatch, capsys):
+    """V6-28: started as root, it becomes the checkout's owner before it
+    reads or writes anything -- and says so."""
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", type("U", (), {"run": staticmethod(lambda app, **k: None)}))
+    monkeypatch.setattr(server, "prepare", lambda settings: [])
+    asked = []
+
+    def become(directory, *, fallback):
+        asked.append((directory, fallback))
+        return True
+
+    assert server.main(["--no-tls"], become=become) == 0
+    assert asked == [(str(ReviewSettings().document_path.parent), "nl2sql")]
+    assert "running as uid" in capsys.readouterr().out
 
 
 def test_main_hands_uvicorn_the_certificate_when_tls_is_on(monkeypatch, tmp_path):

@@ -19,10 +19,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+from nl2sql_common.vectors import vector_literal as _vector_literal, QueryEmbedder as Embedder
+from nl2sql_common.errors import DATABASE_ERRORS, MODEL_ERRORS, Unavailable
 
 # Collections are discovered from the catalog, but the name still gets
 # interpolated into SQL, so it has to match a strict identifier pattern.
@@ -31,7 +33,7 @@ _SAFE_IDENTIFIER = re.compile(r"^[a-z_][a-z0-9_]*$")
 COLLECTION_SUFFIX = "_embeddings"
 
 
-class KnowledgeUnavailableError(RuntimeError):
+class KnowledgeUnavailableError(Unavailable, RuntimeError):
     """The vector store or the embedding model could not be reached."""
 
 
@@ -50,10 +52,6 @@ class RetrievedChunk:
         """The table this chunk documents, when it documents exactly one."""
         value = self.meta.get("table")
         return value if isinstance(value, str) and value else None
-
-
-class Embedder(Protocol):
-    def embed_query(self, text: str) -> list[float]: ...
 
 
 def build_embedder(settings) -> Embedder:
@@ -144,6 +142,12 @@ class KnowledgeBase:
             self._cached_collections = [r[0] for r in rows if _SAFE_IDENTIFIER.match(r[0])]
         return [c for c in self._cached_collections if c not in self._excluded_collections]
 
+    def forget(self) -> bool:
+        """Look for collections again next time (V6-33): a document the RAG
+        pipeline loaded since is searchable from then on. Whether a list was held."""
+        held, self._cached_collections = self._cached_collections is not None, None
+        return held
+
     def embedding_models(self) -> set[str]:
         """Which model(s) the stored vectors were produced with."""
         models: set[str] = set()
@@ -163,7 +167,7 @@ class KnowledgeBase:
 
         try:
             vector = self._embedder.embed_query(question)
-        except Exception as exc:
+        except MODEL_ERRORS as exc:
             raise KnowledgeUnavailableError(
                 f"Could not embed the question: {exc}. Is the embedding model "
                 "available on the configured Ollama host?"
@@ -173,8 +177,11 @@ class KnowledgeBase:
         results: list[RetrievedChunk] = []
         try:
             with self._engine.connect() as conn:
+                # LOCAL: the transaction SQLAlchemy begins here ends with this
+                # block, and so does the timeout -- a plain SET would stay on
+                # the pooled connection for whoever borrows it next (V6-22).
                 conn.exec_driver_sql(
-                    f"SET statement_timeout = {int(self._statement_timeout_ms)}"
+                    f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}"
                 )
                 for collection in self.collections():
                     rows = conn.exec_driver_sql(
@@ -201,7 +208,7 @@ class KnowledgeBase:
                         )
         except KnowledgeUnavailableError:
             raise
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise KnowledgeUnavailableError(
                 f"Could not search the knowledge base: {exc}"
             ) from exc
@@ -209,7 +216,3 @@ class KnowledgeBase:
         results.sort(key=lambda c: c.distance)
         return results
 
-
-def _vector_literal(vector: list[float]) -> str:
-    """pgvector's text input format, so no client-side vector type is needed."""
-    return "[" + ",".join(repr(float(v)) for v in vector) + "]"

@@ -364,13 +364,18 @@ in `.env` before the first start.
 Everyone in any group can ask questions, and what they ask runs as them:
 inside the database, the statement's `current_user` is the person, so
 their grants -- and any row-level rule a table is ever given -- apply to
-them. The connection itself is the agent's reader, so the server's own log
-and `pg_stat_activity` name the reader; what the person asked is in the
-agent's trace (MLflow), under their name. Every group reads every table
+them. The connection itself is the agent's reader, so `session_user` is the
+reader; the transaction's `application_name` names the person
+(`nl2sql:agent:alice`, 6.2), which is what `pg_stat_activity` shows while it
+runs and what `%a` puts in the database's own log, and what they asked is in
+the agent's trace (MLflow), under their name. Every group reads every table
 today: running as them is attribution, not yet isolation. A person changes
-their own password from any page, beside **Sign out**. Five wrong passwords
-in a row lock an account for fifteen minutes, which the directory page can
-clear sooner.
+their own password from any page, beside **Sign out** -- which ends every
+session they signed in with the old one, except the page they changed it
+on. **Sign out** ends the session everywhere a copy of it is, not only in
+that browser. Five wrong passwords in a row lock an account for fifteen
+minutes, which the directory page can clear sooner; the lock ends the
+sessions from before it too.
 
 Already have a directory -- Active Directory, or any LDAP server? Make this
 one a read-only copy of it instead: `LDAP_MODE=replica` and where the
@@ -1088,11 +1093,22 @@ The defaults are its second, **a team on a trusted network**:
   nothing else, re-created on every start, and runs every query in a
   read-only transaction under a timeout -- the planner's `EXPLAIN`
   included.
+- **A session can be ended** (6.2): signing out, a password changed or set,
+  a lock or a removal ends the sessions it should, for every service within
+  a minute.
+- **A service token is somebody** (6.2): `API_TOKEN_NAME` and its siblings
+  name it, and what it does is recorded under `token:<name>`;
+  `API_TOKEN_ROLES` and its siblings say what it may do, and nothing else.
+- **Nothing runs as root** (6.2) but the one-shot pki service: each service
+  runs as an account of its own and reads only its own key, and the review
+  service writes the checkout's documents as the person who owns them.
+- **A failure's own words are an administrator's** (6.2): hosts, drivers and
+  configuration in `/readyz` and in answers, to `nl2sql_admins` only
+  (`API_DEBUG_DETAIL=true` shows everyone, for a development server).
 
 With sign-in off (`--no-auth`) the stack is the first tier, **alone**: keep
-it on a machine nothing else can reach. What none of this does yet -- revoke
-a session, name a service token, run the images unprivileged -- is listed
-at the end of [`SECURITY.md`](SECURITY.md#known-limits).
+it on a machine nothing else can reach. What none of this does yet is
+listed at the end of [`SECURITY.md`](SECURITY.md#known-limits).
 
 ---
 

@@ -90,7 +90,11 @@ class Job:
     finished_at: dt.datetime | None = None
     progress: list[ProgressRecord] = field(default_factory=list)
     state: dict[str, Any] | None = None
+    #: Why it failed, as whoever asked is told.
     error: str | None = None
+    #: And as an operator is (V6-32): a crash's own words, which may name a
+    #: host, a port or a path. None when `error` already says everything.
+    fault: str | None = None
     condition: threading.Condition = field(
         default_factory=lambda: threading.Condition(threading.RLock()), repr=False
     )
@@ -249,7 +253,8 @@ class JobStore:
         except BaseException as exc:  # noqa: BLE001 -- the job records it, the server survives
             with job.condition:
                 job.status = "failed"
-                job.error = f"{type(exc).__name__}: {exc}"
+                job.error = f"the question could not be answered: {type(exc).__name__}"
+                job.fault = f"{type(exc).__name__}: {exc}"
                 job.finished_at = _now()
                 job.condition.notify_all()
             return

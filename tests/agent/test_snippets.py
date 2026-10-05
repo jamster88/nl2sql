@@ -26,6 +26,7 @@ from nl2sql_agent.snippets import (
     render,
     usable,
 )
+import psycopg
 
 
 def snippet(**overrides) -> Snippet:
@@ -155,8 +156,8 @@ class _Conn:
     def exec_driver_sql(self, statement: str, params=None):
         self.store.statements.append((statement, params))
         if self.store.fail:
-            raise RuntimeError(self.store.fail)
-        if statement.startswith("SET statement_timeout"):
+            raise psycopg.OperationalError(self.store.fail)
+        if statement.startswith("SET LOCAL statement_timeout"):
             return _Rows()
         if "count(*)" in statement:
             return _Rows(scalar=len(self.store.rows))
@@ -199,7 +200,7 @@ class FakeEmbedder:
     def embed_query(self, text: str) -> list[float]:
         self.calls.append(text)
         if self.fail:
-            raise RuntimeError(self.fail)
+            raise ConnectionError(self.fail)
         return [0.25, -0.5]
 
 

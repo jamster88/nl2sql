@@ -5,6 +5,7 @@ from __future__ import annotations
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi.testclient import TestClient
 
+from nl2sql_common.attribution import APPLICATION_NAME_SQL
 from nl2sql_agent.config import Settings
 from nl2sql_agent.console.app import create_app, default_guard
 from nl2sql_agent.console.query import Inspector
@@ -38,11 +39,13 @@ def _client(db, **console) -> TestClient:
 def test_a_reviewers_query_runs_as_the_reviewer(db):
     answer = _client(db).post("/v1/query", json={"sql": "SELECT 1"}, headers=bearer("rita", REVIEWERS, USERS))
     assert answer.status_code == 200
-    assert db.statements[:3] == [
+    assert db.statements[:4] == [
         "SET TRANSACTION READ ONLY",
         "SET LOCAL statement_timeout = 30000",
+        APPLICATION_NAME_SQL,
         'SET LOCAL ROLE "rita"',
     ]
+    assert db.named == ["nl2sql:console:rita"], "and Postgres is told whose it is"
 
 
 def test_a_curator_may_use_it_and_someone_who_only_asks_may_not(db):

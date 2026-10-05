@@ -21,6 +21,10 @@ RUN npm ci
 
 COPY auth/gui/tsconfig.json auth/gui/vite.config.ts auth/gui/index.html ./
 COPY auth/gui/src/ ./src/
+# What every page shares (V6-25), where its configuration looks for it:
+# beside the page in the checkout, so `../web` (or `../../web`) from /build.
+COPY web/package.json /web/package.json
+COPY web/src/ /web/src/
 # `npm run build` is `tsc --noEmit && vite build`, so an image cannot be
 # produced from code that does not compile.
 RUN npm run build
@@ -54,6 +58,15 @@ ENV NGINX_ENVSUBST_FILTER="^DIRECTORY_" \
 # appear, mounted by compose from the volume the pki service issues them into.
 RUN mkdir -p /etc/nl2sql/tls
 
+# Unprivileged (V6-31): nginx's own account, uid 101, which the pki service
+# gives this page's key to. What the start writes -- the templates rendered
+# into conf.d, the include files beside nginx.conf, the pid, the cache -- is
+# made that account's here, and the `user` directive goes: a master that is
+# not root cannot switch to it.
+RUN sed -i -e '/^user /d' -e 's#^pid .*#pid /tmp/nginx.pid;#' /etc/nginx/nginx.conf \
+ && chown nginx:nginx /etc/nginx /etc/nginx/conf.d /var/cache/nginx
+USER 101:101
+
 EXPOSE 8084
 
 # HTTPS unless the page was told otherwise. Unverified, and only here: this is
@@ -65,4 +78,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql directory GUI" \
       org.opencontainers.image.description="React/TypeScript web interface for a standalone nl2sql directory: people, groups, passwords" \
-      org.opencontainers.image.version="6.1.0"
+      org.opencontainers.image.version="6.2.0"

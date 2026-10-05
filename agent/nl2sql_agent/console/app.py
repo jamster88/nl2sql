@@ -19,54 +19,24 @@ import json
 import time
 from typing import Any, Callable
 
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader, HTTPBearer
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
-from starlette.status import (
-    HTTP_404_NOT_FOUND,
-    HTTP_503_SERVICE_UNAVAILABLE,
-)
+from starlette.status import HTTP_503_SERVICE_UNAVAILABLE
 
 from .. import __version__
-from ..api.app import FALLBACK_CODES, ApiHTTPError
+from ..api.app import FALLBACK_CODES
 from ..api.tls import CertificateInfo
 from ..config import Settings
 from ..database import Database
-from .models import (
-    AgentVerdict,
-    ApiError,
-    Check,
-    ColumnModel,
-    ConsoleLimits,
-    ConsoleMeta,
-    Health,
-    IssueModel,
-    PromptModel,
-    QueryRequest,
-    QueryResult,
-    Readiness,
-    ResultColumn,
-    SchemaModel,
-    TableModel,
-)
-from .query import DatabaseUnavailable, Identity, Inspector, Outcome
-from .settings import MAX_SQL_LENGTH, ConsoleSettings
-from nl2sql_identity import Guard, GuardSettings, Identity
+from nl2sql_common.envelope import ApiError
+from nl2sql_identity import Guard, GuardSettings
 from nl2sql_identity.postgres import membership_lookup
-
-_bearer = HTTPBearer(
-    auto_error=False,
-    description="A session token from the auth service (POST /auth/token), or the console token.",
-)
-_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="The console token, by another name.")
-
-#: On every route that needs a caller, so the OpenAPI document says how to
-#: authenticate. They decide nothing: `Guard` does.
-DOCUMENTED = [Depends(_bearer), Depends(_api_key)]
-
+from .query import DatabaseUnavailable, Inspector
+from .routes import ConsoleContext, routers
+from .settings import ConsoleSettings
 
 def default_guard(agent: Settings, console: ConsoleSettings) -> Guard:
     """Sign-in as the environment configures it, roles re-read from Postgres."""
@@ -76,7 +46,8 @@ def default_guard(agent: Settings, console: ConsoleSettings) -> Guard:
             public_key_file=console.auth_public_key_file,
             cookie_name=console.auth_cookie_name,
             service_token=console.token,
-            service_roles=frozenset(console.allowed_roles),
+            service_roles=console.token_holds(),
+            service_name=console.token_name,
         ),
         recheck=membership_lookup(agent.database_url) if console.auth_enabled else None,
     )
@@ -85,43 +56,6 @@ def default_guard(agent: Settings, console: ConsoleSettings) -> Guard:
 def _error_response(status: int, code: str, message: str, **detail: Any) -> JSONResponse:
     return JSONResponse(
         status_code=status, content=ApiError.of(code, message, **detail).model_dump()
-    )
-
-
-def role_warning(identity: Identity) -> str | None:
-    """Said once, wherever the role is shown, when it is not the reader."""
-    if identity.read_only:
-        return None
-    power = "a superuser" if identity.superuser else "able to write to the retail tables"
-    return (
-        f"DATABASE_URL connects as {identity.role}, which is {power}. Every query is "
-        "still run READ ONLY and through the agent's validator, but the console runs "
-        "SQL a person typed and should run it as the agent's read-only role."
-    )
-
-
-def result_model(outcome: Outcome, *, max_rows: int, max_plan_cost: float) -> QueryResult:
-    verdict = outcome.verdict
-    return QueryResult(
-        sql=outcome.sql,
-        mode=outcome.mode,
-        executed=outcome.executed,
-        agent=AgentVerdict(
-            accepted=verdict.accepted,
-            stage=verdict.stage,
-            issues=[IssueModel(stage=i.stage, message=i.message) for i in verdict.issues],
-            notes=list(verdict.notes),
-        ),
-        columns=[ResultColumn(name=name, data_type=kind) for name, kind in outcome.columns],
-        rows=outcome.rows,
-        row_count=outcome.row_count,
-        truncated=outcome.truncated,
-        max_rows=max_rows,
-        plan=outcome.plan,
-        plan_cost=outcome.plan_cost,
-        max_plan_cost=max_plan_cost,
-        error=outcome.error,
-        elapsed_ms=outcome.elapsed_ms,
     )
 
 
@@ -184,10 +118,6 @@ def create_app(
             allow_headers=["Authorization", "Content-Type", "X-API-Key"],
         )
 
-    # --- authentication ---------------------------------------------------
-
-    caller = guard.require(*console.allowed_roles)
-
     # --- error shape ------------------------------------------------------
 
     # Starlette's HTTPException rather than FastAPI's subclass of it: a path
@@ -218,173 +148,18 @@ def create_app(
             f"cannot reach the retail database: {exc}",
         )
 
-    # --- the unauthenticated routes ---------------------------------------
+    # --- the routes (routes.py), each router carrying its guard -------------
 
-    @app.get("/", tags=["service"], summary="What this is and where to go next")
-    def root() -> dict[str, Any]:
-        return {
-            "service": "nl2sql-console",
-            "version": __version__,
-            "docs": "/docs" if console.docs_enabled else None,
-            "openapi": "/openapi.json",
-            "endpoints": {
-                "meta": "/v1/meta",
-                "schema": "/v1/schema",
-                "prompt": "/v1/schema/{table}/prompt",
-                "query": "POST /v1/query",
-                "health": "/healthz",
-                "readiness": "/readyz",
-            },
-        }
-
-    @app.get("/healthz", tags=["service"], response_model=Health, summary="Is the process alive")
-    def healthz() -> Health:
-        return Health(version=__version__, uptime_seconds=round(time.monotonic() - started, 3))
-
-    @app.get(
-        "/readyz",
-        tags=["service"],
-        response_model=Readiness,
-        summary="Can it run a query right now",
-        responses={HTTP_503_SERVICE_UNAVAILABLE: {"model": Readiness}},
+    context = ConsoleContext(
+        agent=agent,
+        console=console,
+        inspector=inspector,
+        guard=guard,
+        certificate=certificate,
+        started=started,
     )
-    def readyz(response: Response) -> Readiness:
-        warnings = console.warnings()
-        try:
-            names = inspector.tables()
-            identity = inspector.identity()
-        except DatabaseUnavailable as exc:
-            response.status_code = HTTP_503_SERVICE_UNAVAILABLE
-            return Readiness(
-                ready=False,
-                checks={
-                    "database": Check(ok=False, detail=str(exc)),
-                    "role": Check(ok=False, detail="not checked: the database is unreachable"),
-                },
-                warnings=warnings,
-            )
-        # Readiness is the database answering. A role that could write is
-        # reported beside it rather than failing it: the fence holds either
-        # way, and an orchestrator restarting a working console over it
-        # would fix nothing.
-        warning = role_warning(identity)
-        checks = {
-            "database": Check(
-                ok=bool(names),
-                detail=f"{len(names)} tables in {agent.db_schema}"
-                if names
-                else f"connected, but {agent.db_schema} has no tables",
-            ),
-            "role": Check(
-                ok=warning is None,
-                detail=f"{identity.role}, read-only" if warning is None else warning,
-            ),
-        }
-        ready = checks["database"].ok
-        if not ready:
-            response.status_code = HTTP_503_SERVICE_UNAVAILABLE
-        signed, detail = guard.check()
-        checks["sign_in"] = Check(ok=signed, detail=detail)
-        ready = ready and signed
-        if not ready:
-            response.status_code = HTTP_503_SERVICE_UNAVAILABLE
-        return Readiness(ready=ready, checks=checks, warnings=warnings)
-
-    # --- the console ------------------------------------------------------
-
-    @app.get(
-        "/v1/meta",
-        tags=["console"],
-        response_model=ConsoleMeta,
-        dependencies=DOCUMENTED,
-        summary="What the console is connected to, and the limits every query runs under",
-    )
-    def meta(who: Identity = Depends(caller)) -> ConsoleMeta:
-        identity = inspector.identity()
-        tables = inspector.tables()
-        warning = role_warning(identity)
-        return ConsoleMeta(
-            version=__version__,
-            database=identity.database,
-            role=identity.role,
-            server_version=identity.server_version,
-            read_only=identity.read_only,
-            db_schema=agent.db_schema,
-            tables=len(tables),
-            limits=ConsoleLimits(
-                statement_timeout_ms=agent.statement_timeout_ms,
-                max_plan_cost=agent.max_plan_cost,
-                agent_max_rows=agent.max_rows,
-                max_rows=console.max_rows,
-                sample_rows=agent.sample_rows,
-                max_sql_length=MAX_SQL_LENGTH,
-            ),
-            authentication=guard.describe(),
-            runs_as=who.principal or identity.role,
-            tls=(
-                certificate.summary()
-                if certificate is not None
-                else {"enabled": console.tls_enabled, "self_signed": False}
-            ),
-            warnings=console.warnings() + ([warning] if warning else []),
-        )
-
-    @app.get(
-        "/v1/schema",
-        tags=["console"],
-        response_model=SchemaModel,
-        dependencies=DOCUMENTED,
-        summary="Every table, as the agent's introspection reads it",
-    )
-    def schema(who: Identity = Depends(caller)) -> SchemaModel:
-        return SchemaModel(
-            db_schema=agent.db_schema,
-            tables=[
-                TableModel(
-                    name=table.name,
-                    comment=table.comment,
-                    approx_rows=table.approx_rows,
-                    columns=[
-                        ColumnModel(
-                            name=column.name,
-                            data_type=column.data_type,
-                            not_null=column.not_null,
-                            comment=column.comment,
-                        )
-                        for column in table.columns
-                    ],
-                    constraints=list(table.constraints),
-                )
-                for table in inspector.catalog()
-            ],
-        )
-
-    @app.get(
-        "/v1/schema/{table}/prompt",
-        tags=["console"],
-        response_model=PromptModel,
-        dependencies=DOCUMENTED,
-        summary="The block of the agent's prompt that describes one table",
-    )
-    def prompt(table: str, who: Identity = Depends(caller)) -> PromptModel:
-        text = inspector.prompt(table)
-        if not text:
-            raise ApiHTTPError(
-                HTTP_404_NOT_FOUND,
-                "unknown_table",
-                f"{table} is not a table in {agent.db_schema}",
-            )
-        return PromptModel(table=table, sample_rows=agent.sample_rows, text=text)
-
-    @app.post(
-        "/v1/query",
-        tags=["console"],
-        response_model=QueryResult,
-        dependencies=DOCUMENTED,
-        summary="Run a query through the agent's gates",
-    )
-    def query(body: QueryRequest, who: Identity = Depends(caller)) -> QueryResult:
-        outcome = inspector.run(body.sql, body.mode, principal=who.principal)
-        return result_model(outcome, max_rows=console.max_rows, max_plan_cost=agent.max_plan_cost)
+    app.state.context = context
+    for router in routers(context):
+        app.include_router(router)
 
     return app

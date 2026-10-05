@@ -1,11 +1,13 @@
 """Every route that does something is guarded, in every service (V6-60).
 
-Authorization in the four FastAPI services is a dependency on each route,
-added by hand: a route written without one is open to anyone, and nothing
-else -- no router-level dependency, no middleware -- would say so. Until the
-routers carry a default-deny dependency themselves (V6-26), this walks each
-application's own route table and fails for a route under a guarded prefix
-whose dependency tree has no `Guard.require` in it.
+Since 6.2 (V6-26) the four FastAPI services put every route on a router
+that carries the guard, so a route added to one is refused to anyone the
+guard refuses before anybody thinks to guard it; the routes open by design
+are on one router of their own. This walks each application's own route
+table regardless, and fails for a route whose dependency tree has no
+`Guard.require` in it -- and below, for a route added to an application
+directly, past the routers, and for a router other than the open one that
+carries no guard.
 
 Derived from `app.routes` rather than a list kept here, so a route added
 tomorrow is checked tomorrow. `Guard.require` marks what it returns with
@@ -21,6 +23,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute
+
+from tests.route_table import flattened
 
 #: Paths every service serves without a caller, on purpose: what it is, its
 #: health, and its contract. Signing in is open because it is how a caller
@@ -102,7 +106,7 @@ def _calls(dependant: Dependant) -> Iterator[object]:
 
 
 def _routes(app: FastAPI) -> list[APIRoute]:
-    return [route for route in app.routes if isinstance(route, APIRoute) and route.path not in OPEN_BY_DESIGN]
+    return [route for route in flattened(app.routes) if isinstance(route, APIRoute) and route.path not in OPEN_BY_DESIGN]
 
 
 @pytest.fixture(params=sorted(SERVICES))
@@ -140,3 +144,36 @@ def test_every_guarded_prefix_is_under_v1_or_the_sessions_own_routes(service):
         and route.path not in ("/v1", "/auth/session", "/auth/password")
     ]
     assert stray == [], name
+
+
+
+APP_MODULES = {
+    "api": "agent/nl2sql_agent/api/app.py",
+    "console": "agent/nl2sql_agent/console/app.py",
+    "review": "review/nl2sql_review/app.py",
+    "auth": "auth/nl2sql_auth/app.py",
+}
+
+
+@pytest.mark.parametrize("name", sorted(APP_MODULES))
+def test_no_route_is_added_to_an_application_directly(name: str):
+    """Past the routers is past their guard."""
+    from pathlib import Path
+    import re
+
+    source = (Path(__file__).resolve().parent.parent.parent / APP_MODULES[name]).read_text()
+    assert not re.search(r"@app\.(get|post|put|patch|delete|api_route)\(", source), name
+
+
+def test_every_router_but_the_open_one_carries_a_guard(service):
+    name, app = service
+    unguarded_routers = []
+    for included in app.routes:
+        router = getattr(included, "original_router", None)
+        if router is None:
+            continue
+        guarded = any(getattr(dependency.dependency, "nl2sql_guard", None) is not None for dependency in router.dependencies)
+        paths = {route.path for route in router.routes}
+        if not guarded and not paths <= OPEN_BY_DESIGN | {"/directory/{rest:path}"}:
+            unguarded_routers.append(sorted(paths))
+    assert unguarded_routers == [], f"{name}: routers with no guard of their own"

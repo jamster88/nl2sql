@@ -19,6 +19,7 @@ import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -36,9 +37,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HttpSignInTest {
 
     private HttpsServer server;
-    private final List<String> requested = new ArrayList<>();
-    private final List<String> bodies = new ArrayList<>();
-    private final List<String> authorisation = new ArrayList<>();
+    // Written by the server's thread; read by the test's, sign-out's request
+    // arriving whenever it does.
+    private final List<String> requested = new CopyOnWriteArrayList<>();
+    private final List<String> bodies = new CopyOnWriteArrayList<>();
+    private final List<String> authorisation = new CopyOnWriteArrayList<>();
 
     @AfterEach
     void stopServer() {
@@ -113,7 +116,37 @@ class HttpSignInTest {
         api.meta();
 
         assertNull(session.current());
-        assertEquals("", authorisation.get(3));
+        assertTrue(authorisation.stream().skip(3).anyMatch(String::isEmpty),
+                "the API is asked with nothing once signed out");
+        awaitRequest("POST /auth/logout");
+        int logout = requested.indexOf("POST /auth/logout");
+        assertEquals("Bearer eyJ.session.ada", authorisation.get(logout),
+                "the session is ended at the auth service, by itself");
+    }
+
+    @Test
+    void signing_out_with_nobody_signed_in_tells_nobody() throws InterruptedException {
+        Settings settings = serve(200, Json.write(Fakes.token("ada", "Ada Lovelace")));
+        Session session = new Session("a-service-token");
+        new HttpSignIn(settings, session).signOut();
+        Thread.sleep(200);
+        assertEquals(List.of(), requested);
+        assertEquals("a-service-token", session.bearer());
+    }
+
+    private void awaitRequest(String wanted) {
+        long deadline = System.nanoTime() + 10_000_000_000L;
+        while (!requested.contains(wanted)) {
+            if (System.nanoTime() > deadline) {
+                throw new AssertionError("never asked: " + wanted + " (asked: " + requested + ")");
+            }
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException cause) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("interrupted waiting for " + wanted);
+            }
+        }
     }
 
     @Test

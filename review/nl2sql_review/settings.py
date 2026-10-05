@@ -16,11 +16,18 @@ live here and are never read by the other one.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
+from nl2sql_common.env import (
+    env as _env,
+    env_str as _env_str,
+    env_int as _env_int,
+    env_float as _env_float,
+    env_bool as _env_bool,
+    env_tuple as _env_tuple,
+)
 
 #: The document that *is* the golden set. Everything downstream -- the
 #: context store rows, the BM25 statistics, both vector tables -- is built
@@ -72,39 +79,6 @@ DEFAULT_KEY_FILE = f"{DEFAULT_TLS_DIR}/server.key"
 SERVICE_HOSTNAME = "nl2sql-review"
 
 
-def _env(name: str) -> str | None:
-    raw = os.getenv(name)
-    return raw if raw not in (None, "") else None
-
-
-def _env_str(name: str, default: str) -> str:
-    return _env(name) or default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = _env(name)
-    return int(raw) if raw else default
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = _env(name)
-    return float(raw) if raw else default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
-def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    raw = _env(name)
-    if raw is None:
-        return default
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
-
-
 @dataclass
 class ReviewSettings:
     """Everything the review service needs, and nothing about the pipeline."""
@@ -137,6 +111,14 @@ class ReviewSettings:
     # write the golden question set; `warnings()` says so loudly when it is
     # unset, and the readiness endpoint repeats it.
     token: str | None = None
+    # Who the token is, and what it may do (V6-62). What it does is
+    # recorded under `token:<name>` -- never under the X-Reviewer it sends.
+    # Empty roles: with sign-in on, the reviewer roles only, and curating by
+    # token is something to grant here by name; with it off, both, because
+    # the review and curation pages' proxies then send this token for
+    # everyone who uses them.
+    token_name: str = "review-token"
+    token_roles: tuple[str, ...] = ()
     # None by default: the review and curation pages reach this through their
     # own nginx, on their own origin, so a cross-origin browser call is
     # something to allow by name (REVIEW_CORS_ORIGINS).
@@ -146,7 +128,7 @@ class ReviewSettings:
     # curator, and reading takes either. What they do is recorded as done by
     # them -- not by whatever name a header claimed -- and the SQL they run
     # to check a fix or a snippet runs as their own database role.
-    # REVIEW_TOKEN still works, for scripts, with both roles. On by default
+    # REVIEW_TOKEN still works, for scripts, as itself. On by default
     # in the code as well as in compose, so a review service started any
     # other way is not open by accident.
     auth_enabled: bool = True
@@ -229,6 +211,8 @@ class ReviewSettings:
             tls_cert_file=_env_str("REVIEW_TLS_CERT_FILE", DEFAULT_CERT_FILE),
             tls_key_file=_env_str("REVIEW_TLS_KEY_FILE", DEFAULT_KEY_FILE),
             token=_env("REVIEW_TOKEN"),
+            token_name=_env_str("REVIEW_TOKEN_NAME", "review-token"),
+            token_roles=_env_tuple("REVIEW_TOKEN_ROLES", ()),
             cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ()),
             auth_enabled=_env_bool("AUTH_ENABLED", True),
             auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
@@ -295,6 +279,14 @@ class ReviewSettings:
     def public_url(self, host: str | None = None) -> str:
         shown = host or ("localhost" if self.host in ("0.0.0.0", "::", "") else self.host)
         return f"{self.scheme}://{shown}:{self.port}{self.root_path}"
+
+    def token_holds(self) -> frozenset[str]:
+        """The roles REVIEW_TOKEN holds: REVIEW_TOKEN_ROLES, or the default above."""
+        if self.token_roles:
+            return frozenset(self.token_roles)
+        if self.auth_enabled:
+            return frozenset(self.reviewer_roles)
+        return frozenset((*self.reviewer_roles, *self.curator_roles))
 
     def warnings(self) -> list[str]:
         """Configurations that will work and probably should not."""

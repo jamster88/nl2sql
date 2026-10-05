@@ -161,10 +161,10 @@ class FakeEngine:
 
 
 class StubDatabase:
-    """The one thing this module needs from `Database`: its private engine."""
+    """The one thing this module needs from `Database`: its public engine."""
 
     def __init__(self, engine: FakeEngine) -> None:
-        self._engine = engine
+        self.engine = engine
 
 
 # --- normalisation ----------------------------------------------------------
@@ -552,7 +552,7 @@ def test_a_schema_where_every_text_column_is_too_wide_yields_no_catalog():
                     return _Rows([_Row(table_name="t", column_name="c", distinct_count=99999)])
                 return _Rows([])
 
-        _engine = _Engine()
+        engine = _Engine()
 
     class _Row:
         def __init__(self, **kw):

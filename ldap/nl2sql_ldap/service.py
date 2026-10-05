@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import pwd
 import signal
 import subprocess
 import sys
@@ -44,46 +43,22 @@ from .layout import Layout
 from .records import parse
 from .replica import Replicator
 from .settings import CONFIG_FILE, DATA_DIR, RUN_DIR, DirectorySettings, SettingsError
+from nl2sql_common.privileges import become as _become
 
 #: Who slapd and this process run as: the account Alpine's openldap package
 #: makes, and the directory's root on its local socket by its peer credentials.
 ACCOUNT = "ldap"
 
 
-def become(
-    account: str = ACCOUNT,
-    *,
-    own: Sequence[str] = (),
-    getuid: Callable[[], int] = os.getuid,
-    lookup: Callable = pwd.getpwnam,
-    makedirs: Callable = os.makedirs,
-    chown: Callable = os.chown,
-    setgroups: Callable = os.setgroups,
-    setgid: Callable = os.setgid,
-    setuid: Callable = os.setuid,
-    environ: dict | None = None,
-) -> None:
+def become(account: str = ACCOUNT, *, own: Sequence[str] = (), **calls) -> bool:
     """Run as `account` from here on, giving it `own` first, if started as root.
 
-    Not recursive: a directory is given to the account, and what is written
-    in it from then on is the account's anyway. A directory that cannot be
-    given -- a certificate mounted read-only, say -- is left as it is; it is
-    only written when there is no certificate to read, and `tls.ensure` says
-    so in words when that fails.
+    The shared `nl2sql_common.privileges.become`, which this image started
+    and every Python service now uses; named here for the directory's own
+    account. Not recursive: what is written in a directory once it is the
+    account's is the account's anyway.
     """
-    if getuid() != 0:
-        return
-    entry = lookup(account)
-    for path in own:
-        makedirs(path, exist_ok=True)
-        try:
-            chown(path, entry.pw_uid, entry.pw_gid)
-        except OSError:
-            pass
-    setgroups([])
-    setgid(entry.pw_gid)
-    setuid(entry.pw_uid)
-    (os.environ if environ is None else environ)["HOME"] = entry.pw_dir
+    return _become(account, own=own, **calls)
 
 
 def local_connection() -> Connection:

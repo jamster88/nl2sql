@@ -97,6 +97,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="let callers choose the database role rows are read as (API_ALLOW_PRINCIPAL)",
     )
     p.add_argument(
+        "--debug-detail",
+        action=argparse.BooleanOptionalAction,
+        default=defaults.debug_detail,
+        help="show every caller a failure in its own words, not only an administrator (API_DEBUG_DETAIL)",
+    )
+    p.add_argument(
         "--docs",
         action=argparse.BooleanOptionalAction,
         default=defaults.docs_enabled,
@@ -123,6 +129,7 @@ def api_settings_from_args(args: argparse.Namespace) -> ApiSettings:
         tls_allow_self_signed=args.allow_self_signed,
         token=args.token,
         allow_principal=args.allow_principal,
+        debug_detail=args.debug_detail,
         max_concurrency=args.max_concurrency,
         docs_enabled=args.docs,
         log_level=args.log_level,

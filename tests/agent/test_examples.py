@@ -285,7 +285,7 @@ class _Embedder:
 
     def embed_query(self, text: str) -> list[float]:
         if self.fail:
-            raise RuntimeError("model not pulled")
+            raise ConnectionError("model not pulled")
         return [0.0] * 1024
 
 

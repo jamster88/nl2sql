@@ -21,8 +21,14 @@ the page's own origin (`check_origin`). A bearer token is never ambient and
 needs no such check.
 
 Roles are re-read from Postgres when the service has a way to (`recheck`),
-once a minute per user: the token says what someone held when they signed
-in, and the database says what they hold now.
+once a minute per session: the token says what someone held when they signed
+in, and the database says what they hold now -- and whether this session is
+still theirs, or was signed out, or predates a password change, a lock or a
+removal (V6-61).
+
+A static service token is a caller with a name and roles of its own
+(`<TOKEN>_NAME`, `<TOKEN>_ROLES`, V6-62): what it does is recorded under
+`token:<name>`, never under a name the request claims.
 """
 
 from __future__ import annotations
@@ -51,6 +57,8 @@ from .tokens import (
     load_public_key,
     verify,
 )
+from nl2sql_common.env import env as _env, env_bool as _env_bool
+from nl2sql_common.errors import DATABASE_ERRORS
 
 #: Where the auth service writes the public half of its signing key, and
 #: where every other service mounts that volume read-only.
@@ -74,17 +82,11 @@ UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 #: How often a missing or replaced public key file is looked for again.
 KEY_RECHECK_SECONDS = 30.0
 
+#: Cached rechecks kept before stale ones are swept: one per live session.
+RECHECK_CACHE_SWEEP = 1024
 
-def _env(name: str) -> str | None:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return None
-    return raw.strip()
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name)
-    return default if raw is None else raw.lower() in {"1", "true", "yes", "on"}
+#: What a service token is called when the deployment names it nothing.
+DEFAULT_SERVICE_NAME = "service-token"
 
 
 def env_roles(name: str, default: Iterable[str]) -> frozenset[str]:
@@ -93,6 +95,20 @@ def env_roles(name: str, default: Iterable[str]) -> frozenset[str]:
     if raw is None:
         return frozenset(default)
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+@dataclass(frozen=True)
+class Standing:
+    """What Postgres says about a session now: its holder's roles -- None
+    when the holder is gone -- and whether the session itself was revoked."""
+
+    roles: frozenset[str] | None
+    revoked: bool = False
+
+
+def _standing(answer: "Standing | frozenset[str] | None") -> Standing:
+    """A recheck may answer with the roles alone, as a simple one does."""
+    return answer if isinstance(answer, Standing) else Standing(answer)
 
 
 class IdentityError(HTTPException):
@@ -115,18 +131,23 @@ class GuardSettings:
     cookie_name: str = SESSION_COOKIE
     #: The static credential for machines, which every service has had
     #: since before sign-in. Still accepted with sign-in on -- the smoke test
-    #: and scripts have no person to sign in -- and scoped to `service_roles`.
+    #: and scripts have no person to sign in -- as a caller named
+    #: `service_name` holding `service_roles` and nothing more.
     service_token: str | None = None
     service_roles: frozenset[str] = field(default_factory=frozenset)
+    service_name: str = DEFAULT_SERVICE_NAME
 
     @classmethod
     def from_env(cls, *, token_variable: str, service_roles: Iterable[str]) -> "GuardSettings":
+        """`<token_variable>_NAME` and `_ROLES` name the token's holder and
+        say what it may do; `service_roles` is the default for the second."""
         return cls(
             enabled=_env_bool("AUTH_ENABLED", True),
             public_key_file=_env("AUTH_PUBLIC_KEY_FILE") or DEFAULT_PUBLIC_KEY_FILE,
             cookie_name=_env("AUTH_COOKIE_NAME") or SESSION_COOKIE,
             service_token=_env(token_variable),
-            service_roles=frozenset(service_roles),
+            service_roles=env_roles(f"{token_variable}_ROLES", service_roles),
+            service_name=_env(f"{token_variable}_NAME") or token_variable.lower().replace("_", "-"),
         )
 
 
@@ -176,7 +197,7 @@ class Guard:
         settings: GuardSettings,
         *,
         public_key=None,
-        recheck: Callable[[str], frozenset[str] | None] | None = None,
+        recheck: Callable[[Identity], "Standing | frozenset[str] | None"] | None = None,
         recheck_seconds: float = 60.0,
         clock: Callable[[], float] = time.time,
     ) -> None:
@@ -189,7 +210,8 @@ class Guard:
         self._recheck = recheck
         self._recheck_seconds = recheck_seconds
         self._clock = clock
-        self._roles: dict[str, tuple[frozenset[str] | None, float]] = {}
+        #: (user, token id, issued at) -> what Postgres said, and when.
+        self._standing: dict[tuple[str, str, int], tuple[Standing, float]] = {}
         self._lock = threading.Lock()
 
     # --- the key --------------------------------------------------------
@@ -233,7 +255,8 @@ class Guard:
     # --- who ------------------------------------------------------------
 
     def _service(self) -> Identity:
-        return Identity(user="", name="service token", roles=self.settings.service_roles, kind=SERVICE)
+        name = self.settings.service_name or DEFAULT_SERVICE_NAME
+        return Identity(user=name, name=f"service token {name}", roles=self.settings.service_roles, kind=SERVICE)
 
     def _is_service_token(self, presented: str | None) -> bool:
         token = self.settings.service_token
@@ -298,36 +321,86 @@ class Guard:
     def current(self, identity: Identity) -> Identity:
         """The identity with the roles Postgres says it holds now.
 
-        Cached per user for `recheck_seconds`. A user who no longer exists
-        is signed out (401); a database that cannot be asked is a 503 rather
-        than a guess either way.
+        Cached per session for `recheck_seconds`, so a revocation or a
+        removal reaches every service within that. A session revoked, or a
+        user who no longer exists, is signed out (401); a database that
+        cannot be asked is a 503 rather than a guess either way.
         """
         if identity.kind != SESSION or self._recheck is None:
             return identity
         now = self._clock()
+        key = (identity.user, identity.token_id, identity.issued_at)
         with self._lock:
-            cached = self._roles.get(identity.user)
+            cached = self._standing.get(key)
         if cached is not None and now - cached[1] < self._recheck_seconds:
-            roles = cached[0]
+            standing = cached[0]
         else:
             try:
-                roles = self._recheck(identity.user)
-            except Exception as exc:  # noqa: BLE001 - any failure to ask is the same answer
+                standing = _standing(self._recheck(identity))
+            except DATABASE_ERRORS as exc:
                 raise IdentityError(
                     HTTP_503_SERVICE_UNAVAILABLE,
                     "roles_unavailable",
                     f"cannot confirm your access right now: {type(exc).__name__}",
                 ) from exc
             with self._lock:
-                self._roles[identity.user] = (roles, now)
-        if roles is None:
+                if len(self._standing) >= RECHECK_CACHE_SWEEP:
+                    self._sweep(now)
+                self._standing[key] = (standing, now)
+        if standing.roles is None:
             raise IdentityError(
                 HTTP_401_UNAUTHORIZED,
                 "account_removed",
                 "your account no longer exists in the directory; sign in again",
                 **{"WWW-Authenticate": "Bearer"},
             )
-        return replace(identity, roles=roles)
+        if standing.revoked:
+            raise IdentityError(
+                HTTP_401_UNAUTHORIZED,
+                "session_revoked",
+                "this session was signed out -- by signing out, a password change, or the account "
+                "being locked or removed; sign in again",
+                **{"WWW-Authenticate": "Bearer"},
+            )
+        return replace(identity, roles=standing.roles)
+
+    def _sweep(self, now: float) -> None:
+        for key in [key for key, (_, at) in self._standing.items() if now - at >= self._recheck_seconds]:
+            del self._standing[key]
+
+    def forget(self, user: str | None = None) -> int:
+        """Ask Postgres again next time: about `user`'s sessions, or everyone's.
+
+        The auth service calls it after it revokes someone's sessions, so its
+        own answer changes at once rather than within the minute; an
+        administrator's reload calls it for everyone (V6-33). Says how many
+        cached answers it dropped.
+        """
+        with self._lock:
+            keys = [key for key in self._standing if user is None or key[0] == user]
+            for key in keys:
+                del self._standing[key]
+        return len(keys)
+
+    def operator(self, request: Request, *, debug: bool = False) -> bool:
+        """Whether this caller may see what an operator needs (V6-32):
+        exception text, hosts, versions, configuration.
+
+        An administrator; the deployment with nobody to tell apart (sign-in
+        off and no token, where every caller is everything); or anyone, when
+        the deployment says so (`debug`). A caller who presents nothing, or
+        something this guard refuses, is not -- and is not refused here
+        either: the route decides whether they may call it at all.
+        """
+        if debug:
+            return True
+        identity = getattr(request.state, "identity", None)
+        if identity is None:
+            try:
+                identity = self.current(self.identify(request))
+            except IdentityError:
+                return False
+        return identity.has_any({ADMINS})
 
     def require(self, *roles: str, query_token: bool = False) -> Callable[[Request], Identity]:
         """A FastAPI dependency: the caller, who must hold one of `roles`.

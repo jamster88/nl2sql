@@ -311,7 +311,7 @@ def test_a_plan_over_the_cost_ceiling_is_repaired_before_it_ever_runs():
 
 
 def test_a_runtime_error_is_repaired_like_any_other_failure():
-    db = FakeDatabase(tables=TABLES, run_select_error=RuntimeError("division by zero"))
+    db = FakeDatabase(tables=TABLES, run_select_error=DataError("SELECT 1/0", None, Exception("division by zero")))
     llm = scripted(["SELECT 1/0 AS n FROM dim_store"] * 7)
     state = make_agent(db, llm).run("q")
 
@@ -331,7 +331,7 @@ def test_every_failure_source_spends_the_same_counter():
         # The first attempt never reaches the planner, so the first scripted
         # plan belongs to the second attempt.
         explain_error=['column "nope" does not exist', None, None],
-        run_select_error=RuntimeError("division by zero"),
+        run_select_error=DataError("SELECT 1/0", None, Exception("division by zero")),
     )
     llm = scripted([
         "SELECT 1 AS n FROM dim_storefront",   # out of scope: static
@@ -483,7 +483,8 @@ def test_a_give_up_after_a_repair_carries_no_rows_from_the_attempt_before():
         tables=TABLES,
         run_select_result=DbRows(columns=["pct"], rows=[(150.0,)], truncated=False),
     )
-    llm = scripted(["SELECT 150 AS pct", "DROP TABLE dim_store"], claims=[])
+    # The third answer is the Repair Agent's diagnosis of the refused DROP.
+    llm = scripted(["SELECT 150 AS pct", "DROP TABLE dim_store", "only a SELECT may run"], claims=[])
     state = make_agent(db, llm, max_attempts=2).run("what percentage?")
 
     assert state["error"]
@@ -800,7 +801,7 @@ def test_a_catalog_that_cannot_be_built_costs_the_literals_and_nothing_else():
 def test_a_matcher_that_raises_mid_question_is_recorded_and_skipped():
     class _Exploding:
         def match(self, question, **kwargs):
-            raise RuntimeError("trigram index vanished")
+            raise OperationalError("SELECT similarity()", None, Exception("trigram index vanished"))
 
     db = FakeDatabase(tables=TABLES)
     state = make_agent(
@@ -881,7 +882,7 @@ def test_a_narrator_that_fails_costs_the_narrative_and_not_the_rows():
     class _Exploding(ScriptedLLM):
         def with_structured_output(self, schema):
             if "claims" in getattr(schema, "model_fields", {}):
-                raise RuntimeError("the model host went away")
+                raise ConnectionError("the model host went away")
             return super().with_structured_output(schema)
 
     db = FakeDatabase(tables=TABLES)
@@ -1000,6 +1001,7 @@ from nl2sql_agent.contract import ContractResources, build_label_map  # noqa: E4
 from nl2sql_agent.repair import COMPLETENESS_HINT  # noqa: E402
 
 from .test_contract import CATALOG  # noqa: E402
+from sqlalchemy.exc import DataError, OperationalError
 
 PRODUCT_SCHEMA = """=== dim_product ===
 columns:
@@ -1315,7 +1317,9 @@ def test_an_unreachable_snippet_store_is_recorded_and_skipped():
         FakeDatabase(tables=TABLES), scripted(["SELECT 1 AS n FROM dim_store"]), snippet_library=library
     ).run("q")
     assert state["retrieval_errors"]["snippets"] == "snippet store unreachable"
-    assert [e.detail for e in state["trace"] if e.node == "retrieve_snippets"] == ["skipped: snippet store unreachable"]
+    assert [e.detail for e in state["trace"] if e.node == "retrieve_snippets"] == ["skipped: unavailable"], (
+        "the driver's words stay in retrieval_errors, for an operator (V6-32)"
+    )
     assert state["result"] is not None
 
 
@@ -1353,3 +1357,34 @@ def test_widening_the_scope_can_make_a_snippet_usable_for_the_next_draft():
     assert "[S40 dimension] Vendor" not in llm.plain_invocations[0][-1].content
     assert "[S40 dimension] Vendor" in llm.plain_invocations[1][-1].content
     assert "[S40 dimension] Vendor" in state["snippet_context"]
+
+
+# --- reload (V6-33) -------------------------------------------------------------
+
+
+def test_reload_forgets_what_was_read_once_and_reads_it_again_on_use():
+    agent = make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT 1 AS n FROM dim_store"]))
+    assert agent.reload() == [], "nothing read yet"
+    agent._literals()
+    agent._contract_resources()
+    dropped = agent.reload()
+    assert "contract" in dropped and ("literals" in dropped or not agent.settings.literals_enabled)
+    assert agent._contract is None and agent._literal_catalog_built is False
+    assert agent.reload() == []
+
+
+def test_reload_asks_the_schema_retriever_and_the_knowledge_base_to_forget():
+    agent = make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT 1 AS n FROM dim_store"]))
+
+    class Part:
+        def __init__(self, held):
+            self.held = held
+
+        def forget(self):
+            held, self.held = self.held, False
+            return held
+
+    agent.schema_retriever, agent.knowledge_base = Part(True), Part(False)
+    assert agent.reload() == ["schema_edges"]
+    agent.schema_retriever, agent.knowledge_base = None, object()
+    assert agent.reload() == [], "a part with nothing to forget is skipped"

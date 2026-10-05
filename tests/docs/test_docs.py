@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.route_table import flattened
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 AGENT_DIR = REPO_ROOT / "agent"
@@ -205,7 +206,7 @@ def test_every_route_the_server_serves_is_documented(agent_api_doc: str):
     #: FastAPI's own OAuth2 redirect helper. Plumbing for the docs page, not
     #: a route a client calls, and nothing here serves OAuth2 anyway.
     internal = {"/docs/oauth2-redirect"}
-    for route in app.routes:
+    for route in flattened(app.routes):
         path = getattr(route, "path", "")
         if not path or path in internal:
             continue
@@ -216,10 +217,12 @@ def test_every_error_code_the_server_can_return_is_documented(agent_api_doc: str
     """A client branches on these. One that is returned but undocumented is
     one nobody handles.
     """
-    source = (AGENT_DIR / "nl2sql_agent" / "api" / "app.py").read_text()
+    source = "".join((AGENT_DIR / "nl2sql_agent" / "api" / name).read_text() for name in ("app.py", "routes.py"))
     codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
     codes |= set(re.findall(r'_error_response\(\s*\n?\s*\d+,\s*\n?\s*"([a-z_]+)"', source))
-    assert codes, "no error codes found in app.py -- the regex needs updating"
+    assert {"not_found", "queue_full", "job_running", "principal_not_allowed"} <= codes, (
+        "no error codes found in app.py and routes.py -- the regex needs updating"
+    )
     for code in sorted(codes):
         assert f"`{code}`" in agent_api_doc, f"the server returns {code!r}, which API.md never lists"
 
@@ -746,7 +749,7 @@ def test_every_route_the_console_serves_is_documented(console_readme: str):
 
     app = create_app(settings=Settings(), console_settings=ConsoleSettings(), inspector_factory=lambda: None)
     internal = {"/docs/oauth2-redirect"}
-    for route in app.routes:
+    for route in flattened(app.routes):
         path = getattr(route, "path", "")
         if path and path not in internal:
             assert path in console_readme, f"the console serves {path}, which console/README.md never mentions"
@@ -754,14 +757,14 @@ def test_every_route_the_console_serves_is_documented(console_readme: str):
 
 def _identity_codes() -> set[str]:
     """What the shared guard answers a caller it cannot let in with."""
-    identity = REPO_ROOT / "auth" / "nl2sql_identity"
+    identity = REPO_ROOT / "common" / "nl2sql_identity"
     codes = set(re.findall(r'IdentityError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', (identity / "guard.py").read_text()))
     codes |= set(re.findall(r'TokenError\(\s*"([a-z_]+)"', (identity / "tokens.py").read_text()))
     return codes
 
 
 def test_every_error_code_the_console_can_return_is_documented(console_readme: str):
-    source = (AGENT_DIR / "nl2sql_agent" / "console" / "app.py").read_text()
+    source = "".join((AGENT_DIR / "nl2sql_agent" / "console" / name).read_text() for name in ("app.py", "routes.py"))
     codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
     codes |= set(re.findall(r'_error_response\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
     # Who may call is decided by the guard every service shares, and a
@@ -769,7 +772,7 @@ def test_every_error_code_the_console_can_return_is_documented(console_readme: s
     codes |= _identity_codes()
     assert {"unauthorized", "sign_in_required", "forbidden", "expired", "unknown_table", "database_unavailable",
             "invalid_request"} <= codes, (
-        "the error codes were not all found in console/app.py and the guard -- the regexes need updating"
+        "the error codes were not all found in console/app.py, routes.py and the guard -- the regexes need updating"
     )
     for code in sorted(codes | {"not_found"}):
         assert f"`{code}`" in console_readme, f"the console returns {code!r}, which console/README.md never lists"

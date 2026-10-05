@@ -94,7 +94,7 @@ def test_the_dev_server_and_nginx_proxy_the_same_paths(vite_config: str, nginx_t
 
 
 def test_the_dev_proxy_adds_the_review_token_and_skips_the_development_certificate(vite_config: str):
-    assert "REVIEW_TOKEN" in vite_config and 'setHeader("Authorization"' in vite_config
+    assert "token: env.REVIEW_TOKEN" in vite_config and "devProxies({" in vite_config
     assert re.search(r"NL2SQL_REVIEW_TLS_VERIFY.*?\"false\"", vite_config, re.S)
 
 

@@ -2,8 +2,8 @@
 
 The HTTP routes are tested against a fake store; this is where the store is
 tested as itself, because what it promises is made of things only a real
-server does: a UNIQUE that turns a double click into one record, ids taken
-under a lock, a vector column sized by the model, and a cosine search.
+server does: a UNIQUE that turns a double click into one record, ids drawn
+from a sequence that never hands one out twice, a vector column sized by the model, and a cosine search.
 
 Each test gets a throwaway database inside the store's own container,
 created from template0 and dropped afterwards, so nothing here touches a
@@ -22,6 +22,7 @@ import hashlib
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
+import psycopg
 import pytest
 
 from nl2sql_review.corrections import (
@@ -280,6 +281,31 @@ def test_a_deleted_fix_can_be_saved_again(store):
     again = store.save(fix("sub-1", corrected_sql="SELECT 2"))
     assert again.corrected_sql == "SELECT 2"
     assert store.find_by_submission("sub-1") == again.fix_id
+
+
+@pytest.mark.docker
+def test_a_deleted_fixs_id_is_never_given_to_another(store):
+    """V6-29: the highest id plus one gave a deleted fix's id to the next,
+    and anything that had quoted it then meant a different fix."""
+    prefix = store.kind.prefix
+    store.save(fix("sub-1"))
+    store.save(fix("sub-2"))
+    store.delete("sub-2")
+    assert store.save(fix("sub-3")).fix_id == f"{prefix}0003"
+
+
+@pytest.mark.docker
+def test_a_store_from_before_the_sequence_carries_on_from_its_highest_id(store):
+    prefix = store.kind.prefix
+    with psycopg.connect(store.url, autocommit=True) as conn:
+        conn.execute(f"DROP SEQUENCE {store.kind.sequence}")
+    # No sequence, as a store whose schema is someone else's may have none:
+    # the highest plus one, as before.
+    assert [store.save(fix(f"sub-{n}")).fix_id for n in (1, 2)] == [f"{prefix}0001", f"{prefix}0002"]
+    store.setup()
+    assert store.save(fix("sub-3")).fix_id == f"{prefix}0003", "made, and moved past what is there"
+    store.setup()
+    assert store.save(fix("sub-4")).fix_id == f"{prefix}0004", "and never moved back"
 
 
 @pytest.mark.docker

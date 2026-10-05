@@ -9,7 +9,7 @@ rather than a browser tab, on a machine rather than a server.
 ./start.sh --desktop
 ```
 
-That builds it, copies the API's certificate out and opens it. Everything
+That builds it, copies the stack's CA certificate out and opens it. Everything
 below is what that command does and why.
 
 ---
@@ -57,7 +57,7 @@ against the pydantic field it mirrors, so the hand-written copy cannot drift.
 ./start.sh --desktop                 # everything, then the window
 ./start.sh --desktop --review        # and the review interface in a browser window
 ./launch.sh --desktop                # build it and stop there
-java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 ```
 
 `--desktop` is an interface, not an addition to one: the web interface is not
@@ -122,8 +122,9 @@ says as whom, with a link to sign out.
 
 It posts to the auth service's `/auth/token` -- on the API's host, port
 8446, unless `--auth-url` says otherwise -- over the same TLS settings as
-the API, because the auth service presents the API's certificate: the
-`--cacert` or `--fingerprint` that reaches one reaches both. The session
+the API. Since 6.1 the auth service presents a certificate of its own,
+issued by the same CA as the API's: the `--cacert` with that CA reaches
+both, and a `--fingerprint` must name both, comma-separated. The session
 comes back as a token, which every call to the API then carries as a bearer
 token, and which is held in memory only -- a token on disk is a password
 anything running as the same user could read, and the price of not keeping
@@ -149,25 +150,25 @@ token and the operating system has already decided which certificates to
 trust. A desktop application has none of that: it opens the connection
 itself, from a machine that has never heard of this server.
 
-The API writes itself a self-signed certificate on first start, which every
-client that checks will refuse — and that refusal is the feature. So there
-are three ways to say *which* server you meant, in the order `agent/API.md`
-recommends them:
+The stack issues the API and the sign-in service certificates of their own
+from a development CA it makes itself, which every client that checks will
+refuse — and that refusal is the feature. So there are three ways to say
+*which* server you meant, in the order `agent/API.md` recommends them:
 
 ```bash
-# 1. the certificate itself, which is what ./launch.sh --desktop copies out
-docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
-java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+# 1. the stack's CA, which is what ./launch.sh --desktop copies out
+docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 
-# 2. its fingerprint, which the server prints at start-up and /v1/meta carries
-java -jar desktop/target/nl2sql-desktop.jar --fingerprint 3f2c...
+# 2. the two servers' fingerprints, which each prints at start-up
+java -jar desktop/target/nl2sql-desktop.jar --fingerprint 3f2c...,a19b...
 
 # 3. nothing at all, for a throwaway experiment
 java -jar desktop/target/nl2sql-desktop.jar --insecure
 ```
 
 The status bar says which of the four it is doing — `verified against
-nl2sql-api.crt`, `pinned to 3f2c8a91b0de`, `NOT VERIFIED`, `not encrypted` —
+nl2sql-ca.crt`, `pinned to 3f2c8a91b0de and 1 more`, `NOT VERIFIED`, `not encrypted` —
 for as long as it is true. An application that stops verifying quietly is how
 it ends up doing it in production.
 
@@ -327,7 +328,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v6_0_1-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v6_1-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
@@ -380,7 +381,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-405 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+409 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

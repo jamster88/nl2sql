@@ -94,6 +94,8 @@ def test_every_wire_model_has_a_typescript_interface():
         if isinstance(value, type)
         and issubclass(value, models.BaseModel)
         and value is not models.BaseModel
+        # The strict base every model shares, not a shape of its own.
+        and value is not models.Wire
         # ApiError is the error envelope; the GUI mirrors it as
         # ApiErrorBody with the payload's own shape spelled out, which is
         # more useful than `dict[str, Any]` and cannot be compared field

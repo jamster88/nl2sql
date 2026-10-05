@@ -125,9 +125,20 @@ def test_the_auth_service_is_published_for_the_desktop_and_waits_for_what_it_nee
     assert auth["container_name"] == "nl2sql-auth"
     [port] = auth["ports"]
     assert (port["published"], port["target"]) == ("8446", 8446)
-    # The certificate it presents is the API's, so the API comes first.
-    assert set(auth["depends_on"]) == {"postgres", "ldap", "api"}
+    # The directory's own API answers on 8447, which is not published (V6-58).
+    assert auth["environment"]["AUTH_DIRECTORY_PORT"] == "8447"
+    # Its certificate is its own (V6-36), so it no longer waits for the API.
+    assert set(auth["depends_on"]) == {"pki", "postgres", "ldap"}
     assert auth["profiles"] == ["auth"]
+
+
+def test_a_sign_in_verifies_the_database_against_its_own_certificate(services: dict):
+    """V6-53: the database's certificate is mounted, and the settings'
+    default -- verify-full against it -- is left to stand."""
+    auth = services["auth"]
+    assert auth["environment"]["AUTH_DB_SSLMODE"] == "" and auth["environment"]["AUTH_DB_SSLROOTCERT"] == ""
+    pgtls = _volume(auth, "/etc/nl2sql/pg-tls")
+    assert (pgtls["source"], pgtls["read_only"]) == ("pgtls", True)
 
 
 def test_every_setting_the_auth_service_reads_can_be_set_through_compose(services: dict):
@@ -163,9 +174,8 @@ def test_the_signing_key_is_the_auth_services_alone_and_its_public_half_is_every
     assert services["auth"]["environment"]["AUTH_PUBLIC_KEY_FILE"] == "/etc/nl2sql/auth/session.pub"
 
 
-def test_the_apis_certificate_covers_the_auth_service(services: dict):
-    names = services["api"]["environment"]["API_TLS_HOSTNAMES"].split(",")
-    assert {"nl2sql-auth", "auth"} <= set(names)
+def test_the_auth_service_is_issued_its_own_certificate(services: dict):
+    assert {"nl2sql-auth", "auth"} <= set(_issued({"services": services}, "auth"))
 
 
 # --- one switch --------------------------------------------------------------------
@@ -188,7 +198,7 @@ def test_every_interface_is_https_unless_one_variable_says_otherwise(services: d
     [enabled] = [value for key, value in services[name]["environment"].items() if key.endswith("_TLS_ENABLED")]
     assert enabled == "true"
     cert = _volume(services[name], "/etc/nl2sql/tls")
-    assert (cert["source"], cert["read_only"]) == ("apitls", True)
+    assert (cert["source"], cert["read_only"]) == (f"{name}tls", True), "its own, from the pki service"
 
 
 def test_gui_tls_enabled_switches_every_interface(tmp_path_factory):
@@ -205,10 +215,21 @@ def test_the_directory_page_is_this_machines_and_waits_for_the_auth_service(serv
     page = services["directorygui"]
     [port] = page["ports"]
     assert (port["host_ip"], port["published"], port["target"]) == ("127.0.0.1", "8084", 8084)
-    assert set(page["depends_on"]) == {"auth"}
+    assert set(page["depends_on"]) == {"pki", "auth"}
+    # Sign-in on the published port, the directory's API on the other.
+    assert page["environment"]["DIRECTORY_UPSTREAM"] == "https://nl2sql-auth:8446"
+    assert page["environment"]["DIRECTORY_API_UPSTREAM"] == "https://nl2sql-auth:8447"
     assert page["profiles"] == ["directorygui"]
     # Told the mode so it can refuse to start beside a replica.
     assert page["environment"]["LDAP_MODE"] == "standalone"
+
+
+def test_moving_the_directory_api_moves_the_page_with_it(tmp_path):
+    """The port is the auth service's and the page's both; set once, it is
+    the same in each, or the page proxies to a port nothing answers on."""
+    services = _compose_config(tmp_path, env={"AUTH_DIRECTORY_PORT": "9447"})["services"]
+    assert services["auth"]["environment"]["AUTH_DIRECTORY_PORT"] == "9447"
+    assert services["directorygui"]["environment"]["DIRECTORY_API_UPSTREAM"] == "https://nl2sql-auth:9447"
 
 
 def test_every_setting_the_directory_page_reads_can_be_set_through_compose_and_nothing_else_is(services: dict):
@@ -225,3 +246,9 @@ def test_every_setting_the_directory_page_reads_can_be_set_through_compose_and_n
 def test_no_two_services_publish_the_same_port(services: dict):
     published = [port["published"] for service in services.values() for port in service.get("ports", [])]
     assert len(published) == len(set(published)), sorted(published)
+
+
+def _issued(config: dict, identity: str) -> list[str]:
+    """The names the pki service issues `identity`'s certificate for."""
+    [spec] = [arg for arg in config["services"]["pki"]["command"] if arg.startswith(f"{identity}=")]
+    return spec.split("=", 2)[2].split(",")

@@ -18,15 +18,27 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from nl2sql_identity import ADMINS, CURATORS, REVIEWERS, SESSION_COOKIE, USERS
 
 DEFAULT_PORT = 8446
+#: The directory's own API: the routes that make and change people,
+#: administrators among them. On a port of its own so that it can be left
+#: unpublished while the sign-in port is open to the desktop client.
+DEFAULT_DIRECTORY_PORT = 8447
 
-#: The certificate the agent API generates, presented here as the review
-#: service and the console present it: the desktop client and every GUI's
-#: proxy already trust it, so sign-in costs nobody a second certificate.
+#: This service's own key and certificate, which the stack's pki service
+#: issues from its development CA (since 6.1; it presented the agent API's
+#: until then). The desktop client and every page's proxy trust the CA.
 DEFAULT_TLS_DIR = "/etc/nl2sql/tls"
+
+#: The retail database's own certificate, which it writes on first start
+#: into a volume this service mounts read-only.
+DEFAULT_DB_CACERT = "/etc/nl2sql/pg-tls/server.crt"
+
+#: The connection modes that check the database is the one it claims to be.
+VERIFYING_SSLMODES = ("verify-ca", "verify-full")
 
 #: The signing key, in a volume nothing else mounts.
 DEFAULT_SIGNING_KEY = "/var/lib/nl2sql-auth/session.key"
@@ -103,6 +115,9 @@ class AuthSettings:
     # --- Binding ---------------------------------------------------------
     host: str = "0.0.0.0"
     port: int = DEFAULT_PORT
+    #: The directory API's own port; 0 serves it on `port` with the rest,
+    #: as 6.0 did.
+    directory_port: int = DEFAULT_DIRECTORY_PORT
     root_path: str = ""
     tls_enabled: bool = True
     tls_cert_file: str = f"{DEFAULT_TLS_DIR}/server.crt"
@@ -129,7 +144,13 @@ class AuthSettings:
     db_host: str = "nl2sql-postgres"
     db_port: int = 5432
     db_name: str = "nl2sql_retail"
-    db_sslmode: str = "prefer"
+    #: verify-full: the connection is TLS, the certificate is the database's
+    #: own (`db_sslrootcert`) and it names the host. A person's password
+    #: crosses this hop, in the clear inside the session -- pg_hba's `ldap`
+    #: method needs it to bind to the directory -- so nothing less will do
+    #: by default (6.1; `prefer` until then, against a server with no TLS).
+    db_sslmode: str = "verify-full"
+    db_sslrootcert: str = DEFAULT_DB_CACERT
     db_connect_timeout: int = 5
     #: The sync's own login: CREATEROLE, ADMIN on the nl2sql roles only.
     rolesync_url: str | None = None
@@ -171,6 +192,7 @@ class AuthSettings:
         return cls(
             host=_env_str("AUTH_HOST", "0.0.0.0"),
             port=_env_int("AUTH_PORT", DEFAULT_PORT),
+            directory_port=_env_int("AUTH_DIRECTORY_PORT", DEFAULT_DIRECTORY_PORT),
             root_path=_env_str("AUTH_ROOT_PATH", ""),
             tls_enabled=_env_bool("AUTH_TLS_ENABLED", True),
             tls_cert_file=_env_str("AUTH_TLS_CERT_FILE", f"{DEFAULT_TLS_DIR}/server.crt"),
@@ -185,7 +207,8 @@ class AuthSettings:
             db_host=_env_str("AUTH_DB_HOST", "nl2sql-postgres"),
             db_port=_env_int("AUTH_DB_PORT", 5432),
             db_name=_env_str("AUTH_DB_NAME", "nl2sql_retail"),
-            db_sslmode=_env_str("AUTH_DB_SSLMODE", "prefer"),
+            db_sslmode=_env_str("AUTH_DB_SSLMODE", "verify-full"),
+            db_sslrootcert=_env_str("AUTH_DB_SSLROOTCERT", DEFAULT_DB_CACERT),
             db_connect_timeout=_env_int("AUTH_DB_CONNECT_TIMEOUT", 5),
             rolesync_url=_secret("AUTH_ROLESYNC_DB_URL"),
             reader_role=_env_str("AUTH_READER_ROLE", "nl2sql_reader"),
@@ -226,6 +249,30 @@ class AuthSettings:
         return int(self.session_hours * 3600)
 
     @property
+    def db_ssl(self) -> dict[str, str]:
+        """The TLS settings every connection to the retail database takes."""
+        settings = {"sslmode": self.db_sslmode}
+        if self.db_sslmode in VERIFYING_SSLMODES:
+            settings["sslrootcert"] = self.db_sslrootcert
+        return settings
+
+    @property
+    def rolesync_conninfo(self) -> str | None:
+        """The role sync's URL, held to the same TLS as a sign-in.
+
+        Its password crosses the same hop. A URL that already says how to
+        connect (`sslmode=` in its query) is left as it was.
+        """
+        if not self.rolesync_url:
+            return None
+        parts = urlsplit(self.rolesync_url)
+        query = dict(parse_qsl(parts.query))
+        if "sslmode" in query:
+            return self.rolesync_url
+        query.update(self.db_ssl)
+        return urlunsplit(parts._replace(query=urlencode(query)))
+
+    @property
     def certificate_present(self) -> bool:
         return Path(self.tls_cert_file).is_file() and Path(self.tls_key_file).is_file()
 
@@ -261,11 +308,26 @@ class AuthSettings:
                 "AUTH_LDAP_STARTTLS=false with a plain ldap:// URL: the directory will "
                 "refuse the service's password, which it only accepts encrypted."
             )
-        if self.db_sslmode in ("disable", "allow"):
+        if self.db_sslmode in ("disable", "allow", "prefer"):
             notes.append(
                 f"AUTH_DB_SSLMODE={self.db_sslmode}: a password being checked may reach the "
-                "retail database unencrypted. Inside one compose network that is the "
-                "stack's own traffic; across hosts, use require or verify-full."
+                "retail database unencrypted -- pg_hba's ldap method sends it in clear "
+                "inside whatever the connection is. The database serves TLS and its sign-in "
+                "rule is hostssl, so this only works against one configured otherwise. "
+                "Use verify-full."
+            )
+        elif self.db_sslmode == "require":
+            notes.append(
+                "AUTH_DB_SSLMODE=require: encrypted, but nothing checks that the server "
+                "is the retail database, so a password could be handed to whatever answers "
+                "at its address. Use verify-full with AUTH_DB_SSLROOTCERT."
+            )
+        if self.db_sslmode in VERIFYING_SSLMODES and not Path(self.db_sslrootcert).is_file():
+            notes.append(
+                f"AUTH_DB_SSLMODE={self.db_sslmode} and there is no certificate at "
+                f"{self.db_sslrootcert} to verify the retail database against, so every "
+                "sign-in will fail. The database writes it into the pgtls volume on its "
+                "first start; mount that here."
             )
         return notes
 

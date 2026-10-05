@@ -16,6 +16,8 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
+import pydantic
+import pytest
 from nl2sql_agent.api.jobs import Job, ProgressRecord
 from nl2sql_agent.api.translate import answer_from_state, job_model, progress_event, result_table
 from nl2sql_agent.state import (
@@ -48,8 +50,15 @@ def full_state() -> dict:
                 LiteralMatch(phrase="produse", table="dim_product", column="dept",
                              value="Produce", score=0.81)
             ],
-            "trace": [TraceEntry(node="finish", ms=2.5, model_calls=0, detail="done")],
+            "trace": [
+                TraceEntry(node="finish", ms=2.5, model_calls=0, detail="done"),
+                TraceEntry(
+                    node="generate_sql", ms=900.0, model_calls=1, detail="SELECT 1",
+                    model="coder:14b", rung="standard", route="attempt 1", hops=["small:3b"],
+                ),
+            ],
             "retrieval_errors": {"knowledge": "vector store unreachable"},
+            "node_errors": {"narrator": "the model host went away"},
             "answer": "There are 42 stores.",
         }
     )
@@ -82,6 +91,31 @@ def test_every_field_of_a_full_state_survives_the_crossing():
     assert answer.audit.drop_reasons == ["one dropped"]
     assert answer.trace[0].node == "finish"
     assert answer.retrieval_errors == {"knowledge": "vector store unreachable"}
+    assert answer.node_errors == {"narrator": "the model host went away"}
+
+
+def test_the_model_that_answered_each_call_crosses_to_the_client():
+    """V6-18: the routing fields were dropped by a lenient model for four
+    releases while the documentation said a client could read them."""
+    entry = answer_from_state(full_state()).trace[1]
+    assert (entry.model, entry.rung, entry.route, entry.hops) == (
+        "coder:14b", "standard", "attempt 1", ["small:3b"],
+    )
+
+
+def test_a_state_field_the_contract_does_not_carry_is_an_error_not_a_loss():
+    """V6-19. Should the pipeline's trace entry grow a field the wire model
+    lacks, translating it fails here, in a test, instead of in silence."""
+    state = full_state()
+    state["trace"] = [{"node": "finish", "ms": 1.0, "cost_usd": 0.01}]
+    with pytest.raises(pydantic.ValidationError):
+        answer_from_state(state)
+
+
+def test_the_audit_says_which_assumptions_the_answer_had_to_state_itself():
+    state = full_state()
+    state["audit"] = AuditReport(passed=False, missing_assumptions=["fiscal year 2025"])
+    assert answer_from_state(state).audit.missing_assumptions == ["fiscal year 2025"]
 
 
 def test_the_narrative_is_trimmed_because_it_is_rendered_verbatim():

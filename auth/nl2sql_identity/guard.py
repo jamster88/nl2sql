@@ -107,9 +107,10 @@ class IdentityError(HTTPException):
 class GuardSettings:
     """What a service needs to know to tell its callers apart."""
 
-    #: Sign-in on. Off is the deployment from before there was any: the
-    #: static token below, or nothing.
-    enabled: bool = False
+    #: Sign-in on -- by default here, not only in compose, so a service
+    #: started any other way is not open by accident. Off is the deployment
+    #: from before there was any: the static token below, or nothing.
+    enabled: bool = True
     public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
     cookie_name: str = SESSION_COOKIE
     #: The static credential for machines, which every service has had
@@ -121,7 +122,7 @@ class GuardSettings:
     @classmethod
     def from_env(cls, *, token_variable: str, service_roles: Iterable[str]) -> "GuardSettings":
         return cls(
-            enabled=_env_bool("AUTH_ENABLED", False),
+            enabled=_env_bool("AUTH_ENABLED", True),
             public_key_file=_env("AUTH_PUBLIC_KEY_FILE") or DEFAULT_PUBLIC_KEY_FILE,
             cookie_name=_env("AUTH_COOKIE_NAME") or SESSION_COOKIE,
             service_token=_env(token_variable),
@@ -329,7 +330,13 @@ class Guard:
         return replace(identity, roles=roles)
 
     def require(self, *roles: str, query_token: bool = False) -> Callable[[Request], Identity]:
-        """A FastAPI dependency: the caller, who must hold one of `roles`."""
+        """A FastAPI dependency: the caller, who must hold one of `roles`.
+
+        No roles means any caller the guard accepts. The dependency carries
+        `nl2sql_guard` (the roles it asks for), which is how a test over an
+        application's route table tells a guarded route from one that was
+        added without a guard (`tests/security/test_routes_guarded.py`).
+        """
         wanted = frozenset(roles)
 
         def dependency(request: Request) -> Identity:
@@ -344,6 +351,7 @@ class Guard:
             request.state.identity = identity
             return identity
 
+        dependency.nl2sql_guard = wanted  # type: ignore[attr-defined]
         return dependency
 
     def describe(self) -> str:

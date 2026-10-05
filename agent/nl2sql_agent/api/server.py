@@ -16,7 +16,10 @@ whoever finds it. Each is printed at startup, next to the URL.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import logging
+import re
 import sys
 from dataclasses import replace
 from typing import Sequence
@@ -142,18 +145,56 @@ def banner(api: ApiSettings, certificate, *, version: str = __version__) -> str:
         lines.append(f"  docs        {api.public_url()}/docs")
     lines.append(f"  health      {api.public_url()}/healthz")
     if certificate is not None:
-        kind = "self-signed" if certificate.self_signed else "CA-issued"
         lines.append(
-            f"  certificate {kind}, for {', '.join(certificate.hostnames) or 'no names'}, "
+            f"  certificate {certificate.kind}, for {', '.join(certificate.hostnames) or 'no names'}, "
             f"good for {certificate.days_remaining} more day(s)"
         )
         lines.append(f"  fingerprint sha256:{certificate.fingerprint_sha256}")
-    lines.append(
-        "  auth        bearer token required" if api.token else "  auth        none"
-    )
+    lines.append(f"  auth        {describe_auth(api)}")
     for note in api.warnings() + certificate_notes(certificate):
         lines.append(f"  WARNING: {note}")
     return "\n".join(lines)
+
+
+def describe_auth(api: ApiSettings) -> str:
+    """Who may call, in the banner's words. Open is said in capitals."""
+    if api.auth_enabled:
+        return "sign-in (a session from the auth service)" + (", or the API token" if api.token else "")
+    if api.token:
+        return "bearer token required"
+    return "NONE -- open to anyone who can reach the port"
+
+
+#: A session token in a query string, which the event stream accepts because
+#: `EventSource` cannot send a header (`guard.py`, `query_token`).
+_TOKEN_IN_QUERY = re.compile(r"(access_token=)[^&\s\"]*")
+
+
+class ScrubTokens(logging.Filter):
+    """Masks a session token in a request line before the access log writes it.
+
+    uvicorn logs every request's path with its query string. The one route
+    that takes `?access_token=` would otherwise write a live session -- eight
+    hours of somebody -- into whatever collects the container's output.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _TOKEN_IN_QUERY.sub(r"\1***", arg) if isinstance(arg, str) else arg
+                for arg in record.args
+            )
+        return True
+
+
+def log_config() -> dict:
+    """uvicorn's own logging configuration, with the access log scrubbed."""
+    from uvicorn.config import LOGGING_CONFIG
+
+    config = copy.deepcopy(LOGGING_CONFIG)
+    config.setdefault("filters", {})["scrub_tokens"] = {"()": ScrubTokens}
+    config["handlers"]["access"]["filters"] = ["scrub_tokens"]
+    return config
 
 
 def build(argv: Sequence[str] | None = None):
@@ -198,6 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         host=api.host,
         port=api.port,
         log_level=api.log_level,
+        log_config=log_config(),
         ssl_certfile=api.tls_cert_file if api.tls_enabled else None,
         ssl_keyfile=api.tls_key_file if api.tls_enabled else None,
         # Every worker would need its own copy of the job store, and a client

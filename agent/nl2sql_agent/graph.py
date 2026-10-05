@@ -106,6 +106,7 @@ from .state import (
     QueryResult,
     Shot,
     TraceEntry,
+    attempt_reset,
     new_state,
 )
 from .tools import TableSelection, build_tools
@@ -588,7 +589,7 @@ class Nl2SqlAgent:
             period=update.pop("period", ""),
         )
         update["answer_contract"] = contract
-        update[_MODEL_CALLS] = 0 if update.get("retrieval_errors") else 1
+        update[_MODEL_CALLS] = 0 if update.get("node_errors") else 1
         update[_DETAIL] = (
             f"{update['verdict']} / {update['intent']}; "
             f"contract: {answer_contract.describe(contract)}"
@@ -1015,6 +1016,11 @@ class Nl2SqlAgent:
         # do about it.
         history[-1] = Attempt(sql=history[-1].sql, issues=hinted)
         update = {
+            # The attempt that failed is over: its rows, its narration, its
+            # audit and the narrator's one rewrite describe a query that is
+            # about to be replaced (state.LIFETIMES). Without this the next
+            # narration read the last audit and spent its rewrite on it.
+            **attempt_reset(),
             "issues": hinted,
             "attempt_history": history,
             "generation_rung": next_rung,
@@ -1085,7 +1091,7 @@ class Nl2SqlAgent:
                 assumptions=state.get("assumptions", []),
             )
         except Exception as exc:
-            failed = {"claims": [], "retrieval_errors": {"narrator": str(exc)}, _DETAIL: str(exc)}
+            failed = {"claims": [], "node_errors": {"narrator": str(exc)}, _DETAIL: str(exc)}
             _note_route(failed, routed)
             return failed
         update: dict[str, Any] = {"claims": claims, _MODEL_CALLS: 1}

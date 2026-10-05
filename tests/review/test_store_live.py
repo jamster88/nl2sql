@@ -30,7 +30,6 @@ nothing is listening.
 
 from __future__ import annotations
 
-import os
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
@@ -52,12 +51,11 @@ from nl2sql_review.store import (
     connection,
     ensure_writer_role,
 )
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-ADMIN_URL = os.environ.get(
-    "FEEDBACK_DB_URL", "postgresql://feedback:feedback@localhost:5435/nl2sql_feedback"
-)
+ADMIN_URL = live_stores.url("feedback", variable="FEEDBACK_DB_URL", driver="postgresql")
 WRITER_PASSWORD = "test-writer-password"
 
 #: What the writer's password is put back to at teardown: the default a
@@ -83,7 +81,7 @@ def owner():
     try:
         admin = psycopg.connect(ADMIN_URL, autocommit=True, connect_timeout=3)
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"no staging database at {ADMIN_URL}: {exc}")
+        live_stores.unreachable("staging database", ADMIN_URL, exc)
 
     name = f"t_feedback_{uuid.uuid4().hex[:12]}"
     try:

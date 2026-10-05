@@ -8,9 +8,17 @@
 # file and leaves every other line as it was:
 #
 #   # BEGIN nl2sql sign-in
-#   host all <reader>,<sync> all scram-sha-256
-#   host <db> +nl2sql_ldap all ldap ldapserver=... ldaptls=1 ldapprefix="uid=" ldapsuffix=",ou=people,<base>"
+#   hostssl all <reader>,<sync> all scram-sha-256
+#   hostssl <db> +nl2sql_ldap all ldap ldapserver=... ldaptls=1 ldapprefix="uid=" ldapsuffix=",ou=people,<base>"
 #   # END nl2sql sign-in
+#
+# `hostssl`, both (6.1). pg_hba's `ldap` method is clear-text password
+# authentication: the client sends the person's directory password to the
+# server, which binds to the directory with it. Over a plain connection that
+# is their password for every page, readable by anyone on the path. The
+# image has served TLS since v1_2 (docker/entrypoint.sh), so a person's
+# password is accepted only over an encrypted connection, and a client that
+# tries without one finds no rule that admits it.
 #
 # The first line is there because pg_hba's `+role` matches indirect members,
 # and two service roles are: the sync holds ADMIN on nl2sql_ldap, and the
@@ -73,8 +81,8 @@ work="$(mktemp "$hba.XXXXXX")"
 {
     if [ "$signin" = on ]; then
         echo "$begin -- written on start by docker/ldap_hba.sh; change .env, not these lines"
-        echo "host all $roles all scram-sha-256"
-        echo "host $db +nl2sql_ldap all ldap ldapserver=$host ldapport=$port $tls ldapprefix=\"uid=\" ldapsuffix=\",ou=people,$base\""
+        echo "hostssl all $roles all scram-sha-256"
+        echo "hostssl $db +nl2sql_ldap all ldap ldapserver=$host ldapport=$port $tls ldapprefix=\"uid=\" ldapsuffix=\",ou=people,$base\""
         echo "$end"
     fi
     awk -v b="$begin" -v e="$end" '

@@ -131,10 +131,11 @@ def select(args: argparse.Namespace) -> list[BenchmarkQuestion]:
     return questions
 
 
-#: The stack's development certificate, as launch.sh copies it out of the
-#: API's volume. MLflow's client trusts it when told to, and is told to here
-#: unless the environment already says what to trust.
-CERTIFICATE = Path(__file__).resolve().parent.parent / "nl2sql-api.crt"
+#: The stack's development CA, as launch.sh copies it out of the API's
+#: volume: every server's certificate, MLflow's front door's among them, is
+#: issued by it (since 6.1). MLflow's client trusts it when told to, and is
+#: told to here unless the environment already says what to trust.
+CERTIFICATE = Path(__file__).resolve().parent.parent / "nl2sql-ca.crt"
 
 
 def trust_the_stack(environ=os.environ, certificate: Path = CERTIFICATE) -> None:

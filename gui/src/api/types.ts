@@ -74,16 +74,20 @@ export interface AuditReport {
   passed: boolean;
   unsupported_claims: string[];
   drop_reasons: string[];
-  redactions: string[];
+  missing_assumptions: string[];
   semantic_issue: string | null;
 }
 
-/** Per-node cost. */
+/** Per-node cost, and for a node that called a model, which one answered. */
 export interface TraceEntry {
   node: string;
   ms: number;
   model_calls: number;
   detail: string;
+  model: string;
+  rung: string;
+  route: string;
+  hops: string[];
 }
 
 /** A phrase from the question, matched to a value in the database. */
@@ -115,6 +119,7 @@ export interface Answer {
   attempts: number;
   trace: TraceEntry[];
   retrieval_errors: Record<string, string>;
+  node_errors: Record<string, string>;
 }
 
 export interface JobLinks {

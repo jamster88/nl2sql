@@ -18,9 +18,10 @@ initdb -D "$PGDATA" \
   --encoding=UTF8
 
 # The stock image's postgresql.conf.sample already sets listen_addresses='*';
-# this is the matching host rule the runtime entrypoint adds when it does the
-# initialization itself.
-printf 'host all all all scram-sha-256\n' >> "$PGDATA/pg_hba.conf"
+# this is the host rule the stock entrypoint would add when it does the
+# initialization itself -- except that it is `hostssl`: a password here is
+# only ever accepted over TLS, which the image's own entrypoint turns on.
+printf 'hostssl all all all scram-sha-256\n' >> "$PGDATA/pg_hba.conf"
 
 # Durability settings are relaxed only for this throwaway build-time server;
 # they are command-line overrides, so the shipped postgresql.conf keeps the
@@ -31,8 +32,10 @@ pg_ctl -D "$PGDATA" -w \
 
 super() { psql -v ON_ERROR_STOP=1 --username=postgres "$@"; }
 
-super --dbname=postgres --command="ALTER ROLE postgres PASSWORD '${DB_PASSWORD}'"
-super --dbname=postgres --command="CREATE ROLE ${DB_USER} LOGIN PASSWORD '${DB_PASSWORD}'"
+# No password for anyone at build time. The superuser never has one; the
+# owner's and the reader's are the environment's, set by the image's
+# entrypoint on every start.
+super --dbname=postgres --command="CREATE ROLE ${DB_USER} LOGIN"
 super --dbname=postgres --command="CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}"
 super --dbname="${DB_NAME}" --command="ALTER SCHEMA public OWNER TO ${DB_USER}"
 
@@ -53,7 +56,7 @@ super --dbname="${DB_NAME}" --command="VACUUM ANALYZE"
 # The agent reads through this role; only the DDL and the COPY above run as
 # the owner.
 super --dbname="${DB_NAME}" \
-  -v reader="${DB_READER}" -v reader_password="${DB_READER_PASSWORD}" -v owner="${DB_USER}" \
+  -v reader="${DB_READER}" -v owner="${DB_USER}" \
   --file="$READER_SQL"
 
 pg_ctl -D "$PGDATA" -m fast -w stop

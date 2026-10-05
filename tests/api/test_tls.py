@@ -206,7 +206,37 @@ def test_the_refusal_says_which_file_and_how_to_fix_it(paths):
         ensure_certificate(settings_for(paths, tls_allow_self_signed=False))
     message = str(raised.value)
     assert str(paths[0]) in message
-    assert "CA-issued" in message
+    assert "is self-signed" in message and "a certificate from a real CA" in message
+
+
+def test_a_certificate_from_the_development_ca_is_refused_by_the_switch_too(paths, tmp_path):
+    """V6-36: the stack's own CA is not a real one. A certificate it issued
+    is development, and the switch that refuses development refuses it."""
+    from nl2sql_identity import pki
+
+    cert, key = paths
+    ca_cert, ca_key, _ = pki.ensure_ca(tmp_path / "ca")
+    pki.ensure_identity(pki.parse_identity(f"api={cert.parent}=localhost"), ca_cert, ca_key)
+    info = ensure_certificate(settings_for(paths, tls_hostnames=("localhost",)))
+    assert (info.self_signed, info.development, info.kind) == (False, True, "issued by the development CA")
+    assert info.summary()["development"] is True
+    assert any("development CA" in note and "nl2sql-ca.crt" in note for note in certificate_notes(info))
+    with pytest.raises(TlsError, match="issued by the development CA"):
+        ensure_certificate(settings_for(paths, tls_allow_self_signed=False))
+
+
+def test_a_certificate_the_pki_issued_is_never_reissued_here(paths, tmp_path):
+    """A name the API asks for that the pki's certificate lacks is a note,
+    not a self-signed replacement: replacing it would undo the CA."""
+    from nl2sql_identity import pki
+
+    cert, key = paths
+    ca_cert, ca_key, _ = pki.ensure_ca(tmp_path / "ca")
+    pki.ensure_identity(pki.parse_identity(f"api={cert.parent}=localhost"), ca_cert, ca_key)
+    before = cert.read_bytes()
+    info = ensure_certificate(settings_for(paths, tls_hostnames=("localhost", "nl2sql-api")))
+    assert cert.read_bytes() == before and info.missing_hostnames == ["nl2sql-api"]
+    assert any("pki service reissues it" in note for note in certificate_notes(info))
 
 
 def test_a_ca_issued_certificate_passes_the_switch(paths, tmp_path):
@@ -429,4 +459,4 @@ def test_a_ca_issued_certificate_is_never_replaced(paths, tmp_path):
 
     assert cert.read_bytes() == before, "it replaced a CA-issued certificate"
     assert info.missing_hostnames == ["nl2sql-review"]
-    assert "CA-issued, so it was left alone" in " ".join(certificate_notes(info))
+    assert "was not generated here, so it was left alone" in " ".join(certificate_notes(info))

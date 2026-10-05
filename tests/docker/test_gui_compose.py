@@ -110,20 +110,27 @@ def test_the_proxy_reaches_the_api_by_the_same_name_it_verifies(gui: dict):
     assert gui["environment"]["API_SSL_NAME"] in gui["environment"]["API_UPSTREAM"]
 
 
-def test_it_can_read_the_certificate_the_api_wrote(gui: dict, config: dict):
-    """From the volume the API writes it into -- the same arrangement the
-    curl-only test client uses, and read-only, because it only reads it."""
+def test_it_verifies_the_api_against_the_ca_beside_its_own_certificate(gui: dict, config: dict):
+    """V6-36: the page's own volume holds its key, its certificate and the
+    CA's; the API's key is nowhere in it. Read-only, because the pki service
+    writes it."""
     mounts = {mount["target"]: mount for mount in gui["volumes"]}
-    certificate_dir = str(Path(gui["environment"]["API_CACERT"]).parent)
-
-    assert certificate_dir in mounts
+    env = gui["environment"]
+    certificate_dir = str(Path(env["API_CACERT"]).parent)
+    assert env["API_CACERT"].endswith("/ca.crt") and env["AUTH_CACERT"] == env["API_CACERT"]
     assert mounts[certificate_dir]["read_only"] is True
-    assert mounts[certificate_dir]["source"] == config["services"]["api"]["volumes"][0]["source"]
+    assert mounts[certificate_dir]["source"] == "guitls"
+    assert gui["depends_on"]["pki"]["condition"] == "service_completed_successfully"
 
 
-def test_the_api_writes_that_volume_rather_than_only_reading_it(config: dict):
-    api_mounts = {mount["target"]: mount for mount in config["services"]["api"]["volumes"]}
-    assert api_mounts["/etc/nl2sql/tls"].get("read_only") is not True
+def test_only_the_pki_service_writes_a_tls_volume(config: dict):
+    writers = {
+        mount["source"]: name
+        for name, service in config["services"].items()
+        for mount in service.get("volumes", [])
+        if mount.get("type") == "volume" and mount["source"].endswith("tls") and not mount.get("read_only")
+    }
+    assert set(writers.values()) <= {"pki", "postgres", "ldap"}, writers
 
 
 # ---------------------------------------------------------------------------

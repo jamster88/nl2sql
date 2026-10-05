@@ -126,7 +126,14 @@ def test_lists_are_comma_separated(clean_env):
 
 def test_an_empty_list_falls_back_to_the_default(clean_env):
     clean_env.setenv("API_CORS_ORIGINS", "")
-    assert ApiSettings.from_env().cors_origins == ("*",)
+    assert ApiSettings.from_env().cors_origins == ()
+
+
+def test_no_other_origin_and_sign_in_on_are_the_defaults_in_the_code_too(clean_env):
+    """V6-12 and V6-54: a server started without compose -- a bare
+    `python -m nl2sql_agent.api`, another orchestrator -- is not open."""
+    assert ApiSettings().cors_origins == () and ApiSettings().auth_enabled is True
+    assert ApiSettings.from_env().cors_origins == () and ApiSettings.from_env().auth_enabled is True
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +161,9 @@ def test_plain_http_is_called_out_as_a_warning():
 
 
 def test_an_open_port_with_no_token_is_called_out():
-    notes = " ".join(ApiSettings(token=None).warnings())
-    assert "No API_TOKEN" in notes
+    notes = " ".join(ApiSettings(auth_enabled=False, token=None).warnings())
+    assert "This server is OPEN" in notes
+    assert not any("OPEN" in note for note in ApiSettings(token=None).warnings())
 
 
 def test_a_token_with_a_wildcard_origin_is_called_out():

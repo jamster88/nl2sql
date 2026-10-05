@@ -190,7 +190,7 @@ def screen(
             "entities": [],
             "measure": "",
             "period": "",
-            "retrieval_errors": {"supervisor": str(exc)},
+            "node_errors": {"supervisor": str(exc)},
         }
 
     verdict = getattr(screening, "verdict", "proceed") or "proceed"

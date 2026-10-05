@@ -11,7 +11,6 @@ aggregate.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,6 +27,7 @@ from nl2sql_review.snippet_validation import (
     tables_named,
     validate_snippet,
 )
+from tests import live_stores
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 KNOWN = ["dim_date", "dim_product", "fact_pos_retail_sales"]
@@ -257,9 +257,7 @@ def test_a_validation_serialises_whole():
 # Live: the real document against the real retail database
 # ---------------------------------------------------------------------------
 
-RETAIL_URL = os.environ.get(
-    "RETAIL_DB_URL", "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+RETAIL_URL = live_stores.url("retail", variable="RETAIL_DB_URL", driver="postgresql")
 
 
 @pytest.fixture(scope="module")
@@ -268,7 +266,7 @@ def live():
     try:
         psycopg.connect(RETAIL_URL, connect_timeout=3).close()
     except psycopg.Error as exc:
-        pytest.skip(f"no retail database at {RETAIL_URL}: {exc}")
+        live_stores.unreachable("retail database", RETAIL_URL, exc)
     return RETAIL_URL
 
 

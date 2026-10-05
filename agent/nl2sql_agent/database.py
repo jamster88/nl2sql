@@ -287,12 +287,19 @@ class Database:
         `principal` plans it as the person it will run as, so a table they
         may not read is refused here, in Postgres's own words, rather than
         only once the executor tries.
+
+        Under the executor's statement timeout too. Planning is milliseconds
+        for any query a person would write, and not for every query a model
+        might: a join of enough tables makes the planner's search the slow
+        part, and an untimed gate is a way past the timeout the executor
+        would have enforced.
         """
         cleaned = ensure_read_only(sql)
         try:
             with self._engine.connect() as conn:
                 with conn.begin():
                     conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+                    conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
                     if principal:
                         conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
                     row = conn.exec_driver_sql(

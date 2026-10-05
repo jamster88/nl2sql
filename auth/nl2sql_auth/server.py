@@ -1,17 +1,21 @@
 """Starting the auth service: the signing key, the certificate, the banner, uvicorn.
 
-Like the review service and the console, this presents the certificate the
-agent API generates rather than one of its own -- the GUIs' proxies and the
-desktop client already trust it, and API_TLS_HOSTNAMES covers nl2sql-auth for
-this reason. The signing key is its own, made on first start.
+Its certificate is its own, issued by the stack's development CA (the pki
+service; until 6.1 it presented the agent API's). The signing key is its
+own too, made on first start.
+
+One process, two ports (V6-58): AUTH_PORT for signing in, which is published
+because the desktop client signs in there, and AUTH_DIRECTORY_PORT for the
+directory's own API, which is not, and which the app answers nowhere else.
 """
 
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
 from dataclasses import replace
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 import psycopg
 
@@ -55,15 +59,25 @@ def _redacted(url: str | None) -> str:
     return f"{scheme}://{credentials.partition(':')[0]}:***@{host}"
 
 
+def _directory_api(settings: AuthSettings) -> str:
+    if settings.replica:
+        return "off: the directory is a replica"
+    if settings.directory_port:
+        return f"/directory/v1 on port {settings.directory_port} only (AUTH_DIRECTORY_PORT)"
+    return "/directory/v1, on the sign-in port"
+
+
 def banner(settings: AuthSettings, *, version: str = __version__) -> str:
+    verified = f", against {settings.db_sslrootcert}" if "sslrootcert" in settings.db_ssl else ""
     lines = [
         f"nl2sql auth service {version}",
         f"  listening on   {settings.public_url()}",
-        f"  signs in at    {settings.db_host}:{settings.db_port}/{settings.db_name} (sslmode={settings.db_sslmode})",
+        f"  signs in at    {settings.db_host}:{settings.db_port}/{settings.db_name} "
+        f"(sslmode={settings.db_sslmode}{verified})",
         f"  directory      {settings.ldap_url} ({settings.ldap_mode}, {settings.ldap_base_dn})",
         f"  role sync      {_redacted(settings.rolesync_url)}, every {settings.role_sync_interval:g}s",
         f"  sessions       {settings.session_hours:g} hours, signed with {settings.signing_key_file}",
-        f"  web interface  {'off: the directory is a replica' if settings.replica else '/directory/v1'}",
+        f"  web interface  {_directory_api(settings)}",
     ]
     for note in settings.problems() + settings.warnings():
         lines.append(f"  ! {note}")
@@ -92,9 +106,9 @@ def main(argv: Sequence[str] | None = None, *, run: Callable | None = None) -> i
     if settings.tls_enabled and not settings.certificate_present:
         print(
             f"error: TLS is on but {settings.tls_cert_file} is not readable.\n"
-            "  This service presents the certificate the agent API generates. Start the API\n"
-            "  once so it writes one, mount its volume here, and make sure API_TLS_HOSTNAMES\n"
-            f"  covers {SERVICE_HOSTNAME}. Or start with --no-tls.",
+            "  Under compose the pki service issues this service its own certificate into\n"
+            f"  the authtls volume, for names that include {SERVICE_HOSTNAME}; mount it here.\n"
+            "  Or start with --no-tls.",
             file=sys.stderr,
         )
         return 2
@@ -104,17 +118,42 @@ def main(argv: Sequence[str] | None = None, *, run: Callable | None = None) -> i
         print(f"error: the signing key: {exc}", file=sys.stderr)
         return 2
     print(note)
-    app = create_app(settings=settings, signing_key=key, database_check=database_check(settings.rolesync_url))
-    if run is None:
-        import uvicorn
-
-        run = uvicorn.run
-    run(
+    app = create_app(settings=settings, signing_key=key, database_check=database_check(settings.rolesync_conninfo))
+    (run or serve)(
         app,
         host=settings.host,
         port=settings.port,
+        directory_port=settings.directory_port,
         log_level=settings.log_level,
         ssl_certfile=settings.tls_cert_file if settings.tls_enabled else None,
         ssl_keyfile=settings.tls_key_file if settings.tls_enabled else None,
     )
     return 0
+
+
+def _listening(host: str, port: int) -> socket.socket:
+    """A socket bound to host:port, as uvicorn binds its own."""
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((host, port))
+    sock.set_inheritable(True)
+    return sock
+
+
+def serve(app: Any, *, host: str, port: int, directory_port: int, server_factory: Callable | None = None, **options: Any) -> None:
+    """uvicorn, on the sign-in port and, when there is one, the directory's.
+
+    One server over two sockets rather than two servers: one event loop,
+    one lifespan -- the role sync starts once -- and one set of signal
+    handlers, so a stop stops both. `scope["server"]` carries the port a
+    request arrived on, which is what the app reads to keep the directory's
+    routes off the published one.
+    """
+    import uvicorn
+
+    server = (server_factory or uvicorn.Server)(uvicorn.Config(app, host=host, port=port, **options))
+    if not directory_port:
+        server.run()
+        return
+    server.run(sockets=[_listening(host, port), _listening(host, directory_port)])

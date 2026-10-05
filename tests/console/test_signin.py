@@ -91,7 +91,7 @@ def test_readiness_counts_sign_in(db, tmp_path):
 
 
 def test_the_default_guard_follows_the_settings():
-    off = default_guard(Settings(), ConsoleSettings(token="t"))
+    off = default_guard(Settings(), ConsoleSettings(auth_enabled=False, token="t"))
     assert not off.settings.enabled and off._recheck is None
     assert off.settings.service_roles == {REVIEWERS, CURATORS}
     on = default_guard(Settings(), ConsoleSettings(auth_enabled=True, allowed_roles=(USERS,)))

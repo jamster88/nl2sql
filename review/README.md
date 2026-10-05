@@ -582,24 +582,25 @@ The error envelope is the agent API's, so one client parses both:
 | `REVIEW_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc`; `false` leaves only `/openapi.json` |
 | `REVIEW_LOG_LEVEL` | `info` | uvicorn's log level |
 
-This service **presents the certificate the agent API generates** and never
-writes one of its own. A second copy of the certificate code would be 250
-lines whose only job is to agree with the first copy, and the two would be
-discovered to disagree by a client failing to connect. The cost of that
-subtraction is a configuration requirement instead: `API_TLS_HOSTNAMES` has
-to cover `nl2sql-review`, which compose does.
+This service presents **a certificate of its own**, which the stack's pki
+service issues from its development CA before it starts (6.1; until then it
+presented the agent API's, whose key was then in eleven containers). It
+never writes one: the issuing is the pki service's, so there is one copy of
+the certificate code and one CA its page's proxy verifies against. The
+names it covers are `REVIEW_TLS_HOSTNAMES`, which must include
+`nl2sql-review`; compose's default does.
 
 ### Who may call
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `AUTH_ENABLED` | `false` (`true` in compose) | Accept signed-in people ([`auth/README.md`](../auth/README.md)) |
+| `AUTH_ENABLED` | `true` | Accept signed-in people ([`auth/README.md`](../auth/README.md)). Only `false`, set by name, turns it off, and the service then says it is open |
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
 | `REVIEW_REVIEWER_ROLES` | `nl2sql_reviewers` | Who may work the review queue: judge, promote, fix, reopen, delete |
 | `REVIEW_CURATOR_ROLES` | `nl2sql_curators` | Who may write directly: snippets, golden pairs, corrections and completions |
 | `REVIEW_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
-| `REVIEW_CORS_ORIGINS` | `*` | Browser origins allowed to call it |
+| `REVIEW_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly; its pages reach it through their own nginx |
 
 With sign-in on, a reviewer's or curator's own name is what is recorded on
 everything they decide -- not a name typed into a form -- and the SQL they

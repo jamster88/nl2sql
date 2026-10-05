@@ -1,8 +1,9 @@
 """What the auth service sends and accepts.
 
-`extra="forbid"` on everything a client sends, so a misspelt field is a 422
+`extra="forbid"` on every model, so a misspelt field a client sends is a 422
 rather than silently ignored -- `pasword` must not sign anybody in with an
-empty password. The error envelope is the other services' own, so a client
+empty password -- and a response built from a record that has grown a field
+fails a test rather than dropping it. The error envelope is the other services' own, so a client
 that already reads one reads this.
 """
 
@@ -21,13 +22,13 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ApiErrorBody(BaseModel):
+class ApiErrorBody(_Strict):
     code: str
     message: str
     detail: dict[str, Any] | None = None
 
 
-class ApiError(BaseModel):
+class ApiError(_Strict):
     error: ApiErrorBody
 
     @classmethod
@@ -35,18 +36,18 @@ class ApiError(BaseModel):
         return cls(error=ApiErrorBody(code=code, message=message, detail=detail or None))
 
 
-class Health(BaseModel):
+class Health(_Strict):
     status: str = "ok"
     version: str
     uptime_seconds: float
 
 
-class Check(BaseModel):
+class Check(_Strict):
     ok: bool
     detail: str
 
 
-class Readiness(BaseModel):
+class Readiness(_Strict):
     ready: bool
     checks: dict[str, Check]
     warnings: list[str] = Field(default_factory=list)
@@ -57,7 +58,7 @@ class SignIn(_Strict):
     password: str = Field(min_length=1, max_length=1024)
 
 
-class Session(BaseModel):
+class Session(_Strict):
     """Who is signed in, and until when (seconds since the epoch)."""
 
     user: str
@@ -78,7 +79,7 @@ class PasswordChange(_Strict):
     new: str = Field(min_length=1, max_length=1024)
 
 
-class AuthMeta(BaseModel):
+class AuthMeta(_Strict):
     """What a sign-in form needs to know before anyone has signed in."""
 
     version: str
@@ -93,7 +94,7 @@ class AuthMeta(BaseModel):
 # --- the directory's web interface ------------------------------------------
 
 
-class Person(BaseModel):
+class Person(_Strict):
     uid: str
     name: str
     cn: str
@@ -105,7 +106,7 @@ class Person(BaseModel):
     locked: bool
 
 
-class PersonList(BaseModel):
+class PersonList(_Strict):
     people: list[Person]
     count: int
 
@@ -132,14 +133,14 @@ class NewPassword(_Strict):
     password: str = Field(min_length=1, max_length=1024)
 
 
-class Group(BaseModel):
+class Group(_Strict):
     name: str
     #: The Postgres role membership grants, or None for a group no role maps to.
     role: str | None
     members: list[str]
 
 
-class GroupList(BaseModel):
+class GroupList(_Strict):
     groups: list[Group]
 
 
@@ -148,7 +149,7 @@ class ImportRequest(_Strict):
     content: str = Field(max_length=MAX_IMPORT_BYTES)
 
 
-class ImportResult(BaseModel):
+class ImportResult(_Strict):
     created: list[str]
     updated: list[str]
     passwords: list[str]
@@ -156,7 +157,7 @@ class ImportResult(BaseModel):
     problems: list[str]
 
 
-class SyncReport(BaseModel):
+class SyncReport(_Strict):
     at: str
     ok: bool
     people: int
@@ -168,7 +169,7 @@ class SyncReport(BaseModel):
     errors: list[str]
 
 
-class DirectoryMeta(BaseModel):
+class DirectoryMeta(_Strict):
     version: str
     mode: str
     base_dn: str

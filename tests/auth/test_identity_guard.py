@@ -111,12 +111,15 @@ def bearer(token: str) -> dict[str, str]:
 # --- settings -------------------------------------------------------------
 
 
-def test_settings_default_to_sign_in_off(monkeypatch):
+def test_settings_default_to_sign_in_on(monkeypatch):
+    """V6-54: the secure default is the code's, not only compose's, so a
+    service started any other way is not open by accident."""
     for name in ("AUTH_ENABLED", "AUTH_PUBLIC_KEY_FILE", "AUTH_COOKIE_NAME", "SOME_TOKEN"):
         monkeypatch.delenv(name, raising=False)
     settings = GuardSettings.from_env(token_variable="SOME_TOKEN", service_roles={USERS})
+    assert GuardSettings().enabled is True
     assert settings == GuardSettings(
-        enabled=False,
+        enabled=True,
         public_key_file=DEFAULT_PUBLIC_KEY_FILE,
         cookie_name=SESSION_COOKIE,
         service_token=None,
@@ -146,7 +149,7 @@ def test_role_lists_come_from_a_comma_separated_variable(monkeypatch):
 
 
 def test_with_sign_in_off_and_no_token_everyone_is_anonymous_and_allowed():
-    client = TestClient(make_app(Guard(GuardSettings())))
+    client = TestClient(make_app(Guard(GuardSettings(enabled=False))))
     for path in ("/anyone", "/users", "/events"):
         answer = client.get(path)
         assert answer.status_code == 200
@@ -155,7 +158,7 @@ def test_with_sign_in_off_and_no_token_everyone_is_anonymous_and_allowed():
 
 
 def test_with_sign_in_off_a_configured_token_is_required():
-    guard = Guard(GuardSettings(service_token=SERVICE_TOKEN, service_roles=frozenset({USERS, REVIEWERS})))
+    guard = Guard(GuardSettings(enabled=False, service_token=SERVICE_TOKEN, service_roles=frozenset({USERS, REVIEWERS})))
     client = TestClient(make_app(guard))
     refused = client.get("/users")
     assert refused.status_code == 401
@@ -343,7 +346,7 @@ def test_a_file_that_is_not_a_key_is_reported(tmp_path, clock):
 
 
 def test_check_with_sign_in_off_is_always_ready():
-    assert Guard(GuardSettings()).check() == (True, "sign-in is off (AUTH_ENABLED=false)")
+    assert Guard(GuardSettings(enabled=False)).check() == (True, "sign-in is off (AUTH_ENABLED=false)")
 
 
 # --- roles as Postgres holds them now --------------------------------------
@@ -410,8 +413,8 @@ def test_the_service_token_is_not_rechecked(signed_in):
     ("settings", "said"),
     [
         (GuardSettings(enabled=True), "session"),
-        (GuardSettings(service_token="t"), "bearer"),
-        (GuardSettings(), "none"),
+        (GuardSettings(enabled=False, service_token="t"), "bearer"),
+        (GuardSettings(enabled=False), "none"),
     ],
 )
 def test_describe_names_the_scheme(settings, said):

@@ -143,7 +143,7 @@ from .store import STATES, VERDICTS, Repository, Submission
 from nl2sql_identity import Guard, GuardSettings, Identity
 from nl2sql_identity.postgres import membership_lookup
 
-__version__ = "6.0.1"
+__version__ = "6.1.0"
 
 #: What each verdict's submissions are for, in the words a refusal uses.
 #: `yes` is promoted into the golden set; the other two are fixed into the

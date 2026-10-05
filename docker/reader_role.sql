@@ -9,11 +9,15 @@
 --     from an image that predates the role keeps whatever roles it had.
 --
 -- Run it as the superuser (inside the container local connections are
--- trusted) with three psql variables. The database comes from the connection:
+-- trusted) with two psql variables, and the password in the environment --
+-- never on a command line, where `ps` shows it to anyone on the machine for
+-- as long as psql runs. The database comes from the connection:
 --
---   psql -U postgres -d nl2sql_retail \
---        -v reader=nl2sql_reader -v reader_password=nl2sql_reader -v owner=nl2sql \
---        -f docker/reader_role.sql
+--   NL2SQL_READER_PASSWORD=... psql -U postgres -d nl2sql_retail \
+--        -v reader=nl2sql_reader -v owner=nl2sql -f docker/reader_role.sql
+--
+-- With no NL2SQL_READER_PASSWORD the role's password is left as it is --
+-- which is how the image builds it, with none, for its entrypoint to set.
 --
 -- Idempotent: re-running resets the password to the one given and re-grants.
 -- Nothing here drops anything, and the owner's rights on the data are
@@ -25,8 +29,13 @@
 SELECT format('CREATE ROLE %I', :'reader')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'reader') \gexec
 
-ALTER ROLE :"reader" WITH LOGIN PASSWORD :'reader_password'
+ALTER ROLE :"reader" WITH LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+
+\getenv reader_password NL2SQL_READER_PASSWORD
+\if :{?reader_password}
+ALTER ROLE :"reader" PASSWORD :'reader_password';
+\endif
 
 -- Sessions start read-only, so a client that forgets SET TRANSACTION READ ONLY
 -- still cannot write. This is a default a session can switch off, not a

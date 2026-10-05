@@ -581,6 +581,34 @@ def _compose_service(name: str) -> str:
     return match.group(1)
 
 
+def _compose_defaults(text: str) -> dict[str, str]:
+    """Each `${NAME:-default}` in `text`, as compose resolves it with nothing
+    set: a default may name another setting -- `https://nl2sql-auth:${AUTH_PORT:-8446}`,
+    so moving the auth service's port moves every page that proxies to it --
+    and then the documented default is that one's, `https://nl2sql-auth:8446`.
+    Only the outer names: an inner one is the other service's setting."""
+    found: dict[str, str] = {}
+    index = 0
+    while (start := text.find("${", index)) != -1:
+        match = re.match(r"\$\{([A-Z_][A-Z0-9_]*):-", text[start:])
+        if not match:
+            index = start + 2
+            continue
+        depth, cursor = 1, start + match.end()
+        while depth:
+            if text.startswith("${", cursor):
+                depth, cursor = depth + 1, cursor + 2
+            else:
+                depth -= text[cursor] == "}"
+                cursor += 1
+        default = text[start + match.end():cursor - 1]
+        while (inner := re.search(r"\$\{[A-Z_][A-Z0-9_]*:-([^${}]*)\}", default)):
+            default = default[:inner.start()] + inner.group(1) + default[inner.end():]
+        found.setdefault(match.group(1), default)
+        index = cursor
+    return found
+
+
 def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(root_readme: str):
     """Image pins aside, which `setup.sh --mlflow` writes, every setting the
     three -- the store, the server and its front door -- take from `.env` has
@@ -589,7 +617,7 @@ def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(r
     block = _compose_service("mlflowdb") + _compose_service("mlflow") + _compose_service("mlflowproxy")
     settings = {
         name: default
-        for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", block)
+        for name, default in _compose_defaults(block).items()
         if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
     }
     assert "MLFLOW_PORT" in settings, "no settings found in the MLflow services -- the regex needs updating"
@@ -606,7 +634,7 @@ def _documented_with_defaults(service: str, readme: str, document: str) -> None:
     that is one value."""
     settings = {
         name: default
-        for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", _compose_service(service))
+        for name, default in _compose_defaults(_compose_service(service)).items()
         if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
     }
     assert settings, f"no settings found in {service} -- the regex needs updating"
@@ -927,3 +955,8 @@ def test_the_rag_readme_quotes_the_real_number_of_rag_tests():
     assert quoted == _collected("--run-docker", "tests/rag")
     behind = int(re.search(r"(\d+) of them need a database", text).group(1))
     assert behind == _collected("--run-docker", "-m", "docker", "tests/rag")
+
+
+def test_a_nested_default_is_read_as_compose_resolves_it():
+    text = "A: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}\nB: ${PLAIN:-x}\nC: $${NOT_ONE}\n"
+    assert _compose_defaults(text) == {"GUI_AUTH_UPSTREAM": "https://nl2sql-auth:8446", "PLAIN": "x"}

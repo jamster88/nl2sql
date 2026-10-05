@@ -124,11 +124,11 @@ def test_a_careful_configuration_has_nothing_to_warn_about():
 
 def test_the_three_configurations_worth_a_warning():
     assert any("clear text" in note for note in ConsoleSettings(token="t", tls_enabled=False).warnings())
-    assert ConsoleSettings().warnings() == [
-        "No CONSOLE_TOKEN is set and sign-in is off (AUTH_ENABLED=false), so anyone who "
-        "can reach the port can run SQL as the agent's database role."
+    assert ConsoleSettings(auth_enabled=False).warnings() == [
+        "This console is OPEN: sign-in is off (AUTH_ENABLED=false) and no CONSOLE_TOKEN "
+        "is set, so anyone who can reach the port can run SQL as the agent's database role."
     ]
-    assert ConsoleSettings(auth_enabled=True).warnings() == [], "sign-in is the control then"
+    assert ConsoleSettings().warnings() == [], "sign-in is on by default, and is the control then"
     assert any("wildcard origin" in note for note in ConsoleSettings(token="t", cors_origins=("*",)).warnings())
 
 

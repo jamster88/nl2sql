@@ -162,20 +162,25 @@ public final class Models {
 
     /** What the Audit Checker made of the narrative. */
     public record AuditReport(boolean passed, List<String> unsupported_claims,
-                              List<String> drop_reasons, List<String> redactions,
+                              List<String> drop_reasons, List<String> missing_assumptions,
                               String semantic_issue) {
         public AuditReport {
             unsupported_claims = list(unsupported_claims);
             drop_reasons = list(drop_reasons);
-            redactions = list(redactions);
+            missing_assumptions = list(missing_assumptions);
         }
     }
 
-    /** Per-node cost. */
-    public record TraceEntry(String node, double ms, int model_calls, String detail) {
+    /** Per-node cost, and for a node that called a model, which one answered and why. */
+    public record TraceEntry(String node, double ms, int model_calls, String detail,
+                             String model, String rung, String route, List<String> hops) {
         public TraceEntry {
             node = text(node);
             detail = text(detail);
+            model = text(model);
+            rung = text(rung);
+            route = text(route);
+            hops = list(hops);
         }
     }
 
@@ -195,7 +200,7 @@ public final class Models {
                          String clarification, List<String> tables, List<LiteralMatch> literals,
                          ResultTable result, ChartSpec chart, List<Claim> claims, AuditReport audit,
                          Double plan_cost, int attempts, List<TraceEntry> trace,
-                         Map<String, String> retrieval_errors) {
+                         Map<String, String> retrieval_errors, Map<String, String> node_errors) {
         public Answer {
             answer = text(answer);
             narrative = text(narrative);
@@ -208,6 +213,7 @@ public final class Models {
             audit = audit == null ? EMPTY_AUDIT : audit;
             trace = list(trace);
             retrieval_errors = map(retrieval_errors);
+            node_errors = map(node_errors);
         }
     }
 

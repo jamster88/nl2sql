@@ -29,13 +29,13 @@ pytestmark = pytest.mark.docker
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def _compose_config(tmp_path: Path, *, profile: str | None = None, env: dict | None = None) -> dict:
+def _compose_config(tmp_path: Path, *, profile: str | tuple[str, ...] | None = None, env: dict | None = None) -> dict:
     empty_env_file = tmp_path / "empty.env"
     empty_env_file.write_text("")
 
     cmd = ["docker", "compose", "--env-file", str(empty_env_file)]
-    if profile:
-        cmd += ["--profile", profile]
+    for name in (profile,) if isinstance(profile, str) else profile or ():
+        cmd += ["--profile", name]
     cmd += ["config", "--format", "json"]
 
     # Start from an environment with nothing compose could substitute. The
@@ -102,8 +102,10 @@ def test_the_scripts_read_the_agents_settings_from_real_compose(script: str):
 
 
 def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
+    # pki has no profile: it is the one-shot that issues every TLS server
+    # its certificate, and any of them may be what is started.
     assert set(agent_profile_config["services"]) == {
-        "postgres", "vectordb", "chunkdb", "snippetsdb", "agent"
+        "postgres", "vectordb", "chunkdb", "snippetsdb", "agent", "pki"
     }
 
 
@@ -114,19 +116,31 @@ def test_postgres_service_shape(agent_profile_config: dict):
     assert postgres["restart"] == "unless-stopped"
     assert "pg_isready" in " ".join(postgres["healthcheck"]["test"])
 
-    volume, ldaptls = postgres["volumes"]
+    volume, pgtls, ldaptls = postgres["volumes"]
     assert volume["source"] == "pgdata"
     # Must match ENV PGDATA in docker/Dockerfile, or the image's baked data
     # is invisible to the named volume that's supposed to seed from it.
     assert volume["target"] == "/var/lib/pgdata"
+    # Its own certificate, written there on first start (V6-52): read-write.
+    assert (pgtls["source"], pgtls["target"], pgtls.get("read_only", False)) == ("pgtls", "/etc/nl2sql/pg-tls", False)
     # Sign-in: pg_hba's `ldap` method verifies the directory's certificate,
     # which libldap finds through LDAPTLS_CACERT, in the volume the
     # directory writes it to -- read-only here.
     assert (ldaptls["source"], ldaptls["target"], ldaptls["read_only"]) == ("ldaptls", "/etc/nl2sql/ldap-tls", True)
-    assert postgres["environment"] == {"LDAPTLS_CACERT": "/etc/nl2sql/ldap-tls/ldap.crt"}
+    assert postgres["environment"] == {
+        "LDAPTLS_CACERT": "/etc/nl2sql/ldap-tls/ldap.crt",
+        "POSTGRES_PASSWORD": "nl2sql",
+        "POSTGRES_READER_USER": "nl2sql_reader",
+        "POSTGRES_READER_PASSWORD": "nl2sql_reader",
+        "POSTGRES_TLS_HOSTNAMES": "",
+        "POSTGRES_REQUIRE_TLS": "",
+    }
+    # No password is a build argument any more (V6-07).
+    assert not any("PASSWORD" in name for name in postgres["build"]["args"])
 
     [port] = postgres["ports"]
     assert port["target"] == 5432
+    assert port["host_ip"] == "127.0.0.1", "this machine's unless DB_BIND_ADDRESS says otherwise (V6-06)"
 
 
 def test_vectordb_service_shape(agent_profile_config: dict):
@@ -184,8 +198,9 @@ def test_agent_database_url_points_at_the_compose_postgres_service_as_the_read_o
     creates (docker/reader_role.sql), never as the owner that loaded the data.
     """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
+    postgres_env = agent_profile_config["services"]["postgres"]["environment"]
     agent_env = agent_profile_config["services"]["agent"]["environment"]
-    reader, password = postgres_args["DB_READER"], postgres_args["DB_READER_PASSWORD"]
+    reader, password = postgres_args["DB_READER"], postgres_env["POSTGRES_READER_PASSWORD"]
     assert f"{reader}:{password}@postgres:5432/{postgres_args['DB_NAME']}" in agent_env["DATABASE_URL"]
     assert reader != postgres_args["DB_USER"]
     assert f"{postgres_args['DB_USER']}:" not in agent_env["DATABASE_URL"]
@@ -193,12 +208,13 @@ def test_agent_database_url_points_at_the_compose_postgres_service_as_the_read_o
 
 def test_the_owners_credentials_never_reach_the_agent_container(agent_profile_config: dict):
     """Least privilege at the compose level: the only Postgres identity in the
-    agent's environment is the reader. The owner's password is a build arg
-    of the postgres service and nothing else.
+    agent's environment is the reader. The owner's password is the postgres
+    service's own environment and nothing else's.
     """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
     agent_env = agent_profile_config["services"]["agent"]["environment"]
-    owner, owner_password = postgres_args["DB_USER"], postgres_args["DB_PASSWORD"]
+    owner = postgres_args["DB_USER"]
+    owner_password = agent_profile_config["services"]["postgres"]["environment"]["POSTGRES_PASSWORD"]
     for key, value in agent_env.items():
         assert f"{owner}:" not in str(value), f"{key} carries the owner's login"
         assert f":{owner_password}@" not in str(value), f"{key} carries the owner's password"
@@ -608,3 +624,83 @@ def test_every_set_of_profiles_named_is_a_project_compose_accepts(profiles: str,
         env={k: v for k, v in os.environ.items() if k not in substitutable},
     )
     assert result.returncode == 0, f"docker compose {profiles}: {result.stderr.strip()}"
+
+
+# ---------------------------------------------------------------------------
+# The stack's TLS identities (6.1, V6-36)
+# ---------------------------------------------------------------------------
+
+
+def _identities(config: dict) -> dict[str, tuple[str, list[str]]]:
+    found = {}
+    for arg in config["services"]["pki"]["command"]:
+        if "=" in arg and not arg.startswith("-"):
+            name, directory, hosts = arg.split("=", 2)
+            found[name] = (directory, hosts.split(","))
+    return found
+
+
+def test_the_pki_issues_an_identity_into_each_servers_own_volume(default_config: dict):
+    pki = default_config["services"]["pki"]
+    assert pki["command"][:3] == ["python", "-m", "nl2sql_identity.pki"]
+    assert pki["image"] == "nl2sql-agent:latest", "the agent's image, which carries the package"
+    mounts = {volume["target"]: volume["source"] for volume in pki["volumes"]}
+    assert mounts["/etc/nl2sql/pki"] == "pkica"
+    for name, (directory, hosts) in _identities(default_config).items():
+        assert mounts[directory] == f"{name}tls"
+        assert "localhost" in hosts and "127.0.0.1" in hosts
+
+
+def test_names_given_to_the_stack_reach_every_identity(tmp_path_factory):
+    """TLS_EXTRA_HOSTNAMES is this machine's name on the network, for a
+    browser elsewhere; the API's own list is API_TLS_HOSTNAMES, as before."""
+    config = _compose_config(
+        tmp_path_factory.mktemp("names"),
+        env={"TLS_EXTRA_HOSTNAMES": "nl2sql.lan", "API_TLS_HOSTNAMES": "localhost,nl2sql-api,api.example"},
+    )
+    assert "--also=nl2sql.lan" in config["services"]["pki"]["command"]
+    assert _identities(config)["api"][1] == ["localhost", "nl2sql-api", "api.example"]
+
+
+# ---------------------------------------------------------------------------
+# Moving a port moves everything that proxies to it
+# ---------------------------------------------------------------------------
+
+#: (service, its variable naming an upstream, the port setting that moves
+#: what it proxies to). A service listens on its own port setting inside
+#: its container as well as publishing it, so a page whose upstream kept the
+#: default answered 502 to every request once the port was moved -- which
+#: USAGE_GUIDE.md says anyone may do in `.env`.
+FOLLOWERS = [
+    ("gui", "API_UPSTREAM", "API_PORT"), ("gui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("reviewgui", "REVIEW_UPSTREAM", "REVIEW_PORT"), ("reviewgui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("curategui", "CURATE_UPSTREAM", "REVIEW_PORT"), ("curategui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("consolegui", "CONSOLE_UPSTREAM", "CONSOLE_PORT"), ("consolegui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("directorygui", "DIRECTORY_UPSTREAM", "AUTH_PORT"),
+    ("directorygui", "DIRECTORY_API_UPSTREAM", "AUTH_DIRECTORY_PORT"),
+    ("mlflowproxy", "AUTH_UPSTREAM", "AUTH_PORT"), ("apitest", "API_BASE_URL", "API_PORT"),
+]
+EVERY_PAGE = ("api", "gui", "review", "reviewgui", "curategui", "console", "consolegui",
+              "auth", "directorygui", "mlflow", "feedback")
+
+
+@pytest.fixture(scope="module")
+def moved(tmp_path_factory) -> dict:
+    ports = {"API_PORT": "9443", "REVIEW_PORT": "9444", "CONSOLE_PORT": "9445", "AUTH_PORT": "9446",
+             "AUTH_DIRECTORY_PORT": "9447"}
+    return _compose_config(tmp_path_factory.mktemp("compose"), profile=EVERY_PAGE, env=ports)["services"]
+
+
+@pytest.mark.parametrize("service,variable,port", FOLLOWERS)
+def test_a_moved_port_is_followed_by_what_proxies_to_it(moved: dict, service: str, variable: str, port: str):
+    target = {"API_PORT": "9443", "REVIEW_PORT": "9444", "CONSOLE_PORT": "9445", "AUTH_PORT": "9446",
+              "AUTH_DIRECTORY_PORT": "9447"}[port]
+    assert moved[service]["environment"][variable].endswith(f":{target}")
+
+
+def test_no_upstream_names_a_port_of_its_own():
+    """Every `https://nl2sql-<service>:` default ends in the setting that
+    moves that service, so the list above is the whole of it."""
+    text = (REPO_ROOT / "docker-compose.yml").read_text()
+    assert re.findall(r"https://nl2sql-[a-z-]+:\d", text) == []
+    assert len(re.findall(r":-https://nl2sql-", text)) == len(FOLLOWERS)

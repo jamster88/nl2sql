@@ -142,8 +142,21 @@ def test_a_replica_starts_its_copy_beside_slapd(paths, capsys):
 
 
 def test_warnings_are_printed_before_starting(paths, capsys):
-    Harness().serve(_replica(paths, uri="ldap://dc1"))
-    assert "clear text" in capsys.readouterr().err
+    """A primary over clear text, allowed by name: it starts, and says what
+    that costs before anything else."""
+    harness = Harness()
+    assert harness.serve(_replica(paths, uri="ldap://dc1", allow_cleartext=True)) == 0
+    err = capsys.readouterr().err
+    assert err.startswith("warning: LDAP_UPSTREAM_URI is ldap://dc1 without StartTLS")
+    assert "clear text" in err
+
+
+def test_a_clear_text_primary_not_allowed_by_name_stops_the_start(paths, capsys):
+    """V6-57: the replica would pass every password through in clear."""
+    harness = Harness()
+    assert harness.serve(_replica(paths, uri="ldap://dc1")) == 2
+    assert harness.spawned == [] and harness.replicators == []
+    assert "error: " in capsys.readouterr().err
 
 
 def test_a_certificate_that_cannot_be_had_stops_the_start(paths, capsys):

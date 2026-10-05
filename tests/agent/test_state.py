@@ -50,6 +50,7 @@ def test_the_two_fields_every_branch_writes_have_reducers():
     whole fan-out fails at runtime rather than in a test.
     """
     assert _reducer_for("retrieval_errors") is merge_errors
+    assert _reducer_for("node_errors") is merge_errors
     assert _reducer_for("trace") is operator.add
 
 
@@ -253,3 +254,51 @@ def test_the_five_issue_sources_are_the_five_the_repair_loop_handles():
     from nl2sql_agent.state import AUDIT, COMPLETENESS, PLANNER, RUNTIME, STATIC, IssueSource
 
     assert set(get_args(IssueSource)) == {STATIC, PLANNER, RUNTIME, COMPLETENESS, AUDIT}
+
+
+# ---------------------------------------------------------------------------
+# Lifetimes: what the repair edge keeps and what it empties
+# ---------------------------------------------------------------------------
+
+
+def test_every_field_has_a_declared_lifetime_and_no_lifetime_names_a_missing_field():
+    """A field added to the state without a lifetime is a field whose value
+    after a repair nobody decided -- which is how the narrator came to read
+    the previous attempt's audit.
+    """
+    from nl2sql_agent.state import LIFETIMES, state_fields
+
+    assert set(LIFETIMES) == set(state_fields())
+    assert set(LIFETIMES.values()) <= {"run", "attempt", "handoff"}
+
+
+def test_the_repair_edge_empties_exactly_the_attempt_fields():
+    from nl2sql_agent.state import ATTEMPT, LIFETIMES, attempt_reset
+
+    assert set(attempt_reset()) == {name for name, life in LIFETIMES.items() if life == ATTEMPT}
+
+
+def test_an_emptied_attempt_field_looks_as_it_did_before_the_first_attempt():
+    """Reset means reset: attempt N+1 starts from what attempt 1 started from."""
+    from nl2sql_agent.state import attempt_reset
+
+    fresh = new_state("q")
+    assert attempt_reset() == {name: fresh[name] for name in attempt_reset()}
+
+
+def test_each_reset_is_a_fresh_object():
+    from nl2sql_agent.state import attempt_reset
+
+    first, second = attempt_reset(), attempt_reset()
+    first["claims"].append("x")
+    first["audit"].drop_reasons.append("y")
+    assert second["claims"] == [] and second["audit"].drop_reasons == []
+
+
+def test_what_the_next_generation_is_written_from_is_handed_over_not_emptied():
+    """The failed SQL and the hints about it are what the retry prompt quotes;
+    the reviewer's report is what keeps it to one reflection per run."""
+    from nl2sql_agent.state import HANDOFF, LIFETIMES, RUN
+
+    assert LIFETIMES["sql"] == LIFETIMES["issues"] == HANDOFF
+    assert LIFETIMES["completeness"] == LIFETIMES["attempt_history"] == RUN

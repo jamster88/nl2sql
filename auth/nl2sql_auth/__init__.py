@@ -7,4 +7,4 @@ The role sync makes the directory's people roles in that database, and the
 web interface edits the people of a standalone directory.
 """
 
-__version__ = "6.0.1"
+__version__ = "6.1.0"

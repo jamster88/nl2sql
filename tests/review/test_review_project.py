@@ -325,14 +325,32 @@ def test_it_is_sourced_rather_than_run(config_envsh: Path, dockerfile: str):
     assert "/docker-entrypoint.d/10-nl2sql-review-config.envsh" in dockerfile
 
 
-def test_a_token_becomes_a_bearer_header(config_envsh: Path, tmp_path: Path):
+def test_with_sign_in_off_a_token_becomes_a_bearer_header_and_it_says_so(config_envsh: Path, tmp_path: Path):
     result = _source(
         config_envsh,
-        _env(tmp_path, REVIEW_TOKEN="s3cret", REVIEW_CACERT=_a_certificate(tmp_path)),
+        _env(tmp_path, AUTH_ENABLED="off", REVIEW_TOKEN="s3cret", REVIEW_CACERT=_a_certificate(tmp_path)),
         then='printf "%s" "$REVIEW_AUTH_HEADER"',
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == "Bearer s3cret"
+    assert "nl2sql-review-gui: sign-in is off (AUTH_ENABLED=false)" in result.stderr
+
+
+def test_with_sign_in_off_and_no_token_the_proxy_adds_no_header(config_envsh: Path, tmp_path: Path):
+    """Open, and the review service open too: nothing to add, and the page
+    still says it is open."""
+    env = _env(tmp_path, AUTH_ENABLED="false", REVIEW_CACERT=_a_certificate(tmp_path))
+    env.pop("REVIEW_TOKEN", None)
+    result = _source(config_envsh, env, then='printf "[%s]" "$REVIEW_AUTH_HEADER"')
+    assert result.returncode == 0 and result.stdout == "[]"
+    assert "nl2sql-review-gui: sign-in is off (AUTH_ENABLED=false)" in result.stderr
+
+
+def test_with_sign_in_unset_the_token_is_never_added(config_envsh: Path, tmp_path: Path):
+    env = _env(tmp_path, REVIEW_TOKEN="s3cret", REVIEW_CACERT=_a_certificate(tmp_path))
+    env.pop("AUTH_ENABLED", None)
+    result = _source(config_envsh, env, then='printf "[%s]" "$REVIEW_AUTH_HEADER"')
+    assert result.returncode == 0 and result.stdout == "[]"
 
 
 def test_no_token_becomes_an_empty_header_which_nginx_then_omits(
@@ -371,8 +389,8 @@ def test_an_https_upstream_with_no_certificate_refuses_to_start(
     config_envsh: Path, tmp_path: Path
 ):
     """nginx would otherwise fail with a BIO error that says nothing about
-    why, and the real cause is almost always that the API has not started
-    yet and so has not written its certificate."""
+    why, and the real cause is almost always that this page's TLS volume,
+    where the pki service writes the CA's certificate, is not mounted."""
     result = _source(config_envsh, _env(tmp_path, REVIEW_CACERT=str(tmp_path / "absent.crt")))
 
     assert result.returncode != 0
@@ -380,7 +398,7 @@ def test_an_https_upstream_with_no_certificate_refuses_to_start(
     # phrases it has to contain span line breaks.
     said = " ".join(result.stderr.split())
     assert "readable certificate" in said
-    assert "apitls volume is not mounted here" in said
+    assert "that volume is not mounted here" in said
 
 
 def test_a_plain_http_upstream_writes_no_verification_block(config_envsh: Path, tmp_path: Path):
@@ -438,8 +456,8 @@ def test_a_sign_in_hop_with_no_certificate_refuses_to_start(config_envsh: Path, 
     assert result.returncode != 0
     assert "nl2sql-review-gui: AUTH_UPSTREAM is https://nl2sql-auth:8446 but there is no" in result.stderr
     assert "readable certificate at AUTH_CACERT=" in result.stderr
-    assert "The auth service presents the certificate the agent API generates," in result.stderr
-    assert "so this usually means the API has not started yet, or the apitls" in result.stderr
+    assert "It is the stack's CA certificate, which the pki service writes beside this" in result.stderr
+    assert "page's own certificate -- so this usually means that volume is not mounted here." in result.stderr
     assert "volume is not mounted here." in result.stderr
 
 
@@ -462,8 +480,8 @@ def test_an_https_page_with_no_certificate_refuses_to_start(config_envsh: Path, 
     result = _source(config_envsh, env)
     assert result.returncode != 0
     assert "nl2sql-review-gui: REVIEW_GUI_TLS_ENABLED is on but" in result.stderr
-    assert "is not readable. They come from the apitls volume" in result.stderr
-    assert "the API writes on its first start; mount it, or set REVIEW_GUI_TLS_ENABLED=false" in result.stderr
+    assert "is not readable. They are this page's own, from the pki service" in result.stderr
+    assert "(its TLS volume, mounted here); mount it, or set REVIEW_GUI_TLS_ENABLED=false" in result.stderr
     assert "behind something that terminates TLS itself." in result.stderr
 
 

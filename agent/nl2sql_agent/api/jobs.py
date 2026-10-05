@@ -37,6 +37,23 @@ Runner = Callable[[str, str | None, Callable[[str, str], None]], dict]
 
 TERMINAL = ("succeeded", "failed", "cancelled")
 
+#: What a refused submission tells the caller to wait, in seconds: about one
+#: question's run, which is how long it takes a place in the queue to free.
+RETRY_AFTER_SECONDS = 60
+
+
+class QueueFull(RuntimeError):
+    """Too much is already waiting; the caller should come back later.
+
+    Raised rather than queued because a queue that only grows is the failure
+    it guards against: every question accepted past this point is one more
+    the server has promised to answer and cannot.
+    """
+
+    def __init__(self, message: str, *, retry_after: int = RETRY_AFTER_SECONDS) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
 
 def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
@@ -103,10 +120,15 @@ class StreamChunk:
 class JobStore:
     """The set of questions this server knows about.
 
-    Bounded three ways, because an HTTP endpoint is something anyone can
-    call in a loop: `max_concurrency` runs at once, `max_jobs` are
-    remembered, and a finished job is forgotten `ttl_seconds` after it
-    finished.
+    Bounded, because an HTTP endpoint is something anyone can call in a
+    loop: `max_concurrency` run at once; at most `max_queued` wait behind
+    them, and a submission past that is refused (`QueueFull`, a 429) rather
+    than accepted into a queue that only grows; one signed-in person has at
+    most `max_per_person` waiting or running, so one person's loop cannot
+    take the whole queue; a question that has waited `queue_ttl_seconds`
+    without starting is failed rather than run for a caller who has long
+    gone; `max_jobs` are remembered; and a finished job is forgotten
+    `ttl_seconds` after it finished.
     """
 
     def __init__(
@@ -116,10 +138,16 @@ class JobStore:
         max_concurrency: int = 2,
         max_jobs: int = 200,
         ttl_seconds: float = 3600.0,
+        max_queued: int = 20,
+        max_per_person: int = 3,
+        queue_ttl_seconds: float = 600.0,
     ) -> None:
         self._runner = runner
         self._max_jobs = max(1, max_jobs)
         self._ttl = ttl_seconds
+        self._max_queued = max(1, max_queued)
+        self._max_per_person = max(1, max_per_person)
+        self._queue_ttl = queue_ttl_seconds
         self._jobs: "OrderedDict[str, Job]" = OrderedDict()
         self._lock = threading.Lock()
         self._pool = ThreadPoolExecutor(
@@ -148,9 +176,34 @@ class JobStore:
         )
         with self._lock:
             self._prune_locked()
+            self._admit_locked(owner)
             self._jobs[job.id] = job
         self._pool.submit(self._run, job)
         return job
+
+    def _admit_locked(self, owner: str | None) -> None:
+        """Refuse a submission the queue cannot honestly take.
+
+        The per-person limit counts running questions as well as waiting
+        ones: it is what one person has in the air. It applies only to a
+        signed-in person -- a service token is one trusted caller, and with
+        sign-in off every caller is the same caller, so a per-caller limit
+        there would be a limit on the whole server.
+        """
+        waiting = sum(1 for job in self._jobs.values() if job.status == "queued")
+        if waiting >= self._max_queued:
+            raise QueueFull(
+                f"{waiting} questions are already waiting (API_MAX_QUEUED={self._max_queued}); "
+                "ask again in a minute"
+            )
+        if owner is None:
+            return
+        mine = sum(1 for job in self._jobs.values() if job.owner == owner and not job.terminal)
+        if mine >= self._max_per_person:
+            raise QueueFull(
+                f"you already have {mine} questions waiting or running "
+                f"(API_MAX_PER_PERSON={self._max_per_person}); ask again when one has finished"
+            )
 
     def _run(self, job: Job) -> None:
         with job.condition:
@@ -158,6 +211,18 @@ class JobStore:
             # only point at which cancellation is honest, which is why DELETE
             # refuses a job that is already running rather than pretending.
             if job.status == "cancelled":
+                job.condition.notify_all()
+                return
+            waited = (_now() - job.created_at).total_seconds()
+            if waited > self._queue_ttl:
+                # Whoever asked has very likely stopped waiting, and the run
+                # would cost a minute of the model host for nobody.
+                job.status = "failed"
+                job.error = (
+                    f"expired: waited {waited:.0f} s in the queue, longer than "
+                    f"API_QUEUE_TTL_SECONDS ({self._queue_ttl:.0f}); ask again"
+                )
+                job.finished_at = _now()
                 job.condition.notify_all()
                 return
             job.status = "running"

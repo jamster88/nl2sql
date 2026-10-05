@@ -58,16 +58,17 @@ DEFAULT_SNIPPETS_DOCUMENT = "/app/context_questions/sql_snippets.md"
 #: read-only role the agent connects as.
 DEFAULT_SNIPPETS_DB_URL = "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
 
-#: The certificate the agent API generates, as this service sees it. The
-#: same volume, mounted read-only: this process presents that certificate
-#: and never writes one.
+#: This service's own certificate, which the stack's pki service issues from
+#: its development CA (6.1; until then it presented the agent API's). Mounted
+#: read-only: this process presents it and never writes one.
 DEFAULT_TLS_DIR = "/etc/nl2sql/tls"
 DEFAULT_CERT_FILE = f"{DEFAULT_TLS_DIR}/server.crt"
 DEFAULT_KEY_FILE = f"{DEFAULT_TLS_DIR}/server.key"
 
 #: The name the certificate must cover for another container to verify this
-#: one. Compose adds it to API_TLS_HOSTNAMES; named here so the readiness
-#: check can say which name is missing rather than "handshake failed".
+#: one. Compose gives it to the pki service in REVIEW_TLS_HOSTNAMES; named
+#: here so the readiness check can say which name is missing rather than
+#: "handshake failed".
 SERVICE_HOSTNAME = "nl2sql-review"
 
 
@@ -114,18 +115,18 @@ class ReviewSettings:
     root_path: str = ""
 
     # --- TLS -------------------------------------------------------------
-    # This service presents the certificate the agent API already generated,
-    # mounted read-only from the volume that API writes it into. It does not
-    # generate one of its own, and that is a deliberate subtraction: a second
-    # copy of the certificate code would be 250 lines whose only job is to
-    # agree with the first copy, and the two would be discovered to disagree
-    # by a client failing to connect.
+    # This service presents a certificate of its own, issued by the stack's
+    # pki service and mounted read-only (6.1; until then it presented the
+    # agent API's, whose key was then in eleven containers). It does not
+    # generate one: the issuing is the pki service's, so there is one copy of
+    # the certificate code and one CA that every client trusts.
     #
     # The consequence is a configuration requirement rather than a code one.
-    # The certificate has to be valid for this service's name too, so compose
-    # adds `nl2sql-review` to API_TLS_HOSTNAMES. `warnings()` says so when the
-    # file is not where it should be, and the server refuses to start with TLS
-    # claimed and no certificate to present -- which is the failure that would
+    # The certificate has to be valid for this service's name, so compose
+    # gives the pki service `nl2sql-review` in REVIEW_TLS_HOSTNAMES.
+    # `warnings()` says so when the file is not where it should be, and the
+    # server refuses to start with TLS claimed and no certificate to present
+    # -- which is the failure that would
     # otherwise look like a working HTTPS URL.
     tls_enabled: bool = True
     tls_cert_file: str = DEFAULT_CERT_FILE
@@ -136,14 +137,19 @@ class ReviewSettings:
     # write the golden question set; `warnings()` says so loudly when it is
     # unset, and the readiness endpoint repeats it.
     token: str | None = None
-    cors_origins: tuple[str, ...] = ("*",)
+    # None by default: the review and curation pages reach this through their
+    # own nginx, on their own origin, so a cross-origin browser call is
+    # something to allow by name (REVIEW_CORS_ORIGINS).
+    cors_origins: tuple[str, ...] = ()
     # Sign-in (the auth service). On, a person's session is what every /v1
     # route needs: the review routes take a reviewer, the curation routes a
     # curator, and reading takes either. What they do is recorded as done by
     # them -- not by whatever name a header claimed -- and the SQL they run
     # to check a fix or a snippet runs as their own database role.
-    # REVIEW_TOKEN still works, for scripts, with both roles.
-    auth_enabled: bool = False
+    # REVIEW_TOKEN still works, for scripts, with both roles. On by default
+    # in the code as well as in compose, so a review service started any
+    # other way is not open by accident.
+    auth_enabled: bool = True
     auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
     auth_cookie_name: str = SESSION_COOKIE
     reviewer_roles: tuple[str, ...] = (REVIEWERS,)
@@ -223,8 +229,8 @@ class ReviewSettings:
             tls_cert_file=_env_str("REVIEW_TLS_CERT_FILE", DEFAULT_CERT_FILE),
             tls_key_file=_env_str("REVIEW_TLS_KEY_FILE", DEFAULT_KEY_FILE),
             token=_env("REVIEW_TOKEN"),
-            cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ("*",)),
-            auth_enabled=_env_bool("AUTH_ENABLED", False),
+            cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ()),
+            auth_enabled=_env_bool("AUTH_ENABLED", True),
             auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
             auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             reviewer_roles=_env_tuple("REVIEW_REVIEWER_ROLES", (REVIEWERS,)),
@@ -270,10 +276,6 @@ class ReviewSettings:
         return "https" if self.tls_enabled else "http"
 
     @property
-    def authenticated(self) -> bool:
-        return bool(self.token)
-
-    @property
     def document_path(self) -> Path:
         return Path(self.document)
 
@@ -299,8 +301,8 @@ class ReviewSettings:
         notes: list[str] = []
         if not self.token and not self.auth_enabled:
             notes.append(
-                "No REVIEW_TOKEN is set and sign-in is off (AUTH_ENABLED=false), so anyone "
-                "who can reach this port can edit "
+                "This review service is OPEN: sign-in is off (AUTH_ENABLED=false) and "
+                "no REVIEW_TOKEN is set, so anyone who can reach this port can edit "
                 "and promote golden questions. This service writes the question set "
                 "the agent is measured against; it is not the one to leave open."
             )
@@ -312,9 +314,8 @@ class ReviewSettings:
         elif not self.certificate_present:
             notes.append(
                 f"REVIEW_TLS_ENABLED is on but {self.tls_cert_file} is not readable. "
-                "This service presents the certificate the agent API generates, so "
-                "the API has to have started at least once and the apitls volume has "
-                "to be mounted here."
+                "Under compose the pki service issues this service its own certificate "
+                "into the reviewtls volume, which has to be mounted here."
             )
         if self.token and "*" in self.cors_origins:
             notes.append(

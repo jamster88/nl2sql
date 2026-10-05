@@ -9,7 +9,6 @@ fake and still mean anything.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -24,10 +23,9 @@ from benchmarks import run_benchmark  # noqa: E402
 from benchmarks.questions import by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
 from tests.benchmarks.test_runner import result  # noqa: E402
+from tests import live_stores
 
-DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+DATABASE_URL = live_stores.url("retail", variable="TEST_DATABASE_URL")
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +151,7 @@ def database():
     try:
         db.run_select("SELECT 1")
     except Exception as exc:
-        pytest.skip(f"no reachable retail database at {DATABASE_URL}: {exc}")
+        live_stores.unreachable("retail database", DATABASE_URL, exc)
     return db
 
 

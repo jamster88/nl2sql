@@ -23,8 +23,8 @@
 #
 # With --desktop the last step is a window instead of a page: the same stack
 # comes up, the client's jar is fetched (or built, if there is no published
-# one for this machine), the API's certificate is copied out for it to verify
-# against, and it is started. The web interface is not started at all -- one
+# one for this machine), the stack's CA certificate is copied out for it to
+# verify the API against, and it is started. The web interface is not started at all -- one
 # interface is what was asked for, and it is this one.
 #
 #     ./start.sh --desktop
@@ -99,8 +99,9 @@ Usage: ./start.sh [options]
 Brings up the whole stack and opens the web interface in your browser.
 
       --desktop      Use the Java desktop client instead of the web interface:
-                     builds its jar, copies the API's certificate out and runs
-                     it. Needs a Java runtime of 21 or later on this machine
+                     builds its jar, copies the stack's CA certificate out
+                     and runs it. Needs a Java runtime of 21 or later on this
+                     machine
       --review       Also bring up the feedback system -- the staging database
                      that keeps verdicts, the service that turns them into
                      golden questions, corrections and completions, the two
@@ -389,7 +390,7 @@ fi
 ./launch.sh "${LAUNCH_ARGS[@]}"
 
 # --- The page --------------------------------------------------------------
-# HTTPS, with the API's certificate, unless GUI_TLS_ENABLED says otherwise.
+# HTTPS, with a certificate of its own, unless GUI_TLS_ENABLED says otherwise.
 case "$(compose_env GUI_TLS_ENABLED true)" in
     0|false|no|off|FALSE|NO|OFF) scheme=http ;;
     *) scheme=https ;;
@@ -532,7 +533,7 @@ start_desktop() {
         warn "the desktop client needs a Java runtime of 21 or later, and this"
         warn "machine reports Java ${major} (nothing on PATH reports 0)."
         warn "The jar is built; point a newer runtime at it yourself:"
-        warn "  <path-to-java> -jar $DESKTOP_JAR --cacert ./nl2sql-api.crt"
+        warn "  <path-to-java> -jar $DESKTOP_JAR --cacert ./nl2sql-ca.crt"
         return 1
     fi
     if [[ ! -f "$DESKTOP_JAR" ]]; then
@@ -543,11 +544,12 @@ start_desktop() {
     local api_port
     api_port=$(compose_env API_PORT 8443)
     local trust=(--insecure)
-    if [[ -f nl2sql-api.crt ]]; then
-        # Verifying beats not verifying, and the certificate is right there.
-        trust=(--cacert ./nl2sql-api.crt)
+    if [[ -f nl2sql-ca.crt ]]; then
+        # Verifying beats not verifying, and the stack's CA -- which every
+        # server's certificate is issued by -- is right there.
+        trust=(--cacert ./nl2sql-ca.crt)
     else
-        warn "./nl2sql-api.crt is missing, so the client will not verify the API's"
+        warn "./nl2sql-ca.crt is missing, so the client will not verify the API's"
         warn "certificate. It says so in its own status bar for as long as that is true."
     fi
 
@@ -802,7 +804,7 @@ EOF
         cat <<EOF
     It could not be started here. The jar is built:
 
-    java -jar $DESKTOP_JAR --cacert ./nl2sql-api.crt
+    java -jar $DESKTOP_JAR --cacert ./nl2sql-ca.crt
 
 EOF
     fi

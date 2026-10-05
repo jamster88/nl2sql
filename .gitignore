@@ -48,9 +48,11 @@ context_questions/*.md.bak
 # the sources beside it.
 desktop/target/
 
-# The API's development certificate, copied out of the container it writes
-# itself in. Per-deployment and regenerated when the names it covers change,
-# so a committed one would be wrong for everybody who did not write it.
+# The stack's development CA, copied out of the API's container -- and the
+# API's own certificate, which earlier releases had clients trust instead.
+# Per-deployment, so a committed one would be wrong for everybody who did not
+# make it.
+nl2sql-ca.crt
 nl2sql-api.crt
 
 # People to load into a standalone directory: names and addresses at least,

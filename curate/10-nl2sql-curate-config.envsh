@@ -13,15 +13,19 @@ set -eu
 #    With sign-in on (AUTH_ENABLED=true) the proxy adds none: the browser's
 #    own session cookie goes through, and the person it names is who did it.
 #    A token here would let every visitor act as the service.
-case "${AUTH_ENABLED:-false}" in
-    true|1|yes|on) export CURATE_AUTH_HEADER="" ;;
-    *)
+#
+#    On unless switched off by name: an unset or misspelt value is sign-in
+#    on, so a page started outside compose is not open by accident.
+case "${AUTH_ENABLED:-true}" in
+    false|0|no|off)
+        echo "nl2sql-curate-gui: sign-in is off (AUTH_ENABLED=false): every visitor to this page can rewrite what the agent learns from." >&2
         if [ -n "${CURATE_TOKEN:-}" ]; then
             export CURATE_AUTH_HEADER="Bearer ${CURATE_TOKEN}"
         else
             export CURATE_AUTH_HEADER=""
         fi
         ;;
+    *) export CURATE_AUTH_HEADER="" ;;
 esac
 
 # 2. Whether there is a certificate to verify. Naming a file that is not
@@ -36,9 +40,8 @@ case "${CURATE_UPSTREAM}" in
         if [ ! -r "${CURATE_CACERT}" ]; then
             echo "nl2sql-curate-gui: CURATE_UPSTREAM is ${CURATE_UPSTREAM} but there is no" >&2
             echo "  readable certificate at CURATE_CACERT=${CURATE_CACERT} to verify it." >&2
-            echo "  The review service presents the certificate the agent API generates," >&2
-            echo "  so this usually means the API has not started yet, or the apitls" >&2
-            echo "  volume is not mounted here." >&2
+            echo "  It is the stack's CA certificate, which the pki service writes beside this" >&2
+            echo "  page's own certificate -- so this usually means that volume is not mounted here." >&2
             exit 1
         fi
         cat > "$tls_conf" <<TLSEOF
@@ -60,8 +63,8 @@ TLSEOF
         ;;
 esac
 
-# 3. The sign-in hop: `/auth/` goes to the auth service, which presents the
-#    same certificate as the API. Checked as the upstream above is, for the
+# 3. The sign-in hop: `/auth/` goes to the auth service, which presents a
+#    certificate of its own from the stack's CA. Checked as the upstream above is, for the
 #    same reason; the destination is overridable for the tests alone.
 auth_conf="${NGINX_AUTH_TLS_CONF:-/etc/nginx/nl2sql-auth-tls.conf}"
 case "${AUTH_UPSTREAM}" in
@@ -69,9 +72,8 @@ case "${AUTH_UPSTREAM}" in
         if [ ! -r "${AUTH_CACERT}" ]; then
             echo "nl2sql-curate-gui: AUTH_UPSTREAM is ${AUTH_UPSTREAM} but there is no" >&2
             echo "  readable certificate at AUTH_CACERT=${AUTH_CACERT} to verify it." >&2
-            echo "  The auth service presents the certificate the agent API generates," >&2
-            echo "  so this usually means the API has not started yet, or the apitls" >&2
-            echo "  volume is not mounted here." >&2
+            echo "  It is the stack's CA certificate, which the pki service writes beside this" >&2
+            echo "  page's own certificate -- so this usually means that volume is not mounted here." >&2
             exit 1
         fi
         cat > "$auth_conf" <<TLSEOF
@@ -93,7 +95,7 @@ TLSEOF
 esac
 
 # 4. This page's own listener. HTTPS by default, because a password is typed
-#    into it; the certificate is the API's, which covers localhost. Off
+#    into it; the certificate is this page's own, from the pki service. Off
 #    (CURATE_GUI_TLS_ENABLED=false) only behind something that terminates TLS.
 server_conf="${NGINX_SERVER_TLS_CONF:-/etc/nginx/nl2sql-server-tls.conf}"
 case "${CURATE_GUI_TLS_ENABLED:-true}" in
@@ -107,8 +109,8 @@ TLSEOF
     *)
         if [ ! -r "${CURATE_GUI_TLS_CERT_FILE}" ] || [ ! -r "${CURATE_GUI_TLS_KEY_FILE}" ]; then
             echo "nl2sql-curate-gui: CURATE_GUI_TLS_ENABLED is on but ${CURATE_GUI_TLS_CERT_FILE} or" >&2
-            echo "  ${CURATE_GUI_TLS_KEY_FILE} is not readable. They come from the apitls volume" >&2
-            echo "  the API writes on its first start; mount it, or set CURATE_GUI_TLS_ENABLED=false" >&2
+            echo "  ${CURATE_GUI_TLS_KEY_FILE} is not readable. They are this page's own, from the pki service" >&2
+            echo "  (its TLS volume, mounted here); mount it, or set CURATE_GUI_TLS_ENABLED=false" >&2
             echo "  behind something that terminates TLS itself." >&2
             exit 1
         fi

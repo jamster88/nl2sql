@@ -73,7 +73,9 @@ class PostgresLogin:
     host: str
     port: int
     dbname: str
-    sslmode: str = "prefer"
+    sslmode: str = "verify-full"
+    #: The retail database's own certificate, for verify-ca and verify-full.
+    sslrootcert: str | None = None
     timeout: int = 5
     roles: tuple[str, ...] = ROLES
     connect: Callable = psycopg.connect
@@ -90,6 +92,7 @@ class PostgresLogin:
                 user=name,
                 password=password,
                 sslmode=self.sslmode,
+                **({"sslrootcert": self.sslrootcert} if self.sslrootcert else {}),
                 connect_timeout=self.timeout,
                 application_name="nl2sql-auth sign-in",
                 autocommit=True,

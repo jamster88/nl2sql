@@ -6,6 +6,11 @@ is preserved rather than renamed at the boundary. `verdict`, `draft`,
 `suite`, `chunk_id` and `pair_id` all mean here exactly what they mean in
 `ragproc.golden_pairs`.
 
+Every model is `Wire`, which forbids a field it does not declare: in a
+request a misspelt field is a 422 rather than ignored, and a response built
+from a row or a dict that has grown a field fails a test rather than
+quietly dropping it.
+
 One rule is specific to this service. **A submission's own fields are never
 writable.** The question, the SQL and the verdict are what a user said, and
 an API that let a curator edit them would turn the staging table into a
@@ -20,6 +25,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+class Wire(BaseModel):
+    """Every model in this contract: no field it does not declare."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
 #: Correct, wrong, correct but incomplete: `store.VERDICTS`, as a type.
 Verdict = Literal["yes", "no", "incomplete"]
 State = Literal["pending", "accepted", "rejected", "promoted", "corrected"]
@@ -28,7 +39,7 @@ State = Literal["pending", "accepted", "rejected", "promoted", "corrected"]
 FixKind = Literal["corrections", "completions"]
 
 
-class SubmissionModel(BaseModel):
+class SubmissionModel(Wire):
     """One captured verdict, with the snapshot that outlives the job."""
 
     id: str
@@ -53,7 +64,7 @@ class SubmissionModel(BaseModel):
     promoted_pair_id: str | None = None
 
 
-class SubmissionList(BaseModel):
+class SubmissionList(Wire):
     submissions: list[SubmissionModel]
     count: int
     #: How many sit in each state, every state present even at zero, so a
@@ -63,7 +74,7 @@ class SubmissionList(BaseModel):
     counts_by_verdict: dict[str, dict[str, int]] = Field(default_factory=dict)
 
 
-class DraftModel(BaseModel):
+class DraftModel(Wire):
     """The golden pair a curator is building out of a submission.
 
     Seeded from the submission, but three of these cannot be: `keywords`,
@@ -95,7 +106,7 @@ class DraftModel(BaseModel):
         return value
 
 
-class ReviewRequest(BaseModel):
+class ReviewRequest(Wire):
     """What a curator may change. Deliberately four fields."""
 
     model_config = ConfigDict(extra="forbid")
@@ -127,12 +138,12 @@ class ReviewRequest(BaseModel):
         return value
 
 
-class PreviewRequest(BaseModel):
+class PreviewRequest(Wire):
     model_config = ConfigDict(extra="forbid")
     draft: DraftModel
 
 
-class PreviewModel(BaseModel):
+class PreviewModel(Wire):
     """The block that would be written, and why it could not be."""
 
     pair_id: str = ""
@@ -144,14 +155,14 @@ class PreviewModel(BaseModel):
     suite_in_force: str = ""
 
 
-class StepModel(BaseModel):
+class StepModel(Wire):
     name: str
     ran: bool
     ok: bool = True
     detail: str = ""
 
 
-class PromotionModel(BaseModel):
+class PromotionModel(Wire):
     """What a promotion did, including the parts that did not work.
 
     `reloaded` false with `pair_id` set is a real and useful state: the pair
@@ -173,7 +184,7 @@ class PromotionModel(BaseModel):
     steps: list[StepModel] = Field(default_factory=list)
 
 
-class PromotionRecord(BaseModel):
+class PromotionRecord(Wire):
     """A row of the promotion log."""
 
     pair_id: str
@@ -187,12 +198,12 @@ class PromotionRecord(BaseModel):
     reload_detail: str = ""
 
 
-class PromotionList(BaseModel):
+class PromotionList(Wire):
     promotions: list[PromotionRecord]
     count: int
 
 
-class GoldenPairModel(BaseModel):
+class GoldenPairModel(Wire):
     """A pair already in the set, as the document holds it.
 
     Read from the markdown rather than from the context store on purpose: the
@@ -216,7 +227,7 @@ class GoldenPairModel(BaseModel):
     submission_id: str | None = None
 
 
-class GoldenSet(BaseModel):
+class GoldenSet(Wire):
     pairs: list[GoldenPairModel]
     count: int
     document: str = ""
@@ -228,7 +239,7 @@ class GoldenSet(BaseModel):
     error: str | None = None
 
 
-class ReviewLimits(BaseModel):
+class ReviewLimits(Wire):
     reload_timeout_seconds: float
     #: What a validation run is held to: the same kind of limits the agent's
     #: own queries have.
@@ -241,7 +252,7 @@ class ReviewLimits(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ValidateRequest(BaseModel):
+class ValidateRequest(Wire):
     """The SQL a reviewer thinks the agent should have written."""
 
     model_config = ConfigDict(extra="forbid")
@@ -249,7 +260,7 @@ class ValidateRequest(BaseModel):
     sql: str = Field(max_length=20000)
 
 
-class ValidationModel(BaseModel):
+class ValidationModel(Wire):
     """What running it against the live retail database showed.
 
     `valid` is the only field that decides anything: a fix is stored only
@@ -269,7 +280,7 @@ class ValidationModel(BaseModel):
     elapsed_ms: float = 0.0
 
 
-class FixRequest(BaseModel):
+class FixRequest(Wire):
     """Store a validated fix. The SQL is validated again here, server side."""
 
     model_config = ConfigDict(extra="forbid")
@@ -278,7 +289,7 @@ class FixRequest(BaseModel):
     review_note: str = Field(default="", max_length=4000)
 
 
-class FixModel(BaseModel):
+class FixModel(Wire):
     """One stored fix: the question, the incorrect answer and the correct one."""
 
     fix_id: str
@@ -307,13 +318,13 @@ class FixModel(BaseModel):
     embedded: bool = False
 
 
-class FixList(BaseModel):
+class FixList(Wire):
     kind: FixKind
     fixes: list[FixModel]
     count: int
 
 
-class FixResultModel(BaseModel):
+class FixResultModel(Wire):
     """What saving a fix did, including the part that may not have worked.
 
     `embedded` false with a `fix` present is a real state, like a promotion
@@ -329,7 +340,7 @@ class FixResultModel(BaseModel):
     embed_detail: str = ""
 
 
-class WithdrawalModel(BaseModel):
+class WithdrawalModel(Wire):
     """What reopening or deleting a submission took back out.
 
     `kind` says where from: `golden` for a promoted pair taken out of the
@@ -351,7 +362,7 @@ class WithdrawalModel(BaseModel):
     steps: list[StepModel] = Field(default_factory=list)
 
 
-class UndoModel(BaseModel):
+class UndoModel(Wire):
     """A submission reopened or deleted, and what came out with it."""
 
     action: Literal["reopened", "deleted"]
@@ -366,14 +377,14 @@ class UndoModel(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class GoldenResultModel(BaseModel):
+class GoldenResultModel(Wire):
     """A golden pair added in the curation interface: its SQL's run, then the write."""
 
     promotion: PromotionModel
     validation: ValidationModel
 
 
-class GoldenRemovalModel(BaseModel):
+class GoldenRemovalModel(Wire):
     """A pair taken out of the golden set, and the submission that went back.
 
     `submission` is set when the review queue had produced the pair: it is
@@ -386,7 +397,7 @@ class GoldenRemovalModel(BaseModel):
     submission: SubmissionModel | None = None
 
 
-class CuratedFixValidateRequest(BaseModel):
+class CuratedFixValidateRequest(Wire):
     model_config = ConfigDict(extra="forbid")
 
     sql: str = Field(max_length=20000)
@@ -394,7 +405,7 @@ class CuratedFixValidateRequest(BaseModel):
     incorrect_sql: str = Field(default="", max_length=20000)
 
 
-class CuratedFixRequest(BaseModel):
+class CuratedFixRequest(Wire):
     """A fix with no submission behind it. The SQL is validated here again."""
 
     model_config = ConfigDict(extra="forbid")
@@ -405,7 +416,7 @@ class CuratedFixRequest(BaseModel):
     review_note: str = Field(default="", max_length=4000)
 
 
-class CuratedFixResultModel(BaseModel):
+class CuratedFixResultModel(Wire):
     kind: FixKind
     fix: FixModel
     validation: ValidationModel
@@ -413,7 +424,7 @@ class CuratedFixResultModel(BaseModel):
     embed_detail: str = ""
 
 
-class FixRemovalModel(BaseModel):
+class FixRemovalModel(Wire):
     """A fix taken out of its store, and the submission that went back, if any."""
 
     kind: FixKind
@@ -426,7 +437,7 @@ class FixRemovalModel(BaseModel):
 SnippetKind = Literal["join", "filter", "measure", "dimension"]
 
 
-class SnippetDraftModel(BaseModel):
+class SnippetDraftModel(Wire):
     """A snippet as the curation form holds it."""
 
     model_config = ConfigDict(extra="forbid")
@@ -441,26 +452,26 @@ class SnippetDraftModel(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
-class SnippetRequest(BaseModel):
+class SnippetRequest(Wire):
     model_config = ConfigDict(extra="forbid")
     draft: SnippetDraftModel
 
 
-class SnippetPreviewRequest(BaseModel):
+class SnippetPreviewRequest(Wire):
     model_config = ConfigDict(extra="forbid")
     draft: SnippetDraftModel
     #: The snippet being changed; absent for a new one.
     snippet_id: str | None = Field(default=None, max_length=20)
 
 
-class SnippetPreviewModel(BaseModel):
+class SnippetPreviewModel(Wire):
     snippet_id: str = ""
     markdown: str = ""
     valid: bool = False
     problems: list[str] = Field(default_factory=list)
 
 
-class SnippetValidationModel(BaseModel):
+class SnippetValidationModel(Wire):
     """What running the snippet inside its probe query showed.
 
     `valid` decides; the warnings -- a join that multiplies or drops rows, a
@@ -483,7 +494,7 @@ class SnippetValidationModel(BaseModel):
     elapsed_ms: float = 0.0
 
 
-class SnippetModel(BaseModel):
+class SnippetModel(Wire):
     """A snippet as the document holds it."""
 
     snippet_id: str
@@ -498,7 +509,7 @@ class SnippetModel(BaseModel):
     note: str = ""
 
 
-class SnippetStoreModel(BaseModel):
+class SnippetStoreModel(Wire):
     """What the snippet store holds, beside the document it was loaded from.
 
     `current` is the store holding exactly this document, embedded: what the
@@ -512,7 +523,7 @@ class SnippetStoreModel(BaseModel):
     detail: str = ""
 
 
-class SnippetSet(BaseModel):
+class SnippetSet(Wire):
     snippets: list[SnippetModel]
     count: int
     document: str = ""
@@ -522,7 +533,7 @@ class SnippetSet(BaseModel):
     error: str | None = None
 
 
-class SnippetResultModel(BaseModel):
+class SnippetResultModel(Wire):
     """What adding, changing or removing a snippet did -- the reload included."""
 
     action: Literal["added", "changed", "removed"]
@@ -538,24 +549,24 @@ class SnippetResultModel(BaseModel):
     validation: SnippetValidationModel | None = None
 
 
-class SchemaColumn(BaseModel):
+class SchemaColumn(Wire):
     name: str
     type: str
 
 
-class SchemaTable(BaseModel):
+class SchemaTable(Wire):
     name: str
     columns: list[SchemaColumn] = Field(default_factory=list)
 
 
-class SchemaModel(BaseModel):
+class SchemaModel(Wire):
     """The retail tables and columns, as the role a snippet is validated as sees them."""
 
     tables: list[SchemaTable] = Field(default_factory=list)
     error: str | None = None
 
 
-class ReviewMeta(BaseModel):
+class ReviewMeta(Wire):
     """Everything the review GUI needs to configure itself."""
 
     service: str = "nl2sql-review"
@@ -576,24 +587,24 @@ class ReviewMeta(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class Health(BaseModel):
+class Health(Wire):
     status: Literal["ok"] = "ok"
     version: str
     uptime_seconds: float
 
 
-class Check(BaseModel):
+class Check(Wire):
     ok: bool
     detail: str = ""
 
 
-class Readiness(BaseModel):
+class Readiness(Wire):
     ready: bool
     checks: dict[str, Check]
     warnings: list[str] = Field(default_factory=list)
 
 
-class ApiError(BaseModel):
+class ApiError(Wire):
     """The same error envelope the agent API uses, so one client parses both."""
 
     model_config = ConfigDict(

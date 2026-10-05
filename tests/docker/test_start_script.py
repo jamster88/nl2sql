@@ -653,7 +653,7 @@ def test_desktop_runs_the_jar_against_the_api(run_start):
 
     assert result.returncode == 0
     assert result.calls_matching("java -jar desktop/target/nl2sql-desktop.jar")
-    assert result.calls_matching("--cacert ./nl2sql-api.crt")
+    assert result.calls_matching("--cacert ./nl2sql-ca.crt")
     assert result.calls_matching("--url https://localhost:8443")
 
 

@@ -42,12 +42,14 @@ class ModelsTest {
                             "claims": [{"text": "...", "value": 719279.97,
                                         "cells": [[0, "net_sales"]], "formula": null}],
                             "audit": {"passed": true, "unsupported_claims": [],
-                                      "drop_reasons": [], "redactions": [],
+                                      "drop_reasons": [], "missing_assumptions": [],
                                       "semantic_issue": null},
                             "plan_cost": 125767.4, "attempts": 1,
                             "trace": [{"node": "generate_sql", "ms": 8123.4,
-                                       "model_calls": 1, "detail": "..."}],
-                            "retrieval_errors": {}},
+                                       "model_calls": 1, "detail": "...",
+                                       "model": "coder:14b", "rung": "standard",
+                                       "route": "attempt 1", "hops": ["small:3b"]}],
+                            "retrieval_errors": {}, "node_errors": {}},
                  "error": null,
                  "links": {"self": "/v1/questions/3f2c", "events": "/v1/questions/3f2c/events"}}
                 """, Models.Job.class);
@@ -56,6 +58,8 @@ class ModelsTest {
         assertEquals(Models.JobStatus.SUCCEEDED, job.status());
         assertEquals("sql", job.progress().get(0).label());
         assertEquals("SELECT sum(x) FROM y", job.answer().sql());
+        assertEquals("coder:14b", job.answer().trace().get(0).model());
+        assertEquals(List.of("small:3b"), job.answer().trace().get(0).hops());
         assertEquals("719279.97", job.answer().result().rows().get(0).get(0));
         assertEquals(List.of("net_sales"), job.answer().chart().y());
         assertEquals("/v1/questions/3f2c/events", job.links().events());
@@ -74,6 +78,7 @@ class ModelsTest {
         assertEquals(List.of(), answer.claims());
         assertEquals(List.of(), answer.trace());
         assertEquals(Map.of(), answer.retrieval_errors());
+        assertEquals(Map.of(), answer.node_errors());
         assertEquals("", answer.sql());
         assertTrue(answer.audit().passed());
         assertEquals(List.of(), answer.audit().drop_reasons());

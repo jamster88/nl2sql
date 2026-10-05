@@ -14,13 +14,23 @@ Three rules follow from the contract and are enforced by the agents, not here:
 
 * **Retrieval is best-effort.** A retriever that cannot reach its store writes
   to `retrieval_errors` and the run continues without it. At the limit, with
-  every store down, the pipeline degrades to schema-only.
+  every store down, the pipeline degrades to schema-only. A node that is not
+  a retriever and fails the same survivable way -- the Supervisor's or the
+  Narrator's model call -- writes to `node_errors` instead, so a reader of
+  either map knows which kind of thing went missing.
 * **`attempts` is the only retry counter.** Every failure source -- static
   validation, the planner, execution, the Completeness Reviewer, the audit --
   increments the same one, so there is no way to loop that does not spend
   budget.
 * **`trace` is appended by every node**, which is what lets the benchmark
   attribute time per agent rather than per stage.
+* **Every field has a lifetime** (`LIFETIMES`). A *run* field describes the
+  whole run; an *attempt* field describes one generated query and what
+  became of it, and the Repair Agent empties it (`attempt_reset`) when it
+  sends the run round again, so no node of attempt N+1 can read what
+  attempt N left behind; a *handoff* field is carried across that edge on
+  purpose -- the failed SQL and the hints about it are what the next
+  generation is written from.
 
 The payload types are dataclasses rather than TypedDicts so they carry their
 own construction and rendering behaviour. They are converted to plain dicts at
@@ -258,7 +268,6 @@ class AuditReport:
     #: unsupported claims back to the narrator once, and a retry that does not
     #: say what was wrong is a retry that reproduces it.
     drop_reasons: list[str] = field(default_factory=list)
-    redactions: list[str] = field(default_factory=list)
     #: Assumptions no surviving claim states (arch5, section 7.3 rule 5). Sent
     #: back to the narrator under the same once-only rule as a dropped claim;
     #: after that the renderer states them itself.
@@ -303,12 +312,14 @@ class TraceEntry:
 # Stage 1's five retrievers are branches of one LangGraph superstep, so they
 # return their updates concurrently. A key two branches both write needs a
 # reducer or the graph refuses the update; a key only one branch writes does
-# not. Only these two are shared: every retriever may record a failure, and
-# every node in the pipeline appends to the trace.
+# not. Only these are shared: every retriever may record a failure, and every
+# node in the pipeline appends to the trace. `node_errors` takes the same
+# reducer so a later node's failure adds to an earlier one's rather than
+# replacing it.
 
 
 def merge_errors(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
-    """Union of two retrievers' failure notes; the later one wins a tie."""
+    """Union of two nodes' failure notes; the later one wins a tie."""
     return {**(left or {}), **(right or {})}
 
 
@@ -354,6 +365,9 @@ class AgentState(TypedDict, total=False):
     snippet_context: str
     schema_tables: list[str]  # what the Schema Retriever alone proposed
     retrieval_errors: Annotated[dict[str, str], merge_errors]
+    #: A node other than a retriever that failed and was survived -- the
+    #: Supervisor's screening, the Narrator's claims -- keyed by agent.
+    node_errors: Annotated[dict[str, str], merge_errors]
     #: The generator's task, scored by the Context Aggregator (arch5.2).
     complexity: Complexity
 
@@ -423,6 +437,7 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "snippet_context": "",
         "schema_tables": [],
         "retrieval_errors": {},
+        "node_errors": {},
         "complexity": Complexity(),
         "sql": "",
         "attempts": 0,
@@ -443,6 +458,95 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "trace": [],
         "trace_id": "",
     }
+
+
+# --- lifetimes ---------------------------------------------------------------
+# One retry loop means one question for every field: when the Repair Agent
+# sends the run back to the generator, which of these still describe
+# something true? Answered here, field by field, rather than by each node
+# remembering to overwrite what it read -- arch4 left it to the nodes, and
+# the narrator then read attempt 1's audit while narrating attempt 2.
+
+RUN = "run"
+ATTEMPT = "attempt"
+HANDOFF = "handoff"
+
+#: Every field of `AgentState` and how long it is true for.
+#:
+#: * `run` -- the question, what retrieval found, the budget, the record of
+#:   every attempt, and the outputs. Written once or accumulated.
+#:   `completeness` is one of these on purpose: the reviewer reads its
+#:   earlier report so that it reflects once per run and does not send the
+#:   same gap back twice.
+#: * `attempt` -- one generated query and what became of it: its plan, its
+#:   rows, the chart, the narration, the audit and the narrator's one
+#:   rewrite. Emptied on the repair edge by `attempt_reset`.
+#: * `handoff` -- the failed SQL and the issues about it, which the Repair
+#:   Agent passes to the next generation and the generation then replaces.
+LIFETIMES: dict[str, str] = {
+    "question": RUN,
+    "principal": RUN,
+    "intent": RUN,
+    "verdict": RUN,
+    "clarification": RUN,
+    "answer_contract": RUN,
+    "assumptions": ATTEMPT,
+    "selected_tables": RUN,
+    "schema": RUN,
+    "literal_map": RUN,
+    "knowledge": RUN,
+    "knowledge_tables": RUN,
+    "knowledge_chunks": RUN,
+    "example_shots": RUN,
+    "example_tables": RUN,
+    "example_pairs": RUN,
+    "snippets": RUN,
+    "snippet_hits": RUN,
+    "snippet_context": RUN,
+    "schema_tables": RUN,
+    "retrieval_errors": RUN,
+    "node_errors": RUN,
+    "complexity": RUN,
+    "sql": HANDOFF,
+    "attempts": RUN,
+    "generation_rung": RUN,
+    "rung_holds": RUN,
+    "issues": HANDOFF,
+    "attempt_history": RUN,
+    "plan_cost": ATTEMPT,
+    "result": ATTEMPT,
+    "completeness": RUN,
+    "chart": ATTEMPT,
+    "claims": ATTEMPT,
+    "narrative": RUN,
+    "audit": ATTEMPT,
+    "narration_retries": ATTEMPT,
+    "answer": RUN,
+    "error": RUN,
+    "trace": RUN,
+    "trace_id": RUN,
+}
+
+
+def attempt_reset() -> dict[str, Any]:
+    """Every `attempt` field, empty: what the Repair Agent's update carries.
+
+    Fresh objects on every call, so no two runs share an empty report.
+    """
+    return {
+        "assumptions": [],
+        "plan_cost": None,
+        "result": None,
+        "chart": None,
+        "claims": [],
+        "audit": AuditReport(),
+        "narration_retries": 0,
+    }
+
+
+def state_fields() -> tuple[str, ...]:
+    """The names `AgentState` declares, in declaration order."""
+    return tuple(AgentState.__annotations__)
 
 
 def to_jsonable(value: Any) -> Any:

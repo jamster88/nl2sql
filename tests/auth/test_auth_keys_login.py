@@ -91,10 +91,20 @@ def test_a_password_postgres_accepts_is_a_session():
     identity = login.check("  Alice ", "pw")
     assert (identity.user, identity.name) == ("alice", "Alice Smith")
     assert identity.roles == {"nl2sql_reviewers", "nl2sql_users"}
-    assert seen["user"] == "alice" and seen["password"] == "pw" and seen["sslmode"] == "prefer"
+    assert seen["user"] == "alice" and seen["password"] == "pw" and seen["sslmode"] == "verify-full"
+    assert "sslrootcert" not in seen, "none given, so libpq's own default"
     assert seen["application_name"] == "nl2sql-auth sign-in"
     assert conn.asked == [(WHO_SQL, {"roles": list(ROLES)})]
-    assert login.describe() == "db:5432/retail (sslmode=prefer)"
+    assert login.describe() == "db:5432/retail (sslmode=verify-full)"
+
+
+def test_a_sign_in_verifies_the_database_against_its_own_certificate():
+    """V6-53: the password crosses this hop, so the server is checked."""
+    conn = FakeConn(("alice", "", ["nl2sql_users"]))
+    login, seen = _login(conn)
+    login.sslrootcert = "/etc/nl2sql/pg-tls/server.crt"
+    login.check("alice", "pw")
+    assert seen["sslrootcert"] == "/etc/nl2sql/pg-tls/server.crt"
 
 
 @pytest.mark.parametrize(("username", "password"), [("", "pw"), ("alice", ""), ("Jane Doe", "pw"), ("postgres", "pw")])

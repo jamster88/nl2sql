@@ -215,3 +215,49 @@ def test_an_identifier_is_escaped_before_it_becomes_a_role_name():
 
     assert _quote_identifier('ana"lyst') == 'ana""lyst'
     assert _quote_identifier("analyst") == "analyst"
+
+
+class _RecordingConnection:
+    """Enough of a SQLAlchemy connection to see what a method sends."""
+
+    def __init__(self, sent: list[str]) -> None:
+        self.sent = sent
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+    def begin(self):
+        return self
+
+    def exec_driver_sql(self, sql: str):
+        self.sent.append(sql)
+        return self
+
+    def scalar(self):
+        return [{"Plan": {"Total Cost": 12.5}}]
+
+
+class _RecordingEngine:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def connect(self):
+        return _RecordingConnection(self.sent)
+
+
+def test_the_planner_gate_runs_under_the_statement_timeout(monkeypatch):
+    """V6-14: EXPLAIN was the one statement the agent sent with no timeout."""
+    db = Database("postgresql+psycopg://u:p@127.0.0.1:1/db", statement_timeout_ms=2500)
+    engine = _RecordingEngine()
+    monkeypatch.setattr(db, "_engine", engine)
+
+    assert db.explain_plan("SELECT 1", principal="ann") == (12.5, None)
+    assert engine.sent[:3] == [
+        "SET TRANSACTION READ ONLY",
+        "SET LOCAL statement_timeout = 2500",
+        'SET LOCAL ROLE "ann"',
+    ]
+    assert engine.sent[-1] == "EXPLAIN (FORMAT JSON) SELECT 1"

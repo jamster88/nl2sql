@@ -128,7 +128,7 @@ class HttpApiClientTest {
                         ? Json.write(Fakes.meta(true))
                         : Json.write(Fakes.ready()));
 
-        assertEquals("6.0.1", client.meta().version());
+        assertEquals("6.1.0", client.meta().version());
         assertTrue(client.readiness().ready());
         assertEquals(List.of("GET /v1/meta", "GET /readyz"), requested);
     }
@@ -284,7 +284,7 @@ class HttpApiClientTest {
         assertEquals("unreachable", failed.code());
         // The deepest cause is the one that says something; Java's own
         // message would be "PKIX path building failed".
-        assertTrue(failed.getMessage().contains("which is not the pinned"), failed.getMessage());
+        assertTrue(failed.getMessage().contains("which is not pinned"), failed.getMessage());
     }
 
     @Test
@@ -292,7 +292,7 @@ class HttpApiClientTest {
         HttpApiClient client = https(Map.of(), exchange -> Json.write(Fakes.meta(true)),
                 "--insecure");
 
-        assertEquals("6.0.1", client.meta().version());
+        assertEquals("6.1.0", client.meta().version());
     }
 
     @Test

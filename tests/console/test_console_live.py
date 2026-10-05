@@ -14,7 +14,6 @@ it tests behaviour against a real server, it does not stand one up.
 
 from __future__ import annotations
 
-import os
 
 import pytest
 import sqlalchemy
@@ -22,12 +21,11 @@ import sqlalchemy
 from nl2sql_agent.config import Settings
 from nl2sql_agent.console.query import Inspector
 from nl2sql_agent.database import Database
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+POSTGRES_URL = live_stores.url("retail", variable="POSTGRES_URL")
 
 
 def _inspector(*, max_rows: int = 1000, **agent) -> Inspector:
@@ -47,7 +45,7 @@ def inspector() -> Inspector:
     try:
         console.db.table_names()
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {POSTGRES_URL}: {exc}")
+        live_stores.unreachable("Postgres", POSTGRES_URL, exc)
     return console
 
 

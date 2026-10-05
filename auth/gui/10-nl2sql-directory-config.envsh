@@ -35,9 +35,8 @@ case "${DIRECTORY_UPSTREAM}" in
         if [ ! -r "${DIRECTORY_CACERT}" ]; then
             echo "nl2sql-directory-gui: DIRECTORY_UPSTREAM is ${DIRECTORY_UPSTREAM} but there is no" >&2
             echo "  readable certificate at DIRECTORY_CACERT=${DIRECTORY_CACERT} to verify it." >&2
-            echo "  The auth service presents the certificate the agent API generates," >&2
-            echo "  so this usually means the API has not started yet, or the apitls" >&2
-            echo "  volume is not mounted here." >&2
+            echo "  It is the stack's CA certificate, which the pki service writes beside this" >&2
+            echo "  page's own certificate -- so this usually means that volume is not mounted here." >&2
             exit 1
         fi
         cat > "$tls_conf" <<TLSEOF
@@ -59,7 +58,7 @@ TLSEOF
 esac
 
 # 4. This page's own listener. HTTPS by default, because passwords are typed
-#    into it; the certificate is the API's, which covers localhost. Off
+#    into it; the certificate is this page's own, from the pki service. Off
 #    (DIRECTORY_GUI_TLS_ENABLED=false) only behind something that terminates TLS.
 server_conf="${NGINX_SERVER_TLS_CONF:-/etc/nginx/nl2sql-server-tls.conf}"
 case "${DIRECTORY_GUI_TLS_ENABLED:-true}" in
@@ -73,8 +72,8 @@ TLSEOF
     *)
         if [ ! -r "${DIRECTORY_GUI_TLS_CERT_FILE}" ] || [ ! -r "${DIRECTORY_GUI_TLS_KEY_FILE}" ]; then
             echo "nl2sql-directory-gui: DIRECTORY_GUI_TLS_ENABLED is on but ${DIRECTORY_GUI_TLS_CERT_FILE} or" >&2
-            echo "  ${DIRECTORY_GUI_TLS_KEY_FILE} is not readable. They come from the apitls volume" >&2
-            echo "  the API writes on its first start; mount it, or set DIRECTORY_GUI_TLS_ENABLED=false" >&2
+            echo "  ${DIRECTORY_GUI_TLS_KEY_FILE} is not readable. They are this page's own, from the pki service" >&2
+            echo "  (its TLS volume, mounted here); mount it, or set DIRECTORY_GUI_TLS_ENABLED=false" >&2
             echo "  behind something that terminates TLS itself." >&2
             exit 1
         fi

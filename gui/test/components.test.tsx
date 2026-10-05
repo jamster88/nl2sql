@@ -441,7 +441,7 @@ describe("AnswerView", () => {
           passed: false,
           unsupported_claims: ["Sales doubled."],
           drop_reasons: ["a sentence was dropped"],
-          redactions: [],
+          missing_assumptions: [],
           semantic_issue: "the question asked for a rate, the SQL returned a total",
         },
       }),
@@ -557,10 +557,34 @@ describe("AnswerView", () => {
 
     it("uses the plural for several model calls", () => {
       const job = makeJob({
-        answer: makeAnswer({ trace: [{ node: "repair", ms: 10, model_calls: 2, detail: "" }] }),
+        answer: makeAnswer({
+          trace: [{ node: "repair", ms: 10, model_calls: 2, detail: "", model: "", rung: "", route: "", hops: [] }],
+        }),
       });
       render(<AnswerView job={job} store={store()} pipeline={pipeline} />);
       expect(screen.getByText("2 model calls")).toBeInTheDocument();
+    });
+
+    it("names the model that answered, with the router's reason on hover", () => {
+      const job = makeJob({
+        answer: makeAnswer({
+          trace: [
+            {
+              node: "generate_sql",
+              ms: 10,
+              model_calls: 1,
+              detail: "",
+              model: "coder:14b",
+              rung: "standard",
+              route: "attempt 1, score 4",
+              hops: [],
+            },
+          ],
+        }),
+      });
+      render(<AnswerView job={job} store={store()} pipeline={pipeline} />);
+      const named = screen.getByText("1 model call · coder:14b");
+      expect(named).toHaveAttribute("title", "attempt 1, score 4");
     });
 
     it("leaves out a panel there is nothing to put in", () => {

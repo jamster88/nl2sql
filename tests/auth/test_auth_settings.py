@@ -172,6 +172,24 @@ def test_warnings_name_the_risky_settings():
     )
     assert "AUTH_TLS_ENABLED=false" in notes
     assert "AUTH_LDAP_STARTTLS=false" in notes
-    assert "AUTH_DB_SSLMODE=disable" in notes
-    assert AuthSettings().warnings() == []
-    assert AuthSettings(ldap_starttls=False, ldap_url="ldaps://d").warnings() == []
+    assert "AUTH_DB_SSLMODE=disable" in notes and "hostssl" in notes
+    assert any("AUTH_DB_SSLMODE=require" in n for n in AuthSettings(db_sslmode="require").warnings())
+    assert any("AUTH_DB_SSLMODE=prefer" in n for n in AuthSettings(db_sslmode="prefer").warnings())
+    assert AuthSettings(db_sslrootcert=__file__).warnings() == []
+    assert AuthSettings(ldap_starttls=False, ldap_url="ldaps://d", db_sslrootcert=__file__).warnings() == []
+
+
+def test_verify_full_with_no_certificate_to_verify_against_is_said():
+    notes = " ".join(AuthSettings(db_sslrootcert="/nowhere/server.crt").warnings())
+    assert "no certificate at /nowhere/server.crt" in notes and "pgtls volume" in notes
+
+
+def test_the_rolesync_url_is_held_to_the_same_tls_as_a_sign_in():
+    settings = AuthSettings(rolesync_url="postgresql://sync:pw@db:5432/retail")
+    assert settings.rolesync_conninfo == (
+        "postgresql://sync:pw@db:5432/retail?sslmode=verify-full&sslrootcert=%2Fetc%2Fnl2sql%2Fpg-tls%2Fserver.crt"
+    )
+    said = "postgresql://sync:pw@db/retail?sslmode=require"
+    assert AuthSettings(rolesync_url=said).rolesync_conninfo == said, "a URL that says how is left alone"
+    assert AuthSettings(rolesync_url="postgresql://s@db/r", db_sslmode="prefer").rolesync_conninfo.endswith("?sslmode=prefer")
+    assert AuthSettings().rolesync_conninfo is None

@@ -88,6 +88,8 @@ def settings(document: Path, snippet_document: Path) -> ReviewSettings:
         snippets_db_url="postgresql://snippets:secret@nowhere:5432/nl2sql_snippets",
         reload_snippets=False,
         token="test-token",
+        # The token-guarded service of 5.x; sign-in has its own file.
+        auth_enabled=False,
     )
 
 

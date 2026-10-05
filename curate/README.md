@@ -113,15 +113,15 @@ the names on the left.
 | `CURATE_GUI_PORT` | `CURATE_GUI_PORT` | `8083` |
 | `CURATE_GUI_UPSTREAM` | `CURATE_UPSTREAM` | `https://nl2sql-review:8444` |
 | `CURATE_GUI_SSL_NAME` | `CURATE_SSL_NAME` | `nl2sql-review` |
-| `CURATE_GUI_CACERT` | `CURATE_CACERT` | `/etc/nl2sql/tls/server.crt` |
+| `CURATE_GUI_CACERT` | `CURATE_CACERT` | `/etc/nl2sql/tls/ca.crt` |
 | `CURATE_GUI_READ_TIMEOUT` | `CURATE_READ_TIMEOUT` | `900s` -- a save waits for the loaders, and embedding takes a while |
 | `CURATE_GUI_RESOLVER` | `CURATE_GUI_RESOLVER` | `127.0.0.11`, Docker's DNS |
 | `REVIEW_TOKEN` | `CURATE_TOKEN` | *(unset)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
 | `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are and admits `nl2sql_curators`; their session, not a token, reaches the service, and their name is on what they write |
 | `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where `/auth/` is proxied: the sign-in form posts there |
 | `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
-| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/server.crt` |
-| `GUI_TLS_ENABLED` | `CURATE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with the API's certificate |
+| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `GUI_TLS_ENABLED` | `CURATE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate |
 | `GUI_TLS_CERT_FILE` | `CURATE_GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
 | `GUI_TLS_KEY_FILE` | `CURATE_GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
 

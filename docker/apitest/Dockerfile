@@ -16,9 +16,9 @@ RUN apk add --no-cache curl jq ca-certificates bash
 COPY docker/apitest/smoke.sh /usr/local/bin/smoke.sh
 RUN chmod +x /usr/local/bin/smoke.sh
 
-# Where the server's certificate is expected to appear -- mounted by compose
-# from the volume the API writes it into. The directory exists in the image so
-# the certificate can also be placed here by `docker cp` on a stopped
+# Where the stack's CA certificate is expected to appear -- mounted by compose
+# from the volume the pki service writes it into. The directory exists in the
+# image so a certificate can also be placed here by `docker cp` on a stopped
 # container, which is how the test suite trusts it without a bind mount.
 RUN mkdir -p /etc/nl2sql/tls
 

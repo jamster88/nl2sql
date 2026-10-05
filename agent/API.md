@@ -7,7 +7,7 @@ an OpenAPI document the server generates itself, which a TypeScript, Python,
 Java or Go client is generated from rather than written against by hand.
 
     ./launch.sh --api
-    curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+    curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
 
 The same image serves both. `docker compose run --rm agent "..."` is the CLI;
 the `api` service is `python -m nl2sql_agent.api` in the same container, so
@@ -82,19 +82,27 @@ Two flags have no environment equivalent:
 
 ## TLS
 
-On by default. The container has no certificate to be given, so on first
-start it **writes itself one** -- self-signed, valid for a year, covering
-`localhost`, `127.0.0.1`, `::1`, `api` and `nl2sql-api` (the compose service
-name other containers reach it by). It lands in the `apitls` volume, so a
-restart presents the same certificate and a client that pinned it keeps
-working.
+On by default. Under compose the API's certificate is **its own, issued
+by the stack's development CA** before the API starts: a one-shot
+container, `nl2sql-pki`, keeps the CA and gives every server -- the API,
+the review service, the console, the auth service, each page -- a key and
+certificate of its own, in a volume only that server mounts (6.1). The
+API's covers `localhost`, `127.0.0.1`, `::1`, `api` and `nl2sql-api` (the
+compose service name other containers reach it by), and anything added to
+`API_TLS_HOSTNAMES` or, for every server at once, `TLS_EXTRA_HOSTNAMES`. It
+lands in the `apitls` volume, which the API mounts read-only, so a restart
+presents the same certificate and a client that pinned it keeps working.
 
-A self-signed certificate is refused by every client that checks, which is
-the point of having one. Three ways to work with it, best first:
+Started on its own -- `python -m nl2sql_agent.api`, with nothing in place --
+the server writes itself a self-signed certificate instead, valid for a
+year.
 
-    # 1. Trust it explicitly -- still proves you reached the right server
-    docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
-    curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+Either is refused by every client that checks until it is told to trust
+it, which is the point. Three ways to work with it, best first:
+
+    # 1. Trust the stack's CA -- one file, for the API and every page
+    docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
+    curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
 
     # 2. Pin its fingerprint, which the server prints at startup
     docker compose --profile api logs api | grep fingerprint
@@ -102,52 +110,35 @@ the point of having one. Three ways to work with it, best first:
     # 3. Turn verification off, for a throwaway experiment only
     curl --insecure https://localhost:8443/healthz
 
-### When a generated certificate is replaced
+### When a certificate is replaced
 
-A certificate already on disk is normally kept exactly as it is. That is what
-makes a generated one survive a restart, so a client that trusted it once --
-or pinned its fingerprint -- keeps working.
+A certificate is kept while it is good: what lets a client that pinned it
+keep working. The pki service reissues one the CA issued when it is close
+to expiry, no longer covers every name asked for -- a name added to
+`API_TLS_HOSTNAMES` -- or was signed by an earlier CA; it replaces the
+shared self-signed certificate 6.0 left in the volume; and it never touches
+one from a real CA. A server started on its own reissues its self-signed
+certificate when it no longer covers its names, and says so at start-up.
 
-There is one exception. If the certificate is self-signed and no longer covers
-every name in `API_TLS_HOSTNAMES`, a new one is generated to cover them, and
-the server says so at start-up.
-
-This exists because of what happens otherwise. When a new service joins the
-stack, `API_TLS_HOSTNAMES` grows to cover it -- the review service presents
-this certificate rather than generating a second one, so `nl2sql-review` had
-to be added to the list. On an existing deployment the volume still held the
-certificate from before. It was silently missing the new name, and the only
-symptom was the new service's proxy refusing to verify it, with a message
-about a hostname mismatch and nothing about which name, or why, or that a
-certificate written months ago was the reason.
-
-Two consequences worth knowing:
-
-* **The fingerprint changes.** Anything that pinned the old one, or copied it
-  out with `docker compose cp`, needs it again. The start-up warning says so.
-* **A proxy in front of the API has to be restarted.** nginx reads the
-  certificate once, while it parses its config, so an already-running proxy
-  goes on trusting a certificate nobody presents any more -- and its own
-  health check will not notice, because that asks for a page served from
-  disk. `launch.sh` checks by asking for `/readyz` *through* the proxy and
-  restarts it when that fails.
-
-A CA-issued certificate is never replaced. It cannot be reissued here, and
-replacing it is a decision for whoever obtained it, so the mismatch is
-reported at start-up and the certificate is left alone.
+* **The fingerprint changes** when a certificate is reissued. Anything that
+  pinned the old one needs it again; trusting the CA (way 1) survives it.
+* **A proxy verifies against the CA**, not the certificate, so a reissued
+  certificate is one it still accepts. A replaced CA is not:
+  `launch.sh` asks for `/readyz` *through* each proxy and restarts one that
+  cannot reach its service.
 
 ### Taking the development certificate away
 
 Once a real certificate is mounted, set `API_TLS_ALLOW_SELF_SIGNED=false`.
-The server then **refuses to start** behind a self-signed certificate: it
-will not generate one, and it will not load one it finds. It exits `2` and
-names the file.
+The server then **refuses to start** behind a development certificate --
+self-signed, or issued by the stack's own CA: it will not generate one,
+and it will not load one it finds. It exits `2` and names the file.
 
     API_TLS_ALLOW_SELF_SIGNED=false docker compose --profile api up api
     # error: /etc/nl2sql/tls/server.crt is self-signed (issuer and subject are
     #        both O=nl2sql agent (development),CN=localhost) and
-    #        API_TLS_ALLOW_SELF_SIGNED=false. Replace it with a CA-issued
-    #        certificate, or set API_TLS_ALLOW_SELF_SIGNED=true ...
+    #        API_TLS_ALLOW_SELF_SIGNED=false. Replace it with a certificate
+    #        from a real CA, or set API_TLS_ALLOW_SELF_SIGNED=true ...
 
 That is the difference between a deployment that is insecure and one that is
 insecure without anyone noticing. Mount the real pair over the defaults:
@@ -164,8 +155,8 @@ server says so at startup, and `/readyz` repeats it.
 
 ## Authentication
 
-Two kinds of caller, and with sign-in on -- the compose default,
-`AUTH_ENABLED=true` -- both are accepted:
+Two kinds of caller, and with sign-in on -- the default, in the server's
+own settings as well as in compose (6.1) -- both are accepted:
 
 - **A person**, signed in through the auth service
   ([`auth/README.md`](../auth/README.md)) with the user name and password
@@ -173,7 +164,7 @@ Two kinds of caller, and with sign-in on -- the compose default,
   cookie its interface's sign-in sets; anything else asks for a token and
   sends it:
 
-      curl --cacert ./nl2sql-api.crt https://localhost:8446/auth/token \
+      curl --cacert ./nl2sql-ca.crt https://localhost:8446/auth/token \
            -H 'Content-Type: application/json' \
            -d '{"username": "alice", "password": "..."}'
       # -> {"user": "alice", "name": "Alice Smith", "roles": [...], "kind": "session",
@@ -189,15 +180,15 @@ Two kinds of caller, and with sign-in on -- the compose default,
   id exists is itself something only its owner should learn.
 
 - **A service**, with `API_TOKEN`: a static token for a script, a smoke
-  test, a service in front. It is not a person, so its questions run as the
-  agent's reader -- or as the `principal` it names, with
-  `API_ALLOW_PRINCIPAL` -- and it sees every job.
+  test, a service in front -- `setup.sh --tokens` generates one. It is not a
+  person, so its questions run as the agent's reader -- or as the
+  `principal` it names, with `API_ALLOW_PRINCIPAL` -- and it sees every job.
 
-With sign-in off (`AUTH_ENABLED=false`, the default outside compose) only the
-second kind exists, and only if `API_TOKEN` is set: unset, the API is open,
-because the usual deployment without sign-in is a private network and a
-token that has to be invented before anything works is a token that ends up
-committed. `GET /v1/meta` says which applies -- `authentication` is
+With sign-in switched off by name (`AUTH_ENABLED=false`) only the second
+kind exists, and only if `API_TOKEN` is set: unset, the API is open, and
+says so in capitals at start-up and on `/readyz`. Since 6.1 an unset or
+misspelt `AUTH_ENABLED` is sign-in on: a server started outside compose is
+not open by accident. `GET /v1/meta` says which applies -- `authentication` is
 `session`, `bearer` or `none` -- to a caller it answers. It is a `/v1` route
 like the rest, so to a caller with neither a session nor a token, on a
 server that requires one, the answer is the `401` itself: `sign_in_required`
@@ -214,8 +205,9 @@ probes and a client's code generation keep working.
 
 The query-string form exists because a browser's `EventSource` cannot set
 headers, and a GUI that cannot stream progress is back to a spinner. Use a
-header everywhere else -- query strings end up in access logs. A signed-in
-browser needs neither: `EventSource` sends the cookie.
+header everywhere else -- query strings end up in logs; the server's own
+access log masks `access_token=` (6.1), and a proxy in front may not. A
+signed-in browser needs neither: `EventSource` sends the cookie.
 
 A write that rides on the cookie has to come from the interface's own pages
 -- `Sec-Fetch-Site`, or `Origin` against the host its proxy reports in
@@ -223,14 +215,27 @@ A write that rides on the cookie has to come from the interface's own pages
 
 ### Browsers
 
-Set `API_CORS_ORIGINS` to the GUI's origin:
+Every page of this stack reaches the API through its own nginx, on its own
+origin, so no browser origin is allowed to call the API directly by default
+(6.1; `*` until then). A GUI served from somewhere else names its origin:
 
     API_CORS_ORIGINS=https://gui.example.com,http://localhost:5173
 
-The default is `*`, which works for a token-less private deployment. Note
-that browsers refuse to send credentials to a wildcard origin, so `*`
-together with `API_TOKEN` is a combination that looks configured and fails
-only in a browser; the server warns about it at startup.
+Browsers refuse to send credentials to a wildcard origin, so `*` together
+with a token is a combination that looks configured and fails only in a
+browser; the server warns about it at startup.
+
+### How much it will take on
+
+Questions run `API_MAX_CONCURRENCY` at a time (2), and at most
+`API_MAX_QUEUED` (20) wait behind them. A signed-in person has at most
+`API_MAX_PER_PERSON` (3) waiting or running at once, so one person's loop
+cannot fill the queue for everyone; a service token and an open server are
+one caller, bounded by the queue alone. Past either limit `POST
+/v1/questions` answers `429 queue_full` with a `Retry-After` of a minute,
+about one question's run. A question that has waited
+`API_QUEUE_TTL_SECONDS` (600) without starting is failed with `expired: ...`
+rather than run for a caller who has very likely gone.
 
 ---
 
@@ -287,8 +292,10 @@ each task -- `supervisor`, `generator`, `reflection`, `narrator`, `repair` --
 and each rung -- `light`, `standard`, `heavy` -- the model, its fallback and
 why, with the catalog it came from and any notes. It is empty until the agent
 has started. No client draws it; it is there so that what a run was routed
-with is never a matter of memory. Each answer's trace names the model that
-actually answered every call.
+with is never a matter of memory. Each answer's `trace` names the model that
+actually answered every call, the rung it was routed at, the router's reason,
+and any routed model that failed before it (`model`, `rung`, `route`,
+`hops`).
 
 ---
 
@@ -319,11 +326,13 @@ list is a list, so nothing needs a null check before it is rendered.
     "claims":    [{"text": "...", "value": 719279.97,
                    "cells": [[0, "net_sales"]], "formula": null}],
     "audit":     {"passed": true, "unsupported_claims": [], "drop_reasons": [],
-                  "redactions": [], "semantic_issue": null},
+                  "missing_assumptions": [], "semantic_issue": null},
     "plan_cost": 125767.4, "attempts": 1,
     "trace":     [{"node": "generate_sql", "ms": 8123.4, "model_calls": 1,
-                   "detail": "..."}],
-    "retrieval_errors": {}
+                   "detail": "...", "model": "...", "rung": "standard",
+                   "route": "attempt 1, ...", "hops": []}],
+    "retrieval_errors": {},          // a retriever that could not reach its store
+    "node_errors": {}                // the supervisor or narrator, failed and survived
   },
   "error": null,
   "links": {"self": "/v1/questions/3f2c...", "events": "/v1/questions/3f2c.../events"}
@@ -501,6 +510,7 @@ Branch on `code`; the message is for a person.
 | `roles_unavailable` | 503 | Postgres could not be asked which groups the caller is in |
 | `not_found` | 404 | No such job. Finished jobs are kept `API_JOB_TTL_SECONDS` |
 | `job_running` | 409 | A question in flight cannot be interrupted |
+| `queue_full` | 429 | Too many questions are waiting, or the caller has `API_MAX_PER_PERSON` in the air. `Retry-After` says when to ask again |
 | `principal_not_allowed` | 400 | `principal` was sent to a server started without `API_ALLOW_PRINCIPAL`, or named someone other than the person signed in |
 | `already_reviewed` | 409 | A verdict has been acted on and no longer belongs to the voter |
 | `feedback_unavailable` | 503 | No staging database is configured (`API_FEEDBACK_DB_URL`) |
@@ -564,7 +574,7 @@ import httpx
 client = httpx.Client(
     base_url="https://nl2sql-api.example.com",
     headers={"Authorization": f"Bearer {token}"},
-    verify="nl2sql-api.crt",     # or True once a real certificate is mounted
+    verify="nl2sql-ca.crt",     # or True once a real certificate is mounted
     timeout=300,
 )
 job = client.post("/v1/questions", json={"question": question},
@@ -584,7 +594,7 @@ with client.stream("GET", job["links"]["events"]) as stream:
 ### Java
 
 ```java
-var http = HttpClient.newBuilder().sslContext(contextTrusting("nl2sql-api.crt")).build();
+var http = HttpClient.newBuilder().sslContext(contextTrusting("nl2sql-ca.crt")).build();
 var post = HttpRequest.newBuilder(URI.create(base + "/v1/questions?wait=240"))
     .header("Authorization", "Bearer " + token)
     .header("Content-Type", "application/json")
@@ -639,20 +649,20 @@ an unset variable through as an empty string, and empty is read as absent.
 | `API_TLS_ENABLED` | `true` | Serve HTTPS. Off only behind a TLS terminator |
 | `API_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | PEM certificate |
 | `API_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | PEM private key |
-| `API_TLS_GENERATE` | `true` | Write a development certificate when none is present |
-| `API_TLS_ALLOW_SELF_SIGNED` | `true` | **Set false to refuse to start without a CA-issued certificate** |
-| `API_TLS_HOSTNAMES` | `localhost,nl2sql-api,api,127.0.0.1,::1` | Names the generated certificate covers |
+| `API_TLS_GENERATE` | `true` (`false` in compose, where the pki service issues it) | Write a development certificate when none is present |
+| `API_TLS_ALLOW_SELF_SIGNED` | `true` | **Set false to refuse to start behind a development certificate** -- self-signed, or the stack's CA's |
+| `API_TLS_HOSTNAMES` | `localhost,nl2sql-api,api,127.0.0.1,::1` | Names the certificate covers -- the pki service's, or a generated one's |
 | `API_TLS_DAYS` | `365` | Lifetime of the generated certificate |
 
 ### Who may call
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `AUTH_ENABLED` | `false` (`true` in compose) | Accept signed-in people; their questions run as them |
+| `AUTH_ENABLED` | `true` | Accept signed-in people; their questions run as them. Only `false`, `0`, `no` or `off` turns it off, and the server then says it is open |
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against. Read when it appears and again when it changes |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
 | `API_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
-| `API_CORS_ORIGINS` | `*` | Browser origins allowed to call it |
+| `API_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly |
 | `API_ALLOW_PRINCIPAL` | `false` | Let callers choose the database role rows are read as (`SET LOCAL ROLE`, for row-level security). Only with something authenticating them in front |
 
 ### Feedback
@@ -672,6 +682,9 @@ role and resets its grants on every start.
 | `API_MAX_CONCURRENCY` | `2` | Questions answered at once. They queue on one Ollama host anyway |
 | `API_JOB_TTL_SECONDS` | `3600` | How long a finished job can still be collected |
 | `API_MAX_JOBS` | `200` | How many jobs are remembered |
+| `API_MAX_QUEUED` | `20` | Questions that may wait behind those running; past it, `429 queue_full` |
+| `API_MAX_PER_PERSON` | `3` | Questions one signed-in person may have waiting or running |
+| `API_QUEUE_TTL_SECONDS` | `600` | A question still waiting after this long is failed rather than run |
 | `API_MAX_WAIT_SECONDS` | `900` | Ceiling on `?wait=` |
 | `API_EVENT_STREAM_TIMEOUT_SECONDS` | `300` | How long an idle stream is held open |
 | `API_KEEPALIVE_SECONDS` | `15` | Comment line interval on a stream |
@@ -704,8 +717,8 @@ It is configured entirely from the environment, which is what compose sets:
 | --- | --- | --- |
 | `API_BASE_URL` | `https://nl2sql-api:8443` | The API to drive |
 | `API_TOKEN` | *(none)* | Presented as a bearer token when set |
-| `API_CACERT` | *(none)* | A CA file to verify against; tried first |
-| `API_INSECURE` | `true` in compose | Allow `--insecure` as a last resort. With this false and nothing to verify against, it refuses to run |
+| `API_CACERT` | *(none)*; the stack's CA in compose | A CA file to verify against; tried first |
+| `API_INSECURE` | `false` | Allow `--insecure` as a last resort. With this false and nothing to verify against, it refuses to run |
 | `APITEST_QUESTION` | `How many stores are there?` | The question to ask, unless one is given as an argument |
 | `APITEST_WAIT_SECONDS` | `240` | How long to wait for the answer |
 

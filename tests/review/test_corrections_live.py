@@ -19,7 +19,6 @@ Docker.
 from __future__ import annotations
 
 import hashlib
-import os
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
@@ -37,13 +36,10 @@ from nl2sql_review.corrections import (
     content_hash,
     vector_literal,
 )
+from tests import live_stores
 
-CORRECTIONS_ADMIN = os.environ.get(
-    "CORRECTIONS_DB_URL", "postgresql://corrections:corrections@localhost:5436/nl2sql_corrections"
-)
-COMPLETIONS_ADMIN = os.environ.get(
-    "COMPLETIONS_DB_URL", "postgresql://completions:completions@localhost:5437/nl2sql_completions"
-)
+CORRECTIONS_ADMIN = live_stores.url("corrections", variable="CORRECTIONS_DB_URL", driver="postgresql")
+COMPLETIONS_ADMIN = live_stores.url("completions", variable="COMPLETIONS_DB_URL", driver="postgresql")
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +119,7 @@ def _scratch(admin_url: str):
     try:
         admin = psycopg.connect(admin_url, autocommit=True, connect_timeout=3)
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"no store at {admin_url}: {exc}")
+        live_stores.unreachable("store", admin_url, exc)
     name = f"t_fixes_{uuid.uuid4().hex[:12]}"
     admin.execute(f'CREATE DATABASE "{name}" TEMPLATE template0')
     return admin, name, _with_database(admin_url, name)

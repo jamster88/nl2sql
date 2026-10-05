@@ -181,6 +181,7 @@ file instead, for Docker secrets.
 | `LDAP_UPSTREAM_STARTTLS` | `false` | for an `ldap://` primary |
 | `LDAP_UPSTREAM_CACERT` | -- | the primary's CA, as a path inside the container (`/seed/...`) |
 | `LDAP_UPSTREAM_TLS_VERIFY` | `true` | |
+| `LDAP_UPSTREAM_ALLOW_CLEARTEXT` | `false` | a plain `ldap://` primary without StartTLS is refused at start unless this is `true`: every password passed through to it would cross in clear (6.1) |
 | `LDAP_UPSTREAM_PAGE_SIZE` | `500` | |
 | `LDAP_UPSTREAM_TIMEOUT` | `10` | seconds |
 | `LDAP_REPLICA_GROUPS` | the four, by name | `upstream=local;...` |

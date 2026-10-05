@@ -23,9 +23,8 @@ upstream_tls() {
             if [ ! -r "$4" ]; then
                 echo "nl2sql-mlflow-proxy: $1 is $2 but there is no" >&2
                 echo "  readable certificate at $3=$4 to verify it." >&2
-                echo "  The auth service presents the certificate the agent API generates," >&2
-                echo "  so this usually means the API has not started yet, or the apitls" >&2
-                echo "  volume is not mounted here." >&2
+                echo "  It is the stack's CA certificate, which the pki service writes beside this" >&2
+                echo "  page's own certificate -- so this usually means that volume is not mounted here." >&2
                 exit 1
             fi
             cat > "$6" <<TLSEOF
@@ -60,19 +59,20 @@ upstream_tls AUTH_UPSTREAM "${AUTH_UPSTREAM}" AUTH_CACERT "${AUTH_CACERT}" "${AU
 #    reaches MLflow -- which is why compose publishes it on this machine only
 #    unless told otherwise.
 signin_conf="${NGINX_SIGNIN_CONF:-/etc/nginx/nl2sql-mlflow-signin.conf}"
-case "${AUTH_ENABLED:-false}" in
-    true|1|yes|on)
+case "${AUTH_ENABLED:-true}" in
+    false|0|no|off)
+        echo "nl2sql-mlflow-proxy: sign-in is off (AUTH_ENABLED=false): anyone who can reach this port reaches MLflow." >&2
+        cat > "$signin_conf" <<TLSEOF
+# Written by 10-nl2sql-mlflow-proxy.envsh. AUTH_ENABLED is off: no sign-in,
+# so anyone who can reach this port reaches MLflow.
+TLSEOF
+        ;;
+    *)
         cat > "$signin_conf" <<TLSEOF
 # Written by 10-nl2sql-mlflow-proxy.envsh because AUTH_ENABLED is on.
 auth_request /_nl2sql_verify;
 error_page 401 = @signin;
 error_page 403 = @forbidden;
-TLSEOF
-        ;;
-    *)
-        cat > "$signin_conf" <<TLSEOF
-# Written by 10-nl2sql-mlflow-proxy.envsh. AUTH_ENABLED is off: no sign-in,
-# so anyone who can reach this port reaches MLflow.
 TLSEOF
         ;;
 esac
@@ -92,8 +92,8 @@ TLSEOF
     *)
         if [ ! -r "${MLFLOW_PROXY_TLS_CERT_FILE}" ] || [ ! -r "${MLFLOW_PROXY_TLS_KEY_FILE}" ]; then
             echo "nl2sql-mlflow-proxy: MLFLOW_PROXY_TLS_ENABLED is on but ${MLFLOW_PROXY_TLS_CERT_FILE} or" >&2
-            echo "  ${MLFLOW_PROXY_TLS_KEY_FILE} is not readable. They come from the apitls volume" >&2
-            echo "  the API writes on its first start; mount it, or set MLFLOW_PROXY_TLS_ENABLED=false" >&2
+            echo "  ${MLFLOW_PROXY_TLS_KEY_FILE} is not readable. They are this page's own, from the pki service" >&2
+            echo "  (its TLS volume, mounted here); mount it, or set MLFLOW_PROXY_TLS_ENABLED=false" >&2
             echo "  behind something that terminates TLS itself." >&2
             exit 1
         fi

@@ -161,6 +161,17 @@ class SettingsTest {
     }
 
     @Test
+    void several_fingerprints_are_each_normalised_and_kept_in_order() {
+        String api = "3f".repeat(32);
+        String auth = "a1".repeat(32);
+        String grouped = String.join(":", auth.split("(?<=\\G..)")).toUpperCase();
+
+        assertEquals(api + "," + auth, Settings.from(NOTHING, "--fingerprint", api + ", " + grouped).fingerprint());
+        assertThrows(IllegalArgumentException.class,
+                () -> Settings.from(NOTHING, "--fingerprint", api + ",AB:CD"));
+    }
+
+    @Test
     void an_unknown_flag_is_refused_with_the_usage() {
         IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
                 () -> Settings.from(NOTHING, "--verbose"));

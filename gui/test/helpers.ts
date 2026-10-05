@@ -47,16 +47,17 @@ export function makeAnswer(overrides: Partial<Answer> = {}): Answer {
       passed: true,
       unsupported_claims: [],
       drop_reasons: [],
-      redactions: [],
+      missing_assumptions: [],
       semantic_issue: null,
     },
     plan_cost: 125767.4,
     attempts: 1,
     trace: [
-      { node: "generate_sql", ms: 8123.4, model_calls: 1, detail: "3 tables" },
-      { node: "execute", ms: 412, model_calls: 0, detail: "" },
+      { node: "generate_sql", ms: 8123.4, model_calls: 1, detail: "3 tables", model: "", rung: "", route: "", hops: [] },
+      { node: "execute", ms: 412, model_calls: 0, detail: "", model: "", rung: "", route: "", hops: [] },
     ],
     retrieval_errors: {},
+    node_errors: {},
     ...overrides,
   };
 }

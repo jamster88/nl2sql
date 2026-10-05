@@ -247,9 +247,12 @@ def test_it_creates_the_agents_read_only_role_on_every_start(run_launch):
     """
     result = run_launch()
     [call] = result.calls_matching("reader=")
-    assert "compose exec -T postgres psql -U postgres" in call
+    assert "compose exec -T -e NL2SQL_READER_PASSWORD postgres psql -U postgres" in call
     assert "-d nl2sql_retail" in call
     assert "reader=nl2sql_reader" in call and "owner=nl2sql" in call
+    # The password by name, never as an argument (V6-55).
+    assert "password" not in call.lower().replace("nl2sql_reader_password", "")
+    assert result.called(f"env NL2SQL_READER_PASSWORD={result.env_file()['POSTGRES_READER_PASSWORD']}")
     assert "can read every table and write none" in result.output
 
 
@@ -482,13 +485,14 @@ def test_a_token_in_the_env_silences_that_warning(run_launch):
     assert "no API_TOKEN is set" not in result.output
 
 
-def test_the_closing_lines_show_how_to_trust_the_development_certificate(run_launch):
-    """Self-signed means every client refuses it until it is trusted, and
-    copying it out is the one step nobody guesses.
+def test_the_closing_lines_show_how_to_trust_the_development_ca(run_launch):
+    """Every server's certificate is issued by the stack's own CA, which no
+    client trusts until it is told to, and copying it out is the one step
+    nobody guesses.
     """
     output = run_launch("--api").output
-    assert "cp api:/etc/nl2sql/tls/server.crt" in output
-    assert 'curl --cacert ./nl2sql-api.crt "https://localhost:8443/v1/meta"' in output
+    assert "cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt" in output
+    assert 'curl --cacert ./nl2sql-ca.crt "https://localhost:8443/v1/meta"' in output
 
 
 def test_the_closing_lines_point_at_the_outside_client_and_the_contract(run_launch):
@@ -985,9 +989,9 @@ def test_it_builds_the_jar_for_this_machine_and_copies_the_certificate_out(run_l
 
     assert "Building it for mac-aarch64" in result.output
     assert result.calls_matching("run --rm desktop")
-    assert "Copied the API certificate" in result.output
-    assert result.calls_matching("cp api:/etc/nl2sql/tls/server.crt")
-    assert (result.workdir / "nl2sql-api.crt").is_file()
+    assert "Copied the stack's CA certificate" in result.output
+    assert result.calls_matching("cp api:/etc/nl2sql/tls/ca.crt")
+    assert (result.workdir / "nl2sql-ca.crt").is_file()
     assert (result.workdir / "desktop/target/nl2sql-desktop.jar").is_file()
 
 
@@ -1060,14 +1064,14 @@ def test_a_certificate_that_could_not_be_copied_names_the_fallback(run_launch):
     answer and it says so in the status bar for as long as it is on."""
     result = run_launch("--desktop", env={"FAKE_CERT_COPY_FAILS": "1"})
 
-    assert "could not copy the API's certificate" in result.output
+    assert "could not copy the stack's CA certificate" in result.output
     assert "--insecure is" in result.output
 
 
 def test_the_closing_notes_say_how_to_run_it(run_launch):
     result = run_launch("--desktop")
 
-    assert "java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt" in result.output
+    assert "java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt" in result.output
     assert "Java runtime of 21 or later" in result.output
     # The point of the whole thing: one queue, whichever client was used.
     assert "the same staging table, the same review" in result.output
@@ -1559,7 +1563,7 @@ def test_with_the_api_the_database_is_prepared_and_the_directory_and_auth_servic
     assert "NL2SQL_SERVICE_ROLES=nl2sql_reader,nl2sql_rolesync" in hba
     assert "NL2SQL_LDAP_BASE_DN=dc=nl2sql,dc=local" in hba
     assert "-u postgres" in hba and hba.rstrip().endswith("postgres sh -s")
-    # Then the services, after the API whose certificate the auth service presents.
+    # Then the sign-in services, after the API.
     assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d auth")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-ldap")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-auth")
@@ -1616,7 +1620,9 @@ def test_passwords_already_in_env_are_never_replaced(run_launch):
     result = run_launch("--api", env_file="IMAGE_NAME=x\n" + kept)
     assert [result.env_file()[key] for key in SIGNIN_SECRETS] == ["kept-0", "kept-1", "kept-2"]
     assert "sign-in password(s)" not in result.output
-    assert result.called("-v rolesync_password=kept-2")
+    # Handed to psql by name, never on its command line (V6-55).
+    assert result.called("env NL2SQL_ROLESYNC_PASSWORD=kept-2")
+    assert not result.called("kept-2 ") and not result.called("rolesync_password=")
 
 
 @pytest.mark.parametrize("how", ["flag", "env"])
@@ -1694,3 +1700,124 @@ def test_plain_pages_are_probed_and_named_over_http(run_launch):
     result = run_launch("--gui", env_file="IMAGE_NAME=x\nGUI_TLS_ENABLED=false\n")
     assert "GUI is healthy at http://localhost:8080" in result.output
     assert result.called("curl readyz -s -k -o /dev/null -w %{http_code} --max-time 10 http://localhost:8080/readyz")
+
+
+# ---------------------------------------------------------------------------
+# Store passwords (6.1): generated once, kept, and told to each store by name
+# ---------------------------------------------------------------------------
+
+STORE_SECRETS = (
+    "POSTGRES_PASSWORD", "POSTGRES_READER_PASSWORD", "CONTEXT_DB_PASSWORD", "VECTOR_DB_PASSWORD",
+    "SNIPPETS_DB_PASSWORD", "SNIPPETS_READER_PASSWORD", "FEEDBACK_DB_PASSWORD", "FEEDBACK_WRITER_PASSWORD",
+    "CORRECTIONS_DB_PASSWORD", "COMPLETIONS_DB_PASSWORD", "MLFLOW_DB_PASSWORD",
+)
+
+
+def test_every_store_password_a_dotenv_lacks_is_generated_before_anything_starts(run_launch):
+    """V6-08. A .env from before 6.1 has none, and compose would fall back to
+    the password every copy of this repository shares."""
+    result = run_launch()
+    values = result.env_file()
+    assert all(re.fullmatch(r"[0-9a-f]{48}", values[key]) for key in STORE_SECRETS)
+    assert len({values[key] for key in STORE_SECRETS}) == len(STORE_SECRETS)
+    assert "Generated 11 database password(s) into .env, which only you can read" in result.output
+    assert result.index_of("env NL2SQL_PASSWORD=") > result.index_of("compose up -d postgres")
+    assert oct((result.workdir / ".env").stat().st_mode & 0o777) == "0o600"
+
+
+def test_store_passwords_already_in_env_are_never_replaced(run_launch):
+    kept = "".join(f"{key}=kept-{index}\n" for index, key in enumerate(STORE_SECRETS))
+    result = run_launch(env_file="RAG_ENABLED=true\n" + kept)
+    assert [result.env_file()[key] for key in STORE_SECRETS] == [f"kept-{i}" for i in range(len(STORE_SECRETS))]
+    assert "database password(s)" not in result.output
+
+
+@pytest.mark.parametrize(
+    ("service", "role", "key"),
+    [
+        ("vectordb", "ragproc", "VECTOR_DB_PASSWORD"),
+        ("chunkdb", "ragproc", "CONTEXT_DB_PASSWORD"),
+        ("snippetsdb", "snippets", "SNIPPETS_DB_PASSWORD"),
+        ("snippetsdb", "snippets_reader", "SNIPPETS_READER_PASSWORD"),
+    ],
+)
+def test_each_retrieval_store_is_told_its_password_by_name(run_launch, service, role, key):
+    """A volume made from a published image, or before 6.1, keeps the old
+    password until the role is told the new one -- over the store's own
+    socket, the password in the environment and never an argument."""
+    kept = "".join(f"{name}={name.lower()}-value\n" for name in STORE_SECRETS)
+    result = run_launch(env_file="RAG_ENABLED=true\n" + kept)
+    [call] = [c for c in result.calls_matching(f"exec -T -e NL2SQL_PASSWORD {service} ") if f"role={role} " in c]
+    assert f"{key.lower()}-value" not in call
+    assert result.called(f"env NL2SQL_PASSWORD={key.lower()}-value")
+
+
+@pytest.mark.parametrize(
+    ("args", "service", "profiles"),
+    [
+        (("--feedback",), "feedbackdb", "--profile feedback"),
+        (("--review",), "correctionsdb", "--profile feedback --profile review"),
+        (("--review",), "completionsdb", "--profile feedback --profile review"),
+        (("--mlflow",), "mlflowdb", "--profile mlflow"),
+    ],
+)
+def test_each_other_store_is_told_its_password_once_it_is_up(run_launch, args, service, profiles):
+    result = run_launch(*args)
+    assert result.calls_matching(f"compose {profiles} exec -T -e NL2SQL_PASSWORD {service} psql")
+
+
+def test_mlflows_store_is_told_before_the_server_that_logs_in_with_it_starts(run_launch):
+    result = run_launch("--mlflow")
+    server = next(i for i, call in enumerate(result.calls) if call.endswith("--profile mlflow up -d mlflow"))
+    assert result.index_of("--profile mlflow up -d mlflowdb") < result.index_of("exec -T -e NL2SQL_PASSWORD mlflowdb") < server
+
+
+@pytest.mark.parametrize(
+    ("service", "said"),
+    [
+        ("vectordb", "could not set the vector store's password; the agent may not reach it."),
+        ("chunkdb", "could not set the context store's password; the agent may not reach it."),
+        ("snippetsdb", "could not set the snippet store's password; it may not load."),
+    ],
+)
+def test_a_store_that_refuses_its_password_is_said_and_the_start_goes_on(run_launch, service, said):
+    result = run_launch(env={"FAKE_SET_PASSWORD_FAILS": service})
+    assert result.returncode == 0
+    assert said in result.output
+
+
+def test_a_snippet_reader_that_refuses_its_password_is_said(run_launch):
+    """The reader's call is the second against snippetsdb; failing only it
+    needs the fake to tell the two apart by the role they name."""
+    result = run_launch(env={"FAKE_SET_PASSWORD_FAILS": "snippetsdb psql -X -q -U snippets -d nl2sql_snippets -v ON_ERROR_STOP=1 -v role=snippets_reader"})
+    assert "could not set the snippet reader's password; the agent may not read snippets." in result.output
+
+
+def test_a_store_that_refuses_its_password_fails_its_own_start(run_launch):
+    result = run_launch("--feedback", env={"FAKE_SET_PASSWORD_FAILS": "feedbackdb"})
+    assert "the staging database did not become healthy." in result.output
+
+
+# ---------------------------------------------------------------------------
+# Published beyond this machine (V6-06)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("bind", [None, "127.0.0.1", "localhost", "::1"])
+def test_stores_on_this_machine_say_nothing(run_launch, bind):
+    assert "DB_BIND_ADDRESS" not in run_launch(env={"DB_BIND_ADDRESS": bind} if bind else None).output
+
+
+def test_an_address_that_only_looks_like_this_machine_is_said(run_launch):
+    assert "published on 127.0.0.10 (DB_BIND_ADDRESS)" in run_launch(env={"DB_BIND_ADDRESS": "127.0.0.10"}).output
+
+
+def test_stores_published_wider_are_said_and_so_is_every_default_password(run_launch):
+    result = run_launch(
+        env={"DB_BIND_ADDRESS": "0.0.0.0"},
+        env_file="RAG_ENABLED=true\nPOSTGRES_PASSWORD=nl2sql\nFEEDBACK_DB_PASSWORD=feedback\n",
+    )
+    assert "the databases are published on 0.0.0.0 (DB_BIND_ADDRESS), not only on this machine." in result.output
+    assert "POSTGRES_PASSWORD is still the default every copy of this repository knows." in result.output
+    assert "FEEDBACK_DB_PASSWORD is still the default" in result.output
+    assert "VECTOR_DB_PASSWORD is still the default" not in result.output, "a generated one is not"

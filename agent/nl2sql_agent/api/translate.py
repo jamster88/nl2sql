@@ -10,6 +10,11 @@ The translation is deliberately total. Every list is a list, every missing
 value has a defined stand-in, and a state carrying a `Decimal` or a `date`
 out of Postgres is passed through `to_jsonable` first -- a GUI should never
 be the thing that discovers a cell type JSON cannot encode.
+
+It is also strict the other way. The nested payloads are built with
+`Model(**fields)` into models that forbid what they do not declare, so a
+field the pipeline's dataclass gains and the wire model does not is an
+error in the tests rather than a field silently left behind.
 """
 
 from __future__ import annotations
@@ -87,6 +92,7 @@ def answer_from_state(state: dict[str, Any] | None) -> Answer:
         attempts=int(state.get("attempts") or 0),
         trace=[TraceEntry(**t) for t in _dicts(state.get("trace"))],
         retrieval_errors=dict(state.get("retrieval_errors") or {}),
+        node_errors=dict(state.get("node_errors") or {}),
     )
 
 

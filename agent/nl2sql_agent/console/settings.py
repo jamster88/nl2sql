@@ -37,8 +37,9 @@ from ..config import _env, _env_bool, _env_int, _env_str
 DEFAULT_PORT = 8445
 
 #: The name the certificate must cover for the console interface's proxy to
-#: verify this process. Compose adds it to API_TLS_HOSTNAMES; named here so
-#: the banner can say which name is missing rather than "handshake failed".
+#: verify this process. Compose gives it to the pki service in
+#: CONSOLE_TLS_HOSTNAMES; named here so the banner can say which name is
+#: missing rather than "handshake failed".
 SERVICE_HOSTNAME = "nl2sql-console"
 
 #: Rows sent to the browser for one query. Enough to see past the agent's
@@ -75,8 +76,8 @@ class ConsoleSettings:
     root_path: str = ""
 
     # --- TLS -------------------------------------------------------------
-    # The certificate the agent API generates, presented rather than copied:
-    # this process never writes one. The same volume, mounted read-only.
+    # Its own certificate, issued by the stack's pki service and mounted
+    # read-only: this process never writes one.
     tls_enabled: bool = True
     tls_cert_file: str = DEFAULT_CERT_FILE
     tls_key_file: str = DEFAULT_KEY_FILE
@@ -94,8 +95,10 @@ class ConsoleSettings:
     # route needs, they must hold one of `allowed_roles`, and their query runs
     # as their own database role -- the role the agent runs their questions
     # as, which keeps this the database as the agent sees it, for them.
-    # CONSOLE_TOKEN still works, for scripts, as the agent's reader.
-    auth_enabled: bool = False
+    # CONSOLE_TOKEN still works, for scripts, as the agent's reader. On by
+    # default in the code as well as in compose: a console started any other
+    # way is not open by accident.
+    auth_enabled: bool = True
     auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
     auth_cookie_name: str = SESSION_COOKIE
     allowed_roles: tuple[str, ...] = (REVIEWERS, CURATORS)
@@ -122,7 +125,7 @@ class ConsoleSettings:
             tls_key_file=_env_str("CONSOLE_TLS_KEY_FILE", DEFAULT_KEY_FILE),
             token=_env("CONSOLE_TOKEN"),
             cors_origins=_env_tuple("CONSOLE_CORS_ORIGINS", ()),
-            auth_enabled=_env_bool("AUTH_ENABLED", False),
+            auth_enabled=_env_bool("AUTH_ENABLED", True),
             auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
             auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             allowed_roles=_env_tuple("CONSOLE_ALLOWED_ROLES", (REVIEWERS, CURATORS)),
@@ -157,8 +160,9 @@ class ConsoleSettings:
             )
         if not self.token and not self.auth_enabled:
             notes.append(
-                "No CONSOLE_TOKEN is set and sign-in is off (AUTH_ENABLED=false), so anyone "
-                "who can reach the port can run SQL as the agent's database role."
+                "This console is OPEN: sign-in is off (AUTH_ENABLED=false) and no "
+                "CONSOLE_TOKEN is set, so anyone who can reach the port can run SQL "
+                "as the agent's database role."
             )
         if self.token and "*" in self.cors_origins:
             notes.append(

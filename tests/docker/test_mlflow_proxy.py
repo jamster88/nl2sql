@@ -112,7 +112,9 @@ def test_with_sign_in_on_every_request_is_asked_about(tmp_path: Path, enabled):
 
 
 def test_with_sign_in_off_nothing_is_asked_and_it_says_so(tmp_path: Path):
-    assert _source(_env(tmp_path)).returncode == 0
+    result = _source(_env(tmp_path, AUTH_ENABLED="false"))
+    assert result.returncode == 0
+    assert "nl2sql-mlflow-proxy: sign-in is off (AUTH_ENABLED=false)" in result.stderr
     written = (tmp_path / "signin.conf").read_text()
     assert "auth_request" not in written and "anyone who can reach this port reaches MLflow" in written
     assert "inside\n# the stack's own network" in (tmp_path / "upstream-tls.conf").read_text()
@@ -131,8 +133,8 @@ def test_an_https_hop_with_no_certificate_refuses_to_start(tmp_path: Path):
     assert result.returncode != 0
     assert "nl2sql-mlflow-proxy: AUTH_UPSTREAM is https://nl2sql-auth:8446 but there is no" in result.stderr
     assert "readable certificate at AUTH_CACERT=" in result.stderr
-    assert "The auth service presents the certificate the agent API generates," in result.stderr
-    assert "so this usually means the API has not started yet, or the apitls" in result.stderr
+    assert "It is the stack's CA certificate, which the pki service writes beside this" in result.stderr
+    assert "page's own certificate -- so this usually means that volume is not mounted here." in result.stderr
     assert "volume is not mounted here." in result.stderr
 
 
@@ -150,8 +152,8 @@ def test_an_https_proxy_with_no_certificate_refuses_to_start(tmp_path: Path):
     result = _source(_env(tmp_path, MLFLOW_PROXY_TLS_ENABLED="true", MLFLOW_PROXY_TLS_CERT_FILE=str(tmp_path / "x")))
     assert result.returncode != 0
     assert "nl2sql-mlflow-proxy: MLFLOW_PROXY_TLS_ENABLED is on but" in result.stderr
-    assert "is not readable. They come from the apitls volume" in result.stderr
-    assert "the API writes on its first start; mount it, or set MLFLOW_PROXY_TLS_ENABLED=false" in result.stderr
+    assert "is not readable. They are this page's own, from the pki service" in result.stderr
+    assert "(its TLS volume, mounted here); mount it, or set MLFLOW_PROXY_TLS_ENABLED=false" in result.stderr
     assert "behind something that terminates TLS itself." in result.stderr
 
 

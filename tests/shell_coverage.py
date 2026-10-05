@@ -67,6 +67,9 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),
     # Writes sign-in's rules into pg_hba.conf; driven against a fake psql.
     "docker/ldap_hba.sh": ("tests/docker/test_ldap_hba_script.py",),
+    # The retail image's entrypoint (v1_2), against a fake stock entrypoint,
+    # openssl, psql and gosu.
+    "docker/entrypoint.sh": ("tests/docker/test_retail_entrypoint.py",),
     # The directory page's nginx start-up script; refuses beside a replica.
     "auth/gui/10-nl2sql-directory-config.envsh": ("tests/auth/test_directory_gui_project.py",),
     # MLflow's front door; writes the auth_request when sign-in is on.
@@ -76,7 +79,7 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
 #: Lines bash never attributes a line number to, so counting them as missed
 #: would mean a ceiling below 100% that no test could ever lift.
 _BLOCK_KEYWORDS = re.compile(
-    r"^(fi|done|esac|\}|\{|else|;;|\)\s*;;|do|then)\s*(;;)?$|^\}\s*[<>|]"
+    r"^(fi|done|esac|\}|\{|else|;;|\)\s*;;|do|then)\s*(;;)?$|^(\}|done)\s*[<>|]"
 )
 _FUNCTION_HEADER = re.compile(r"^(local\s+)?[\w_]+\(\)\s*\{")
 _BARE_CASE_LABEL = re.compile(r"^[^(]*\)\s*$")
@@ -209,8 +212,10 @@ def logical_commands(source: str) -> list[tuple[int, set[int], str]]:
         continued = bool(_CONTINUES.search(raw))
         # An unclosed `$(` continues a command however the lines inside it
         # end -- `events=$(curl ... | while read; do ... done)` is one
-        # command, and bash reports it at the `done)`.
-        depth = max(0, depth + literal.count("$(") - literal.count(")"))
+        # command, and bash reports it at the `done)`. So does an array
+        # assignment, `KEYS=(A B` on one line and `C)` on the next, which
+        # bash reports at one line of the several.
+        depth = max(0, depth + literal.count("$(") + literal.count("=(") - literal.count(")"))
 
         if not (continued or open_quote or open_single or depth) and start is not None:
             commands.append((start, set(span), lines[start - 1].strip()))

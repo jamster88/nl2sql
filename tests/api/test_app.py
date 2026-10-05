@@ -89,9 +89,9 @@ def test_readiness_repeats_the_configuration_warnings(make_client):
     """The place an operator looks when something is odd, so the "TLS is off
     and there is no token" facts belong there and not only in the log.
     """
-    client = make_client(api=ApiSettings(tls_enabled=False, token=None))
+    client = make_client(api=ApiSettings(auth_enabled=False, tls_enabled=False, token=None))
     warnings = " ".join(client.get("/readyz").json()["warnings"])
-    assert "clear text" in warnings and "No API_TOKEN" in warnings
+    assert "clear text" in warnings and "OPEN" in warnings and "no API_TOKEN" in warnings
 
 
 def test_a_reachable_model_and_an_unreachable_database_is_not_ready(make_client, fake_agent):
@@ -242,7 +242,7 @@ def test_meta_describes_the_certificate_being_presented(make_client, fake_agent,
 
     app = create_app(
         settings=Settings(),
-        api_settings=ApiSettings(token=None),
+        api_settings=ApiSettings(auth_enabled=False, token=None),
         agent_factory=lambda: fake_agent,
         certificate=info,
     )
@@ -312,7 +312,7 @@ def test_a_wait_that_runs_out_returns_the_unfinished_job_not_an_error(make_clien
 def test_the_wait_is_capped_by_the_server(make_client):
     """Otherwise any client can pin a connection open for as long as it likes."""
     gate = threading.Event()
-    api = ApiSettings(token=None, tls_enabled=False, max_wait_seconds=0.2)
+    api = ApiSettings(auth_enabled=False, token=None, tls_enabled=False, max_wait_seconds=0.2)
     client = make_client(make_runner(gate=gate), api=api)
     started = time.monotonic()
     client.post("/v1/questions", json={"question": "q"}, params={"wait": 600})
@@ -520,7 +520,7 @@ def test_deleting_an_unknown_job_is_a_404(client):
 
 @pytest.fixture
 def secured(make_client):
-    return make_client(api=ApiSettings(token="s3cret", tls_enabled=False, max_wait_seconds=10))
+    return make_client(api=ApiSettings(auth_enabled=False, token="s3cret", tls_enabled=False, max_wait_seconds=10))
 
 
 def test_without_a_token_nothing_under_v1_answers(secured):
@@ -631,7 +631,7 @@ def test_a_caller_chosen_principal_is_refused_by_default(client):
 
 
 def test_a_principal_reaches_the_pipeline_when_it_is_switched_on(make_client):
-    api = ApiSettings(token=None, tls_enabled=False, allow_principal=True, max_wait_seconds=10)
+    api = ApiSettings(auth_enabled=False, token=None, tls_enabled=False, allow_principal=True, max_wait_seconds=10)
     client = make_client(api=api)
     body = ask(client, principal="analyst")
     assert body["answer"] is not None
@@ -644,7 +644,7 @@ def test_a_principal_reaches_the_pipeline_when_it_is_switched_on(make_client):
 
 
 def test_a_browser_origin_is_allowed_when_it_is_listed(make_client):
-    api = ApiSettings(token=None, tls_enabled=False, cors_origins=("https://gui.example.com",))
+    api = ApiSettings(auth_enabled=False, token=None, tls_enabled=False, cors_origins=("https://gui.example.com",))
     client = make_client(api=api)
     response = client.get("/v1/meta", headers={"Origin": "https://gui.example.com"})
     assert response.headers["access-control-allow-origin"] == "https://gui.example.com"
@@ -652,7 +652,7 @@ def test_a_browser_origin_is_allowed_when_it_is_listed(make_client):
 
 
 def test_an_unlisted_origin_gets_no_permission(make_client):
-    api = ApiSettings(token=None, tls_enabled=False, cors_origins=("https://gui.example.com",))
+    api = ApiSettings(auth_enabled=False, token=None, tls_enabled=False, cors_origins=("https://gui.example.com",))
     client = make_client(api=api)
     response = client.get("/v1/meta", headers={"Origin": "https://evil.example.com"})
     assert "access-control-allow-origin" not in response.headers
@@ -661,24 +661,33 @@ def test_an_unlisted_origin_gets_no_permission(make_client):
 def test_no_origins_configured_means_no_browser_is_allowed(make_client):
     """An empty list is a server that only non-browser clients may call --
     the GUI's own proxy is same-origin and needs no permission."""
-    api = ApiSettings(token=None, tls_enabled=False, cors_origins=())
+    api = ApiSettings(auth_enabled=False, token=None, tls_enabled=False, cors_origins=())
     client = make_client(api=api)
     response = client.get("/v1/meta", headers={"Origin": "https://gui.example.com"})
     assert response.status_code == 200
     assert "access-control-allow-origin" not in response.headers
 
 
-def test_the_wildcard_default_does_not_claim_to_support_credentials(client):
+def test_by_default_no_other_origin_is_answered(client):
+    """V6-12. Every page of the stack reaches the API through its own nginx,
+    on its own origin; a browser on any other origin gets no CORS grant
+    unless one is configured by name."""
+    response = client.get("/v1/meta", headers={"Origin": "https://anything.example.com"})
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_a_wildcard_does_not_claim_to_support_credentials(make_client):
     """Browsers reject "*" plus credentials outright, so claiming both makes
     every request from a browser fail rather than some of them.
     """
+    client = make_client(api=ApiSettings(auth_enabled=False, token=None, tls_enabled=False, cors_origins=("*",)))
     response = client.get("/v1/meta", headers={"Origin": "https://anything.example.com"})
     assert response.headers["access-control-allow-origin"] == "*"
     assert "access-control-allow-credentials" not in response.headers
 
 
 def test_the_preflight_allows_what_a_gui_actually_sends(make_client):
-    api = ApiSettings(token=None, tls_enabled=False, cors_origins=("https://gui.example.com",))
+    api = ApiSettings(auth_enabled=False, token=None, tls_enabled=False, cors_origins=("https://gui.example.com",))
     client = make_client(api=api)
     response = client.options(
         "/v1/questions",
@@ -706,7 +715,7 @@ def test_the_docs_can_be_turned_off_without_taking_the_schema_with_them(make_cli
     """A generated client still needs /openapi.json even where a browsable
     page is not wanted.
     """
-    client = make_client(api=ApiSettings(token=None, tls_enabled=False, docs_enabled=False))
+    client = make_client(api=ApiSettings(auth_enabled=False, token=None, tls_enabled=False, docs_enabled=False))
     assert client.get("/docs").status_code == 404
     assert client.get("/openapi.json").status_code == 200
 
@@ -778,9 +787,31 @@ def test_a_question_asked_of_a_shutting_down_server_is_told_to_come_back(make_cl
     from nl2sql_agent.api.jobs import JobStore
 
     store = JobStore(make_runner())
-    client = make_client(api=ApiSettings(token=None, tls_enabled=False))
+    client = make_client(api=ApiSettings(auth_enabled=False, token=None, tls_enabled=False))
     client.app.state.jobs.shutdown()
     store.shutdown()
     response = client.post("/v1/questions", json={"question": "q"})
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "unavailable"
+
+
+def test_a_full_queue_is_a_429_with_a_time_to_come_back(make_client):
+    """V6-13: the client is told when to ask again, not left holding a job
+    the server cannot get to."""
+    import threading
+
+    from .conftest import make_runner
+
+    gate = threading.Event()
+    client = make_client(make_runner(gate=gate), max_queued=1)
+    try:
+        # Two run (the fixture's concurrency), one waits, the next is refused.
+        for _ in range(5):
+            response = client.post("/v1/questions", json={"question": "q"})
+            if response.status_code == 429:
+                break
+        assert response.status_code == 429
+        assert response.headers["retry-after"] == "60"
+        assert response.json()["error"]["code"] == "queue_full"
+    finally:
+        gate.set()

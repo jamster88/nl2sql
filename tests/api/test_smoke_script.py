@@ -80,6 +80,7 @@ def api(tmp_path: Path):
         **kwargs,
     ) -> Api:
         settings = ApiSettings(
+            auth_enabled=False,
             host="127.0.0.1",
             port=free_port(),
             tls_enabled=tls,

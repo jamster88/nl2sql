@@ -15,30 +15,24 @@ dropped afterwards. Nothing it can do reaches the real one.
 
 from __future__ import annotations
 
-import os
 import sys
 import uuid
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
+from tests import live_stores
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 RAG_DIR = REPO_ROOT / "rag"
 if str(RAG_DIR) not in sys.path:
     sys.path.insert(0, str(RAG_DIR))
 
-CHUNK_DB_URL = os.environ.get(
-    "TEST_CHUNK_DB_URL", "postgresql://ragproc:ragproc@localhost:5433/nl2sql_chunks"
-)
-VECTOR_DB_URL = os.environ.get(
-    "TEST_VECTOR_DB_URL", "postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors"
-)
+CHUNK_DB_URL = live_stores.url("chunks", variable="TEST_CHUNK_DB_URL", driver="postgresql")
+VECTOR_DB_URL = live_stores.url("vectors", variable="TEST_VECTOR_DB_URL", driver="postgresql")
 #: The snippet store, as its owner -- the compose service on its published
 #: port. Like the two above, tests only ever touch a throwaway database in it.
-SNIPPETS_DB_URL = os.environ.get(
-    "TEST_SNIPPETS_DB_URL", "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
-)
+SNIPPETS_DB_URL = live_stores.url("snippets", variable="TEST_SNIPPETS_DB_URL", driver="postgresql")
 
 
 def _with_database(url: str, name: str) -> str:
@@ -52,7 +46,7 @@ def _scratch_database(url: str, connect):
     try:
         admin = psycopg.connect(url, autocommit=True)
     except psycopg.Error as exc:
-        pytest.skip(f"no reachable database at {url}: {exc}")
+        live_stores.unreachable("database", url, exc)
 
     name = f"t_{uuid.uuid4().hex[:16]}"
     try:

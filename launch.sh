@@ -99,13 +99,13 @@ Usage: ./launch.sh [options]
       --mlflow     Also start MLflow, where every question the agent answers
                    is traced -- a span per agent and per model call -- and
                    verdicts are recorded on the traces they judge (implies
-                   --api: its front door presents the API's certificate)
+                   --api, which brings up the sign-in its front door asks)
       --curate     Also start the curation interface, where SQL snippets,
                    golden pairs, corrections and completions are written
                    directly -- each run against the retail database before
                    it is saved -- and the review service behind it (implies
                    --feedback)
-      --desktop    Also build the desktop client and copy the API's
+      --desktop    Also build the desktop client and copy the stack's CA
                    certificate out, so the client can run on this machine
       --load-golden
                    Load context_questions/translated_questions.md into the
@@ -136,17 +136,16 @@ while [[ $# -gt 0 ]]; do
         # The review interface is nothing without the service behind it, and
         # the service is nothing without the database in front of it.
         --review) WITH_REVIEW=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
-        # The console presents the certificate the API writes, so the API is
-        # what it cannot start without -- and what it is troubleshooting.
+        # The console checks sign-ins with the auth service, which starts with
+        # the API -- and the API is what it is troubleshooting.
         --console) WITH_CONSOLE=1; WITH_API=1; shift ;;
         # A question asked from a terminal is traced as well, so MLflow does
-        # not need the API to be useful -- but its front door presents the
-        # certificate the API writes, and checks sign-ins with the auth
-        # service, which starts with the API.
+        # not need the API to be useful -- but its front door checks sign-ins
+        # with the auth service, which starts with the API.
         --mlflow) WITH_MLFLOW=1; WITH_API=1; shift ;;
         # The review service is its backend, and that needs the staging
-        # database and the certificate the API writes -- what --review needs,
-        # without the review interface itself.
+        # database and sign-in -- what --review needs, without the review
+        # interface itself.
         --curate) WITH_CURATE=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
         # The desktop client talks to the API directly rather than through a
         # proxy of its own, so that is the one thing it cannot do without.
@@ -184,6 +183,68 @@ fi
 SERVICES=(postgres)
 [[ $WITH_RAG -eq 1 ]] && SERVICES+=(vectordb chunkdb snippetsdb)
 
+compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
+    local value="${!1:-}"
+    if [[ -z "$value" && -f .env ]]; then
+        value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
+    fi
+    printf '%s' "${value:-$2}"
+}
+
+# --- Passwords ---------------------------------------------------------------
+# Every store's password, and the roles' that read them, generated once and
+# never replaced (6.1): a .env written before there were any has none, and
+# compose would otherwise fall back to the password every copy of this
+# repository shares. Hex, so each sits in a URL as it is; 24 bytes from
+# /dev/urandom. A volume made before keeps its old password until the role
+# is told the new one -- the retail database's entrypoint does that itself,
+# and set_password below does it for the rest as each store comes up.
+secret() {
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+STORE_SECRETS=(POSTGRES_PASSWORD POSTGRES_READER_PASSWORD CONTEXT_DB_PASSWORD VECTOR_DB_PASSWORD
+    SNIPPETS_DB_PASSWORD SNIPPETS_READER_PASSWORD FEEDBACK_DB_PASSWORD FEEDBACK_WRITER_PASSWORD
+    CORRECTIONS_DB_PASSWORD COMPLETIONS_DB_PASSWORD MLFLOW_DB_PASSWORD)
+
+ensure_secrets() {  # ensure_secrets KEY... -- generate each one .env lacks; print how many
+    local key added=0
+    for key in "$@"; do
+        if [[ -z "$(compose_env "$key" "")" ]]; then
+            printf '%s=%s\n' "$key" "$(secret)" >> .env
+            added=$((added + 1))
+        fi
+    done
+    # Passwords, so the file is its owner's alone -- whoever wrote it.
+    chmod 600 .env
+    printf '%s' "$added"
+}
+
+# set_password SERVICE DATABASE LOGIN ROLE KEY [compose options...]
+#   ROLE's password, made what .env says KEY is. As LOGIN, over the
+#   container's own socket, where these stores trust their superuser; the
+#   password goes in through the environment and is read with \getenv, so it
+#   is on no command line. Nothing is done when there is no value, or no
+#   such role.
+set_password() {
+    local service="$1" database="$2" login="$3" role="$4" key="$5"
+    shift 5
+    local value
+    value="$(compose_env "$key" "")"
+    [[ -n "$value" ]] || return 0
+    NL2SQL_PASSWORD="$value" docker compose "$@" exec -T -e NL2SQL_PASSWORD "$service" \
+        psql -X -q -U "$login" -d "$database" -v ON_ERROR_STOP=1 -v role="$role" -f - >/dev/null <<'SQL'
+\getenv password NL2SQL_PASSWORD
+SELECT format('ALTER ROLE %I PASSWORD %L', :'role', :'password')
+WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
+SQL
+}
+
+generated=$(ensure_secrets "${STORE_SECRETS[@]}")
+if [[ "$generated" -gt 0 ]]; then
+    step "Generated $generated database password(s) into .env, which only you can read"
+fi
+
 # --- Start -----------------------------------------------------------------
 step "Starting ${#SERVICES[@]} service(s): ${SERVICES[*]}"
 if [[ $RESTART -eq 1 ]]; then
@@ -208,13 +269,6 @@ wait_healthy() {
 # that role keeps whatever roles it had, so the role is (re)created on every
 # start; docker/reader_role.sql is idempotent. Local connections inside the
 # container are trusted, which is why no superuser password is needed here.
-compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
-    local value="${!1:-}"
-    if [[ -z "$value" && -f .env ]]; then
-        value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
-    fi
-    printf '%s' "${value:-$2}"
-}
 
 ensure_extensions() {
     docker compose exec -T postgres psql -U postgres -q \
@@ -225,11 +279,11 @@ ensure_extensions() {
 }
 
 ensure_reader_role() {
-    docker compose exec -T postgres psql -U postgres -q \
+    NL2SQL_READER_PASSWORD="$(compose_env POSTGRES_READER_PASSWORD nl2sql_reader)" \
+    docker compose exec -T -e NL2SQL_READER_PASSWORD postgres psql -U postgres -q \
         -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
         -v ON_ERROR_STOP=1 \
         -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
-        -v reader_password="$(compose_env POSTGRES_READER_PASSWORD nl2sql_reader)" \
         -v owner="$(compose_env POSTGRES_USER nl2sql)" \
         -f - < docker/reader_role.sql >/dev/null
 }
@@ -244,6 +298,37 @@ if [[ $WITH_RAG -eq 1 ]]; then
     info "nl2sql-chunkdb is healthy"
     wait_healthy nl2sql-snippetsdb
     info "nl2sql-snippetsdb is healthy"
+fi
+
+# Published beyond this machine is a choice (DB_BIND_ADDRESS), and one worth
+# saying out loud: every store's port is then the network's, and a password
+# left at the value every copy of this repository shares is no password.
+db_bind=$(compose_env DB_BIND_ADDRESS 127.0.0.1)
+if [[ ! "$db_bind" =~ ^(127\.0\.0\.1|localhost|::1)$ ]]; then
+    warn "the databases are published on $db_bind (DB_BIND_ADDRESS), not only on this machine."
+    for default_pair in POSTGRES_PASSWORD=nl2sql POSTGRES_READER_PASSWORD=nl2sql_reader \
+        CONTEXT_DB_PASSWORD=ragproc VECTOR_DB_PASSWORD=ragproc SNIPPETS_DB_PASSWORD=snippets \
+        FEEDBACK_DB_PASSWORD=feedback CORRECTIONS_DB_PASSWORD=corrections \
+        COMPLETIONS_DB_PASSWORD=completions; do
+        if [[ "$(compose_env "${default_pair%%=*}" "")" == "${default_pair#*=}" ]]; then
+            warn "${default_pair%%=*} is still the default every copy of this repository knows."
+        fi
+    done
+fi
+
+if [[ $WITH_RAG -eq 1 ]]; then
+    set_password vectordb "$(compose_env VECTOR_DB_NAME nl2sql_vectors)" \
+        "$(compose_env VECTOR_DB_USER ragproc)" "$(compose_env VECTOR_DB_USER ragproc)" VECTOR_DB_PASSWORD ||
+        warn "could not set the vector store's password; the agent may not reach it."
+    set_password chunkdb "$(compose_env CONTEXT_DB_NAME nl2sql_chunks)" \
+        "$(compose_env CONTEXT_DB_USER ragproc)" "$(compose_env CONTEXT_DB_USER ragproc)" CONTEXT_DB_PASSWORD ||
+        warn "could not set the context store's password; the agent may not reach it."
+    set_password snippetsdb "$(compose_env SNIPPETS_DB_NAME nl2sql_snippets)" \
+        "$(compose_env SNIPPETS_DB_USER snippets)" "$(compose_env SNIPPETS_DB_USER snippets)" SNIPPETS_DB_PASSWORD ||
+        warn "could not set the snippet store's password; it may not load."
+    set_password snippetsdb "$(compose_env SNIPPETS_DB_NAME nl2sql_snippets)" \
+        "$(compose_env SNIPPETS_DB_USER snippets)" "$(compose_env SNIPPETS_READER_USER snippets_reader)" \
+        SNIPPETS_READER_PASSWORD || warn "could not set the snippet reader's password; the agent may not read snippets."
 fi
 
 step "Making sure the agent's read-only role exists"
@@ -284,33 +369,25 @@ fi
 # none, and a directory started without them refuses to. Generated here
 # rather than sending the user back to setup.sh, and never replaced: the
 # directory and the database keep the first ones they were given.
-signin_secret() {
-    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
-}
-
 ensure_signin_secrets() {
-    local key added=0
-    for key in LDAP_ADMIN_PASSWORD LDAP_SERVICE_PASSWORD AUTH_ROLESYNC_PASSWORD; do
-        if [[ -z "$(compose_env "$key" "")" ]]; then
-            printf '%s=%s\n' "$key" "$(signin_secret)" >> .env
-            added=$((added + 1))
-        fi
-    done
-    # Passwords, so the file is its owner's alone -- whoever wrote it.
-    chmod 600 .env
+    local added
+    added=$(ensure_secrets LDAP_ADMIN_PASSWORD LDAP_SERVICE_PASSWORD AUTH_ROLESYNC_PASSWORD)
     if [[ $added -gt 0 ]]; then
         info "generated $added sign-in password(s) into .env, which only you can read"
     fi
 }
 
+# The sync's password goes in through the environment and is read in SQL
+# with \getenv: on a psql command line it would be in `ps`, on this machine
+# and in the container, for as long as psql ran.
 ensure_auth_roles() {
-    docker compose exec -T postgres psql -U postgres -q \
+    NL2SQL_ROLESYNC_PASSWORD="$(compose_env AUTH_ROLESYNC_PASSWORD "")" \
+    docker compose exec -T -e NL2SQL_ROLESYNC_PASSWORD postgres psql -U postgres -q \
         -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
         -v ON_ERROR_STOP=1 \
         -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
         -v owner="$(compose_env POSTGRES_USER nl2sql)" \
         -v rolesync="$(compose_env AUTH_ROLESYNC_USER nl2sql_rolesync)" \
-        -v rolesync_password="$(compose_env AUTH_ROLESYNC_PASSWORD "")" \
         -f - < docker/auth_roles.sql >/dev/null
 }
 
@@ -719,7 +796,7 @@ await_health() {  # await_health CONTAINER
     return 1
 }
 
-# Every page is HTTPS with the API's certificate unless GUI_TLS_ENABLED says
+# Every page is HTTPS with its own certificate unless GUI_TLS_ENABLED says
 # otherwise -- which is for behind something that terminates TLS itself.
 case "$(compose_env GUI_TLS_ENABLED true)" in
     0|false|no|off|FALSE|NO|OFF) gui_scheme=http ;;
@@ -728,10 +805,11 @@ esac
 
 # --- The proxies, and the certificate they loaded at start ---------------
 # nginx reads `proxy_ssl_trusted_certificate` once, while it parses its
-# config. A certificate reissued after that -- which the API does when
-# API_TLS_HOSTNAMES grows to cover a service that did not exist before -- is
-# one the proxy has never seen, and every request through it then fails with
-# an upstream verification error while the page itself still loads fine.
+# config. Each proxy trusts the stack's CA (the pki service), so a service's
+# certificate reissued since is one it still verifies -- but a CA replaced
+# since, or a proxy from before 6.1 still trusting the API's old
+# certificate, is not, and every request through it then fails with an
+# upstream verification error while the page itself still loads fine.
 #
 # The container's own health check cannot see this: it asks for index.html,
 # which is served from disk. So the check is a request for a route the API
@@ -753,15 +831,15 @@ repair_proxy() {  # repair_proxy SERVICE CONTAINER PORT PROFILES...
     shift 3
     proxy_reaches_api "$port" && return 0
     info "$name cannot reach the API through its proxy -- restarting it to pick up"
-    info "the current certificate (the API reissues one when a service name is added)"
+    info "the stack's current CA certificate"
     docker compose "$@" restart "$name" >/dev/null 2>&1 || return 1
     await_health "$container" || return 1
     proxy_reaches_api "$port"
 }
 
 # --- Sign-in: the directory and the auth service ---------------------------
-# After the API, because the auth service presents the certificate the API
-# writes. Compose starts the directory first and waits for it. A standalone
+# Compose starts the directory first and waits for it; the auth service's
+# certificate is its own, from the pki service. A standalone
 # directory also gets its page, where nl2sql_admins add and edit people; a
 # replica's people are edited on its primary, so it has none.
 auth_port=$(compose_env AUTH_PORT 8446)
@@ -810,7 +888,7 @@ fi
 # so what Docker does for it is build it -- which keeps the promise the rest
 # of this script makes, that Docker is the only thing anyone has to install.
 DESKTOP_JAR="desktop/target/nl2sql-desktop.jar"
-DESKTOP_CERT="nl2sql-api.crt"
+DESKTOP_CERT="nl2sql-ca.crt"
 
 javafx_platform() {
     # OpenJFX publishes its native code under one of five classifiers, and
@@ -878,13 +956,13 @@ if [[ $WITH_DESKTOP -eq 1 ]]; then
 fi
 
 if [[ $WITH_DESKTOP -eq 1 ]]; then
-    # The client verifies the API's certificate rather than skipping the
-    # check, so it needs the certificate. It is the same file the API writes
-    # itself on first start, copied out of the volume it lives in.
-    if docker compose --profile api cp api:/etc/nl2sql/tls/server.crt "./$DESKTOP_CERT" >/dev/null 2>&1; then
-        info "Copied the API certificate to ./$DESKTOP_CERT"
+    # The client verifies the API and the auth service rather than skipping
+    # the check, so it needs what they are verified against: the stack's CA,
+    # which the pki service puts beside every server's own certificate.
+    if docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt "./$DESKTOP_CERT" >/dev/null 2>&1; then
+        info "Copied the stack's CA certificate to ./$DESKTOP_CERT"
     else
-        warn "could not copy the API's certificate out of the container."
+        warn "could not copy the stack's CA certificate out of the API's container."
         warn "Without it the client has nothing to verify against; --insecure is"
         warn "the fallback, and it says so in the status bar for as long as it is on."
     fi
@@ -940,7 +1018,10 @@ review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
 
 start_feedbackdb() {
     docker compose --profile feedback up -d feedbackdb >/dev/null 2>&1 || return 1
-    await_health nl2sql-feedbackdb
+    await_health nl2sql-feedbackdb || return 1
+    set_password feedbackdb "$(compose_env FEEDBACK_DB_NAME nl2sql_feedback)" \
+        "$(compose_env FEEDBACK_DB_USER feedback)" "$(compose_env FEEDBACK_DB_USER feedback)" \
+        FEEDBACK_DB_PASSWORD --profile feedback
 }
 
 # The two stores a reviewer's fixes go into: corrections of wrong answers
@@ -951,7 +1032,13 @@ start_fixstores() {
     docker compose --profile feedback --profile review up -d correctionsdb completionsdb \
         >/dev/null 2>&1 || return 1
     await_health nl2sql-correctionsdb || return 1
-    await_health nl2sql-completionsdb
+    await_health nl2sql-completionsdb || return 1
+    set_password correctionsdb "$(compose_env CORRECTIONS_DB_NAME nl2sql_corrections)" \
+        "$(compose_env CORRECTIONS_DB_USER corrections)" "$(compose_env CORRECTIONS_DB_USER corrections)" \
+        CORRECTIONS_DB_PASSWORD --profile feedback --profile review || return 1
+    set_password completionsdb "$(compose_env COMPLETIONS_DB_NAME nl2sql_completions)" \
+        "$(compose_env COMPLETIONS_DB_USER completions)" "$(compose_env COMPLETIONS_DB_USER completions)" \
+        COMPLETIONS_DB_PASSWORD --profile feedback --profile review
 }
 
 start_review() {
@@ -1050,10 +1137,8 @@ if [[ $WITH_CURATE -eq 1 ]]; then
 fi
 
 # --- The SQL console -------------------------------------------------------
-# The agent's own image started a third way, and a page in front of it. After
-# the API, because it presents the certificate the API writes -- and on the
-# first start after an upgrade that is a certificate the API has just
-# reissued, because API_TLS_HOSTNAMES has grown to name the console.
+# The agent's own image started a third way, and a page in front of it, with
+# a certificate of its own from the pki service.
 console_port=$(compose_env CONSOLE_PORT 8445)
 console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
 console_bind=$(compose_env CONSOLE_BIND_ADDRESS 127.0.0.1)
@@ -1120,7 +1205,13 @@ fi
 mlflow_port=$(compose_env MLFLOW_PORT 5001)
 mlflow_bind=$(compose_env MLFLOW_BIND_ADDRESS 127.0.0.1)
 
+# Its store first, and told the password .env holds before the server that
+# logs in with it starts: a volume made before 6.1 still has the old one.
 start_mlflow() {
+    docker compose --profile mlflow up -d mlflowdb >/dev/null 2>&1 || return 1
+    await_health nl2sql-mlflowdb || return 1
+    set_password mlflowdb "$(compose_env MLFLOW_DB_NAME mlflow)" "$(compose_env MLFLOW_DB_USER mlflow)" \
+        "$(compose_env MLFLOW_DB_USER mlflow)" MLFLOW_DB_PASSWORD --profile mlflow || return 1
     docker compose --profile mlflow up -d mlflow >/dev/null 2>&1 || return 1
     await_health nl2sql-mlflow
 }
@@ -1214,19 +1305,20 @@ EOF
 
 ==> The REST API is up. Point a GUI at it, or try it from here:
 
-    # the development certificate is self-signed, so copy it out and trust it
-    docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+    # every server's certificate is issued by the stack's development CA:
+    # copy the CA's out once and trust it, for the API and every page
+    docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
 
-    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/meta"
+    curl --cacert ./nl2sql-ca.crt "$api_scheme://localhost:$api_port/v1/meta"
 EOF
         if [[ $WITH_SIGNIN -eq 1 ]]; then
             cat <<EOF
 
     # sign in: the "token" in the answer is a session, sent as a bearer token
-    curl --cacert ./nl2sql-api.crt "$auth_scheme://localhost:$auth_port/auth/token" \\
+    curl --cacert ./nl2sql-ca.crt "$auth_scheme://localhost:$auth_port/auth/token" \\
          -H 'Content-Type: application/json' \\
          -d '{"username": "$(compose_env LDAP_ADMIN_USER admin)", "password": "..."}'
-    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
+    curl --cacert ./nl2sql-ca.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
          -H "Authorization: Bearer \$TOKEN" -H 'Content-Type: application/json' \\
          -d '{"question": "How many stores are there?"}'
 
@@ -1236,7 +1328,7 @@ EOF
 EOF
         else
             cat <<EOF
-    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
+    curl --cacert ./nl2sql-ca.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
          -H 'Content-Type: application/json' \\
          -d '{"question": "How many stores are there?"}'
 

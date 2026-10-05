@@ -9,14 +9,14 @@ several image versions.
 
 Opt-in (`pytest --run-docker`). Connects as the reader at POSTGRES_URL and,
 for the one test that needs to create a table, as the owner at
-POSTGRES_OWNER_URL (defaults: the compose postgres on localhost:5432 with the
-credentials from docker/Dockerfile). Skips rather than fails when nothing is
-listening.
+POSTGRES_OWNER_URL (defaults: the compose postgres on its published port, with
+the passwords `.env` gives the stack -- tests/live_stores.py). Skips rather
+than fails when nothing is listening; fails when something is and refuses the
+login.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
@@ -24,15 +24,12 @@ import sqlalchemy
 from nl2sql_agent.database import Database
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
-POSTGRES_OWNER_URL = os.environ.get(
-    "POSTGRES_OWNER_URL", "postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail"
-)
+POSTGRES_URL = live_stores.url("retail", variable="POSTGRES_URL")
+POSTGRES_OWNER_URL = live_stores.url("retail_owner", variable="POSTGRES_OWNER_URL")
 
 READER = make_url(POSTGRES_URL).username
 OWNER = make_url(POSTGRES_OWNER_URL).username
@@ -47,7 +44,7 @@ def _engine_or_skip(url: str) -> sqlalchemy.Engine:
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {url}: {exc}")
+        live_stores.unreachable("Postgres", url, exc)
     return engine
 
 

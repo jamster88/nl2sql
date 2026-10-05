@@ -9,15 +9,29 @@ services:
         GEN_ARGS: ${GEN_ARGS:-}
         DB_NAME: ${POSTGRES_DB:-nl2sql_retail}
         DB_USER: ${POSTGRES_USER:-nl2sql}
-        DB_PASSWORD: ${POSTGRES_PASSWORD:-nl2sql}
         DB_READER: ${POSTGRES_READER_USER:-nl2sql_reader}
-        DB_READER_PASSWORD: ${POSTGRES_READER_PASSWORD:-nl2sql_reader}
     image: ${IMAGE_NAME:-nl2sql-retail-postgres}:${IMAGE_TAG:-latest}
     container_name: nl2sql-postgres
     restart: unless-stopped
     shm_size: 256mb
     stop_grace_period: 1m
     environment:
+      # The image bakes in no password (v1_2): its entrypoint sets these on
+      # every start, from .env, where setup.sh generates them -- the owner's
+      # and the agent reader's. The defaults are for a compose run with no
+      # .env, and are what the agent's URL below assumes; launch.sh warns
+      # when a store with one is published beyond this machine. The
+      # superuser has no password at all and is reached only with
+      # `docker compose exec`.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nl2sql}
+      POSTGRES_READER_USER: ${POSTGRES_READER_USER:-nl2sql_reader}
+      POSTGRES_READER_PASSWORD: ${POSTGRES_READER_PASSWORD:-nl2sql_reader}
+      # Its own certificate, written on first start into pgtls for these
+      # names; every connection over the network must use TLS unless
+      # POSTGRES_REQUIRE_TLS=false. Add this machine's name to reach it with
+      # sslmode=verify-full from elsewhere.
+      POSTGRES_TLS_HOSTNAMES: ${POSTGRES_TLS_HOSTNAMES:-}
+      POSTGRES_REQUIRE_TLS: ${POSTGRES_REQUIRE_TLS:-}
       # Sign-in: pg_hba's `ldap` method checks a person's password by binding
       # to the directory over StartTLS, and libldap verifies the directory's
       # certificate against this file -- the one the directory writes into
@@ -26,13 +40,19 @@ services:
       # never read.
       LDAPTLS_CACERT: /etc/nl2sql/ldap-tls/ldap.crt
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      # This machine's unless DB_BIND_ADDRESS says otherwise, like every
+      # store here: a database port is for the services on this network and
+      # the person at this machine, and opening it wider earns a warning.
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       # Matches PGDATA in docker/Dockerfile. The image already ships a
       # populated cluster at this path; Docker seeds the named volume from it
       # the first time the volume is created, and the volume keeps any later
       # writes across stop/start/recreate.
       - pgdata:/var/lib/pgdata
+      # Its certificate and key, written here on first start and kept. The
+      # auth service mounts the certificate to verify it (verify-full).
+      - pgtls:/etc/nl2sql/pg-tls
       - ldaptls:/etc/nl2sql/ldap-tls:ro
     healthcheck:
       test:
@@ -52,7 +72,7 @@ services:
     restart: unless-stopped
     stop_grace_period: 1m
     ports:
-      - "${VECTOR_DB_PORT:-5434}:5432"
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${VECTOR_DB_PORT:-5434}:5432"
     volumes:
       - vectordata:/var/lib/pgdata
     healthcheck:
@@ -78,7 +98,7 @@ services:
       POSTGRES_PASSWORD: ${CONTEXT_DB_PASSWORD:-ragproc}
       POSTGRES_DB: ${CONTEXT_DB_NAME:-nl2sql_chunks}
     ports:
-      - "${CONTEXT_DB_PORT:-5433}:5432"
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${CONTEXT_DB_PORT:-5433}:5432"
     volumes:
       - chunkdata:/var/lib/pgdata
     healthcheck:
@@ -116,7 +136,7 @@ services:
       POSTGRES_DB: ${FEEDBACK_DB_NAME:-nl2sql_feedback}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${FEEDBACK_DB_PORT:-5435}:5432"
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${FEEDBACK_DB_PORT:-5435}:5432"
     volumes:
       - feedbackdata:/var/lib/postgresql/data
     healthcheck:
@@ -151,7 +171,7 @@ services:
       POSTGRES_DB: ${CORRECTIONS_DB_NAME:-nl2sql_corrections}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${CORRECTIONS_DB_PORT:-5436}:5432"
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${CORRECTIONS_DB_PORT:-5436}:5432"
     volumes:
       - correctionsdata:/var/lib/postgresql/data
     healthcheck:
@@ -181,7 +201,7 @@ services:
       POSTGRES_DB: ${COMPLETIONS_DB_NAME:-nl2sql_completions}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${COMPLETIONS_DB_PORT:-5437}:5432"
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${COMPLETIONS_DB_PORT:-5437}:5432"
     volumes:
       - completionsdata:/var/lib/postgresql/data
     healthcheck:
@@ -215,7 +235,7 @@ services:
       POSTGRES_DB: ${SNIPPETS_DB_NAME:-nl2sql_snippets}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${SNIPPETS_DB_PORT:-5438}:5432"
+      - "${DB_BIND_ADDRESS:-127.0.0.1}:${SNIPPETS_DB_PORT:-5438}:5432"
     volumes:
       - snippetsdata:/var/lib/postgresql/data
     healthcheck:
@@ -226,6 +246,54 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # The stack's TLS identities: one development CA, and a key and
+  # certificate of its own for every server here, each in a volume only that
+  # server mounts (nl2sql_identity/pki.py). A one-shot, run before anything
+  # that serves TLS; each start keeps what is still good and reissues what
+  # is not. A client trusts the CA once -- launch.sh copies it out as
+  # ./nl2sql-ca.crt -- and every page, the API and the sign-in verify.
+  #
+  # The agent's image, because it carries the package; the CA's own key is
+  # in pkica, which nothing else mounts. TLS_EXTRA_HOSTNAMES adds names to
+  # every certificate: this machine's, for a browser elsewhere.
+  pki:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
+    container_name: nl2sql-pki
+    entrypoint: []
+    command:
+      - python
+      - -m
+      - nl2sql_identity.pki
+      - --ca-dir=/etc/nl2sql/pki
+      - --trust-dir=/etc/nl2sql/identities/trust
+      - --also=${TLS_EXTRA_HOSTNAMES:-}
+      - api=/etc/nl2sql/identities/api=${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,127.0.0.1,::1}
+      - review=/etc/nl2sql/identities/review=${REVIEW_TLS_HOSTNAMES:-localhost,nl2sql-review,review,127.0.0.1,::1}
+      - console=/etc/nl2sql/identities/console=${CONSOLE_TLS_HOSTNAMES:-localhost,nl2sql-console,console,127.0.0.1,::1}
+      - auth=/etc/nl2sql/identities/auth=${AUTH_TLS_HOSTNAMES:-localhost,nl2sql-auth,auth,127.0.0.1,::1}
+      - gui=/etc/nl2sql/identities/gui=localhost,nl2sql-gui,127.0.0.1,::1
+      - reviewgui=/etc/nl2sql/identities/reviewgui=localhost,nl2sql-review-gui,127.0.0.1,::1
+      - curategui=/etc/nl2sql/identities/curategui=localhost,nl2sql-curate-gui,127.0.0.1,::1
+      - consolegui=/etc/nl2sql/identities/consolegui=localhost,nl2sql-console-gui,127.0.0.1,::1
+      - directorygui=/etc/nl2sql/identities/directorygui=localhost,nl2sql-directory-gui,127.0.0.1,::1
+      - mlflowproxy=/etc/nl2sql/identities/mlflowproxy=localhost,nl2sql-mlflow-proxy,127.0.0.1,::1
+    volumes:
+      - pkica:/etc/nl2sql/pki
+      - tlstrust:/etc/nl2sql/identities/trust
+      - apitls:/etc/nl2sql/identities/api
+      - reviewtls:/etc/nl2sql/identities/review
+      - consoletls:/etc/nl2sql/identities/console
+      - authtls:/etc/nl2sql/identities/auth
+      - guitls:/etc/nl2sql/identities/gui
+      - reviewguitls:/etc/nl2sql/identities/reviewgui
+      - curateguitls:/etc/nl2sql/identities/curategui
+      - consoleguitls:/etc/nl2sql/identities/consolegui
+      - directoryguitls:/etc/nl2sql/identities/directorygui
+      - mlflowproxytls:/etc/nl2sql/identities/mlflowproxy
 
   agent:
     build:
@@ -380,6 +448,8 @@ services:
     command: ["python", "-m", "nl2sql_agent.api"]
     entrypoint: []
     depends_on:
+      pki:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       vectordb:
@@ -394,21 +464,21 @@ services:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8443}
       API_ROOT_PATH: ${API_ROOT_PATH:-}
-      # TLS is on by default and the certificate is written on first start
-      # into the volume below. Set API_TLS_ALLOW_SELF_SIGNED=false once a
-      # real certificate is mounted: the server then refuses to fall back
-      # to the development one instead of quietly serving it.
+      # TLS is on by default, with the API's own certificate: the pki service
+      # issues it from the stack's development CA into the volume below
+      # before the API starts, so nothing is generated here. Set
+      # API_TLS_ALLOW_SELF_SIGNED=false once a real certificate is mounted:
+      # the server then refuses a development one instead of quietly
+      # serving it.
       API_TLS_ENABLED: ${API_TLS_ENABLED:-true}
       API_TLS_CERT_FILE: ${API_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       API_TLS_KEY_FILE: ${API_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
-      API_TLS_GENERATE: ${API_TLS_GENERATE:-true}
+      API_TLS_GENERATE: ${API_TLS_GENERATE:-false}
       API_TLS_ALLOW_SELF_SIGNED: ${API_TLS_ALLOW_SELF_SIGNED:-true}
-      # nl2sql-review, nl2sql-console and nl2sql-auth are in this list because
-      # the review service, the SQL console and the auth service present this
-      # same certificate rather than generating one each, and the nginx in
-      # front of each verifies the name it connects to. A name added here is picked up on the API's next
-      # start: it reissues a development certificate that does not cover it.
-      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,nl2sql-review,review,nl2sql-console,console,nl2sql-auth,auth,127.0.0.1,::1}
+      # The names the API's certificate covers; the pki service reads the
+      # same variable. The API's own names only: since 6.1 every other
+      # service has a certificate of its own.
+      API_TLS_HOSTNAMES: ${API_TLS_HOSTNAMES:-localhost,nl2sql-api,api,127.0.0.1,::1}
       API_TLS_DAYS: ${API_TLS_DAYS:-}
       # --- who may call ----------------------------------------------
       # Sign-in: on, a person signs in through the auth service and their
@@ -425,6 +495,9 @@ services:
       API_MAX_CONCURRENCY: ${API_MAX_CONCURRENCY:-}
       API_JOB_TTL_SECONDS: ${API_JOB_TTL_SECONDS:-}
       API_MAX_JOBS: ${API_MAX_JOBS:-}
+      API_MAX_QUEUED: ${API_MAX_QUEUED:-}
+      API_MAX_PER_PERSON: ${API_MAX_PER_PERSON:-}
+      API_QUEUE_TTL_SECONDS: ${API_QUEUE_TTL_SECONDS:-}
       API_MAX_WAIT_SECONDS: ${API_MAX_WAIT_SECONDS:-}
       API_EVENT_STREAM_TIMEOUT_SECONDS: ${API_EVENT_STREAM_TIMEOUT_SECONDS:-}
       API_KEEPALIVE_SECONDS: ${API_KEEPALIVE_SECONDS:-}
@@ -442,7 +515,9 @@ services:
     ports:
       - "${API_PORT:-8443}:${API_PORT:-8443}"
     volumes:
-      - apitls:/etc/nl2sql/tls
+      # Its own key and certificate, and the CA's certificate beside them.
+      # Read-only: the pki service writes them, and nothing else may.
+      - apitls:/etc/nl2sql/tls:ro
       - authkeys:/etc/nl2sql/auth:ro
       - ./models/catalog.json:/app/models/catalog.json:ro
     healthcheck:
@@ -483,16 +558,19 @@ services:
     container_name: nl2sql-gui
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
     environment:
       GUI_PORT: ${GUI_PORT:-8080}
       # nl2sql-api rather than api: both resolve on this network, but the
-      # API's generated certificate is issued for that name, and
-      # proxy_ssl_name below has to match something it covers.
-      API_UPSTREAM: ${GUI_API_UPSTREAM:-https://nl2sql-api:8443}
+      # API's certificate is issued for that name, and proxy_ssl_name below
+      # has to match something it covers. Verified against the stack's CA,
+      # which the pki service puts beside this page's own certificate.
+      API_UPSTREAM: ${GUI_API_UPSTREAM:-https://nl2sql-api:${API_PORT:-8443}}
       API_SSL_NAME: ${GUI_API_SSL_NAME:-nl2sql-api}
-      API_CACERT: ${GUI_API_CACERT:-/etc/nl2sql/tls/server.crt}
+      API_CACERT: ${GUI_API_CACERT:-/etc/nl2sql/tls/ca.crt}
       # Longer than a question takes, and longer than API_MAX_WAIT_SECONDS
       # can hold a connection, or the proxy cuts the answer off.
       API_READ_TIMEOUT: ${GUI_API_READ_TIMEOUT:-600s}
@@ -506,10 +584,10 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       # Where the page's sign-in form posts: the auth service, verified like
       # the upstream above.
-      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}
       AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
-      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
-      # HTTPS with the API's certificate, so a password typed into the
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/ca.crt}
+      # HTTPS with this page's own certificate, so a password typed into the
       # sign-in form is never sent in clear. Off only behind something that
       # terminates TLS itself; GUI_TLS_ENABLED switches every interface.
       GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
@@ -518,10 +596,9 @@ services:
     ports:
       - "${GUI_PORT:-8080}:${GUI_PORT:-8080}"
     volumes:
-      # Read-only, and only the certificate is read: the proxy verifies the
-      # API rather than skipping verification, which is the difference
-      # between TLS and a TLS-shaped URL.
-      - apitls:/etc/nl2sql/tls:ro
+      # This page's own key and certificate, and the CA it verifies the API
+      # and the auth service with. No other service's key is in here.
+      - guitls:/etc/nl2sql/tls:ro
     profiles: ["gui"]
 
   # The review service: the process that can rewrite the golden question set.
@@ -540,6 +617,8 @@ services:
     container_name: nl2sql-review
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       feedbackdb:
         condition: service_healthy
       chunkdb:
@@ -561,14 +640,14 @@ services:
       REVIEW_HOST: ${REVIEW_HOST:-0.0.0.0}
       REVIEW_PORT: ${REVIEW_PORT:-8444}
       REVIEW_ROOT_PATH: ${REVIEW_ROOT_PATH:-}
-      # Presents the certificate the API generates rather than one of its
-      # own; API_TLS_HOSTNAMES above covers nl2sql-review for that reason.
+      # Its own certificate, from the pki service (REVIEW_TLS_HOSTNAMES).
       REVIEW_TLS_ENABLED: ${REVIEW_TLS_ENABLED:-true}
       REVIEW_TLS_CERT_FILE: ${REVIEW_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       REVIEW_TLS_KEY_FILE: ${REVIEW_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
-      # Not optional in the way API_TOKEN is. A caller here can edit the
-      # golden question set; the readiness endpoint says so loudly when this
-      # is unset.
+      # A token for scripts. With sign-in off it is the only control on a
+      # service that can edit the golden question set, and the readiness
+      # endpoint says so loudly when it is unset; with sign-in on (the
+      # default) a person's session is what every route needs.
       REVIEW_TOKEN: ${REVIEW_TOKEN:-}
       REVIEW_CORS_ORIGINS: ${REVIEW_CORS_ORIGINS:-}
       # Sign-in, as for the API: reviewing is nl2sql_reviewers' and writing
@@ -581,17 +660,17 @@ services:
       REVIEW_CURATOR_ROLES: ${REVIEW_CURATOR_ROLES:-}
       # As the owner: this service creates the schema and re-fences the
       # INSERT-only role the API connects as, on every start.
-      FEEDBACK_DB_URL: ${REVIEW_FEEDBACK_DB_URL:-postgresql://feedback:feedback@nl2sql-feedbackdb:5432/nl2sql_feedback}
+      FEEDBACK_DB_URL: ${REVIEW_FEEDBACK_DB_URL:-postgresql://${FEEDBACK_DB_USER:-feedback}:${FEEDBACK_DB_PASSWORD:-feedback}@nl2sql-feedbackdb:5432/${FEEDBACK_DB_NAME:-nl2sql_feedback}}
       FEEDBACK_WRITER_PASSWORD: ${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}
       REVIEW_MANAGE_SCHEMA: ${REVIEW_MANAGE_SCHEMA:-}
       # --- fixing wrong and incomplete answers ----------------------
       # Validation runs the reviewer's SQL as the read-only role the agent
       # uses, never as the owner: it is SQL a person typed.
-      RETAIL_DB_URL: ${REVIEW_RETAIL_DB_URL:-postgresql://nl2sql_reader:nl2sql_reader@nl2sql-postgres:5432/nl2sql_retail}
+      RETAIL_DB_URL: ${REVIEW_RETAIL_DB_URL:-postgresql://${POSTGRES_READER_USER:-nl2sql_reader}:${POSTGRES_READER_PASSWORD:-nl2sql_reader}@nl2sql-postgres:5432/${POSTGRES_DB:-nl2sql_retail}}
       REVIEW_VALIDATE_TIMEOUT_MS: ${REVIEW_VALIDATE_TIMEOUT_MS:-}
       REVIEW_VALIDATE_MAX_ROWS: ${REVIEW_VALIDATE_MAX_ROWS:-}
-      CORRECTIONS_DB_URL: ${REVIEW_CORRECTIONS_DB_URL:-postgresql://corrections:corrections@nl2sql-correctionsdb:5432/nl2sql_corrections}
-      COMPLETIONS_DB_URL: ${REVIEW_COMPLETIONS_DB_URL:-postgresql://completions:completions@nl2sql-completionsdb:5432/nl2sql_completions}
+      CORRECTIONS_DB_URL: ${REVIEW_CORRECTIONS_DB_URL:-postgresql://${CORRECTIONS_DB_USER:-corrections}:${CORRECTIONS_DB_PASSWORD:-corrections}@nl2sql-correctionsdb:5432/${CORRECTIONS_DB_NAME:-nl2sql_corrections}}
+      COMPLETIONS_DB_URL: ${REVIEW_COMPLETIONS_DB_URL:-postgresql://${COMPLETIONS_DB_USER:-completions}:${COMPLETIONS_DB_PASSWORD:-completions}@nl2sql-completionsdb:5432/${COMPLETIONS_DB_NAME:-nl2sql_completions}}
       REVIEW_EMBED_FIXES: ${REVIEW_EMBED_FIXES:-}
       # --- promotion -------------------------------------------------
       REVIEW_DOCUMENT: ${REVIEW_DOCUMENT:-/app/context_questions/translated_questions.md}
@@ -599,8 +678,8 @@ services:
       REVIEW_RELOAD_CONTEXT: ${REVIEW_RELOAD_CONTEXT:-}
       REVIEW_RELOAD_VECTORS: ${REVIEW_RELOAD_VECTORS:-}
       REVIEW_RELOAD_TIMEOUT_SECONDS: ${REVIEW_RELOAD_TIMEOUT_SECONDS:-}
-      CHUNK_DB_URL: ${REVIEW_CHUNK_DB_URL:-postgresql://ragproc:ragproc@nl2sql-chunkdb:5432/nl2sql_chunks}
-      VECTOR_DB_URL: ${REVIEW_VECTOR_DB_URL:-postgresql://ragproc:ragproc@nl2sql-vectordb:5432/nl2sql_vectors}
+      CHUNK_DB_URL: ${REVIEW_CHUNK_DB_URL:-postgresql://${CONTEXT_DB_USER:-ragproc}:${CONTEXT_DB_PASSWORD:-ragproc}@nl2sql-chunkdb:5432/${CONTEXT_DB_NAME:-nl2sql_chunks}}
+      VECTOR_DB_URL: ${REVIEW_VECTOR_DB_URL:-postgresql://${VECTOR_DB_USER:-ragproc}:${VECTOR_DB_PASSWORD:-ragproc}@nl2sql-vectordb:5432/${VECTOR_DB_NAME:-nl2sql_vectors}}
       # --- SQL snippets (5.6) -----------------------------------------
       # Written into their document -- bind-mounted with the golden one,
       # below -- then loaded into the snippet store as its owner. The loader
@@ -622,8 +701,8 @@ services:
     ports:
       - "${REVIEW_PORT:-8444}:${REVIEW_PORT:-8444}"
     volumes:
-      # Read-only: the certificate the API wrote, which this service presents.
-      - apitls:/etc/nl2sql/tls:ro
+      # Read-only: its own key and certificate, from the pki service.
+      - reviewtls:/etc/nl2sql/tls:ro
       # Read-only: the auth service's public key, which sessions are checked with.
       - authkeys:/etc/nl2sql/auth:ro
       # The golden question document, bind-mounted from the working tree.
@@ -666,6 +745,8 @@ services:
     container_name: nl2sql-review-gui
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       review:
         condition: service_healthy
     environment:
@@ -673,9 +754,9 @@ services:
       # nl2sql-review rather than review: both resolve on this network, but
       # the certificate is issued for that name and proxy_ssl_name has to
       # match something it covers.
-      REVIEW_UPSTREAM: ${REVIEW_GUI_UPSTREAM:-https://nl2sql-review:8444}
+      REVIEW_UPSTREAM: ${REVIEW_GUI_UPSTREAM:-https://nl2sql-review:${REVIEW_PORT:-8444}}
       REVIEW_SSL_NAME: ${REVIEW_GUI_SSL_NAME:-nl2sql-review}
-      REVIEW_CACERT: ${REVIEW_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      REVIEW_CACERT: ${REVIEW_GUI_CACERT:-/etc/nl2sql/tls/ca.crt}
       # Longer than a promotion takes: it runs both RAG loaders and re-embeds.
       REVIEW_READ_TIMEOUT: ${REVIEW_GUI_READ_TIMEOUT:-900s}
       REVIEW_GUI_RESOLVER: ${REVIEW_GUI_RESOLVER:-127.0.0.11}
@@ -685,16 +766,16 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       # Where the page's sign-in form posts: the auth service, verified like
       # the upstream above.
-      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}
       AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
-      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/ca.crt}
       REVIEW_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
       REVIEW_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       REVIEW_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${REVIEW_GUI_PORT:-8081}:${REVIEW_GUI_PORT:-8081}"
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      - reviewguitls:/etc/nl2sql/tls:ro
     profiles: ["reviewgui"]
 
   # The curation interface: a fourth React/TypeScript single page, for
@@ -714,15 +795,17 @@ services:
     container_name: nl2sql-curate-gui
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       review:
         condition: service_healthy
     environment:
       CURATE_GUI_PORT: ${CURATE_GUI_PORT:-8083}
       # nl2sql-review rather than review: the certificate is issued for that
       # name and proxy_ssl_name has to match something it covers.
-      CURATE_UPSTREAM: ${CURATE_GUI_UPSTREAM:-https://nl2sql-review:8444}
+      CURATE_UPSTREAM: ${CURATE_GUI_UPSTREAM:-https://nl2sql-review:${REVIEW_PORT:-8444}}
       CURATE_SSL_NAME: ${CURATE_GUI_SSL_NAME:-nl2sql-review}
-      CURATE_CACERT: ${CURATE_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      CURATE_CACERT: ${CURATE_GUI_CACERT:-/etc/nl2sql/tls/ca.crt}
       # Longer than a save takes: a golden pair runs both RAG loaders.
       CURATE_READ_TIMEOUT: ${CURATE_GUI_READ_TIMEOUT:-900s}
       CURATE_GUI_RESOLVER: ${CURATE_GUI_RESOLVER:-127.0.0.11}
@@ -732,16 +815,16 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       # Where the page's sign-in form posts: the auth service, verified like
       # the upstream above.
-      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}
       AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
-      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/ca.crt}
       CURATE_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
       CURATE_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       CURATE_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${CURATE_GUI_PORT:-8083}:${CURATE_GUI_PORT:-8083}"
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      - curateguitls:/etc/nl2sql/tls:ro
     profiles: ["curategui"]
 
   # The SQL console: the retail database as the agent sees it, for working
@@ -768,6 +851,8 @@ services:
     command: ["python", "-m", "nl2sql_agent.console"]
     entrypoint: []
     depends_on:
+      pki:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     environment:
@@ -785,8 +870,7 @@ services:
       CONSOLE_HOST: ${CONSOLE_HOST:-0.0.0.0}
       CONSOLE_PORT: ${CONSOLE_PORT:-8445}
       CONSOLE_ROOT_PATH: ${CONSOLE_ROOT_PATH:-}
-      # Presents the certificate the API generates, as the review service
-      # does; API_TLS_HOSTNAMES above covers nl2sql-console for that reason.
+      # Its own certificate, from the pki service (CONSOLE_TLS_HOSTNAMES).
       CONSOLE_TLS_ENABLED: ${CONSOLE_TLS_ENABLED:-true}
       CONSOLE_TLS_CERT_FILE: ${CONSOLE_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       CONSOLE_TLS_KEY_FILE: ${CONSOLE_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
@@ -806,8 +890,8 @@ services:
     ports:
       - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_PORT:-8445}:${CONSOLE_PORT:-8445}"
     volumes:
-      # Read-only: the certificate the API wrote, which this process presents.
-      - apitls:/etc/nl2sql/tls:ro
+      # Read-only: its own key and certificate, from the pki service.
+      - consoletls:/etc/nl2sql/tls:ro
       # Read-only: the auth service's public key, which sessions are checked with.
       - authkeys:/etc/nl2sql/auth:ro
     healthcheck:
@@ -839,15 +923,17 @@ services:
     container_name: nl2sql-console-gui
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       console:
         condition: service_healthy
     environment:
       CONSOLE_GUI_PORT: ${CONSOLE_GUI_PORT:-8082}
       # nl2sql-console rather than console: the certificate is issued for
       # that name and proxy_ssl_name has to match something it covers.
-      CONSOLE_UPSTREAM: ${CONSOLE_GUI_UPSTREAM:-https://nl2sql-console:8445}
+      CONSOLE_UPSTREAM: ${CONSOLE_GUI_UPSTREAM:-https://nl2sql-console:${CONSOLE_PORT:-8445}}
       CONSOLE_SSL_NAME: ${CONSOLE_GUI_SSL_NAME:-nl2sql-console}
-      CONSOLE_CACERT: ${CONSOLE_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      CONSOLE_CACERT: ${CONSOLE_GUI_CACERT:-/etc/nl2sql/tls/ca.crt}
       # Longer than the agent's statement timeout, which is the longest a
       # query can take, or the proxy cuts off an answer that is coming.
       CONSOLE_READ_TIMEOUT: ${CONSOLE_GUI_READ_TIMEOUT:-120s}
@@ -857,16 +943,16 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       # Where the page's sign-in form posts: the auth service, verified like
       # the upstream above.
-      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}
       AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
-      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/ca.crt}
       CONSOLE_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
       CONSOLE_GUI_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       CONSOLE_GUI_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
     ports:
       - "${CONSOLE_BIND_ADDRESS:-127.0.0.1}:${CONSOLE_GUI_PORT:-8082}:${CONSOLE_GUI_PORT:-8082}"
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      - consoleguitls:/etc/nl2sql/tls:ro
     profiles: ["consolegui"]
 
   # --- sign-in ---------------------------------------------------------
@@ -945,6 +1031,8 @@ services:
       LDAP_UPSTREAM_STARTTLS: ${LDAP_UPSTREAM_STARTTLS:-}
       LDAP_UPSTREAM_CACERT: ${LDAP_UPSTREAM_CACERT:-}
       LDAP_UPSTREAM_TLS_VERIFY: ${LDAP_UPSTREAM_TLS_VERIFY:-}
+      # A plain ldap:// primary is refused unless this says otherwise.
+      LDAP_UPSTREAM_ALLOW_CLEARTEXT: ${LDAP_UPSTREAM_ALLOW_CLEARTEXT:-}
       LDAP_UPSTREAM_PAGE_SIZE: ${LDAP_UPSTREAM_PAGE_SIZE:-}
       LDAP_UPSTREAM_TIMEOUT: ${LDAP_UPSTREAM_TIMEOUT:-}
       LDAP_REPLICA_GROUPS: ${LDAP_REPLICA_GROUPS:-}
@@ -967,9 +1055,13 @@ services:
   #
   # Published, unlike the directory: the desktop client and scripts sign in
   # here directly (POST /auth/token). Browsers sign in through the interface
-  # they opened, whose nginx proxies /auth/ to this.
+  # they opened, whose nginx proxies /auth/ to this. The directory's own API
+  # -- the routes that make administrators -- is not on that port: it
+  # answers on AUTH_DIRECTORY_PORT, which is not published, for the
+  # directory page's nginx on this network alone.
   #
-  # After the API, because it presents the certificate the API writes.
+  # Its certificate is its own (the pki service), so it no longer waits for
+  # the API to write one.
   auth:
     build:
       context: .
@@ -978,15 +1070,16 @@ services:
     container_name: nl2sql-auth
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       ldap:
         condition: service_healthy
-      api:
-        condition: service_healthy
     environment:
       AUTH_HOST: ${AUTH_HOST:-0.0.0.0}
       AUTH_PORT: ${AUTH_PORT:-8446}
+      AUTH_DIRECTORY_PORT: ${AUTH_DIRECTORY_PORT:-8447}
       AUTH_ROOT_PATH: ${AUTH_ROOT_PATH:-}
       AUTH_TLS_ENABLED: ${AUTH_TLS_ENABLED:-true}
       AUTH_TLS_CERT_FILE: ${AUTH_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
@@ -1005,7 +1098,11 @@ services:
       AUTH_DB_HOST: ${AUTH_DB_HOST:-}
       AUTH_DB_PORT: ${AUTH_DB_PORT:-}
       AUTH_DB_NAME: ${POSTGRES_DB:-nl2sql_retail}
+      # verify-full by default, against the database's own certificate,
+      # mounted below: a person's password crosses this hop, and pg_hba's
+      # ldap method sends it in the clear inside the TLS session.
       AUTH_DB_SSLMODE: ${AUTH_DB_SSLMODE:-}
+      AUTH_DB_SSLROOTCERT: ${AUTH_DB_SSLROOTCERT:-}
       AUTH_DB_CONNECT_TIMEOUT: ${AUTH_DB_CONNECT_TIMEOUT:-}
       AUTH_ROLESYNC_DB_URL: postgresql://${AUTH_ROLESYNC_USER:-nl2sql_rolesync}:${AUTH_ROLESYNC_PASSWORD:-}@nl2sql-postgres:5432/${POSTGRES_DB:-nl2sql_retail}
       AUTH_READER_ROLE: ${POSTGRES_READER_USER:-nl2sql_reader}
@@ -1030,8 +1127,11 @@ services:
     ports:
       - "${AUTH_PORT:-8446}:${AUTH_PORT:-8446}"
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      # Its own key and certificate, from the pki service.
+      - authtls:/etc/nl2sql/tls:ro
       - ldaptls:/etc/nl2sql/ldap-tls:ro
+      # The retail database's certificate, which every sign-in verifies.
+      - pgtls:/etc/nl2sql/pg-tls:ro
       # The signing key: this service's alone.
       - authdata:/var/lib/nl2sql-auth
       # Its public half, written here and read by every service that checks
@@ -1067,13 +1167,19 @@ services:
     container_name: nl2sql-directory-gui
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       auth:
         condition: service_healthy
     environment:
       DIRECTORY_GUI_PORT: ${DIRECTORY_GUI_PORT:-8084}
-      DIRECTORY_UPSTREAM: ${DIRECTORY_GUI_UPSTREAM:-https://nl2sql-auth:8446}
+      # Sign-in through the auth service's published port, as every page;
+      # the directory's own API through its internal one, which nothing
+      # outside this network can reach.
+      DIRECTORY_UPSTREAM: ${DIRECTORY_GUI_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}
+      DIRECTORY_API_UPSTREAM: ${DIRECTORY_GUI_API_UPSTREAM:-https://nl2sql-auth:${AUTH_DIRECTORY_PORT:-8447}}
       DIRECTORY_SSL_NAME: ${DIRECTORY_GUI_SSL_NAME:-nl2sql-auth}
-      DIRECTORY_CACERT: ${DIRECTORY_GUI_CACERT:-/etc/nl2sql/tls/server.crt}
+      DIRECTORY_CACERT: ${DIRECTORY_GUI_CACERT:-/etc/nl2sql/tls/ca.crt}
       DIRECTORY_READ_TIMEOUT: ${DIRECTORY_GUI_READ_TIMEOUT:-120s}
       DIRECTORY_GUI_RESOLVER: ${DIRECTORY_GUI_RESOLVER:-127.0.0.11}
       DIRECTORY_GUI_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
@@ -1084,7 +1190,7 @@ services:
     ports:
       - "${DIRECTORY_GUI_BIND_ADDRESS:-127.0.0.1}:${DIRECTORY_GUI_PORT:-8084}:${DIRECTORY_GUI_PORT:-8084}"
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      - directoryguitls:/etc/nl2sql/tls:ro
     profiles: ["directorygui"]
 
   # The tracking store behind MLflow: experiments, traces and the verdicts on
@@ -1173,17 +1279,15 @@ services:
       start_period: 30s
     profiles: ["mlflow"]
 
-  # MLflow's front door: nginx, over HTTPS with the API's certificate, asking
+  # MLflow's front door: nginx, over HTTPS with its own certificate, asking
   # the auth service about every request (auth_request). A browser that has
   # not signed in is sent to; an MLflow client -- the benchmark, a notebook --
   # signs in with MLFLOW_TRACKING_USERNAME and _PASSWORD, which MLflow sends
   # as Basic credentials. nl2sql_reviewers and nl2sql_admins by default
   # (MLFLOW_ALLOWED_ROLES, on the auth service).
   #
-  # In MLflow's profile, and not waiting on the API in compose: the
-  # certificate it presents is the API's, so launch.sh starts the API first,
-  # and a start before the certificate exists is refused and retried rather
-  # than served without one.
+  # In MLflow's profile. Its certificate is its own, from the pki service,
+  # so it waits on nothing of the API's.
   mlflowproxy:
     build:
       context: .
@@ -1192,28 +1296,30 @@ services:
     container_name: nl2sql-mlflow-proxy
     restart: unless-stopped
     depends_on:
+      pki:
+        condition: service_completed_successfully
       mlflow:
         condition: service_healthy
     environment:
       MLFLOW_PROXY_PORT: ${MLFLOW_PROXY_PORT:-5001}
       MLFLOW_UPSTREAM: ${MLFLOW_PROXY_UPSTREAM:-http://nl2sql-mlflow:5000}
       MLFLOW_SSL_NAME: ${MLFLOW_PROXY_SSL_NAME:-nl2sql-mlflow}
-      MLFLOW_CACERT: ${MLFLOW_PROXY_CACERT:-/etc/nl2sql/tls/server.crt}
+      MLFLOW_CACERT: ${MLFLOW_PROXY_CACERT:-/etc/nl2sql/tls/ca.crt}
       MLFLOW_READ_TIMEOUT: ${MLFLOW_PROXY_READ_TIMEOUT:-300s}
       MLFLOW_PROXY_RESOLVER: ${MLFLOW_PROXY_RESOLVER:-127.0.0.11}
       MLFLOW_PROXY_TLS_ENABLED: ${GUI_TLS_ENABLED:-true}
       MLFLOW_PROXY_TLS_CERT_FILE: ${GUI_TLS_CERT_FILE:-/etc/nl2sql/tls/server.crt}
       MLFLOW_PROXY_TLS_KEY_FILE: ${GUI_TLS_KEY_FILE:-/etc/nl2sql/tls/server.key}
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
-      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:8446}
+      AUTH_UPSTREAM: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}
       AUTH_SSL_NAME: ${GUI_AUTH_SSL_NAME:-nl2sql-auth}
-      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/server.crt}
+      AUTH_CACERT: ${GUI_AUTH_CACERT:-/etc/nl2sql/tls/ca.crt}
     ports:
       # 5001 on the host: macOS keeps 5000 for AirPlay. This machine's
       # unless MLFLOW_BIND_ADDRESS says otherwise.
       - "${MLFLOW_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-5001}:${MLFLOW_PROXY_PORT:-5001}"
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      - mlflowproxytls:/etc/nl2sql/tls:ro
     profiles: ["mlflow"]
 
   # An outside client. Nothing of this project is installed in it -- it is a
@@ -1226,19 +1332,22 @@ services:
     image: ${APITEST_IMAGE_NAME:-nl2sql-apitest}:${APITEST_IMAGE_TAG:-latest}
     container_name: nl2sql-apitest
     depends_on:
+      pki:
+        condition: service_completed_successfully
       api:
         condition: service_healthy
     environment:
-      API_BASE_URL: ${APITEST_BASE_URL:-https://nl2sql-api:8443}
+      API_BASE_URL: ${APITEST_BASE_URL:-https://nl2sql-api:${API_PORT:-8443}}
       API_TOKEN: ${API_TOKEN:-}
-      # The development certificate is self-signed, so the smoke test is told
-      # so explicitly rather than reaching for --insecure on its own.
-      API_INSECURE: ${APITEST_INSECURE:-true}
-      API_CACERT: ${APITEST_CACERT:-}
+      # Verified, against the stack's CA: a client of this API is shown
+      # trusting the CA, never --insecure.
+      API_INSECURE: ${APITEST_INSECURE:-false}
+      API_CACERT: ${APITEST_CACERT:-/etc/nl2sql/tls/ca.crt}
       APITEST_QUESTION: ${APITEST_QUESTION:-How many stores are there?}
       APITEST_WAIT_SECONDS: ${APITEST_WAIT_SECONDS:-240}
     volumes:
-      - apitls:/etc/nl2sql/tls:ro
+      # The CA's certificate and nothing else: it serves nothing.
+      - tlstrust:/etc/nl2sql/tls:ro
     profiles: ["api"]
 
   # A build, not a deployment.
@@ -1279,11 +1388,27 @@ volumes:
   # a session with.
   authdata:
   authkeys:
+  # The stack's TLS: the development CA (its key read by the pki service
+  # alone), the CA's certificate for a container that only verifies, and one
+  # volume per server holding that server's own key and certificate. Named,
+  # so a certificate survives a restart and a client that trusted the CA
+  # once keeps working.
+  pkica:
+  tlstrust:
   apitls:
-    # The REST server's certificate and key. Named so a generated development
-    # certificate survives a restart: a client that trusted it once (or
-    # pinned its fingerprint) keeps working instead of being asked again on
-    # every `docker compose up`.
+    # The REST server's, as it has been since 4.x; the pki service replaces
+    # the shared development certificate it held until 6.1.
+  reviewtls:
+  consoletls:
+  authtls:
+  guitls:
+  reviewguitls:
+  curateguitls:
+  consoleguitls:
+  directoryguitls:
+  mlflowproxytls:
+  # The retail database's own certificate, which it writes on first start.
+  pgtls:
   pgdata:
     name: nl2sql-pgdata
   feedbackdata:

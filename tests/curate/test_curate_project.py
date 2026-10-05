@@ -194,10 +194,21 @@ def test_the_start_up_script_is_valid_executable_shell():
 
 def test_a_token_becomes_a_bearer_header_and_none_an_empty_one(tmp_path: Path):
     cert = _a_certificate(tmp_path)
-    named = _source(ENVSH, _env(tmp_path, CURATE_TOKEN="s3cret", CURATE_CACERT=cert), then='printf "%s" "$CURATE_AUTH_HEADER"')
+    named = _source(
+        ENVSH, _env(tmp_path, AUTH_ENABLED="0", CURATE_TOKEN="s3cret", CURATE_CACERT=cert),
+        then='printf "%s" "$CURATE_AUTH_HEADER"',
+    )
     assert named.returncode == 0 and named.stdout == "Bearer s3cret"
-    empty = _source(ENVSH, _env(tmp_path, CURATE_CACERT=cert), then='printf "[%s]" "$CURATE_AUTH_HEADER"')
+    assert "nl2sql-curate-gui: sign-in is off" in named.stderr
+    empty = _source(ENVSH, _env(tmp_path, AUTH_ENABLED="no", CURATE_CACERT=cert), then='printf "[%s]" "$CURATE_AUTH_HEADER"')
     assert empty.returncode == 0 and empty.stdout == "[]"
+
+
+def test_with_sign_in_unset_the_token_is_never_added(tmp_path: Path):
+    env = _env(tmp_path, CURATE_TOKEN="s3cret", CURATE_CACERT=_a_certificate(tmp_path))
+    env.pop("AUTH_ENABLED", None)
+    result = _source(ENVSH, env, then='printf "[%s]" "$CURATE_AUTH_HEADER"')
+    assert result.returncode == 0 and result.stdout == "[]"
 
 
 def test_an_https_upstream_writes_the_verification_block(tmp_path: Path):
@@ -211,7 +222,7 @@ def test_an_https_upstream_with_no_certificate_refuses_to_start(tmp_path: Path):
     result = _source(ENVSH, _env(tmp_path, CURATE_CACERT=str(tmp_path / "absent.crt")))
     assert result.returncode != 0
     said = " ".join(result.stderr.split())
-    assert "readable certificate" in said and "apitls volume is not mounted here" in said
+    assert "readable certificate" in said and "that volume is not mounted here" in said
 
 
 def test_a_plain_http_upstream_writes_no_verification_block_and_says_what_is_at_stake(tmp_path: Path):
@@ -256,8 +267,8 @@ def test_a_sign_in_hop_with_no_certificate_refuses_to_start(tmp_path: Path):
     assert result.returncode != 0
     assert "nl2sql-curate-gui: AUTH_UPSTREAM is https://nl2sql-auth:8446 but there is no" in result.stderr
     assert "readable certificate at AUTH_CACERT=" in result.stderr
-    assert "The auth service presents the certificate the agent API generates," in result.stderr
-    assert "so this usually means the API has not started yet, or the apitls" in result.stderr
+    assert "It is the stack's CA certificate, which the pki service writes beside this" in result.stderr
+    assert "page's own certificate -- so this usually means that volume is not mounted here." in result.stderr
     assert "volume is not mounted here." in result.stderr
 
 
@@ -280,8 +291,8 @@ def test_an_https_page_with_no_certificate_refuses_to_start(tmp_path: Path):
     result = _source(ENVSH, env)
     assert result.returncode != 0
     assert "nl2sql-curate-gui: CURATE_GUI_TLS_ENABLED is on but" in result.stderr
-    assert "is not readable. They come from the apitls volume" in result.stderr
-    assert "the API writes on its first start; mount it, or set CURATE_GUI_TLS_ENABLED=false" in result.stderr
+    assert "is not readable. They are this page's own, from the pki service" in result.stderr
+    assert "(its TLS volume, mounted here); mount it, or set CURATE_GUI_TLS_ENABLED=false" in result.stderr
     assert "behind something that terminates TLS itself." in result.stderr
 
 

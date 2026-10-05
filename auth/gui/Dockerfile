@@ -44,13 +44,14 @@ ENV NGINX_ENVSUBST_FILTER="^DIRECTORY_" \
     DIRECTORY_GUI_TLS_CERT_FILE=/etc/nl2sql/tls/server.crt \
     DIRECTORY_GUI_TLS_KEY_FILE=/etc/nl2sql/tls/server.key \
     DIRECTORY_UPSTREAM=https://nl2sql-auth:8446 \
-    DIRECTORY_CACERT=/etc/nl2sql/tls/server.crt \
+    DIRECTORY_API_UPSTREAM=https://nl2sql-auth:8447 \
+    DIRECTORY_CACERT=/etc/nl2sql/tls/ca.crt \
     DIRECTORY_SSL_NAME=nl2sql-auth \
     DIRECTORY_READ_TIMEOUT=120s \
     DIRECTORY_GUI_RESOLVER=127.0.0.11
 
-# Where the API's certificate is expected to appear, mounted by compose from
-# the volume the API writes it into.
+# Where this page's own certificate and the stack's CA are expected to
+# appear, mounted by compose from the volume the pki service issues them into.
 RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8084
@@ -64,4 +65,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql directory GUI" \
       org.opencontainers.image.description="React/TypeScript web interface for a standalone nl2sql directory: people, groups, passwords" \
-      org.opencontainers.image.version="6.0.1"
+      org.opencontainers.image.version="6.1.0"

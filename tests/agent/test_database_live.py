@@ -4,25 +4,24 @@ that `SET TRANSACTION READ ONLY` actually stops a data-modifying CTE that
 `ensure_read_only`'s static check lets through (see test_database_safety.py).
 
 Opt-in (`pytest --run-docker`): connects to whatever Postgres is reachable at
-POSTGRES_URL (default: the local docker-compose postgres service on
-localhost:5432, credentials nl2sql/nl2sql per docker/Dockerfile). Skips
+POSTGRES_URL (default: the local docker-compose postgres service, as the
+reader, with the password `.env` gives it -- tests/live_stores.py). Skips
 rather than fails if nothing is listening there -- this test verifies
-*behavior against a real server*, it doesn't stand up one of its own.
+*behavior against a real server*, it doesn't stand up one of its own -- and
+fails if something is and refuses the login.
 """
 
 from __future__ import annotations
 
-import os
 
 import pytest
 import sqlalchemy
 from nl2sql_agent.database import Database, UnsafeQueryError
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+POSTGRES_URL = live_stores.url("retail", variable="POSTGRES_URL")
 
 
 @pytest.fixture(scope="module")
@@ -31,7 +30,7 @@ def db() -> Database:
     try:
         database.table_names()
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {POSTGRES_URL}: {exc}")
+        live_stores.unreachable("Postgres", POSTGRES_URL, exc)
     return database
 
 
@@ -107,7 +106,7 @@ def test_the_reader_role_cannot_write_even_with_the_read_only_default_switched_o
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {POSTGRES_URL}: {exc}")
+        live_stores.unreachable("Postgres", POSTGRES_URL, exc)
 
     for statement in (
         "DELETE FROM dim_store WHERE false",

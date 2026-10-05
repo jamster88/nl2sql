@@ -1,8 +1,9 @@
 """Starting the review service.
 
 A sibling of the agent's `api/server.py` and deliberately smaller, because
-this process does less: no certificate to generate (it presents the one the
-agent API wrote), no job store to shut down, no pipeline to warm.
+this process does less: no certificate to generate (under compose the pki
+service issues it one of its own), no job store to shut down, no pipeline to
+warm.
 
 What it does do before binding is create its schema and reset the writer
 role the agent API connects as. That ordering is the point -- the public
@@ -17,7 +18,11 @@ from __future__ import annotations
 import argparse
 import sys
 from dataclasses import replace
+from pathlib import Path
 from typing import Sequence
+
+from cryptography import x509
+from nl2sql_identity import pki
 
 from .app import __version__, create_app
 from .corrections import COMPLETIONS, CORRECTIONS, FixStore
@@ -108,6 +113,31 @@ def settings_from_args(args: argparse.Namespace) -> ReviewSettings:
     return replace(settings, **overrides) if overrides else settings
 
 
+def describe_auth(settings: ReviewSettings) -> str:
+    """Who may call, in the banner's words. Open is said in capitals."""
+    if settings.auth_enabled:
+        return "sign-in" + (", or the review token" if settings.token else "")
+    return "bearer token" if settings.token else "NONE"
+
+
+def describe_certificate(path: str) -> str:
+    """What this service presents, as the console's banner says it: what
+    issued it and for which names. Unreadable is said too, though `main`
+    refuses to start on that before the banner is printed."""
+    try:
+        certificate = x509.load_pem_x509_certificate(Path(path).read_bytes())
+    except (OSError, ValueError):
+        return f"{path} (not readable)"
+    if certificate.issuer == certificate.subject:
+        kind = "self-signed"
+    elif pki.is_development(certificate):
+        kind = "issued by the development CA"
+    else:
+        kind = "CA-issued"
+    names = ", ".join(sorted(pki.covered_names(certificate))) or "no names"
+    return f"{kind}, the review service's own, for {names}"
+
+
 def banner(settings: ReviewSettings, *, version: str = __version__) -> str:
     lines = [
         f"nl2sql review service {version}",
@@ -119,10 +149,10 @@ def banner(settings: ReviewSettings, *, version: str = __version__) -> str:
         f"  corrections    {_redacted(settings.corrections_db_url)}",
         f"  completions    {_redacted(settings.completions_db_url)}",
         f"  reload         context={settings.reload_context} vectors={settings.reload_vectors}",
-        f"  auth           {'bearer token' if settings.authenticated else 'NONE'}",
+        f"  auth           {describe_auth(settings)}",
     ]
     if settings.tls_enabled:
-        lines.append(f"  certificate    {settings.tls_cert_file} (written by the agent API)")
+        lines.append(f"  certificate    {describe_certificate(settings.tls_cert_file)}")
     for note in settings.warnings():
         lines.append(f"  ! {note}")
     return "\n".join(lines)
@@ -188,9 +218,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if settings.tls_enabled and not settings.certificate_present:
         print(
             f"error: TLS is on but {settings.tls_cert_file} is not readable.\n"
-            "  This service presents the certificate the agent API generates. Start the\n"
-            f"  API once so it writes one, mount its volume here, and make sure\n"
-            f"  API_TLS_HOSTNAMES covers {SERVICE_HOSTNAME}. Or start with --no-tls.",
+            "  Under compose the pki service issues this service its own certificate into\n"
+            f"  the reviewtls volume, for names that include {SERVICE_HOSTNAME}; mount it\n"
+            "  here. Or start with --no-tls.",
             file=sys.stderr,
         )
         return 2

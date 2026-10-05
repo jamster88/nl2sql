@@ -6,13 +6,19 @@ the OpenAPI document at `/openapi.json`, which is the whole framework-
 agnostic story -- a TypeScript GUI generates a client from it, a Django or
 Spring service generates one too, and neither imports a line of this package.
 
-Two rules held throughout:
+Three rules held throughout:
 
 * **Nothing is ever `None` where a list would do.** A GUI rendering
   `result.rows.map(...)` should not have to null-check first.
 * **The pipeline's vocabulary is preserved.** `verdict`, `intent`, `claims`,
   `audit` and `trace` are the architecture's own words (arch4), and renaming
   them at the boundary would mean two names for everything.
+* **Nothing is dropped on the way out.** Every model is `Wire`, which
+  forbids a field it does not declare -- in a request, a misspelt field is a
+  422 rather than ignored; in a response, `translate.py` building one from
+  the pipeline's state fails a test the day the state gains a field this
+  contract does not carry. The lenient default is how the trace's model
+  routing fields went missing over REST for four releases.
 """
 
 from __future__ import annotations
@@ -48,7 +54,13 @@ MAX_METADATA_KEY_LENGTH = 64
 MAX_METADATA_VALUE_LENGTH = 256
 
 
-class AskRequest(BaseModel):
+class Wire(BaseModel):
+    """Every model in this contract: no field it does not declare."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AskRequest(Wire):
     """A question, and the few things a caller may say about how to run it."""
 
     model_config = ConfigDict(
@@ -113,7 +125,7 @@ class AskRequest(BaseModel):
         return value
 
 
-class ProgressEvent(BaseModel):
+class ProgressEvent(Wire):
     """One step of the pipeline, as it happens.
 
     `seq` is monotonic per job and is what a reconnecting client passes as
@@ -127,7 +139,7 @@ class ProgressEvent(BaseModel):
     at: datetime
 
 
-class ResultTable(BaseModel):
+class ResultTable(Wire):
     """The rows, in the shape a table widget wants them."""
 
     columns: list[str] = Field(default_factory=list)
@@ -139,7 +151,7 @@ class ResultTable(BaseModel):
     )
 
 
-class ChartSpec(BaseModel):
+class ChartSpec(Wire):
     """What the Visualiser thinks these rows should be drawn as.
 
     A suggestion, not a rendering: the GUI owns the chart library. `kind` is
@@ -154,7 +166,7 @@ class ChartSpec(BaseModel):
     series: str | None = None
 
 
-class Claim(BaseModel):
+class Claim(Wire):
     """A sentence in the narrative, tied to the cells that support it."""
 
     text: str
@@ -166,26 +178,42 @@ class Claim(BaseModel):
     formula: str | None = None
 
 
-class AuditReport(BaseModel):
+class AuditReport(Wire):
     """What the Audit Checker made of the narrative."""
 
     passed: bool = True
     unsupported_claims: list[str] = Field(default_factory=list)
     drop_reasons: list[str] = Field(default_factory=list)
-    redactions: list[str] = Field(default_factory=list)
+    missing_assumptions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Defaults the pipeline chose for the question (a fiscal year, say) "
+            "that no surviving claim states; the answer states them instead."
+        ),
+    )
     semantic_issue: str | None = None
 
 
-class TraceEntry(BaseModel):
-    """Per-node cost, the measurement the architecture is argued from."""
+class TraceEntry(Wire):
+    """Per-node cost, the measurement the architecture is argued from.
+
+    A node that called a model also says which one answered and why it was
+    asked (arch5.2): `rung` is what the call was routed at, `route` the
+    router's reasoning, and `hops` the routed models that failed before
+    `model` answered. All four are empty for a node that called none.
+    """
 
     node: str
     ms: float = 0.0
     model_calls: int = 0
     detail: str = ""
+    model: str = ""
+    rung: str = ""
+    route: str = ""
+    hops: list[str] = Field(default_factory=list)
 
 
-class LiteralMatch(BaseModel):
+class LiteralMatch(Wire):
     """A phrase from the question, matched to a value in the database."""
 
     phrase: str
@@ -195,7 +223,7 @@ class LiteralMatch(BaseModel):
     score: float = 0.0
 
 
-class Answer(BaseModel):
+class Answer(Wire):
     """Everything the pipeline produced for one question.
 
     A GUI that only wants to show a sentence reads `answer`; one that wants
@@ -218,15 +246,25 @@ class Answer(BaseModel):
     plan_cost: float | None = None
     attempts: int = 0
     trace: list[TraceEntry] = Field(default_factory=list)
-    retrieval_errors: dict[str, str] = Field(default_factory=dict)
+    retrieval_errors: dict[str, str] = Field(
+        default_factory=dict,
+        description="Retrievers that could not reach their store, by name; the run went on without them.",
+    )
+    node_errors: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Agents other than retrievers that failed and were survived -- the "
+            "supervisor's screening, the narrator's claims -- by name."
+        ),
+    )
 
 
-class JobLinks(BaseModel):
+class JobLinks(Wire):
     self: str
     events: str
 
 
-class Job(BaseModel):
+class Job(Wire):
     """A question in flight, or one that has finished.
 
     The same document throughout its life, so a client polls one URL and
@@ -251,12 +289,12 @@ class Job(BaseModel):
     links: JobLinks
 
 
-class JobList(BaseModel):
+class JobList(Wire):
     jobs: list[Job]
     count: int
 
 
-class FeedbackRequest(BaseModel):
+class FeedbackRequest(Wire):
     """What a user says about an answer: yes or no, and optionally why.
 
     Only these two fields. The question, the SQL, the row count and the rest
@@ -285,7 +323,7 @@ class FeedbackRequest(BaseModel):
     )
 
 
-class FeedbackModel(BaseModel):
+class FeedbackModel(Wire):
     """The receipt for a recorded verdict.
 
     `state` is what the review service has done with it. It is always
@@ -301,7 +339,7 @@ class FeedbackModel(BaseModel):
     state: Literal["pending"] = "pending"
 
 
-class Limits(BaseModel):
+class Limits(Wire):
     """What a client may not exceed, so it can stop before the server does.
 
     `max_question_length` and `max_metadata_entries` are here for the clients
@@ -321,7 +359,7 @@ class Limits(BaseModel):
     max_metadata_entries: int = MAX_METADATA_ENTRIES
 
 
-class Pipeline(BaseModel):
+class Pipeline(Wire):
     """Which optional stages this server is running with.
 
     A GUI uses it to decide what to render: no narrator means no paragraph to
@@ -336,7 +374,7 @@ class Pipeline(BaseModel):
     nodes: list[str] = Field(default_factory=list)
 
 
-class Meta(BaseModel):
+class Meta(Wire):
     """Everything a client needs to configure itself against this server."""
 
     service: str = "nl2sql-agent"
@@ -369,18 +407,18 @@ class Meta(BaseModel):
     )
 
 
-class Health(BaseModel):
+class Health(Wire):
     status: Literal["ok"] = "ok"
     version: str
     uptime_seconds: float
 
 
-class Check(BaseModel):
+class Check(Wire):
     ok: bool
     detail: str = ""
 
 
-class Readiness(BaseModel):
+class Readiness(Wire):
     """Whether this server can actually answer a question right now.
 
     Separate from `/healthz` because the two failures are different and want
@@ -393,7 +431,7 @@ class Readiness(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class ApiError(BaseModel):
+class ApiError(Wire):
     """One error shape for every failure, so a client parses one thing."""
 
     model_config = ConfigDict(

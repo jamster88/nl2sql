@@ -291,9 +291,10 @@ class Calibrator:
             screened = supervisor.screen(client, case["question"], clarify_enabled=False, tables=tables)
             seconds = self.clock() - started
             # A failed call degrades to "proceed", which must not score as a
-            # right answer to a question that should proceed.
+            # right answer to a question that should proceed. Since 6.1 the
+            # failure is in node_errors, not among the retrievers'.
             correct = screened["verdict"] == case["verdict"] and "supervisor" not in screened.get(
-                "retrieval_errors", {}
+                "node_errors", {}
             )
             samples.append(Sample((complexity.supervisor_rung(case["question"])[0],), correct, seconds))
         return samples

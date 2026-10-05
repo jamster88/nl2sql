@@ -29,6 +29,7 @@ from nl2sql_agent.schema_retrieval import (
 )
 
 from .conftest import FakeDatabase, FakeKnowledgeBase, make_chunk
+from tests import live_stores
 
 # The 19 tables of data_gen/ddl.sql.
 RETAIL_TABLES = [
@@ -481,13 +482,8 @@ def test_read_foreign_keys_defaults_to_public():
 # Live: the real catalog and the real vector store (pytest --run-docker)
 # ---------------------------------------------------------------------------
 
-RETAIL_DB_URL = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail",
-)
-VECTOR_DB_URL = os.environ.get(
-    "TEST_VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"
-)
+RETAIL_DB_URL = live_stores.url("retail", variable="TEST_DATABASE_URL")
+VECTOR_DB_URL = live_stores.url("vectors", variable="TEST_VECTOR_DB_URL")
 EMBED_BASE_URL = os.environ.get("TEST_EMBED_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.environ.get("TEST_EMBED_MODEL", "bge-m3")
 DDL_COLLECTION = "ddl_index_embeddings"
@@ -504,7 +500,7 @@ def live_database() -> Database:
     try:
         database.table_names()
     except Exception as exc:
-        pytest.skip(f"no reachable retail database at {RETAIL_DB_URL}: {exc}")
+        live_stores.unreachable("retail database", RETAIL_DB_URL, exc)
     return database
 
 
@@ -516,7 +512,7 @@ def live_knowledge_base() -> KnowledgeBase:
     try:
         knowledge_base.search("smoke test", top_k=1)
     except Exception as exc:
-        pytest.skip(f"no reachable DDL vectors at {VECTOR_DB_URL}: {exc}")
+        live_stores.unreachable("DDL vectors", VECTOR_DB_URL, exc)
     return knowledge_base
 
 

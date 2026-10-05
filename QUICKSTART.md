@@ -49,9 +49,9 @@ It starts every container, checks each one is ready, and opens
 <https://localhost:8080> in your browser. From now on, `./start.sh` is all it
 takes: seconds rather than minutes.
 
-The page is HTTPS with a certificate the stack made itself, so the browser
-warns about it the first time; accept it, or trust `nl2sql-api.crt` as
-[`USAGE_GUIDE.md`](USAGE_GUIDE.md#signing-in) shows. Then sign in as
+The page is HTTPS with a certificate from a CA the stack made itself, so the
+browser warns about it the first time; accept it, or trust `nl2sql-ca.crt` --
+once, for every page -- as [`USAGE_GUIDE.md`](USAGE_GUIDE.md#signing-in) shows. Then sign in as
 `admin`, with the password the first run generated:
 
 ```bash

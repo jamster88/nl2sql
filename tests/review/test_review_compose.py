@@ -6,9 +6,10 @@ Behind `--run-docker` for the same reason as the other compose tests:
 
 The properties that carry weight here are the ones no single file shows:
 
-* **The review service presents the API's certificate.** That is two settings
-  in two services -- `API_TLS_HOSTNAMES` has to cover `nl2sql-review`, and
-  the review GUI's `proxy_ssl_name` has to be a name that certificate covers.
+* **The review service presents a certificate of its own.** That is two
+  settings in two services -- the pki service's `REVIEW_TLS_HOSTNAMES` has to
+  cover `nl2sql-review`, and the review GUI's `proxy_ssl_name` has to be a
+  name that certificate covers.
   Nothing but a test connects them.
 * **The golden question document is bind-mounted writable from the checkout.**
   If it were not, a promotion would write a copy inside a container and the
@@ -264,16 +265,15 @@ def test_the_loaders_are_where_the_service_looks_for_them(review: dict):
 # ---------------------------------------------------------------------------
 
 
-def test_the_api_certificate_covers_the_review_service(api: dict):
-    """The review service presents the certificate the API generates rather
-    than carrying a second copy of the code that makes one. The cost of that
-    subtraction is this line, and nothing but a test connects the two."""
-    assert "nl2sql-review" in api["environment"]["API_TLS_HOSTNAMES"].split(",")
+def test_the_review_service_is_issued_its_own_certificate(config: dict):
+    """V6-36: its own key and certificate, from the pki service, rather than
+    the API's. The name its page's proxy verifies is one the pki issues it."""
+    assert "nl2sql-review" in _issued(config, "review")
+    assert "nl2sql-review" not in config["services"]["api"]["environment"]["API_TLS_HOSTNAMES"].split(",")
 
 
-def test_the_review_gui_verifies_a_name_that_certificate_covers(reviewgui: dict, api: dict):
-    covered = api["environment"]["API_TLS_HOSTNAMES"].split(",")
-    assert reviewgui["environment"]["REVIEW_SSL_NAME"] in covered
+def test_the_review_gui_verifies_a_name_that_certificate_covers(reviewgui: dict, config: dict):
+    assert reviewgui["environment"]["REVIEW_SSL_NAME"] in _issued(config, "review")
 
 
 def test_the_review_gui_proxies_the_name_it_verifies(reviewgui: dict):
@@ -281,11 +281,11 @@ def test_the_review_gui_proxies_the_name_it_verifies(reviewgui: dict):
     assert reviewgui["environment"]["REVIEW_SSL_NAME"] in upstream
 
 
-@pytest.mark.parametrize("service", ["review", "reviewgui"])
-def test_the_certificate_is_mounted_read_only(config: dict, service: str):
-    """Neither of these writes a certificate; only the API does."""
+@pytest.mark.parametrize(("service", "volume"), [("review", "reviewtls"), ("reviewgui", "reviewguitls")])
+def test_each_has_its_own_certificate_mounted_read_only(config: dict, service: str, volume: str):
+    """V6-36: each its own key, which only the pki service writes."""
     mounts = {mount["target"]: mount for mount in config["services"][service]["volumes"]}
-    assert mounts["/etc/nl2sql/tls"]["source"] == "apitls"
+    assert mounts["/etc/nl2sql/tls"]["source"] == volume
     assert mounts["/etc/nl2sql/tls"]["read_only"] is True
 
 
@@ -476,3 +476,9 @@ def test_a_fix_is_validated_on_the_retail_database_as_the_reader(review: dict):
     assert url.startswith("postgresql://nl2sql_reader:") and "@nl2sql-postgres:5432/nl2sql_retail" in url
     for knob in ("REVIEW_VALIDATE_TIMEOUT_MS", "REVIEW_VALIDATE_MAX_ROWS", "REVIEW_EMBED_FIXES"):
         assert knob in review["environment"]
+
+
+def _issued(config: dict, identity: str) -> list[str]:
+    """The names the pki service issues `identity`'s certificate for."""
+    [spec] = [arg for arg in config["services"]["pki"]["command"] if arg.startswith(f"{identity}=")]
+    return spec.split("=", 2)[2].split(",")

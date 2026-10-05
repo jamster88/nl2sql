@@ -24,6 +24,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 FAKE_DOCKER = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_LOG"
+# A secret handed over by name (`-e NAME`) rather than on the command line:
+# what the variable held, on a line of its own, so a test can see it arrived
+# without it ever being an argument.
+for passed in NL2SQL_PASSWORD NL2SQL_READER_PASSWORD NL2SQL_ROLESYNC_PASSWORD; do
+    if [[ -n "${!passed:-}" && " $* " == *" -e $passed "* ]]; then
+        printf 'env %s=%s\n' "$passed" "${!passed}" >> "$FAKE_LOG"
+    fi
+done
 # What each compose call was told about sign-in: compose reads the shell
 # before .env, so this is what every service it starts would be given.
 if [[ "${1:-}" == compose ]]; then
@@ -154,7 +162,7 @@ case "$1" in
             exit 0
         fi
         if [[ "$*" == *" cp api:"* ]]; then
-            # Copies the API's certificate out of the volume it writes it to.
+            # Copies the stack's CA certificate out of the API's volume.
             [[ -n "${FAKE_CERT_COPY_FAILS:-}" ]] && exit 1
             printf 'not really a certificate\n' > "${@: -1}"
             exit 0
@@ -232,6 +240,16 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
             printf '%s\n' "48 golden pairs in the context store" "embedding with ollama:bge-m3 (1024 dimensions)" \
                 "  question         -> golden_pair_question_vectors: 0 embedded, 48 already current, 0 removed" \
                 "  reasoning_target -> golden_pair_reasoning_vectors: 0 embedded, 48 already current, 0 removed"
+            exit 0
+        fi
+        if [[ "$*" == *"exec -T -e NL2SQL_PASSWORD "* ]]; then
+            # A store told the password .env holds (set_password), with or
+            # without a --profile in front. FAKE_SET_PASSWORD_FAILS names the
+            # service -- or as much of the call as tells it apart -- that
+            # refuses.
+            if [[ -n "${FAKE_SET_PASSWORD_FAILS:-}" && "$*" == *"NL2SQL_PASSWORD $FAKE_SET_PASSWORD_FAILS"* ]]; then
+                exit 1
+            fi
             exit 0
         fi
         if [[ "$*" == *" logs "* || "$*" == *" logs" ]]; then
@@ -906,9 +924,7 @@ def run_init_db(tmp_path: Path):
                 "PGDATA": str(pgdata),
                 "DB_NAME": "nl2sql_retail",
                 "DB_USER": "nl2sql",
-                "DB_PASSWORD": "owner-secret",
                 "DB_READER": "nl2sql_reader",
-                "DB_READER_PASSWORD": "reader-secret",
                 "DDL_FILE": str(workdir / "ddl.sql"),
                 "LOAD_SQL": str(workdir / "_load.sql"),
                 "READER_SQL": str(workdir / "reader_role.sql"),

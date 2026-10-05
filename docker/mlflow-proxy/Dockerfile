@@ -25,7 +25,7 @@ ENV NGINX_ENVSUBST_FILTER="^(MLFLOW_|AUTH_)" \
     MLFLOW_UPSTREAM=http://nl2sql-mlflow:5000 \
     MLFLOW_READ_TIMEOUT=300s \
     AUTH_UPSTREAM=https://nl2sql-auth:8446 \
-    AUTH_CACERT=/etc/nl2sql/tls/server.crt \
+    AUTH_CACERT=/etc/nl2sql/tls/ca.crt \
     AUTH_SSL_NAME=nl2sql-auth \
     MLFLOW_PROXY_RESOLVER=127.0.0.11
 
@@ -42,4 +42,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql MLflow proxy" \
       org.opencontainers.image.description="nginx in front of the nl2sql MLflow server: sign-in through the auth service for every request" \
-      org.opencontainers.image.version="6.0.1"
+      org.opencontainers.image.version="6.1.0"

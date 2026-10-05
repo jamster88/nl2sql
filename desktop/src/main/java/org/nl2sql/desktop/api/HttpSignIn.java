@@ -19,9 +19,10 @@ import java.time.Duration;
  * header -- which is also what the API does with a service token, so the
  * server needs nothing new to accept it.
  *
- * <p>Over the same TLS settings as the API, because the auth service presents
- * the API's certificate: one {@code --cacert} or {@code --fingerprint} covers
- * both, and a user who has got the one working has got the other.
+ * <p>Over the same TLS settings as the API. The auth service presents a
+ * certificate of its own, issued by the same CA as the API's: one
+ * {@code --cacert} with that CA covers both, and so does a
+ * {@code --fingerprint} that names both.
  */
 public final class HttpSignIn implements SignIn {
 

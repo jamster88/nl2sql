@@ -70,7 +70,7 @@ Or over the network, for something with a screen:
 
 ```bash
 ../launch.sh --api
-curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
 ```
 
 ## The pipeline
@@ -289,12 +289,12 @@ put one caller's progress on another caller's stream. LangGraph copies the
 context into the threads it fans stage 1 across, so the four concurrent
 retrievers report to the right run too.
 
-**TLS is the default and the development certificate is removable.** The
-container writes itself a self-signed certificate on first start because
-there is no way to hand it a real one from `docker compose up`.
-`API_TLS_ALLOW_SELF_SIGNED=false` refuses to start behind one at all --
-neither generating nor loading -- so the convenience cannot quietly become
-the deployment.
+**TLS is the default and the development certificate is removable.** Under
+compose the stack's pki service issues the API a certificate of its own
+from a development CA before it starts; on its own, the server writes
+itself a self-signed one. `API_TLS_ALLOW_SELF_SIGNED=false` refuses to
+start behind either -- neither generating nor loading one -- so the
+convenience cannot quietly become the deployment.
 
 **The translation layer is separate on purpose.** `state.py` is internal and
 changes with the architecture; `models.py` is what other people's code is
@@ -337,7 +337,7 @@ typed. What it is for, and its settings, are in
 | [`settings.py`](nl2sql_agent/console/settings.py) | `CONSOLE_*`, and `AGENT_SETTINGS`: the six of this package's settings it runs under, read through `config.Settings` |
 | [`models.py`](nl2sql_agent/console/models.py) | Its wire shapes; health, readiness and the error envelope are the API's own |
 | [`app.py`](nl2sql_agent/console/app.py) | The routes, the token, readiness with the role's privileges in it |
-| [`server.py`](nl2sql_agent/console/server.py) | Flags, the API's certificate presented rather than generated, the banner |
+| [`server.py`](nl2sql_agent/console/server.py) | Flags, its own certificate (from the pki service) presented rather than generated, the banner |
 
 `plan_cost_problem` is the one change it made here: the planner gate's
 "estimated plan cost ... exceeds the ceiling" used to be written inside

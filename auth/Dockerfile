@@ -15,8 +15,10 @@
 #                    directory image, so the web interface edits people
 #                    with the same code the directory is seeded with
 #
-# Root, as the review service and the console are, for the same reason: it
-# presents the agent API's certificate, whose key that API writes 0600.
+# Root, still, as the review service and the console are. The reason given
+# here until 6.1 -- it presented the agent API's certificate, whose key that
+# API wrote 0600 -- is gone: its certificate and key are its own now, from
+# the pki service. Running as a user of its own is the next step (V6-31).
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -28,15 +30,16 @@ COPY auth/nl2sql_auth/ ./nl2sql_auth/
 COPY auth/nl2sql_identity/ ./nl2sql_identity/
 COPY ldap/nl2sql_ldap/ ./nl2sql_ldap/
 
-# Where the volumes are mounted: the API's certificate (read-only), the
-# directory's certificate (read-only), the signing key (this service's
-# alone) and its public half (read-only everywhere else).
-RUN mkdir -p /etc/nl2sql/tls /etc/nl2sql/ldap-tls /etc/nl2sql/auth /var/lib/nl2sql-auth \
+# Where the volumes are mounted: its own certificate (read-only), the
+# directory's and the retail database's certificates (read-only), the
+# signing key (this service's alone) and its public half (read-only
+# everywhere else).
+RUN mkdir -p /etc/nl2sql/tls /etc/nl2sql/ldap-tls /etc/nl2sql/pg-tls /etc/nl2sql/auth /var/lib/nl2sql-auth \
  && chmod 700 /var/lib/nl2sql-auth
 
 EXPOSE 8446
 
-ARG AUTH_VERSION=6.0.1
+ARG AUTH_VERSION=6.1.0
 ENV AUTH_VERSION=${AUTH_VERSION} \
     PYTHONUNBUFFERED=1
 

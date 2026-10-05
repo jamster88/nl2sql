@@ -441,6 +441,56 @@ def test_the_audit_can_send_the_sql_back_and_it_costs_an_attempt():
     assert state["attempts"] == 2
 
 
+def test_an_attempt_sent_back_by_the_audit_starts_its_presentation_afresh():
+    """V6-15. The audit's semantic issue routes to repair; the next attempt's
+    narration must not read the previous attempt's audit as though its own
+    claims had been rejected, which spent the narrator's one rewrite on a
+    query that no longer existed and sent it the wrong reasons.
+    """
+    db = FakeDatabase(
+        tables=TABLES,
+        run_select_result=DbRows(columns=["pct"], rows=[(150.0,)], truncated=False),
+    )
+    bad = Narrative(claims=[NarratedClaim(text="Share rose 40%.", value=40.0, cells=[])])
+    fine = Narrative(claims=[NarratedClaim(text="The share is shown below.", cells=[])])
+    llm = ScriptedLLM(
+        sql_responses=["SELECT 150 AS pct", "SELECT 15 AS pct"],
+        screening=Screening(verdict="proceed", intent="aggregate"),
+        narration=[bad, fine],
+    )
+    agent = make_agent(db, llm, max_attempts=2)
+    rows = iter([[(150.0,)], [(15.0,)]])
+    db.run_select = lambda sql, principal=None: DbRows(columns=["pct"], rows=next(rows), truncated=False)
+    state = agent.run("what percentage?")
+
+    assert state["attempts"] == 2
+    assert [a.issues[0].source for a in state["attempt_history"]] == ["audit"]
+    # Two narrations, one per attempt, and the second was a first draft: not
+    # told about "Share rose 40%.", and not counted as the attempt's rewrite.
+    narrations = [m for schema, m in llm.structured_invocations if "claims" in schema.model_fields]
+    assert len(narrations) == 2
+    assert "Share rose 40%." not in "\n".join(str(m.content) for m in narrations[1])
+    assert state["narration_retries"] == 0
+    assert state["audit"].semantic_issue is None
+    assert state["result"].rows == [[15.0]]
+
+
+def test_a_give_up_after_a_repair_carries_no_rows_from_the_attempt_before():
+    """The final state describes the last attempt. Rows from an earlier one,
+    beside SQL that never produced them, are an answer to a different query.
+    """
+    db = FakeDatabase(
+        tables=TABLES,
+        run_select_result=DbRows(columns=["pct"], rows=[(150.0,)], truncated=False),
+    )
+    llm = scripted(["SELECT 150 AS pct", "DROP TABLE dim_store"], claims=[])
+    state = make_agent(db, llm, max_attempts=2).run("what percentage?")
+
+    assert state["error"]
+    assert state["result"] is None and state["plan_cost"] is None
+    assert state["claims"] == [] and state["audit"].semantic_issue is None
+
+
 def test_narration_can_be_switched_off_for_a_benchmark_run():
     db = FakeDatabase(tables=TABLES)
     llm = ScriptedLLM(
@@ -841,7 +891,8 @@ def test_a_narrator_that_fails_costs_the_narrative_and_not_the_rows():
     )
     state = make_agent(db, llm).run("q")
 
-    assert "went away" in state["retrieval_errors"]["narrator"]
+    assert "went away" in state["node_errors"]["narrator"]
+    assert "narrator" not in state["retrieval_errors"]
     assert state["result"].rows == [[1]]
     assert state["answer"]
 

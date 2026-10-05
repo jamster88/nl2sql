@@ -44,11 +44,11 @@ ENV NGINX_ENVSUBST_FILTER="^(CONSOLE_|AUTH_)" \
     CONSOLE_GUI_TLS_CERT_FILE=/etc/nl2sql/tls/server.crt \
     CONSOLE_GUI_TLS_KEY_FILE=/etc/nl2sql/tls/server.key \
     AUTH_UPSTREAM=https://nl2sql-auth:8446 \
-    AUTH_CACERT=/etc/nl2sql/tls/server.crt \
+    AUTH_CACERT=/etc/nl2sql/tls/ca.crt \
     AUTH_SSL_NAME=nl2sql-auth \
     CONSOLE_GUI_PORT=8082 \
     CONSOLE_UPSTREAM=https://nl2sql-console:8445 \
-    CONSOLE_CACERT=/etc/nl2sql/tls/server.crt \
+    CONSOLE_CACERT=/etc/nl2sql/tls/ca.crt \
     CONSOLE_SSL_NAME=nl2sql-console \
     CONSOLE_READ_TIMEOUT=120s \
     CONSOLE_GUI_RESOLVER=127.0.0.11
@@ -58,8 +58,8 @@ ENV NGINX_ENVSUBST_FILTER="^(CONSOLE_|AUTH_)" \
 # script expects: it turns "no token" into an empty Authorization header,
 # which nginx then does not send at all.
 
-# Where the agent API's certificate is expected to appear, mounted by compose
-# from the volume the API writes it into.
+# Where this page's own certificate and the stack's CA are expected to
+# appear, mounted by compose from the volume the pki service issues them into.
 RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8082
@@ -73,4 +73,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
 
 LABEL org.opencontainers.image.title="nl2sql SQL console GUI" \
       org.opencontainers.image.description="React/TypeScript interface for querying the retail database through the agent's gates" \
-      org.opencontainers.image.version="6.0.1"
+      org.opencontainers.image.version="6.1.0"

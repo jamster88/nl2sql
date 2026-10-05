@@ -93,11 +93,17 @@ MLFLOW_PROXY_ENVSH = "docker/mlflow-proxy/10-nl2sql-mlflow-proxy.envsh"
 #: `psql` and a pg_hba.conf of its own in tests/docker/test_ldap_hba_script.py.
 LDAP_HBA = "docker/ldap_hba.sh"
 
+#: The retail image's entrypoint since v1_2: its certificate, its transport
+#: rules and its passwords, then Postgres. Driven against a fake stock
+#: entrypoint and fake `openssl`, `psql` and `gosu` in
+#: tests/docker/test_retail_entrypoint.py.
+RETAIL_ENTRYPOINT = "docker/entrypoint.sh"
+
 #: Everything that parses a flag or prints a message a user reads.
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB, LDAP_HBA, DIRECTORY_GUI_ENVSH, MLFLOW_PROXY_ENVSH)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB, LDAP_HBA, DIRECTORY_GUI_ENVSH, MLFLOW_PROXY_ENVSH, RETAIL_ENTRYPOINT)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
@@ -591,6 +597,7 @@ COMPOSE_SERVICES = {
         "correctionsdb": ("tests/review/test_review_compose.py",),
         "completionsdb": ("tests/review/test_review_compose.py",),
         "agent": ("tests/docker/test_compose_config.py",),
+        "pki": ("tests/security/test_posture.py", "tests/docker/test_compose_config.py"),
         "api": ("tests/docker/test_api_compose.py",),
         "gui": ("tests/docker/test_gui_compose.py",),
         "review": ("tests/review/test_review_compose.py",),

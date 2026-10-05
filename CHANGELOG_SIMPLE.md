@@ -14,6 +14,32 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v6_1 (6.1.0) -- 2026-10-04
+
+**Added**
+- A development certificate authority: a one-shot `pki` service gives every server its own key and certificate, and a client trusts `nl2sql-ca.crt` once.
+- `nl2sql-retail-postgres:v1_2`: no password in the image, TLS on, nothing over the network without it, and the superuser not over the network at all.
+- `SECURITY.md`, the threat model and the deployment tiers; `Multi-Agent_NL2SQL_arch6.md`, the architecture as built, with the sign-in design.
+- `tests/security/`: every route guarded, every wire model strict, the compose posture.
+- The live tests find the databases' passwords where compose does, and fail rather than skip when a database refuses them.
+
+**Fixed**
+- A repair started from the failed attempt's leftovers; it starts clean now.
+- A narrator or supervisor that failed said nothing; `node_errors` says so.
+- Moving the API's, the review service's, the console's or the auth service's port in `.env` left every page asking the old one; they follow it now.
+- The review service's banner said `auth NONE` over a service that required sign-in; it says sign-in, and names its own certificate.
+- The sensitive-column redaction promised a policy nothing applied; the claim is gone.
+- The trace over REST dropped the model, rung, route and hops; it carries them, and the interfaces show the model.
+- Every wire model refuses a field it does not know.
+- The benchmark test that failed on every run names the two overlaps the owner kept.
+
+**Updated**
+- The databases answer on this machine only unless `DB_BIND_ADDRESS` opens them, and every store password is generated.
+- Sign-in to the retail database is over TLS, verified; the directory's API answers on its own port, behind its page.
+- Sign-in is on in the code as well as in compose; CORS closed until opened; the job queue bounded (429); `EXPLAIN` time-boxed; tokens scrubbed from the access log.
+- A replica refuses a clear-text primary; the pages honour `X-Forwarded-Proto`.
+- Version 6.1.0 in every declaration; `setup.sh` pins `v6_1` and `nl2sql-retail-postgres:v1_2`.
+
 ## v6_0_1 (6.0.1) -- 2026-10-04
 
 **Fixed**

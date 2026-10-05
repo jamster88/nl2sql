@@ -195,6 +195,7 @@ def create_app(
         port=settings.db_port,
         dbname=settings.db_name,
         sslmode=settings.db_sslmode,
+        sslrootcert=settings.db_ssl.get("sslrootcert"),
         timeout=settings.db_connect_timeout,
         roles=roles,
     )
@@ -209,7 +210,7 @@ def create_app(
                 return found.people()
 
         rolesync = RoleSync(
-            rolesync_url=settings.rolesync_url,
+            rolesync_url=settings.rolesync_conninfo,
             people=people,
             group_roles=settings.group_roles,
             reader=settings.reader_role,
@@ -219,7 +220,7 @@ def create_app(
     guard = guard or Guard(
         GuardSettings(enabled=True, public_key_file=settings.public_key_file, cookie_name=settings.cookie_name),
         public_key=signing_key.public_key(),
-        recheck=membership_lookup(settings.rolesync_url, roles) if settings.rolesync_url else None,
+        recheck=membership_lookup(settings.rolesync_conninfo, roles) if settings.rolesync_url else None,
         clock=clock,
     )
     throttle = throttle or Throttle(
@@ -266,6 +267,28 @@ def create_app(
             allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type"],
         )
+
+    # --- the directory's own port -----------------------------------------
+
+    if settings.directory_port:
+
+        @app.middleware("http")
+        async def _directory_on_its_own_port(request: Request, call_next):
+            """The routes that make people -- administrators among them -- are
+            answered on AUTH_DIRECTORY_PORT alone (V6-58). The sign-in port is
+            published to the network for the desktop client; this one is
+            not, and the directory page's nginx reaches it from inside. They
+            still need an administrator's session there: this is the second
+            line, not the first."""
+            server = request.scope.get("server") or (None, None)
+            if request.url.path.startswith("/directory/") and server[1] != settings.directory_port:
+                return _error_response(
+                    404,
+                    "not_found",
+                    "the directory's API is not served on this port: it answers inside "
+                    "the stack, for the directory page, on AUTH_DIRECTORY_PORT",
+                )
+            return await call_next(request)
 
     # --- error shape ------------------------------------------------------
 
@@ -323,8 +346,8 @@ def create_app(
             secure=_secure(request),
         )
 
-    def current(request: Request) -> Identity:
-        return guard.current(guard.identify(request))
+    # Any signed-in caller: their own session and their own password.
+    current = guard.require()
 
     def session_of(identity: Identity) -> Session:
         return Session(

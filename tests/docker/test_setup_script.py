@@ -620,8 +620,12 @@ def test_default_run_creates_the_agents_read_only_role(run_setup):
     """
     result = run_setup()
     [call] = result.calls_matching("reader=")
-    assert "compose exec -T postgres psql -U postgres" in call
+    assert "compose exec -T -e NL2SQL_READER_PASSWORD postgres psql -U postgres" in call
     assert "reader=nl2sql_reader" in call and "owner=nl2sql" in call
+    # The password by name, generated into .env, never an argument (V6-55).
+    reader_password = result.env_file()["POSTGRES_READER_PASSWORD"]
+    assert reader_password not in call
+    assert result.called(f"env NL2SQL_READER_PASSWORD={reader_password}")
     assert "read-only role nl2sql_reader ready" in result.output
 
 
@@ -922,7 +926,9 @@ def test_settings_added_by_hand_survive_a_re_run(run_setup):
 
     assert env["API_TOKEN"] == "s3cret"
     assert env["GUI_PORT"] == "9090"
-    assert "kept 2 other setting(s) from the previous .env" in second.output
+    # The token is one of the keys this script carries itself (--tokens), so
+    # one setting is kept by hand: the port.
+    assert "kept 1 other setting(s) from the previous .env" in second.output
     assert "# a note" not in (second.workdir / ".env").read_text()
 
 
@@ -1212,3 +1218,76 @@ def test_a_sign_in_image_that_will_not_pull_is_built_instead(run_setup):
     result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-auth"})
     assert result.returncode == 0
     assert "./launch.sh will build it from source the first time sign-in starts." in result.output
+
+
+# ---------------------------------------------------------------------------
+# Every store's password (6.1, V6-08)
+# ---------------------------------------------------------------------------
+
+STORE_SECRETS = (
+    "POSTGRES_PASSWORD", "POSTGRES_READER_PASSWORD", "CONTEXT_DB_PASSWORD", "VECTOR_DB_PASSWORD",
+    "SNIPPETS_DB_PASSWORD", "SNIPPETS_READER_PASSWORD", "FEEDBACK_DB_PASSWORD", "FEEDBACK_WRITER_PASSWORD",
+    "CORRECTIONS_DB_PASSWORD", "COMPLETIONS_DB_PASSWORD", "MLFLOW_DB_PASSWORD",
+)
+TOKENS = ("API_TOKEN", "REVIEW_TOKEN", "CONSOLE_TOKEN")
+
+
+def test_every_store_is_given_a_password_of_its_own(run_setup):
+    env = run_setup().env_file()
+    assert all(re.fullmatch(r"[0-9a-f]{48}", env[key]) for key in STORE_SECRETS)
+    assert len({env[key] for key in STORE_SECRETS}) == len(STORE_SECRETS)
+
+
+def test_store_passwords_are_kept_from_one_env_to_the_next(run_setup):
+    first = run_setup().env_file()
+    again = run_setup().env_file()
+    assert [again[key] for key in STORE_SECRETS] == [first[key] for key in STORE_SECRETS]
+
+
+@pytest.mark.parametrize(("service", "key"), [("vectordb", "VECTOR_DB_PASSWORD"), ("chunkdb", "CONTEXT_DB_PASSWORD"), ("snippetsdb", "SNIPPETS_DB_PASSWORD")])
+def test_each_store_it_starts_is_told_its_password_by_name(run_setup, service, key):
+    result = run_setup()
+    assert result.calls_matching(f"compose exec -T -e NL2SQL_PASSWORD {service} psql")
+    assert result.called(f"env NL2SQL_PASSWORD={result.env_file()[key]}")
+
+
+@pytest.mark.parametrize(
+    ("service", "said"),
+    [
+        ("vectordb", "could not set the knowledge base's password. Check 'docker compose logs vectordb'."),
+        ("chunkdb", "could not set the context store's password. Check 'docker compose logs chunkdb'."),
+        ("snippetsdb", "could not set the snippet store's password. Check 'docker compose logs snippetsdb'."),
+    ],
+)
+def test_a_store_that_refuses_its_password_stops_setup(run_setup, service, said):
+    result = run_setup(env={"FAKE_SET_PASSWORD_FAILS": service})
+    assert result.returncode != 0
+    assert said in result.output
+
+
+def test_no_service_token_unless_asked_for(run_setup):
+    env = run_setup().env_file()
+    assert not any(key in env for key in TOKENS)
+
+
+def test_tokens_makes_the_three_service_tokens_and_keeps_them(run_setup):
+    """'The three tokens when set' (V6-08): generated, not chosen, once someone
+    asks for them, and carried from then on with or without the flag."""
+    first = run_setup("--tokens").env_file()
+    assert all(re.fullmatch(r"[0-9a-f]{48}", first[key]) for key in TOKENS)
+    assert len({first[key] for key in TOKENS}) == 3
+    again = run_setup().env_file()
+    assert [again[key] for key in TOKENS] == [first[key] for key in TOKENS]
+
+
+def test_the_backup_keeps_the_settings_and_not_the_secrets(run_setup):
+    """.env.bak is a record of what the last .env said; every secret in it is
+    in the new .env already, and a second copy is one more place to read it."""
+    first = run_setup("--tokens")
+    secrets = [value for key, value in first.env_file().items() if key in STORE_SECRETS + TOKENS + SIGNIN_SECRETS]
+    again = run_setup()
+    backup = (again.workdir / ".env.bak").read_text()
+    assert "IMAGE_NAME=" in backup and "AGENT_IMAGE_TAG=" in backup
+    assert not any(secret in backup for secret in secrets)
+    assert "# POSTGRES_PASSWORD: carried into .env, not kept here" in backup
+    assert (again.workdir / ".env.bak").stat().st_mode & 0o777 == 0o600

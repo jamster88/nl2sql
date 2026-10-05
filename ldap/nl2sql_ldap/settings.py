@@ -165,6 +165,10 @@ class UpstreamSettings:
     starttls: bool = False
     cacert: str | None = None
     verify: bool = True
+    #: A plain ldap:// primary without StartTLS is refused unless this says
+    #: so: every password passed through to it would cross in clear, and the
+    #: directory refuses clear-text binds to itself for the same reason.
+    allow_cleartext: bool = False
     interval_seconds: int = 60
     #: Copy only people who are in one of the mirrored groups. An Active
     #: Directory has every employee in it; the stack needs the ones who may
@@ -210,6 +214,7 @@ class UpstreamSettings:
             starttls=_env_bool("LDAP_UPSTREAM_STARTTLS", False),
             cacert=_env("LDAP_UPSTREAM_CACERT"),
             verify=_env_bool("LDAP_UPSTREAM_TLS_VERIFY", True),
+            allow_cleartext=_env_bool("LDAP_UPSTREAM_ALLOW_CLEARTEXT", False),
             interval_seconds=_env_int("LDAP_REPLICA_INTERVAL", 60),
             only_group_members=_env_bool("LDAP_REPLICA_ONLY_GROUP_MEMBERS", True),
             page_size=_env_int("LDAP_UPSTREAM_PAGE_SIZE", 500),
@@ -304,16 +309,24 @@ class DirectorySettings:
                 "LDAP_ADMIN_PASSWORD is not set: a standalone directory needs a first "
                 "person who can sign in (setup.sh writes one into .env)"
             )
+        if self.upstream is not None and not self.upstream.secure and not self.upstream.allow_cleartext:
+            found.append(
+                f"LDAP_UPSTREAM_URI is {self.upstream.uri} without StartTLS: the bind account's "
+                "password and every person's would cross to the primary in clear text. Use "
+                "ldaps:// or LDAP_UPSTREAM_STARTTLS=true -- or, for a primary that cannot do "
+                "either, say so with LDAP_UPSTREAM_ALLOW_CLEARTEXT=true"
+            )
         return found
 
     def warnings(self) -> list[str]:
         """Configurations that will start and probably should not."""
         notes: list[str] = []
-        if self.upstream is not None and not self.upstream.secure:
+        if self.upstream is not None and not self.upstream.secure and self.upstream.allow_cleartext:
             notes.append(
-                f"LDAP_UPSTREAM_URI is {self.upstream.uri} without StartTLS: every password "
-                "passed through to the primary crosses the network in clear text. Use "
-                "ldaps:// or LDAP_UPSTREAM_STARTTLS=true."
+                f"LDAP_UPSTREAM_URI is {self.upstream.uri} without StartTLS, allowed by "
+                "LDAP_UPSTREAM_ALLOW_CLEARTEXT=true: every password passed through to the "
+                "primary crosses the network in clear text. Use ldaps:// or "
+                "LDAP_UPSTREAM_STARTTLS=true."
             )
         if self.upstream is not None and not self.upstream.verify:
             notes.append(

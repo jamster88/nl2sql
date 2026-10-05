@@ -110,7 +110,9 @@ class World:
             database_check=checks.get(database_check, database_check),
             clock=lambda: NOW,
         )
-        self.client = TestClient(self.app)
+        # On the directory's own port, so its routes answer; what the
+        # published port does with them has its own test below.
+        self.client = TestClient(self.app, base_url=f"http://testserver:{self.settings.directory_port}")
 
     def sign_in(self, name="admin", password=None) -> TestClient:
         password = password or f"{name}-password"
@@ -627,3 +629,20 @@ def test_an_edit_without_a_sync_configured_still_happens():
     world.sign_in("admin")
     answer = world.client.post("/directory/v1/people", json={"uid": "noor"}, headers=SAME)
     assert answer.status_code == 201 and world.directory.person("noor") is not None
+
+
+def test_the_directory_api_answers_only_on_its_own_port():
+    """V6-58: the sign-in port is published for the desktop client, and the
+    routes that make administrators are not served there."""
+    world = World()
+    published = TestClient(world.app, base_url="http://testserver:8446")
+    refused = published.get("/directory/v1/people")
+    assert refused.status_code == 404 and "AUTH_DIRECTORY_PORT" in refused.json()["error"]["message"]
+    assert published.get("/auth/meta").status_code == 200, "signing in is what that port is for"
+    assert world.client.get("/directory/v1/people").status_code == 401, "here it asks who is calling"
+
+
+def test_with_no_directory_port_the_directory_shares_the_sign_in_port():
+    world = World(settings=AuthSettings(session_hours=1, directory_port=0))
+    together = TestClient(world.app, base_url="http://testserver:8446")
+    assert together.get("/directory/v1/people").status_code == 401

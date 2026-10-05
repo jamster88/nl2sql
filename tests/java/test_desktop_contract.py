@@ -138,6 +138,8 @@ def test_every_wire_model_has_a_java_record():
         if isinstance(value, type)
         and issubclass(value, models.BaseModel)
         and value is not models.BaseModel
+        # The strict base every model shares, not a shape of its own.
+        and value is not models.Wire
         # ApiError is the error envelope; the client mirrors it as
         # ApiErrorBody with the payload left as a map, because it branches on
         # one key of it and never renders the rest.

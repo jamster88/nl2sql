@@ -61,6 +61,6 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=5 \
 
 LABEL org.opencontainers.image.title="nl2sql directory" \
       org.opencontainers.image.description="OpenLDAP for the nl2sql stack: standalone, or a read-only replica of another directory" \
-      org.opencontainers.image.version="6.0.1"
+      org.opencontainers.image.version="6.1.0"
 
 ENTRYPOINT ["python3", "-m", "nl2sql_ldap"]

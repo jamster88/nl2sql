@@ -1,7 +1,7 @@
 """Sign-in end to end: the retail database, the directory, the auth service.
 
-Opt-in (`pytest --run-docker`). Builds the directory and auth images, starts
-them beside a copy of the published retail database on a network of their
+Opt-in (`pytest --run-docker`). Builds the retail database, the directory
+and the auth images from this checkout, starts them on a network of their
 own -- nothing published to the host, nothing shared with a running stack --
 prepares the database the way launch.sh does (docker/reader_role.sql,
 docker/auth_roles.sql, docker/ldap_hba.sh), and then signs people in:
@@ -15,6 +15,11 @@ docker/auth_roles.sql, docker/ldap_hba.sh), and then signs people in:
   only for a transaction (SET ROLE);
 * MLflow behind its proxy: a browser sent to sign in, an MLflow client's
   Basic credentials accepted, a write from another site refused.
+
+The database is the `v1_2` image as `setup.sh` runs it: passwords from the
+environment and none in the image, a certificate of its own, nothing over
+the network without TLS, the superuser not over the network at all -- and
+the auth service checks passwords against it with `verify-full`.
 """
 
 from __future__ import annotations
@@ -30,7 +35,14 @@ import pytest
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-RETAIL = "mcfaddja/nl2sql-retail-postgres:v1_1"
+#: Built from docker/Dockerfile rather than pulled: what is under test is
+#: this checkout's entrypoint, and a cached build costs nothing after the first.
+RETAIL = "nl2sql-retail-postgres:pytest"
+OWNER_PASSWORD = "owner-password-1"
+READER_PASSWORD = "reader-password-1"
+#: Where the database writes its certificate, and where the auth service and
+#: anyone else who verifies it reads it from.
+PG_TLS = "/etc/nl2sql/pg-tls"
 LDAP_IMAGE = "nl2sql-ldap:pytest"
 AUTH_IMAGE = "nl2sql-auth:pytest"
 PROXY_IMAGE = "nl2sql-mlflow-proxy:pytest"
@@ -56,10 +68,12 @@ def wait_until(predicate, what: str, seconds: int = 60) -> None:
 def stack(docker_daemon_available):
     if not docker_daemon_available:
         pytest.skip("no Docker daemon")
+    docker("build", "-q", "-f", str(REPO_ROOT / "docker" / "Dockerfile"), "-t", RETAIL, str(REPO_ROOT))
     docker("build", "-q", "-f", str(REPO_ROOT / "ldap" / "Dockerfile"), "-t", LDAP_IMAGE, str(REPO_ROOT))
     docker("build", "-q", "-f", str(REPO_ROOT / "auth" / "Dockerfile"), "-t", AUTH_IMAGE, str(REPO_ROOT))
     net = f"nl2sql-signin-{uuid.uuid4().hex[:8]}"
     tls = f"{net}-ldaptls"
+    pgtls = f"{net}-pgtls"
     names = {part: f"{net}-{part}" for part in ("ldap", "pg", "auth", "mlflow", "proxy")}
     docker("network", "create", net)
     try:
@@ -70,16 +84,20 @@ def stack(docker_daemon_available):
         )
         docker(
             "run", "-d", "--name", names["pg"], "--network", net, "--network-alias", "nl2sql-postgres",
-            "-v", f"{tls}:/etc/nl2sql/ldap-tls:ro", "-e", "LDAPTLS_CACERT=/etc/nl2sql/ldap-tls/ldap.crt", RETAIL,
+            "-v", f"{tls}:/etc/nl2sql/ldap-tls:ro", "-e", "LDAPTLS_CACERT=/etc/nl2sql/ldap-tls/ldap.crt",
+            "-v", f"{pgtls}:{PG_TLS}", "-e", f"POSTGRES_PASSWORD={OWNER_PASSWORD}",
+            "-e", f"POSTGRES_READER_PASSWORD={READER_PASSWORD}", RETAIL,
         )
+        # Over TCP: the server the entrypoint sets passwords through answers
+        # on the socket only, so a socket check can catch it before it stops.
         wait_until(
-            lambda: docker("exec", names["pg"], "pg_isready", "-q", "-U", "nl2sql", "-d", "nl2sql_retail", check=False).returncode == 0
+            lambda: docker("exec", names["pg"], "pg_isready", "-q", "-h", "127.0.0.1", "-d", "nl2sql_retail", check=False).returncode == 0
             and docker("inspect", "-f", "{{.State.Health.Status}}", names["ldap"], check=False).stdout.strip() == "healthy",
             "the database and the directory",
         )
-        time.sleep(2)  # the image's entrypoint restarts the server once after its first check
         psql = ["exec", "-i", "-u", "postgres", names["pg"], "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail"]
-        docker(*psql, "-v", "reader=nl2sql_reader", "-v", "reader_password=nl2sql_reader", "-v", "owner=nl2sql",
+        docker(*psql[:2], "-e", f"NL2SQL_READER_PASSWORD={READER_PASSWORD}", *psql[2:],
+               "-v", "reader=nl2sql_reader", "-v", "owner=nl2sql",
                "-f", "-", input=(REPO_ROOT / "docker" / "reader_role.sql").read_text())
         apply_auth_roles(names["pg"])
         docker(
@@ -90,6 +108,7 @@ def stack(docker_daemon_available):
         )
         docker(
             "run", "-d", "--name", names["auth"], "--network", net, "-v", f"{tls}:/etc/nl2sql/ldap-tls:ro",
+            "-v", f"{pgtls}:{PG_TLS}:ro",
             "-e", "AUTH_TLS_ENABLED=false", "-e", "AUTH_ROLE_SYNC_INTERVAL=2",
             "-e", "AUTH_ROLESYNC_DB_URL=postgresql://nl2sql_rolesync:sync-password-1@nl2sql-postgres:5432/nl2sql_retail",
             "-e", "LDAP_SERVICE_PASSWORD=svc-password-1", AUTH_IMAGE,
@@ -109,16 +128,17 @@ def stack(docker_daemon_available):
         for container in names.values():
             docker("rm", "-f", container, check=False)
         docker("network", "rm", net, check=False)
-        docker("volume", "rm", tls, check=False)
+        docker("volume", "rm", tls, pgtls, check=False)
 
 
 #: Run inside the auth container, which has Python and nothing else needed.
 def apply_auth_roles(pg: str) -> None:
     """docker/auth_roles.sql, as launch.sh applies it on every start."""
     docker(
-        "exec", "-i", "-u", "postgres", pg, "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail",
+        "exec", "-i", "-u", "postgres", "-e", "NL2SQL_ROLESYNC_PASSWORD=sync-password-1", pg,
+        "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail",
         "-v", "reader=nl2sql_reader", "-v", "owner=nl2sql", "-v", "rolesync=nl2sql_rolesync",
-        "-v", "rolesync_password=sync-password-1", "-f", "-", input=(REPO_ROOT / "docker" / "auth_roles.sql").read_text(),
+        "-f", "-", input=(REPO_ROOT / "docker" / "auth_roles.sql").read_text(),
     )
 
 
@@ -126,7 +146,7 @@ REQUEST = """
 import json, os, urllib.request, urllib.error
 body = os.environ["BODY"]
 request = urllib.request.Request(
-    "http://127.0.0.1:8446" + os.environ["ROUTE"], method=os.environ["METHOD"],
+    "http://127.0.0.1:" + os.environ["PORT"] + os.environ["ROUTE"], method=os.environ["METHOD"],
     data=body.encode() if body else None,
     headers={"Content-Type": "application/json", **json.loads(os.environ["HEADERS"])},
 )
@@ -139,9 +159,14 @@ print(json.dumps([status, json.loads(text) if text.startswith("{") else None]))
 """
 
 
-def call(stack, method: str, path: str, body=None, headers=None) -> tuple[int, dict | None]:
+def call(stack, method: str, path: str, body=None, headers=None, port: int | None = None) -> tuple[int, dict | None]:
+    """A request to the auth service, from inside it. The directory's API
+    answers on its own port (8447), which only the directory page reaches;
+    everything else on 8446."""
+    if port is None:
+        port = 8447 if path.startswith("/directory/") else 8446
     result = docker(
-        "exec", "-i", "-e", f"METHOD={method}", "-e", f"ROUTE={path}",
+        "exec", "-i", "-e", f"METHOD={method}", "-e", f"ROUTE={path}", "-e", f"PORT={port}",
         "-e", f"BODY={json.dumps(body) if body is not None else ''}", "-e", f"HEADERS={json.dumps(headers or {})}",
         stack["auth"], "python", "-", input=REQUEST, check=False,
     )
@@ -157,10 +182,12 @@ def token(stack, user: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {body['token']}"}
 
 
-def sql_as(stack, user: str, password: str, query: str) -> subprocess.CompletedProcess:
+def sql_as(stack, user: str, password: str, query: str, sslmode: str = "verify-full") -> subprocess.CompletedProcess:
+    """psql over the network, as anyone outside the container connects: by
+    the database's name, verifying its certificate."""
     return docker(
-        "exec", "-e", f"PGPASSWORD={password}", stack["pg"], "psql", "-X", "-At", "-h", "localhost",
-        "-U", user, "-d", "nl2sql_retail", "-c", query, check=False,
+        "exec", "-e", f"PGPASSWORD={password}", "-e", f"PGSSLMODE={sslmode}", "-e", f"PGSSLROOTCERT={PG_TLS}/server.crt",
+        stack["pg"], "psql", "-X", "-At", "-h", "nl2sql-postgres", "-U", user, "-d", "nl2sql_retail", "-c", query, check=False,
     )
 
 
@@ -208,16 +235,52 @@ def test_a_person_added_in_the_web_interface_can_sign_in_read_and_be_removed(sta
 
     assert call(stack, "DELETE", "/directory/v1/people/alice", headers=admin)[0] == 204
     wait_until(lambda: sql_as(stack, "alice", "alice-password-1", "SELECT 1").returncode != 0, "alice's role to go")
-    roles = sql_as(stack, "nl2sql_reader", "nl2sql_reader", "SELECT count(*) FROM pg_roles WHERE rolname = 'alice'")
+    roles = sql_as(stack, "nl2sql_reader", READER_PASSWORD, "SELECT count(*) FROM pg_roles WHERE rolname = 'alice'")
     assert roles.stdout.strip() == "0"
 
 
 def test_the_reader_keeps_its_password_and_becomes_a_person_only_for_a_transaction(stack):
     statement = "BEGIN; SET TRANSACTION READ ONLY; SET LOCAL ROLE admin; SELECT current_user, session_user; COMMIT;"
-    result = sql_as(stack, "nl2sql_reader", "nl2sql_reader", statement)
+    result = sql_as(stack, "nl2sql_reader", READER_PASSWORD, statement)
     assert "admin|nl2sql_reader" in result.stdout, result.stderr
-    refused = sql_as(stack, "nl2sql_reader", "nl2sql_reader", "SET ROLE nl2sql_admins")
+    refused = sql_as(stack, "nl2sql_reader", READER_PASSWORD, "SET ROLE nl2sql_admins")
     assert "permission denied" in refused.stderr, "a group cannot be become, only a person"
+
+
+def test_the_directory_api_is_not_answered_on_the_sign_in_port(stack):
+    """8446 is published; 8447, where the directory's API answers, is not,
+    and only the directory page proxies to it."""
+    admin = token(stack, "admin", "admin-password-1")
+    assert call(stack, "GET", "/directory/v1/people", headers=admin, port=8446)[0] == 404
+    assert call(stack, "GET", "/directory/v1/people", headers=admin)[0] == 200
+
+
+def test_nothing_reaches_the_database_over_the_network_in_clear_text(stack):
+    refused = sql_as(stack, "nl2sql_reader", READER_PASSWORD, "SELECT 1", sslmode="disable")
+    assert refused.returncode != 0
+    assert "no encryption" in refused.stderr, refused.stderr
+    assert sql_as(stack, "nl2sql_reader", READER_PASSWORD, "SELECT 1").stdout.strip() == "1"
+
+
+def test_the_superuser_is_refused_over_the_network_whatever_the_password(stack):
+    refused = sql_as(stack, "postgres", OWNER_PASSWORD, "SELECT 1")
+    assert refused.returncode != 0
+    assert "rejects connection" in refused.stderr, refused.stderr
+
+
+def test_the_passwords_are_the_environments_and_none_is_baked_in(stack):
+    assert sql_as(stack, "nl2sql", OWNER_PASSWORD, "SELECT current_user").stdout.strip() == "nl2sql"
+    for user, old in (("nl2sql", "nl2sql"), ("nl2sql_reader", "nl2sql_reader")):
+        refused = sql_as(stack, user, old, "SELECT 1")
+        assert "password authentication failed" in refused.stderr, f"{user} still takes {old!r}"
+
+
+def test_the_certificate_is_the_databases_own_and_names_it(stack):
+    """What the auth service verifies against: written on first start into
+    the volume, for the names it is reached by, and kept."""
+    subject = docker("exec", stack["pg"], "openssl", "x509", "-in", f"{PG_TLS}/server.crt", "-noout", "-ext", "subjectAltName").stdout
+    assert "DNS:nl2sql-postgres" in subject and "DNS:localhost" in subject
+    assert sql_as(stack, "nl2sql_reader", READER_PASSWORD, "SHOW ssl").stdout.strip() == "on"
 
 
 def curl(stack, *args: str) -> str:

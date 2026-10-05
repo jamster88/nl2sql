@@ -24,15 +24,12 @@ from nl2sql_agent.examples import (
     GoldenPairLibrary,
     build_embedder,
 )
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-CONTEXT_DB_URL = os.environ.get(
-    "TEST_CONTEXT_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5433/nl2sql_chunks"
-)
-VECTOR_DB_URL = os.environ.get(
-    "TEST_VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"
-)
+CONTEXT_DB_URL = live_stores.url("chunks", variable="TEST_CONTEXT_DB_URL")
+VECTOR_DB_URL = live_stores.url("vectors", variable="TEST_VECTOR_DB_URL")
 EMBED_BASE_URL = os.environ.get("TEST_EMBED_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.environ.get("TEST_EMBED_MODEL", "bge-m3")
 
@@ -57,7 +54,7 @@ def library() -> GoldenPairLibrary:
     try:
         count = lib.count()
     except Exception as exc:
-        pytest.skip(f"no reachable context store at {CONTEXT_DB_URL}: {exc}")
+        live_stores.unreachable("context store", CONTEXT_DB_URL, exc)
     if not count:
         pytest.skip("context store is reachable but holds no golden pairs")
     try:
@@ -176,7 +173,7 @@ def test_the_knowledge_retriever_does_not_pick_up_the_golden_pair_vectors():
     try:
         collections = kb.collections()
     except Exception as exc:
-        pytest.skip(f"no reachable vector store at {VECTOR_DB_URL}: {exc}")
+        live_stores.unreachable("vector store", VECTOR_DB_URL, exc)
     assert collections, "vector store has no knowledge collections"
     assert not any("golden" in name for name in collections)
 

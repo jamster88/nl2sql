@@ -17,7 +17,6 @@ another session, or onto the server's filesystem.
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -34,6 +33,7 @@ from nl2sql_review.validation import (
     static_problems,
     validate,
 )
+from tests import live_stores
 
 
 class FakeCursor:
@@ -249,9 +249,7 @@ def test_a_validation_serialises_whole():
 # Against the real retail database
 # ---------------------------------------------------------------------------
 
-RETAIL_URL = os.environ.get(
-    "RETAIL_DB_URL", "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+RETAIL_URL = live_stores.url("retail", variable="RETAIL_DB_URL", driver="postgresql")
 
 
 @pytest.fixture(scope="module")
@@ -261,7 +259,7 @@ def live():
     try:
         psycopg.connect(RETAIL_URL, connect_timeout=3).close()
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"no retail database at {RETAIL_URL}: {exc}")
+        live_stores.unreachable("retail database", RETAIL_URL, exc)
     return RETAIL_URL
 
 

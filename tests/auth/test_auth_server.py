@@ -25,8 +25,10 @@ def test_flags_override_the_environment_only_when_given(monkeypatch):
 def test_the_banner_says_where_passwords_go_and_hides_the_sync_password():
     text = server.banner(AuthSettings(rolesync_url="postgresql://sync:secret@db/retail", ldap_service_password="x"))
     assert "secret" not in text and "postgresql://sync:***@db/retail" in text
-    assert "nl2sql-postgres:5432/nl2sql_retail (sslmode=prefer)" in text
-    assert "/directory/v1" in text
+    assert "nl2sql-postgres:5432/nl2sql_retail (sslmode=verify-full, against /etc/nl2sql/pg-tls/server.crt)" in text
+    assert "/directory/v1 on port 8447 only (AUTH_DIRECTORY_PORT)" in text
+    assert "(sslmode=require)" in server.banner(AuthSettings(db_sslmode="require"))
+    assert "/directory/v1, on the sign-in port" in server.banner(AuthSettings(directory_port=0))
     replica = server.banner(AuthSettings(ldap_mode="replica"))
     assert "off: the directory is a replica" in replica
     assert "(not set)" in replica and "! AUTH_ROLESYNC_DB_URL is not set" in replica
@@ -45,7 +47,7 @@ def test_print_settings_prints_and_exits(capsys):
 def test_without_the_apis_certificate_it_will_not_start_with_tls(capsys, monkeypatch, tmp_path):
     monkeypatch.setenv("AUTH_TLS_CERT_FILE", str(tmp_path / "missing.crt"))
     assert server.main([], run=lambda *a, **k: None) == 2
-    assert "covers nl2sql-auth" in capsys.readouterr().err
+    assert "names that include nl2sql-auth" in capsys.readouterr().err
 
 
 def test_a_key_that_cannot_be_read_stops_the_start(capsys, monkeypatch, tmp_path):
@@ -79,14 +81,59 @@ def test_a_start_makes_the_key_builds_the_app_and_serves_it(capsys, monkeypatch,
 
 
 def test_the_real_server_is_uvicorn(monkeypatch, tmp_path):
+    """With no directory port of its own, one socket, as before 6.1."""
     import uvicorn
 
     monkeypatch.setenv("AUTH_SIGNING_KEY_FILE", str(tmp_path / "session.key"))
     monkeypatch.setenv("AUTH_PUBLIC_KEY_FILE", str(tmp_path / "session.pub"))
-    called = []
-    monkeypatch.setattr(uvicorn, "run", lambda app, **options: called.append(options["host"]))
+    monkeypatch.setenv("AUTH_HOST", "127.0.0.1")
+    monkeypatch.setenv("AUTH_PORT", "0")
+    monkeypatch.setenv("AUTH_DIRECTORY_PORT", "0")
+    ran = []
+
+    class Server:
+        def __init__(self, config):
+            ran.append(config)
+
+        def run(self, sockets=None):
+            ran.append(sockets)
+
+    monkeypatch.setattr(uvicorn, "Server", Server)
     assert server.main(["--no-tls"]) == 0
-    assert called == ["0.0.0.0"]
+    config, sockets = ran
+    assert (config.host, config.port) == ("127.0.0.1", 0) and sockets is None, "port 0: one socket"
+
+
+def test_two_ports_are_two_bound_sockets_under_one_server():
+    import socket as sockets_module
+
+    ran = []
+
+    class Server:
+        def __init__(self, config):
+            ran.append(config)
+
+        def run(self, sockets=None):
+            ran.append(sockets)
+
+    server.serve(object(), host="127.0.0.1", port=0, directory_port=0, server_factory=Server)
+    assert ran[1] is None
+    ran.clear()
+    with sockets_module.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    server.serve(object(), host="127.0.0.1", port=0, directory_port=free, server_factory=Server, log_level="info")
+    config, bound = ran
+    assert config.log_level == "info"
+    assert [sock.getsockname()[1] for sock in bound][1] == free
+    for sock in bound:
+        sock.close()
+
+
+def test_an_ipv6_host_binds_an_ipv6_socket():
+    sock = server._listening("::1", 0)
+    assert sock.family.name == "AF_INET6"
+    sock.close()
 
 
 def test_the_database_check_names_the_role_it_reached():

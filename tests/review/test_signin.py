@@ -146,7 +146,7 @@ def test_readiness_counts_sign_in(make_client, tmp_path):
 
 
 def test_the_default_guard_follows_the_settings():
-    off = default_guard(ReviewSettings(token="t"))
+    off = default_guard(ReviewSettings(auth_enabled=False, token="t"))
     assert not off.settings.enabled and off._recheck is None
     assert off.settings.service_roles == {REVIEWERS, CURATORS}
     on = default_guard(ReviewSettings(auth_enabled=True, reviewer_roles=("x",), curator_roles=("y",)))
@@ -217,4 +217,4 @@ def test_a_snippet_is_run_as_the_person_who_checks_it(principal):
 
 def test_settings_say_nothing_about_a_missing_token_once_sign_in_is_on():
     assert not any("REVIEW_TOKEN" in note for note in ReviewSettings(auth_enabled=True).warnings())
-    assert any("REVIEW_TOKEN" in note for note in replace(ReviewSettings(), token=None).warnings())
+    assert any("REVIEW_TOKEN" in note for note in replace(ReviewSettings(), auth_enabled=False, token=None).warnings())

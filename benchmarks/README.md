@@ -49,10 +49,18 @@ as each node finishes, so the gaps between those callbacks are stage durations.
 
 ## The questions
 
-Fifteen, spread across five categories. They are deliberately **not** the 45
+Fifteen, spread across five categories. They were written apart from the
 golden pairs the agent retrieves from -- a benchmark drawn from those would
 measure how well it can look something up, which is not the thing worth knowing.
-A test asserts none of them is golden-pair text verbatim.
+
+Two of them have since become golden pairs. The golden set grows from reviewed
+feedback (since 4.4), and when users' verdicts on **B03** and **B14** were
+promoted (5.4) their questions became **Q46** and **Q47**, word for word. They
+stay in the benchmark by the owner's decision, so the fifteen stay comparable
+across releases; read their scores as lookup, not generalisation. A test
+(`tests/benchmarks/test_questions.py`) holds the overlap to exactly those two,
+each named with the pair it became, so a third is a failure to look at rather
+than a quiet change in what the benchmark measures.
 
 | Category | n | What it tests |
 |---|---|---|
@@ -273,11 +281,12 @@ database that went away, keeps what it measured and ends as `KILLED`.
 
 It runs on the host, so MLflow is `https://localhost:5001` -- its front door,
 the port compose publishes -- unless `MLFLOW_TRACKING_URI` says otherwise;
-set it empty to run untraced with MLflow up. The front door presents the
-API's certificate, which the benchmark trusts when `./nl2sql-api.crt` is
-there (`./launch.sh --desktop` copies it out, or `docker compose --profile
-api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt`) and
-`MLFLOW_TRACKING_SERVER_CERT_PATH` does not name another. With sign-in on it
+set it empty to run untraced with MLflow up. The front door presents a
+certificate issued by the stack's development CA, which the benchmark
+trusts when `./nl2sql-ca.crt` is there (`./launch.sh --desktop` copies it
+out, or `docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt
+./nl2sql-ca.crt`) and `MLFLOW_TRACKING_SERVER_CERT_PATH` does not name
+another. With sign-in on it
 also asks who is logging runs: set `MLFLOW_TRACKING_USERNAME` and
 `MLFLOW_TRACKING_PASSWORD` to someone in `nl2sql-reviewers` or
 `nl2sql-admins`, which MLflow's client sends as Basic credentials. With nothing answering there, the benchmark runs as

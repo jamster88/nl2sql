@@ -20,12 +20,12 @@
 --                      make and remove people but cannot touch the owner, the
 --                      reader, or any role it did not create.
 --
--- Run it as the superuser on every start, after reader_role.sql, with four
--- psql variables:
+-- Run it as the superuser on every start, after reader_role.sql, with three
+-- psql variables and the sync's password in the environment, never on a
+-- command line (it is in `ps` for as long as psql runs):
 --
---   psql -U postgres -d nl2sql_retail \
---        -v reader=nl2sql_reader -v owner=nl2sql \
---        -v rolesync=nl2sql_rolesync -v rolesync_password=... \
+--   NL2SQL_ROLESYNC_PASSWORD=... psql -U postgres -d nl2sql_retail \
+--        -v reader=nl2sql_reader -v owner=nl2sql -v rolesync=nl2sql_rolesync \
 --        -f docker/auth_roles.sql
 --
 -- Idempotent. Nothing here drops anything, and a person's role is never
@@ -63,6 +63,7 @@ GRANT nl2sql_users TO nl2sql_reviewers, nl2sql_curators, nl2sql_admins
 SELECT format('CREATE ROLE %I', :'rolesync')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'rolesync') \gexec
 
+\getenv rolesync_password NL2SQL_ROLESYNC_PASSWORD
 ALTER ROLE :"rolesync" WITH LOGIN PASSWORD :'rolesync_password'
     CREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS NOINHERIT;
 

@@ -151,7 +151,9 @@ public record Settings(
                   --url URL            the API to talk to (default %s)
                   --token TOKEN        bearer token, when the server requires one
                   --cacert FILE        PEM certificate to verify the server against
-                  --fingerprint HEX    accept exactly the certificate with this SHA-256
+                  --fingerprint HEX    accept exactly the certificates with these SHA-256s,
+                                       comma-separated: the API's and the sign-in
+                                       service's
                   --insecure           do not verify the certificate at all
                   --wait SECONDS       how long to let the server hold a question open
                   --auth-url URL       the sign-in service (default: the API's host, port %d)
@@ -170,14 +172,15 @@ public record Settings(
                 Each option has an environment variable: NL2SQL_API_URL,
                 NL2SQL_API_TOKEN, NL2SQL_API_CACERT, NL2SQL_API_FINGERPRINT,
                 NL2SQL_API_INSECURE, NL2SQL_API_WAIT_SECONDS, NL2SQL_AUTH_URL and
-                NL2SQL_USER. The flag wins. The sign-in service presents the API's
-                certificate, so the same --cacert or --fingerprint covers both.
+                NL2SQL_USER. The flag wins.
 
-                The API writes itself a self-signed certificate on first start, so
-                one of --cacert, --fingerprint or --insecure is needed to reach it:
+                The API and the sign-in service each present a certificate of their
+                own, issued by the stack's development CA, so one of --cacert,
+                --fingerprint or --insecure is needed to reach them. The CA covers
+                both:
 
-                  docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
-                  java -jar nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+                  docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
+                  java -jar nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 
                 ./start.sh --desktop does that copy for you.
                 """.formatted(DEFAULT_BASE_URL, DEFAULT_AUTH_PORT);
@@ -254,21 +257,28 @@ public record Settings(
     }
 
     /**
-     * A fingerprint as the server prints it, however it was pasted.
+     * A fingerprint as the server prints it, however it was pasted -- or
+     * several, comma-separated: the API's and the sign-in service's, which
+     * since 6.1 present certificates of their own.
      *
      * <p>The API prints plain lowercase hex; every other tool that shows one
      * groups it in colon-separated pairs, and a user who pins the one their
-     * browser showed them should not have to know which this expects.
+     * browser showed them should not have to know which this expects. Each is
+     * normalised to lower-case hexadecimal, and they are joined by commas.
      */
     private static String normaliseFingerprint(String value) {
-        String stripped = value.replace(":", "").replace(" ", "").toLowerCase(java.util.Locale.ROOT);
-        if (stripped.isEmpty()) {
-            return "";
+        java.util.List<String> pins = new java.util.ArrayList<>();
+        for (String part : value.split(",")) {
+            String stripped = part.replace(":", "").replace(" ", "").toLowerCase(java.util.Locale.ROOT);
+            if (stripped.isEmpty()) {
+                continue;
+            }
+            if (!stripped.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException(
+                        "a SHA-256 fingerprint is 64 hexadecimal characters; got " + part.strip());
+            }
+            pins.add(stripped);
         }
-        if (!stripped.matches("[0-9a-f]{64}")) {
-            throw new IllegalArgumentException(
-                    "a SHA-256 fingerprint is 64 hexadecimal characters; got " + value);
-        }
-        return stripped;
+        return String.join(",", pins);
     }
 }

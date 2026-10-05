@@ -98,17 +98,23 @@ def test_the_api_reads_the_database_as_the_reader_role_like_everything_else(api:
     assert "nl2sql:nl2sql@" not in api["environment"]["DATABASE_URL"]
 
 
-def test_the_api_waits_for_every_database(api: dict):
-    assert set(api["depends_on"]) == {"postgres", "vectordb", "chunkdb", "snippetsdb"}
+def test_the_api_waits_for_every_database_and_its_certificate(api: dict):
+    assert set(api["depends_on"]) == {"pki", "postgres", "vectordb", "chunkdb", "snippetsdb"}
+    assert api["depends_on"].pop("pki")["condition"] == "service_completed_successfully"
     assert all(d["condition"] == "service_healthy" for d in api["depends_on"].values())
 
 
-def test_tls_is_on_and_the_certificate_is_generated_by_default(api: dict):
+def test_tls_is_on_with_the_certificate_the_pki_issued(api: dict):
+    """V6-36: the API presents its own certificate, which the pki service
+    issues before it starts; it generates nothing, and cannot write the
+    volume it is in."""
     env = api["environment"]
     assert env["API_TLS_ENABLED"] == "true"
-    assert env["API_TLS_GENERATE"] == "true"
+    assert env["API_TLS_GENERATE"] == "false"
     assert env["API_TLS_ALLOW_SELF_SIGNED"] == "true"
     assert env["API_TLS_CERT_FILE"] == "/etc/nl2sql/tls/server.crt"
+    [mount] = [v for v in api["volumes"] if v["target"] == "/etc/nl2sql/tls"]
+    assert (mount["source"], mount.get("read_only")) == ("apitls", True)
 
 
 def test_the_generated_certificate_names_the_service_other_containers_reach(api: dict):
@@ -222,11 +228,14 @@ def test_the_test_client_reaches_the_api_by_its_service_name_over_tls(config: di
 
 def test_the_test_client_can_read_the_certificate_it_has_to_trust(config: dict):
     """Better than --insecure even in development: it still proves the
-    connection reached the server holding that key.
+    connection reached the server holding that key. The CA's certificate,
+    and only that: a client has no business with any server's key.
     """
-    [mount] = [v for v in config["services"]["apitest"]["volumes"] if v["source"] == "apitls"]
-    assert mount["target"] == "/etc/nl2sql/tls"
-    assert mount.get("read_only") is True
+    apitest = config["services"]["apitest"]
+    [mount] = apitest["volumes"]
+    assert (mount["source"], mount["target"], mount.get("read_only")) == ("tlstrust", "/etc/nl2sql/tls", True)
+    assert apitest["environment"]["API_CACERT"] == "/etc/nl2sql/tls/ca.crt"
+    assert apitest["environment"]["API_INSECURE"] == "false"
 
 
 def test_the_test_client_is_given_the_same_token_as_the_server(tmp_path_factory):

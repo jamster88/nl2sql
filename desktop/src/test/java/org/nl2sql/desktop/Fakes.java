@@ -49,9 +49,9 @@ public final class Fakes {
                         List.of(List.of(0, "net_sales")), null)),
                 new Models.AuditReport(true, List.of(), List.of(), List.of(), null),
                 125767.4, 1,
-                List.of(new Models.TraceEntry("generate_sql", 8123.4, 1, "3 tables, 2 examples"),
-                        new Models.TraceEntry("run_sql", 210.0, 0, "")),
-                Map.of());
+                List.of(new Models.TraceEntry("generate_sql", 8123.4, 1, "3 tables, 2 examples", "", "", "", List.of()),
+                        new Models.TraceEntry("run_sql", 210.0, 0, "", "", "", "", List.of())),
+                Map.of(), Map.of());
     }
 
     public static Models.Job job(String id, Models.JobStatus status, Models.Answer answer) {
@@ -111,7 +111,7 @@ public final class Fakes {
             "fact_vendor_allowances", "fact_store_traffic");
 
     public static Models.Meta meta(boolean feedback) {
-        return new Models.Meta("nl2sql-agent", "6.0.1", "qwen3.8-256k",
+        return new Models.Meta("nl2sql-agent", "6.1.0", "qwen3.8-256k",
                 List.of("aggregate"), TABLES, SCOPE,
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",

@@ -142,10 +142,10 @@ Everything a query here runs inside, from the outside in:
 | Layer | What it does |
 |---|---|
 | **The address** | Both ports are published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise -- every other port in the stack is opened the way Docker opens ports, and a page that runs SQL is not one to offer the network by default. `launch.sh` warns when it is opened up with neither sign-in nor a token. |
-| **Sign-in** | On in compose (`AUTH_ENABLED`): every `/v1` route needs a signed-in person in `CONSOLE_ALLOWED_ROLES` -- `nl2sql_reviewers` and `nl2sql_curators` by default -- and each statement runs as them, `SET LOCAL ROLE` from the reader, so it can read what they can and nothing more. See [`auth/README.md`](../auth/README.md). |
+| **Sign-in** | On by default (`AUTH_ENABLED`), in the console's own settings as well as in compose: every `/v1` route needs a signed-in person in `CONSOLE_ALLOWED_ROLES` -- `nl2sql_reviewers` and `nl2sql_curators` by default -- and each statement runs as them, `SET LOCAL ROLE` from the reader, so it can read what they can and nothing more. See [`auth/README.md`](../auth/README.md). |
 | **The token** | `CONSOLE_TOKEN`, when set, is a static service token: with sign-in off it guards every `/v1` route, and the interface's nginx holds it and adds it so the browser never has it; with sign-in on it is accepted beside sessions, and the interface sends none. |
 | **CORS** | Off unless `CONSOLE_CORS_ORIGINS` names an origin. The page is same-origin behind its proxy, and a SQL runner any site in the browser could call is not something to offer without being asked. |
-| **TLS** | The console presents the certificate the agent API generates (`API_TLS_HOSTNAMES` covers `nl2sql-console`), and the proxy verifies it rather than trusting whatever answers. |
+| **TLS** | The console presents a certificate of its own, which the stack's pki service issues (`CONSOLE_TLS_HOSTNAMES` covers `nl2sql-console`), and the proxy verifies it against the stack's CA rather than trusting whatever answers. |
 | **The role** | `DATABASE_URL` is the agent's own -- compose anchors the one value -- so every query runs as `nl2sql_reader`: `SELECT` on the retail tables and nothing else. A URL pointed at the owner by mistake is shown in the status bar and the readiness check. |
 | **The validator** | The agent's, as above. Nothing it refuses for safety reaches the database. |
 | **The transaction** | `SET TRANSACTION READ ONLY`, then rolled back whatever happened. This is what refuses the write the validator does not know about -- `SELECT lo_create(0)` passes it and is refused here, by the server. |
@@ -235,9 +235,9 @@ empty unless set, so the default below stands.
 | `CONSOLE_PORT` | `8445` | The port to serve on, and to publish |
 | `CONSOLE_ROOT_PATH` | *(empty)* | A path prefix, when served under one by a reverse proxy |
 | `CONSOLE_TLS_ENABLED` | `true` | Serve HTTPS. Off only behind something that terminates TLS itself |
-| `CONSOLE_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | The certificate to present -- the one the API writes |
+| `CONSOLE_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | The certificate to present -- its own, from the pki service |
 | `CONSOLE_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | Its key |
-| `AUTH_ENABLED` | `false` (`true` in compose) | Accept signed-in people, and run each statement as the one who typed it |
+| `AUTH_ENABLED` | `true` | Accept signed-in people, and run each statement as the one who typed it. Only `false`, set by name, turns it off |
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
 | `CONSOLE_ALLOWED_ROLES` | `nl2sql_reviewers,nl2sql_curators` | Who may use it, signed in |
@@ -275,15 +275,15 @@ the names on the left.
 | `CONSOLE_GUI_PORT` | `CONSOLE_GUI_PORT` | `8082` |
 | `CONSOLE_GUI_UPSTREAM` | `CONSOLE_UPSTREAM` | `https://nl2sql-console:8445` |
 | `CONSOLE_GUI_SSL_NAME` | `CONSOLE_SSL_NAME` | `nl2sql-console` |
-| `CONSOLE_GUI_CACERT` | `CONSOLE_CACERT` | `/etc/nl2sql/tls/server.crt` |
+| `CONSOLE_GUI_CACERT` | `CONSOLE_CACERT` | `/etc/nl2sql/tls/ca.crt` |
 | `CONSOLE_GUI_READ_TIMEOUT` | `CONSOLE_READ_TIMEOUT` | `120s` -- longer than the statement timeout, or the proxy cuts off an answer that is coming |
 | `CONSOLE_GUI_RESOLVER` | `CONSOLE_GUI_RESOLVER` | `127.0.0.11`, Docker's DNS |
 | `CONSOLE_TOKEN` | `CONSOLE_TOKEN` | *(unset)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
 | `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are, and sends the session rather than a token |
 | `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where `/auth/` is proxied: the sign-in form posts there |
 | `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
-| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/server.crt` |
-| `GUI_TLS_ENABLED` | `CONSOLE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with the API's certificate, so a password never crosses in clear |
+| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `GUI_TLS_ENABLED` | `CONSOLE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
 | `GUI_TLS_CERT_FILE` | `CONSOLE_GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
 | `GUI_TLS_KEY_FILE` | `CONSOLE_GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
 

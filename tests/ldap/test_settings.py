@@ -30,7 +30,7 @@ VARIABLES = [
         "LDAP_UPSTREAM_FLAVOUR LDAP_UPSTREAM_USER_BASE LDAP_UPSTREAM_GROUP_BASE "
         "LDAP_UPSTREAM_USER_FILTER LDAP_UPSTREAM_GROUP_FILTER LDAP_UPSTREAM_LOGIN_ATTRIBUTE "
         "LDAP_UPSTREAM_MEMBER_ATTRIBUTE LDAP_REPLICA_GROUPS LDAP_UPSTREAM_STARTTLS "
-        "LDAP_UPSTREAM_CACERT LDAP_UPSTREAM_TLS_VERIFY LDAP_REPLICA_INTERVAL "
+        "LDAP_UPSTREAM_CACERT LDAP_UPSTREAM_TLS_VERIFY LDAP_UPSTREAM_ALLOW_CLEARTEXT LDAP_REPLICA_INTERVAL "
         "LDAP_REPLICA_ONLY_GROUP_MEMBERS LDAP_UPSTREAM_PAGE_SIZE LDAP_UPSTREAM_TIMEOUT"
     ).split()
 ]
@@ -242,10 +242,30 @@ def test_a_replica_needs_no_first_person():
 
 
 def test_warnings_name_the_risky_settings():
-    upstream = UpstreamSettings(uri="ldap://d", bind_dn="x", bind_password="y", base_dn="z", verify=False)
+    upstream = UpstreamSettings(
+        uri="ldap://d", bind_dn="x", bind_password="y", base_dn="z", verify=False, allow_cleartext=True
+    )
     replica = DirectorySettings(mode=REPLICA, upstream=upstream, require_tls=False)
     notes = " ".join(replica.warnings())
-    assert "clear text" in notes and "not checked" in notes and "unencrypted" in notes
+    assert "clear text" in notes and "LDAP_UPSTREAM_ALLOW_CLEARTEXT=true" in notes
+    assert "not checked" in notes and "unencrypted" in notes
     assert "without limit" in " ".join(DirectorySettings(lockout_failures=0).warnings())
     assert DirectorySettings().warnings() == []
     assert not module.UpstreamSettings(uri="ldap://d", bind_dn="", bind_password="", base_dn="").secure
+
+
+def test_a_clear_text_primary_is_refused_unless_allowed_by_name(monkeypatch):
+    """V6-57. The directory refuses clear-text binds to itself; a replica
+    holds its primary to the same rule, so a person's password is never
+    passed through in clear without someone having said so."""
+    _replica_env(monkeypatch, LDAP_UPSTREAM_URI="ldap://dc1.corp.example", LDAP_SERVICE_PASSWORD="s")
+    refused = DirectorySettings.from_env()
+    [problem] = refused.problems()
+    assert "without StartTLS" in problem and "LDAP_UPSTREAM_ALLOW_CLEARTEXT=true" in problem
+    assert not any("clear text" in note for note in refused.warnings()), "a problem, not a warning"
+    monkeypatch.setenv("LDAP_UPSTREAM_STARTTLS", "true")
+    assert DirectorySettings.from_env().problems() == []
+    monkeypatch.setenv("LDAP_UPSTREAM_STARTTLS", "false")
+    monkeypatch.setenv("LDAP_UPSTREAM_ALLOW_CLEARTEXT", "true")
+    allowed = DirectorySettings.from_env()
+    assert allowed.problems() == [] and any("clear text" in note for note in allowed.warnings())

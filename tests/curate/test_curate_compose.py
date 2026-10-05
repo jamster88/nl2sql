@@ -8,9 +8,9 @@ file shows:
   which loads it, holds the owner. The two halves -- the agent's URL and the
   review service's reader name and password -- are two services that have to
   agree.
-* **The curation page presents nothing of its own.** It proxies the review
-  service, verifying a name the API's certificate covers, holding the review
-  token so the browser never does.
+* **The curation page holds nothing of the review service's but its token.**
+  It proxies the review service, verifying a name the review service's
+  certificate covers, holding the review token so the browser never does.
 """
 
 from __future__ import annotations
@@ -165,8 +165,11 @@ def test_it_waits_for_and_verifies_the_review_service(curategui: dict, services:
     assert curategui["depends_on"]["review"]["condition"] == "service_healthy"
     env = curategui["environment"]
     assert env["CURATE_UPSTREAM"] == "https://nl2sql-review:8444"
-    assert env["CURATE_SSL_NAME"] in services["api"]["environment"]["API_TLS_HOSTNAMES"].split(",")
-    assert {m["target"]: m.get("read_only") for m in curategui["volumes"]} == {"/etc/nl2sql/tls": True}
+    assert env["CURATE_SSL_NAME"] in _issued({"services": services}, "review")
+    assert env["CURATE_CACERT"] == "/etc/nl2sql/tls/ca.crt"
+    assert [(m["source"], m["target"], m.get("read_only")) for m in curategui["volumes"]] == [
+        ("curateguitls", "/etc/nl2sql/tls", True)
+    ]
 
 
 def test_the_review_token_is_held_by_the_proxy(tmp_path_factory):
@@ -219,3 +222,9 @@ def test_each_setting_of_the_page_is_set_by_the_name_compose_documents(tmp_path_
 def test_every_setting_the_proxy_reads_can_be_set_through_compose_and_nothing_else_is(curategui: dict):
     assert sorted(_proxy_variables() - set(curategui["environment"])) == []
     assert sorted(set(curategui["environment"]) - _proxy_variables()) == []
+
+
+def _issued(config: dict, identity: str) -> list[str]:
+    """The names the pki service issues `identity`'s certificate for."""
+    [spec] = [arg for arg in config["services"]["pki"]["command"] if arg.startswith(f"{identity}=")]
+    return spec.split("=", 2)[2].split(",")

@@ -192,6 +192,7 @@ docker compose run --rm agent --json "top 10 SKUs"
     "limit": 10
   },
   "retrieval_errors": {},
+  "node_errors": {},
   "selected_tables": ["dim_product", "dim_date", "fact_pos_retail_sales", "..."],
   "sql": "SELECT prod.sku_id,\n       prod.product_name,\n       SUM(sales.net_sales_amt) AS total_net_sales ...",
   "attempts": 1,
@@ -291,10 +292,10 @@ The server writes itself a self-signed certificate on first start, so a
 client has to be told to trust it:
 
 ```bash
-docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
 
-curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
-curl --cacert ./nl2sql-api.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
+curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-ca.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
      -H 'Content-Type: application/json' \
      -d '{"question": "How many stores are there?"}'
 ```

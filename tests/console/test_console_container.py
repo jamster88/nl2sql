@@ -1,13 +1,14 @@
 """The SQL console and its interface, as real containers.
 
-Four on a private network, which is the arrangement compose builds: the
-agent image serving the API (only so it writes the certificate it writes in
-every deployment), a Postgres holding one table and a read-only role, the
-agent image again serving the console with that certificate, and the
-interface's nginx in front of it. The properties worth proving need all
-four: the proxy *verifies* the console's certificate rather than trusting
-whatever answers, the token is added by the proxy and never by the page,
-and a query runs as a role whose writes the database itself refuses.
+Three on a private network, which is the arrangement compose builds: a
+Postgres holding one table and a read-only role, the agent image serving the
+console with a certificate issued the way compose's pki service issues one,
+and the interface's nginx in front of it, verifying that certificate against
+the CA. The properties worth proving need all three: the proxy *verifies*
+the console's certificate rather than trusting whatever answers, the token
+is added by the proxy and never by the page, and a query runs as a role
+whose writes the database itself refuses. Sign-in is off by name: this is
+the open hop and its token; the signed-in one is tests/auth's.
 
 Everything is removed before and after, and a leak is a failure: a network
 left behind eventually takes a subnet that shadows a real LAN address.
@@ -27,11 +28,11 @@ from tests.docker.test_gui_container import (
     API_IMAGE,
     _build,
     _get,
+    _issue,
     _names,
     _remove_network,
     _trust,
     _wait_for,
-    _wait_for_api,
     free_port,
 )
 
@@ -123,8 +124,8 @@ def _wait_for_console(name: str) -> None:
 
 @pytest.fixture(scope="module")
 def stack(gui_image: str, api_image: str):
-    """The database, the API that writes the certificate, the console, and a
-    factory for interfaces in front of it -- each test says how its proxy is
+    """The database, the console's certificate, the console, and a factory
+    for interfaces in front of it -- each test says how its proxy is
     configured."""
     suffix = uuid.uuid4().hex[:8]
     network = f"{NETWORK_PREFIX}{suffix}"
@@ -143,7 +144,7 @@ def stack(gui_image: str, api_image: str):
     def run_console(alias: str, *env: str) -> str:
         environment = [
             "-e", "DATABASE_URL=postgresql+psycopg://reader:reader@nl2sql-postgres:5432/shop",
-            *[flag for pair in env for flag in ("-e", pair)],
+            *[flag for pair in ("AUTH_ENABLED=false", *env) for flag in ("-e", pair)],
         ]
         return run(
             alias, "--network-alias", alias, "-v", f"{volume}:/etc/nl2sql/tls:ro", *environment,
@@ -152,7 +153,7 @@ def stack(gui_image: str, api_image: str):
 
     def run_gui(upstream: str = "https://nl2sql-console:8445", **env: str) -> int:
         port = free_port()
-        flags = [flag for key, value in env.items() for flag in ("-e", f"{key}={value}")]
+        flags = [flag for key, value in {"AUTH_ENABLED": "false", **env}.items() for flag in ("-e", f"{key}={value}")]
         name = run(
             f"gui-{uuid.uuid4().hex[:6]}", "-p", f"127.0.0.1:{port}:8082",
             "-v", f"{volume}:/etc/nl2sql/tls:ro", "-e", f"CONSOLE_UPSTREAM={upstream}", *flags, gui_image,
@@ -170,17 +171,10 @@ def stack(gui_image: str, api_image: str):
         )
         assert load.returncode == 0, load.stderr
 
-        api = run(
-            "api", "--network-alias", "nl2sql-api", "-v", f"{volume}:/etc/nl2sql/tls",
-            "-e", "DATABASE_URL=postgresql+psycopg://nobody:nobody@127.0.0.1:1/none",
-            "-e", "OLLAMA_BASE_URL=http://127.0.0.1:1",
-            "-e", "API_TLS_HOSTNAMES=localhost,nl2sql-api,nl2sql-console,127.0.0.1",
-            "--entrypoint", "python", api_image, "-m", "nl2sql_agent.api",
-        )
-        _wait_for_api(api)
-        _trust(api)
+        _issue(volume, api_image, "localhost,nl2sql-console,127.0.0.1")
         console = run_console("nl2sql-console")
         _wait_for_console(console)
+        _trust(console)
         yield {"gui": run_gui, "console": console, "run_console": run_console, "run": run}
     finally:
         for name in reversed(started):
@@ -297,11 +291,11 @@ def test_the_console_refuses_to_start_without_a_certificate_to_present(stack, ap
         subprocess.run(["sleep", "1"], timeout=5)
     assert state == ["false", "2"]
     said = " ".join(_docker("logs", name).stderr.split())
-    assert "presents the certificate the agent API generates" in said
+    assert "the pki service issues the console its own certificate" in said
 
 
 def test_the_console_says_what_it_reads_and_as_whom(stack):
     banner = _docker("logs", stack["console"]).stdout
     assert "postgresql+psycopg://reader:***@nl2sql-postgres:5432/shop" in banner
     assert "reader:reader" not in banner
-    assert "written by the agent API, for localhost, nl2sql-api, nl2sql-console" in banner
+    assert "issued by the development CA, the console's own, for localhost, nl2sql-console, 127.0.0.1" in banner

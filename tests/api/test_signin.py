@@ -122,7 +122,7 @@ def test_a_reviewer_may_ask_too():
 
 
 def test_the_default_guard_follows_the_settings():
-    off = default_guard(Settings(), ApiSettings(token="t"))
+    off = default_guard(Settings(), ApiSettings(auth_enabled=False, token="t"))
     assert not off.settings.enabled and off.settings.service_token == "t" and off._recheck is None
     on = default_guard(Settings(), ApiSettings(auth_enabled=True, auth_cookie_name="sid"))
     assert on.settings.enabled and on.settings.cookie_name == "sid" and on._recheck is not None

@@ -73,6 +73,7 @@ def make_runner(
 def api_settings() -> ApiSettings:
     """Fast timings, so a stream test is not a five-minute test."""
     return ApiSettings(
+        auth_enabled=False,
         token=None,
         tls_enabled=False,
         max_concurrency=2,

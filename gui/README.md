@@ -77,7 +77,7 @@ skips the last step; `BROWSER` chooses what does it.
 
 The image is published, and `setup.sh --gui` pulls and pins it:
 
-    docker pull mcfaddja/nl2sql-gui:v6_0_1
+    docker pull mcfaddja/nl2sql-gui:v6_1
     ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -85,7 +85,7 @@ which works and takes a couple of minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v6_0_1 .
+      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v6_1 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -115,7 +115,7 @@ token with `API_TOKEN`; neither reaches the browser.
 Three things stand between a browser and this API, and none of them is about
 this application:
 
-1. **The development certificate is self-signed.** A browser blocks every
+1. **The development certificate is the stack's own.** A browser blocks every
    request behind a warning -- and `EventSource` gives no warning to click,
    it simply never connects, so progress silently stops working.
 2. **The token would have to reach the browser** to be sent from it, which
@@ -313,16 +313,16 @@ and is read at container start-up.
 | --- | --- | --- |
 | `GUI_PORT` | `8080` | Port nginx listens on, and the one compose publishes |
 | `API_UPSTREAM` | `https://nl2sql-api:8443` | The API. An `http://` scheme turns certificate verification off, for the deployment behind a TLS terminator |
-| `API_SSL_NAME` | `nl2sql-api` | The name the certificate is verified against. Must be one `API_TLS_HOSTNAMES` covers |
-| `API_CACERT` | `/etc/nl2sql/tls/server.crt` | What to verify against, from the volume the API writes it into |
+| `API_SSL_NAME` | `nl2sql-api` | The name the certificate is verified against. Must be one the API's certificate covers (`API_TLS_HOSTNAMES`) |
+| `API_CACERT` | `/etc/nl2sql/tls/ca.crt` | What to verify against, the stack's CA, which the pki service puts beside this page's own certificate |
 | `API_TOKEN` | *(none)* | Sent as a bearer token with sign-in off. Held here so the browser never has it |
 | `API_READ_TIMEOUT` | `600s` | Must outlast a question, and `API_MAX_WAIT_SECONDS` |
 | `GUI_RESOLVER` | `127.0.0.11` | Docker's embedded DNS, for the per-request lookup |
-| `AUTH_ENABLED` | `true` in compose | The page asks who you are, and admits `nl2sql_users`; the session cookie, not `API_TOKEN`, is what reaches the API |
+| `AUTH_ENABLED` | `true` | The page asks who you are, and admits `nl2sql_users`; the session cookie, not `API_TOKEN`, is what reaches the API. Only `false`, set by name, turns it off, and the page then says it is open |
 | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446` | The auth service, which `/auth/` is proxied to -- `GUI_AUTH_UPSTREAM` in `.env` |
 | `AUTH_SSL_NAME` | `nl2sql-auth` | `GUI_AUTH_SSL_NAME` |
-| `AUTH_CACERT` | `/etc/nl2sql/tls/server.crt` | `GUI_AUTH_CACERT` |
-| `GUI_TLS_ENABLED` | `true` | Serve the page over HTTPS, with the API's certificate, so a password is never sent in clear. Off only behind something that terminates TLS |
+| `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` | `GUI_AUTH_CACERT` |
+| `GUI_TLS_ENABLED` | `true` | Serve the page over HTTPS, with its own certificate, so a password is never sent in clear. Off only behind something that terminates TLS |
 | `GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | |
 | `GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | |
 
@@ -345,7 +345,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-332 tests, 100% of statements, branches, functions and lines -- matching the
+333 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

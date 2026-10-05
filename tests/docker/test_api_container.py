@@ -211,6 +211,10 @@ def run_api(api_image: str):
     started: list[str] = []
 
     def _run(*, env: dict | None = None, network: str | None = None, wait_healthy: bool = True) -> Container:
+        """The API on its own, as `docker run` starts it. Open by name unless
+        a test says otherwise: what most of these exercise is the HTTP
+        surface, and sign-in -- on unless switched off (6.1) -- has a test of
+        its own below and an end-to-end one in tests/auth."""
         name = f"nl2sql-api-test-{uuid.uuid4().hex[:8]}"
         port = free_port()
         cmd = [
@@ -224,8 +228,9 @@ def run_api(api_image: str):
             "-e", "OLLAMA_BASE_URL=http://127.0.0.1:1",
             "-e", "API_TLS_HOSTNAMES=localhost,nl2sql-api,127.0.0.1",
         ]
-        for key, value in (env or {}).items():
-            cmd += ["-e", f"{key}={value}"]
+        for key, value in {"AUTH_ENABLED": "false", **(env or {})}.items():
+            if value is not None:
+                cmd += ["-e", f"{key}={value}"]
         if network:
             cmd += ["--network", network, "--network-alias", "nl2sql-api"]
         cmd += ["--entrypoint", "python", api_image, "-m", "nl2sql_agent.api"]
@@ -336,7 +341,21 @@ def test_the_banner_tells_the_operator_what_they_are_running(run_api):
     assert "REST API" in logs
     assert "fingerprint sha256:" in logs
     assert "self-signed" in logs
-    assert "No API_TOKEN" in logs
+    assert "This server is OPEN" in logs
+
+
+def test_started_with_nothing_said_it_asks_who_is_calling(run_api, tmp_path):
+    """V6-54 where it matters: the image run with no AUTH_ENABLED at all --
+    not compose, which has always set it -- refuses a caller who is not
+    signed in, and says so in its banner."""
+    api = run_api(env={"AUTH_ENABLED": None})
+    cert = api.certificate(tmp_path / "c.crt")
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        api.get("/v1/meta", cert)
+    assert raised.value.code == 401
+    logs = api.logs()
+    assert "sign-in (a session from the auth service)" in logs
+    assert "OPEN" not in logs
 
 
 def test_refusing_the_development_certificate_stops_the_container(run_api):

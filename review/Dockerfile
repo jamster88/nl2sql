@@ -41,14 +41,14 @@ COPY rag/05_load_golden_pairs.py rag/06_embed_golden_pairs.py rag/07_load_snippe
 # promotion against it is a promotion nobody will ever see in git.
 COPY context_questions/translated_questions.md context_questions/sql_snippets.md ./context_questions/
 
-# Where the agent API's certificate is expected to appear, mounted read-only
-# from the volume that API writes it into. This service presents that
-# certificate and never generates one; see nl2sql_review/settings.py.
+# Where its own certificate is expected to appear, mounted read-only from the
+# volume the stack's pki service issues it into. This service presents it
+# and never generates one; see nl2sql_review/settings.py.
 RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8444
 
-ARG REVIEW_VERSION=6.0.1
+ARG REVIEW_VERSION=6.1.0
 ENV REVIEW_VERSION=${REVIEW_VERSION}
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \

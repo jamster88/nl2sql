@@ -9,8 +9,9 @@ What carries weight here is what no single file shows:
   own -- the same role, the same host -- and so are the limits it runs every
   query under. A console on different settings would reproduce nothing.
 * **It holds nothing else.** One credential, the reader's, on one database.
-* **It presents the API's certificate.** `API_TLS_HOSTNAMES` has to cover
-  `nl2sql-console`, and the interface's proxy has to verify a name it covers.
+* **It presents a certificate of its own.** The pki service issues it for
+  `CONSOLE_TLS_HOSTNAMES`, which has to cover `nl2sql-console`, and the
+  interface's proxy has to verify a name it covers.
 * **Its ports are this machine's.** Every other port in the file is opened
   the way Docker opens ports; a page that runs SQL is published on loopback
   unless someone says otherwise.
@@ -147,26 +148,25 @@ def test_it_holds_no_credential_but_the_readers(console: dict):
     assert [key for key in console["environment"] if key.endswith("_URL")] == ["DATABASE_URL"]
 
 
-def test_it_waits_for_the_database_and_nothing_else(console: dict):
-    """Not the API: the certificate it presents is a file, not a service,
+def test_it_waits_for_the_database_and_its_certificate_and_nothing_else(console: dict):
+    """Not the API: its certificate is its own, issued by the pki service,
     and the retail database is the only thing it talks to."""
-    assert set(console["depends_on"]) == {"postgres"}
+    assert set(console["depends_on"]) == {"pki", "postgres"}
     assert console["depends_on"]["postgres"]["condition"] == "service_healthy"
+    assert console["depends_on"]["pki"]["condition"] == "service_completed_successfully"
 
 
 # ---------------------------------------------------------------------------
-# TLS: the API's certificate, presented
+# TLS: a certificate of its own, presented
 # ---------------------------------------------------------------------------
 
 
-def test_the_api_certificate_covers_the_console(config: dict):
-    covered = config["services"]["api"]["environment"]["API_TLS_HOSTNAMES"].split(",")
-    assert SERVICE_HOSTNAME in covered
+def test_the_console_is_issued_its_own_certificate(config: dict):
+    assert SERVICE_HOSTNAME in _issued(config, "console")
 
 
 def test_the_console_gui_verifies_a_name_that_certificate_covers(consolegui: dict, config: dict):
-    covered = config["services"]["api"]["environment"]["API_TLS_HOSTNAMES"].split(",")
-    assert consolegui["environment"]["CONSOLE_SSL_NAME"] in covered
+    assert consolegui["environment"]["CONSOLE_SSL_NAME"] in _issued(config, "console")
 
 
 def test_the_console_gui_proxies_the_name_it_verifies(consolegui: dict, console: dict):
@@ -174,10 +174,10 @@ def test_the_console_gui_proxies_the_name_it_verifies(consolegui: dict, console:
     assert console["container_name"] == SERVICE_HOSTNAME
 
 
-@pytest.mark.parametrize("service", ["console", "consolegui"])
-def test_the_certificate_is_mounted_read_only(config: dict, service: str):
+@pytest.mark.parametrize(("service", "volume"), [("console", "consoletls"), ("consolegui", "consoleguitls")])
+def test_each_has_its_own_certificate_mounted_read_only(config: dict, service: str, volume: str):
     mounts = {mount["target"]: mount for mount in config["services"][service]["volumes"]}
-    assert mounts["/etc/nl2sql/tls"]["source"] == "apitls"
+    assert mounts["/etc/nl2sql/tls"]["source"] == volume
     assert mounts["/etc/nl2sql/tls"]["read_only"] is True
 
 
@@ -317,3 +317,9 @@ def test_every_setting_the_console_proxy_reads_can_be_set_through_compose(consol
 def test_every_variable_compose_sets_is_one_the_console_proxy_reads(consolegui: dict):
     unread = sorted(set(consolegui["environment"]) - _proxy_variables())
     assert unread == [], f"compose sets {unread} on the console interface, which nothing in it reads"
+
+
+def _issued(config: dict, identity: str) -> list[str]:
+    """The names the pki service issues `identity`'s certificate for."""
+    [spec] = [arg for arg in config["services"]["pki"]["command"] if arg.startswith(f"{identity}=")]
+    return spec.split("=", 2)[2].split(",")

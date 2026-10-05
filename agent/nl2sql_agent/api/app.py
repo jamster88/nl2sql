@@ -41,6 +41,7 @@ from starlette.status import (
     HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
+    HTTP_429_TOO_MANY_REQUESTS,
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
@@ -52,7 +53,7 @@ from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
 from nl2sql_identity import USERS, Guard, GuardSettings, Identity
 from nl2sql_identity.postgres import membership_lookup
-from .jobs import Job, JobStore, StreamChunk
+from .jobs import Job, JobStore, QueueFull, StreamChunk
 from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable, build_sink
 from .models import (
     MAX_METADATA_ENTRIES,
@@ -275,6 +276,9 @@ def create_app(
         max_concurrency=api.max_concurrency,
         max_jobs=api.max_jobs,
         ttl_seconds=api.job_ttl_seconds,
+        max_queued=api.max_queued,
+        max_per_person=api.max_per_person,
+        queue_ttl_seconds=api.queue_ttl_seconds,
     )
     started = time.monotonic()
 
@@ -450,6 +454,10 @@ def create_app(
         summary="Ask a question",
         responses={
             HTTP_400_BAD_REQUEST: {"model": ApiError},
+            HTTP_429_TOO_MANY_REQUESTS: {
+                "model": ApiError,
+                "description": "Too many questions waiting; Retry-After says when to ask again.",
+            },
             HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
         },
     )
@@ -496,6 +504,10 @@ def create_app(
                 owner=identity.principal,
                 metadata=body.metadata,
             )
+        except QueueFull as exc:
+            raise ApiHTTPError(
+                HTTP_429_TOO_MANY_REQUESTS, "queue_full", str(exc), **{"Retry-After": str(exc.retry_after)}
+            ) from exc
         except RuntimeError as exc:
             raise ApiHTTPError(HTTP_503_SERVICE_UNAVAILABLE, "unavailable", str(exc)) from exc
 

@@ -1,10 +1,11 @@
 """The GUI image, and the hop it exists to make.
 
 Everything here runs two real containers on a private network: the agent
-image serving the REST API with the certificate it writes for itself, and the
-GUI image in front of it. That pairing is the whole point of the container --
-a browser cannot be pointed at a self-signed certificate, so something has to
-stand in front and verify it -- and it cannot be tested any other way. A
+image serving the REST API with a certificate issued the way compose's pki
+service issues one (6.1), and the GUI image in front of it, verifying it
+against the CA. That pairing is the whole point of the container -- a browser
+is not given the API's certificate, so something has to stand in front and
+verify it -- and it cannot be tested any other way. A
 mocked upstream would prove the proxy forwards; only the real one proves it
 *verifies*, which is the security property.
 
@@ -38,22 +39,40 @@ NAME_PREFIX = "nl2sql-gui-test-"
 NETWORK_PREFIX = "nl2sql-gui-net-"
 VOLUME_PREFIX = "nl2sql-gui-tls-"
 
-#: What every page here is checked against: since 6.0 each serves HTTPS with
-#: the certificate the API writes, so a test that asked over plain HTTP was
-#: answered 400 -- and a test that skipped verification would not show the
-#: page presents the right one. Set by `_trust` once the API has written it.
+#: What every page here is checked against: since 6.0 each serves HTTPS, so a
+#: test that asked over plain HTTP was answered 400 -- and a test that skipped
+#: verification would not show the page presents the right one. Since 6.1 that
+#: is the CA's certificate, as a browser is given `nl2sql-ca.crt`. Set by
+#: `_trust` once the API is up.
 _PAGE_TLS: ssl.SSLContext | None = None
 
 
 def _trust(api: str) -> None:
-    """Verify every page against the certificate this API container wrote."""
+    """Verify every page against the CA that issued this stack's certificate,
+    copied out of the API container as `launch.sh` copies it for a client."""
     global _PAGE_TLS
-    target = Path(tempfile.mkdtemp()) / "server.crt"
+    target = Path(tempfile.mkdtemp()) / "ca.crt"
     subprocess.run(
-        ["docker", "cp", f"{api}:/etc/nl2sql/tls/server.crt", str(target)],
+        ["docker", "cp", f"{api}:/etc/nl2sql/tls/ca.crt", str(target)],
         check=True, capture_output=True, timeout=30,
     )
     _PAGE_TLS = ssl.create_default_context(cafile=str(target))
+
+
+def _issue(volume: str, api_image: str, hostnames: str) -> None:
+    """What compose's pki service does, into `volume`: a key, a certificate
+    for `hostnames` from a development CA made for this test, and the CA's
+    certificate beside them as `ca.crt`. One identity shared by the test's
+    containers, where compose gives each its own -- what is under test here
+    is the hop, not which key each server holds."""
+    result = subprocess.run(
+        [
+            "docker", "run", "--rm", "-v", f"{volume}:/etc/nl2sql/tls", "--entrypoint", "python", api_image,
+            "-m", "nl2sql_identity.pki", "--ca-dir=/tmp/ca", f"shared=/etc/nl2sql/tls={hostnames}",
+        ],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _build(dockerfile: str, tag: str, available: bool) -> str:
@@ -148,9 +167,11 @@ def _leaves_nothing_behind(docker_daemon_available: bool):
 def stack(gui_image: str, api_image: str):
     """The API and the GUI, on one network, sharing the certificate volume.
 
-    Exactly the arrangement compose builds, which is why the certificate
-    works: the API writes it for the names it will be reached by, and the
-    proxy verifies against the same file.
+    The arrangement compose builds, less one key per server: the certificate
+    is issued for the names the API will be reached by, and the proxy verifies
+    it against the CA beside it. Sign-in is off by name, as `--no-auth` turns
+    it off: what is tested here is the open hop and its token, and the signed-
+    in one has tests/auth/test_auth_live.py.
     """
     suffix = uuid.uuid4().hex[:8]
     network = f"{NETWORK_PREFIX}{suffix}"
@@ -171,7 +192,7 @@ def stack(gui_image: str, api_image: str):
             "-v", f"{volume}:/etc/nl2sql/tls:ro",
             "-e", "API_UPSTREAM=https://nl2sql-api:8443",
         ]
-        for key, value in env.items():
+        for key, value in {"AUTH_ENABLED": "false", **env}.items():
             cmd += ["-e", f"{key}={value}"]
         cmd.append(gui_image)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -181,17 +202,17 @@ def stack(gui_image: str, api_image: str):
         return port
 
     try:
+        _issue(volume, api_image, "localhost,nl2sql-api,127.0.0.1")
         result = subprocess.run(
             [
                 "docker", "run", "-d", "--name", api,
                 "--network", network, "--network-alias", "nl2sql-api",
-                "-v", f"{volume}:/etc/nl2sql/tls",
+                "-v", f"{volume}:/etc/nl2sql/tls:ro", "-e", "API_TLS_GENERATE=false", "-e", "AUTH_ENABLED=false",
                 # Nothing is listening at either address. The HTTP surface
                 # comes up regardless -- the pipeline is built lazily, per
                 # request -- and /v1/meta answers with an empty table list.
                 "-e", "DATABASE_URL=postgresql+psycopg://nobody:nobody@127.0.0.1:1/none",
                 "-e", "OLLAMA_BASE_URL=http://127.0.0.1:1",
-                "-e", "API_TLS_HOSTNAMES=localhost,nl2sql-api,127.0.0.1",
                 "--entrypoint", "python", api_image, "-m", "nl2sql_agent.api",
             ],
             capture_output=True, text=True, timeout=120,

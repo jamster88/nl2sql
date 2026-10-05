@@ -29,6 +29,14 @@ agent's reader and the role sync -- by `scram-sha-256`, and every member of
 opening a connection to the database as that person, with that password:
 if Postgres lets them in, they are who they say.
 
+Both lines are `hostssl` (6.1). pg_hba's `ldap` method is clear-text
+password authentication -- the client hands the database the password, and
+the database binds to the directory with it -- so it is accepted only over
+an encrypted connection, and the database refuses anything over the
+network without one. This service connects with `sslmode=verify-full`
+against the database's own certificate (`AUTH_DB_SSLROOTCERT`), so a
+password is never handed to anything that is not the database.
+
 That is what makes the database the authority rather than a bystander. A
 person the directory does not know, or knows with another password, cannot
 connect -- to anything, by any route -- whatever a session says.
@@ -100,6 +108,33 @@ roles and administer the five sign-in roles and nothing else:
   anything, made unable to log in.
 
 The last result is on `/readyz` (`role_sync`), and on the directory page.
+
+### Connecting to the database directly
+
+A person's role is a real login: they can connect to the retail database
+with `psql` or a BI tool, as themselves, with their directory password --
+read only, a minute per statement, five connections at a time. What that
+costs, and what 6.1 does about it:
+
+- **Their password crosses to the database as it is.** pg_hba's `ldap`
+  method needs it in hand to bind to the directory, so the client sends it
+  inside the connection. Before 6.1 the database had no TLS and the rule
+  admitted unencrypted connections: the password crossed the network in
+  clear. Now the database serves TLS with a certificate of its own and the
+  rule is `hostssl`: nothing else is accepted.
+- **Encrypted is not verified.** `sslmode=require` keeps the password from
+  being read on the way and does not check that the server is the
+  database. Use `sslmode=verify-full` with the database's certificate
+  (`docker compose cp postgres:/etc/nl2sql/pg-tls/server.crt
+  ./nl2sql-postgres.crt`), connecting by a name it covers
+  (`POSTGRES_TLS_HOSTNAMES`) -- this password is the person's password for
+  every page.
+- **It is this machine's by default.** The port is published on
+  `127.0.0.1` unless `DB_BIND_ADDRESS` says otherwise; opening it is what
+  makes the two points above matter, and `launch.sh` warns when it is.
+
+[`USAGE_GUIDE.md`](../USAGE_GUIDE.md#connecting-to-the-retail-database-directly)
+has the commands.
 
 ## MLflow's front door
 
@@ -187,9 +222,10 @@ The auth service's, read from the environment; compose passes each from
 | Variable | Default | |
 | --- | --- | --- |
 | `AUTH_HOST` | `0.0.0.0` | |
-| `AUTH_PORT` | `8446` | also the published port |
+| `AUTH_PORT` | `8446` | also the published port: signing in, for the pages and the desktop client |
+| `AUTH_DIRECTORY_PORT` | `8447` | the directory's own API -- the routes that make people -- answered here and nowhere else; not published, so only the directory page's nginx reaches it. `0` serves it on `AUTH_PORT`, as 6.0 did |
 | `AUTH_ROOT_PATH` | -- | behind a path-prefixing proxy |
-| `AUTH_TLS_ENABLED` | `true` | presents the API's certificate |
+| `AUTH_TLS_ENABLED` | `true` | presents its own certificate, from the pki service, on both ports |
 | `AUTH_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | |
 | `AUTH_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | |
 | `AUTH_SIGNING_KEY_FILE` | `/var/lib/nl2sql-auth/session.key` | written on first start, 0600 |
@@ -202,9 +238,10 @@ The auth service's, read from the environment; compose passes each from
 | `AUTH_DB_HOST` | `nl2sql-postgres` | the database people sign in to |
 | `AUTH_DB_PORT` | `5432` | |
 | `AUTH_DB_NAME` | `nl2sql_retail` | compose passes `POSTGRES_DB` |
-| `AUTH_DB_SSLMODE` | `prefer` | |
+| `AUTH_DB_SSLMODE` | `verify-full` | a person's password crosses this hop; anything weaker is warned about at start |
+| `AUTH_DB_SSLROOTCERT` | `/etc/nl2sql/pg-tls/server.crt` | the database's own certificate, from the `pgtls` volume |
 | `AUTH_DB_CONNECT_TIMEOUT` | `5` | seconds |
-| `AUTH_ROLESYNC_DB_URL` | -- | compose builds it from `AUTH_ROLESYNC_USER` (`nl2sql_rolesync`) and `AUTH_ROLESYNC_PASSWORD`, which setup.sh generates |
+| `AUTH_ROLESYNC_DB_URL` | -- | compose builds it from `AUTH_ROLESYNC_USER` (`nl2sql_rolesync`) and `AUTH_ROLESYNC_PASSWORD`, which setup.sh generates; held to `AUTH_DB_SSLMODE` unless it says `sslmode=` itself |
 | `AUTH_READER_ROLE` | `nl2sql_reader` | the role granted each person's, to become them |
 | `AUTH_GROUP_ROLES` | the four above | `group=role,group=role` |
 | `AUTH_ROLE_SYNC_INTERVAL` | `30` | seconds |
@@ -227,8 +264,8 @@ The services that check a session read three: `AUTH_ENABLED` (compose:
 `true`), `AUTH_PUBLIC_KEY_FILE` and `AUTH_COOKIE_NAME`. Every interface reads
 `AUTH_ENABLED` and where to send sign-ins -- `GUI_AUTH_UPSTREAM`
 (`https://nl2sql-auth:8446`), `GUI_AUTH_SSL_NAME` (`nl2sql-auth`),
-`GUI_AUTH_CACERT` (`/etc/nl2sql/tls/server.crt`) in `.env` -- and is HTTPS
-with the API's certificate unless `GUI_TLS_ENABLED=false`.
+`GUI_AUTH_CACERT` (`/etc/nl2sql/tls/ca.crt`) in `.env` -- and is HTTPS
+with its own certificate unless `GUI_TLS_ENABLED=false`.
 
 ## Tests
 

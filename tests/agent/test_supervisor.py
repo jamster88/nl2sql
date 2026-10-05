@@ -157,7 +157,7 @@ def test_an_unreachable_model_degrades_to_proceed_and_records_why():
     state = screen(llm, "sales by department")
     assert state["verdict"] == "proceed"
     assert state["intent"] == "aggregate"
-    assert "connection refused" in state["retrieval_errors"]["supervisor"]
+    assert "connection refused" in state["node_errors"]["supervisor"]
 
 
 def test_a_malformed_response_still_yields_a_usable_verdict_and_intent():

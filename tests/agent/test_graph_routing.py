@@ -143,7 +143,7 @@ def test_a_narrator_that_fails_still_says_which_model_it_asked():
     state = make_agent(FakeDatabase(tables=TABLES), llm).run("q")
 
     narrate = by_node(state, "narrate")[0]
-    assert "narrator" in state["retrieval_errors"]
+    assert "narrator" in state["node_errors"]
     assert (narrate.model, narrate.rung) == (ANCHOR, "light")
 
 

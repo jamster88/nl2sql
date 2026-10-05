@@ -546,5 +546,5 @@ def test_a_reachable_database_checks_out():
 
 
 def test_a_settings_warning_names_the_open_combination():
-    notes = ApiSettings(feedback_db_url="postgresql://x/y", token=None).warnings()
+    notes = ApiSettings(auth_enabled=False, feedback_db_url="postgresql://x/y", token=None).warnings()
     assert any("API_FEEDBACK_DB_URL is set while no API_TOKEN" in note for note in notes)

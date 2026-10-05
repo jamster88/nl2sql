@@ -317,20 +317,26 @@ def test_it_is_sourced_rather_than_run(config_envsh: Path, dockerfile: str):
 )
 def test_no_token_means_no_authorization_header(config_envsh: Path, token, expected, tmp_path):
     """nginx omits a header whose value is empty, so "no token" has to
-    produce an empty string rather than the word "Bearer" on its own."""
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443")
+    produce an empty string rather than the word "Bearer" on its own. Only
+    with sign-in switched off, which the page says on its way up."""
+    env = _env(tmp_path, API_UPSTREAM="http://api:8443", AUTH_ENABLED="false")
     if token is not None:
         env["API_TOKEN"] = token
     result = _source(config_envsh, env, 'printf "%s" "$API_AUTH_HEADER"')
     assert result.returncode == 0, result.stderr
     assert result.stdout == expected
+    assert "nl2sql-gui: sign-in is off (AUTH_ENABLED=false)" in result.stderr
 
 
-@pytest.mark.parametrize("enabled", ["true", "1", "yes", "on"])
+@pytest.mark.parametrize("enabled", ["true", "1", "yes", "on", "", "maybe", None])
 def test_with_sign_in_on_the_proxy_adds_no_token(config_envsh: Path, enabled, tmp_path):
     """The browser's session goes through instead; a token here would sign
-    every visitor in as the service."""
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", API_TOKEN="s3cret", AUTH_ENABLED=enabled)
+    every visitor in as the service. On is the default (V6-54): unset,
+    empty or misspelt is on, and only a named "off" turns it off."""
+    env = _env(tmp_path, API_UPSTREAM="http://api:8443", API_TOKEN="s3cret")
+    env.pop("AUTH_ENABLED", None)
+    if enabled is not None:
+        env["AUTH_ENABLED"] = enabled
     result = _source(config_envsh, env, 'printf "%s" "$API_AUTH_HEADER"')
     assert result.returncode == 0, result.stderr
     assert result.stdout == ""
@@ -410,10 +416,10 @@ def test_an_https_upstream_with_no_certificate_refuses_to_start(config_envsh: Pa
     assert result.returncode != 0
     assert "there is no readable" in result.stderr
     assert "certificate at API_CACERT" in result.stderr
-    # The likeliest cause, named: under compose the file comes from the
-    # volume the API writes on its first start.
-    assert "comes from the apitls volume, which the API" in result.stderr
-    assert "started yet, or the volume is not mounted" in result.stderr
+    # The likeliest cause, named: under compose the file is the stack's CA
+    # certificate, which the pki service writes into this page's own volume.
+    assert "the pki service writes beside this" in result.stderr
+    assert "so this usually means that volume is not mounted here" in result.stderr
 
 
 def test_a_plain_http_upstream_needs_no_certificate(config_envsh: Path, tmp_path: Path):

@@ -62,7 +62,9 @@ def test_the_page_is_for_administrators_only():
 def test_the_dev_proxy_and_nginx_both_send_the_page_to_the_auth_service(template: str):
     vite = (GUI / "vite.config.ts").read_text()
     assert '"/directory": proxy, "/auth": proxy' in vite and "https://localhost:8446" in vite
-    assert "location ~ ^/(auth|directory)/ {" in template
+    assert "location /auth/ {" in template and "set $upstream ${DIRECTORY_UPSTREAM};" in template
+    # V6-58: the directory's own API on the auth service's unpublished port.
+    assert "location /directory/ {" in template and "set $upstream ${DIRECTORY_API_UPSTREAM};" in template
     assert 'proxy_set_header Authorization "${DIRECTORY_AUTH_HEADER}";' in template
     assert "proxy_set_header X-Forwarded-Host $http_host;" in template
     assert "client_max_body_size 6m;" in template
@@ -155,8 +157,8 @@ def test_an_https_upstream_with_no_certificate_refuses_to_start(tmp_path: Path):
     assert result.returncode != 0
     assert "nl2sql-directory-gui: DIRECTORY_UPSTREAM is https://nl2sql-auth:8446 but there is no" in result.stderr
     assert "readable certificate at DIRECTORY_CACERT=" in result.stderr
-    assert "The auth service presents the certificate the agent API generates," in result.stderr
-    assert "so this usually means the API has not started yet, or the apitls" in result.stderr
+    assert "It is the stack's CA certificate, which the pki service writes beside this" in result.stderr
+    assert "page's own certificate -- so this usually means that volume is not mounted here." in result.stderr
     assert "volume is not mounted here." in result.stderr
 
 
@@ -174,8 +176,8 @@ def test_an_https_page_with_no_certificate_refuses_to_start(tmp_path: Path):
     result = _source(_env(tmp_path, DIRECTORY_GUI_TLS_ENABLED="true", DIRECTORY_GUI_TLS_CERT_FILE=str(tmp_path / "x")))
     assert result.returncode != 0
     assert "nl2sql-directory-gui: DIRECTORY_GUI_TLS_ENABLED is on but" in result.stderr
-    assert "is not readable. They come from the apitls volume" in result.stderr
-    assert "the API writes on its first start; mount it, or set DIRECTORY_GUI_TLS_ENABLED=false" in result.stderr
+    assert "is not readable. They are this page's own, from the pki service" in result.stderr
+    assert "(its TLS volume, mounted here); mount it, or set DIRECTORY_GUI_TLS_ENABLED=false" in result.stderr
     assert "behind something that terminates TLS itself." in result.stderr
 
 

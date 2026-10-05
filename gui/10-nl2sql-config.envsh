@@ -18,15 +18,19 @@ set -eu
 #    the indirection is the empty case: nginx drops a header whose value is
 #    the empty string, so no token sends no Authorization header at all
 #    rather than "Bearer " with nothing after it.
-case "${AUTH_ENABLED:-false}" in
-    true|1|yes|on) export API_AUTH_HEADER="" ;;
-    *)
+#
+#    On unless switched off by name: an unset or misspelt value is sign-in
+#    on, so a page started outside compose is not open by accident.
+case "${AUTH_ENABLED:-true}" in
+    false|0|no|off)
+        echo "nl2sql-gui: sign-in is off (AUTH_ENABLED=false): every visitor to this page can ask questions." >&2
         if [ -n "${API_TOKEN:-}" ]; then
             export API_AUTH_HEADER="Bearer ${API_TOKEN}"
         else
             export API_AUTH_HEADER=""
         fi
         ;;
+    *) export API_AUTH_HEADER="" ;;
 esac
 
 # Writes the directives that verify an upstream into a file the template
@@ -43,9 +47,8 @@ upstream_tls() {
             if [ ! -r "$4" ]; then
                 echo "nl2sql-gui: $1 is $2 but there is no readable" >&2
                 echo "  certificate at $3=$4 to verify it against." >&2
-                echo "  Under compose this file comes from the apitls volume, which the API" >&2
-                echo "  writes on its first start -- so this usually means the API has not" >&2
-                echo "  started yet, or the volume is not mounted." >&2
+                echo "  It is the stack's CA certificate, which the pki service writes beside this" >&2
+                echo "  page's own certificate -- so this usually means that volume is not mounted here." >&2
                 exit 1
             fi
             cat > "$6" <<EOF
@@ -72,13 +75,13 @@ EOF
 upstream_tls API_UPSTREAM "${API_UPSTREAM}" API_CACERT "${API_CACERT}" "${API_SSL_NAME}" \
     "${NGINX_UPSTREAM_TLS_CONF:-/etc/nginx/nl2sql-upstream-tls.conf}"
 
-# 3. The sign-in hop: `/auth/` goes to the auth service, which presents the
-#    same certificate as the API.
+# 3. The sign-in hop: `/auth/` goes to the auth service, which presents a
+#    certificate of its own from the stack's CA.
 upstream_tls AUTH_UPSTREAM "${AUTH_UPSTREAM}" AUTH_CACERT "${AUTH_CACERT}" "${AUTH_SSL_NAME}" \
     "${NGINX_AUTH_TLS_CONF:-/etc/nginx/nl2sql-auth-tls.conf}"
 
 # 4. This page's own listener. HTTPS by default, because the page carries a
-#    password; the certificate is the API's, which covers localhost. Off
+#    password; the certificate is this page's own, from the pki service. Off
 #    (GUI_TLS_ENABLED=false) only behind something that terminates TLS.
 server_tls="${NGINX_SERVER_TLS_CONF:-/etc/nginx/nl2sql-server-tls.conf}"
 case "${GUI_TLS_ENABLED:-true}" in
@@ -92,8 +95,8 @@ EOF
     *)
         if [ ! -r "${GUI_TLS_CERT_FILE}" ] || [ ! -r "${GUI_TLS_KEY_FILE}" ]; then
             echo "nl2sql-gui: GUI_TLS_ENABLED is on but ${GUI_TLS_CERT_FILE} or" >&2
-            echo "  ${GUI_TLS_KEY_FILE} is not readable. They come from the apitls volume" >&2
-            echo "  the API writes on its first start; mount it, or set GUI_TLS_ENABLED=false" >&2
+            echo "  ${GUI_TLS_KEY_FILE} is not readable. They are this page's own, from the pki service" >&2
+            echo "  (its TLS volume, mounted here); mount it, or set GUI_TLS_ENABLED=false" >&2
             echo "  behind something that terminates TLS itself." >&2
             exit 1
         fi

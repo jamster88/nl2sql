@@ -260,13 +260,14 @@ def test_the_front_door_asks_about_every_request_over_https(proxy: dict):
     assert (env["AUTH_ENABLED"], env["MLFLOW_PROXY_TLS_ENABLED"]) == ("true", "true")
     assert env["MLFLOW_UPSTREAM"] == "http://nl2sql-mlflow:5000"
     assert env["AUTH_UPSTREAM"] == "https://nl2sql-auth:8446"
-    # It waits for MLflow. The certificate it presents, and verifies the auth
-    # service with, is the one the API writes -- which launch.sh starts first,
-    # so that `--profile mlflow` alone is a project compose accepts, and
-    # `--profile mlflow down` stops all three.
-    assert set(proxy["depends_on"]) == {"mlflow"}
+    # It waits for MLflow, and for its own certificate from the pki service
+    # (V6-36), which it also verifies the auth service with -- so it waits
+    # on nothing of the API's, and `--profile mlflow` alone is a project
+    # compose accepts.
+    assert set(proxy["depends_on"]) == {"pki", "mlflow"}
     [volume] = proxy["volumes"]
-    assert (volume["source"], volume["target"], volume["read_only"]) == ("apitls", "/etc/nl2sql/tls", True)
+    assert (volume["source"], volume["target"], volume["read_only"]) == ("mlflowproxytls", "/etc/nl2sql/tls", True)
+    assert env["AUTH_CACERT"] == "/etc/nl2sql/tls/ca.crt"
     assert proxy["profiles"] == ["mlflow"]
 
 

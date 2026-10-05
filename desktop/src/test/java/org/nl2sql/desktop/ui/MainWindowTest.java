@@ -65,7 +65,7 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.1"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.1.0"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
@@ -85,7 +85,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.1"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.1.0"));
             window.close();
         });
     }
@@ -476,7 +476,7 @@ class MainWindowTest {
                         + "2025, which is an increase of eleven per cent over the previous year "
                         + "across every banner in the group.", 719279.97,
                         List.of(List.of(0, "net_sales")), null)),
-                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of());
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of());
         Models.Job job = Fakes.answered();
         return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
                 job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),
@@ -649,7 +649,7 @@ class MainWindowTest {
             signInAs(window, "ada", "pw");
 
             assertFalse(window.signInView().node().isVisible());
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.0.1"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.1.0"));
             assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
             window.close();
         });

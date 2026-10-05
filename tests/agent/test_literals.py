@@ -19,7 +19,6 @@ architecture document: 42 of the 43 text columns, `basket_id` excluded.
 
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 
 import pytest
@@ -36,10 +35,9 @@ from nl2sql_agent.literals import (
     trigram_available,
 )
 from nl2sql_agent.state import LiteralMatch
+from tests import live_stores
 
-POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+POSTGRES_URL = live_stores.url("retail", variable="POSTGRES_URL")
 
 # A miniature of the real catalog. `Dairy & Eggs` appears in two columns (the
 # tie the generator must be shown), `Salem` is the coincidental near-miss for
@@ -445,7 +443,7 @@ def live_db() -> Database:
     try:
         database.table_names()
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {POSTGRES_URL}: {exc}")
+        live_stores.unreachable("Postgres", POSTGRES_URL, exc)
     return database
 
 

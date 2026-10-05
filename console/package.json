@@ -1,6 +1,6 @@
 {
   "name": "nl2sql-console-gui",
-  "version": "6.0.1",
+  "version": "6.1.0",
   "private": true,
   "type": "module",
   "description": "Web front end for querying the retail database through the agent's gates, to troubleshoot its answers.",

@@ -30,7 +30,8 @@ def _client(
     **console,
 ) -> TestClient:
     agent = agent or Settings(max_rows=50, statement_timeout_ms=30000, max_plan_cost=1_000_000.0)
-    settings = ConsoleSettings(**{"token": None, **console})
+    # The open console unless a test says otherwise; sign-in has its own file.
+    settings = ConsoleSettings(**{"token": None, "auth_enabled": False, **console})
     app = create_app(
         settings=agent,
         console_settings=settings,
@@ -343,7 +344,7 @@ def test_by_default_it_reads_the_agents_database_with_the_agents_limits():
         db_schema="analytics",
         max_rows=7,
     )
-    app = create_app(settings=agent, console_settings=ConsoleSettings(max_rows=11))
+    app = create_app(settings=agent, console_settings=ConsoleSettings(auth_enabled=False, max_rows=11))
     inspector = app.state.inspector
 
     assert inspector.agent is agent

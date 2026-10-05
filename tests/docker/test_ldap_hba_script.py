@@ -70,14 +70,23 @@ def test_the_rules_go_first_and_the_files_own_follow_unchanged(tmp_path):
     assert result.stdout.strip() == "sign-in rules written (on)"
     lines = (tmp_path / "pg_hba.conf").read_text().splitlines()
     assert lines[0].startswith("# BEGIN nl2sql sign-in")
-    assert lines[1] == "host all nl2sql_reader,nl2sql_rolesync all scram-sha-256"
+    assert lines[1] == "hostssl all nl2sql_reader,nl2sql_rolesync all scram-sha-256"
     assert lines[2] == (
-        'host nl2sql_retail +nl2sql_ldap all ldap ldapserver=nl2sql-ldap ldapport=389 ldaptls=1 '
+        'hostssl nl2sql_retail +nl2sql_ldap all ldap ldapserver=nl2sql-ldap ldapport=389 ldaptls=1 '
         'ldapprefix="uid=" ldapsuffix=",ou=people,dc=nl2sql,dc=local"'
     )
     assert lines[3] == "# END nl2sql sign-in"
     assert "\n".join(lines[4:]) + "\n" == ORIGINAL
     assert psql_calls(tmp_path)[-1].endswith("SELECT pg_reload_conf()")
+
+
+def test_no_rule_it_writes_admits_a_connection_without_tls(tmp_path):
+    """V6-53. The `ldap` method sends a person's directory password to the
+    server in clear; only an encrypted connection may carry it, and the
+    service roles' passwords go the same way."""
+    run(tmp_path, **ON)
+    block = (tmp_path / "pg_hba.conf").read_text().split("# END nl2sql sign-in")[0].splitlines()[1:]
+    assert block and all(line.startswith("hostssl ") for line in block)
 
 
 def test_running_it_again_changes_nothing_and_reloads_nothing(tmp_path):

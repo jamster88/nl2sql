@@ -336,11 +336,12 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     first thing a contributor checks a run against, so a wrong one reads as a
     broken checkout.
     """
-    total = _collected("--run-docker", "--run-node", "--run-java")
+    total = _collected("--run-docker", "--run-node", "--run-java", "--run-acceptance")
     docker_only = _collected("--run-docker", "-m", "docker")
     node_only = _collected("--run-node", "-m", "node")
     java_only = _collected("--run-java", "-m", "java")
-    offline = total - docker_only - node_only - java_only
+    acceptance_only = _collected("--run-acceptance", "-m", "acceptance")
+    offline = total - docker_only - node_only - java_only - acceptance_only
 
     quoted = _quoted_counts(root_readme)
 
@@ -349,22 +350,26 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     assert quoted["docker"] == docker_only, f"README says {quoted['docker']} docker tests, there are {docker_only}"
     assert quoted["node"] == node_only, f"README says {quoted['node']} node tests, there are {node_only}"
     assert quoted["java"] == java_only, f"README says {quoted['java']} java tests, there are {java_only}"
+    assert quoted["acceptance"] == acceptance_only, (
+        f"README says {quoted['acceptance']} acceptance tests, there are {acceptance_only}"
+    )
 
 
 def _quoted_counts(root_readme: str) -> dict[str, int]:
     return {
         "offline": int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1)),
-        "total": int(re.search(r"--run-java\s+#\s*all (\d+)", root_readme).group(1)),
+        "total": int(re.search(r"--run-acceptance\s+#\s*all (\d+)", root_readme).group(1)),
         "docker": int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1)),
         "node": int(re.search(r"The (\d+) behind `--run-node`", root_readme).group(1)),
         "java": int(re.search(r"The (\d+) behind `--run-java`", root_readme).group(1)),
+        "acceptance": int(re.search(r"The (\d+) behind `--run-acceptance`", root_readme).group(1)),
     }
 
 
 def test_the_quoted_counts_are_internally_consistent(root_readme: str):
     quoted = _quoted_counts(root_readme)
     assert (quoted["offline"] + quoted["docker"] + quoted["node"] + quoted["java"]
-            == quoted["total"])
+            + quoted["acceptance"] == quoted["total"])
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +586,11 @@ def _compose_service(name: str) -> str:
     return match.group(1)
 
 
+#: Settings every service's block reads that no service does: the stack's
+#: own name, in each container's (USAGE_GUIDE.md documents it once).
+STACK_WIDE = {"NL2SQL_INSTANCE"}
+
+
 def _compose_defaults(text: str) -> dict[str, str]:
     """Each `${NAME:-default}` in `text`, as compose resolves it with nothing
     set: a default may name another setting -- `https://nl2sql-auth:${AUTH_PORT:-8446}`,
@@ -618,7 +628,7 @@ def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(r
     settings = {
         name: default
         for name, default in _compose_defaults(block).items()
-        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
+        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG")) and name not in STACK_WIDE
     }
     assert "MLFLOW_PORT" in settings, "no settings found in the MLflow services -- the regex needs updating"
     for name, default in sorted(settings.items()):
@@ -635,7 +645,7 @@ def _documented_with_defaults(service: str, readme: str, document: str) -> None:
     settings = {
         name: default
         for name, default in _compose_defaults(_compose_service(service)).items()
-        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
+        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG")) and name not in STACK_WIDE
     }
     assert settings, f"no settings found in {service} -- the regex needs updating"
     for name, default in sorted(settings.items()):

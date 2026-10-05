@@ -191,6 +191,13 @@ compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shel
     printf '%s' "${value:-$2}"
 }
 
+# A container of this stack by the name it usually has, `nl2sql-api`, which
+# is its name here unless NL2SQL_INSTANCE gives the stack another -- the
+# acceptance tier's, which runs beside this one as `<instance>-api`.
+in_instance() {  # in_instance nl2sql-NAME -- that container's name in this stack
+    printf '%s-%s' "$(compose_env NL2SQL_INSTANCE nl2sql)" "${1#nl2sql-}"
+}
+
 # --- Passwords ---------------------------------------------------------------
 # Every store's password, and the roles' that read them, generated once and
 # never replaced (6.1): a .env written before there were any has none, and
@@ -254,13 +261,14 @@ else
 fi
 
 wait_healthy() {
-    local container="$1" status=""
+    local container status=""
+    container=$(in_instance "$1")
     for _ in $(seq 1 60); do
         status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
         sleep 2
     done
-    die "$container did not become healthy (last status: ${status:-unknown}). Check: docker compose logs ${container#nl2sql-}"
+    die "$1 did not become healthy (last status: ${status:-unknown}). Check: docker compose logs ${1#nl2sql-}"
 }
 
 # --- Read-only role --------------------------------------------------------
@@ -746,11 +754,11 @@ start_api() {
     docker compose --profile api up -d api >/dev/null 2>&1 || return 1
     local status=""
     for _ in $(seq 1 60); do
-        status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-api 2>/dev/null || echo starting)
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$(in_instance nl2sql-api)" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
         # A container that has already exited will never become healthy, and
         # waiting two more minutes to find that out hides the reason.
-        [[ "$(docker inspect --format '{{.State.Running}}' nl2sql-api 2>/dev/null || echo true)" == "false" ]] && return 1
+        [[ "$(docker inspect --format '{{.State.Running}}' "$(in_instance nl2sql-api)" 2>/dev/null || echo true)" == "false" ]] && return 1
         sleep 2
     done
     return 1
@@ -786,7 +794,8 @@ fi
 # whole point of these three is to warn and carry on. A missing review
 # interface should not stop a working agent from being reported as working.
 await_health() {  # await_health CONTAINER
-    local container="$1" status=""
+    local container status=""
+    container=$(in_instance "$1")
     for _ in $(seq 1 60); do
         status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
@@ -978,9 +987,9 @@ start_gui() {
     docker compose --profile api --profile gui up -d gui >/dev/null 2>&1 || return 1
     local status=""
     for _ in $(seq 1 60); do
-        status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-gui 2>/dev/null || echo starting)
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$(in_instance nl2sql-gui)" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
-        [[ "$(docker inspect --format '{{.State.Running}}' nl2sql-gui 2>/dev/null || echo true)" == "false" ]] && return 1
+        [[ "$(docker inspect --format '{{.State.Running}}' "$(in_instance nl2sql-gui)" 2>/dev/null || echo true)" == "false" ]] && return 1
         sleep 2
     done
     return 1

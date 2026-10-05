@@ -541,8 +541,12 @@ start_desktop() {
         return 1
     fi
 
-    local api_port
+    # Both addresses, as .env sets them: the client's default sign-in
+    # address is the API's host on 8446, which with AUTH_PORT moved is
+    # nothing -- or another stack's auth service on this machine.
+    local api_port auth_port
     api_port=$(compose_env API_PORT 8443)
+    auth_port=$(compose_env AUTH_PORT 8446)
     local trust=(--insecure)
     if [[ -f nl2sql-ca.crt ]]; then
         # Verifying beats not verifying, and the stack's CA -- which every
@@ -560,7 +564,7 @@ start_desktop() {
     # a subshell it is reparented away and outlives both.
     mkdir -p "$(dirname "$DESKTOP_PID")"
     ( nohup "$java_bin" -jar "$DESKTOP_JAR" "${trust[@]}" \
-          --url "https://localhost:$api_port" >"$DESKTOP_LOG" 2>&1 &
+          --url "https://localhost:$api_port" --auth-url "https://localhost:$auth_port" >"$DESKTOP_LOG" 2>&1 &
       printf '%s' "$!" > "$DESKTOP_PID" )
     local pid
     pid=$(cat "$DESKTOP_PID")

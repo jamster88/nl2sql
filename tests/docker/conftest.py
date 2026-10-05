@@ -161,6 +161,11 @@ case "$1" in
             printf 'not really a jar\n' > desktop/target/nl2sql-desktop.jar
             exit 0
         fi
+        # setup.sh --build-all: every image this run pins, in one build.
+        if [[ "$*" == "--profile api"*" build" && -n "${FAKE_BUILD_ALL_FAILS:-}" ]]; then
+            echo "failed to solve: the Dockerfile did not build" >&2
+            exit 1
+        fi
         if [[ "$*" == *" cp api:"* ]]; then
             # Copies the stack's CA certificate out of the API's volume.
             [[ -n "${FAKE_CERT_COPY_FAILS:-}" ]] && exit 1

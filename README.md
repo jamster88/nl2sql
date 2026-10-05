@@ -1763,8 +1763,9 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 4620 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 5402, including ones that build and run containers
+pytest                                          # 4630 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
+pytest --run-docker --run-node --run-java --run-acceptance   # all 5427, the whole stack included
 ```
 
 | Directory | Covers |
@@ -1786,7 +1787,7 @@ pytest --run-docker --run-node --run-java       # all 5402, including ones that 
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 726 tests behind `--run-docker` are the ones that need a working daemon:
+The 732 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console, desktop, directory and auth images and run them, resolve the real
 compose file, query the live databases -- found as compose finds them, with the passwords in
 `.env` ([`tests/live_stores.py`](tests/live_stores.py)), so a database that refuses the login is a
@@ -1800,6 +1801,25 @@ rather than one because the three needs are different -- a clone with Docker
 but no npm should still be able to run every container test, a GUI developer
 with npm and no Docker daemon should still be able to run the interface's,
 and neither of them should be asked for a JDK to run the Python ones.
+
+The 9 behind `--run-acceptance` are the **acceptance tier**
+([`tests/acceptance/`](tests/acceptance)), and they are what a release passes
+before it is published. They copy this checkout, start it as a stack of its
+own beside any other -- `NL2SQL_INSTANCE` names its containers, volumes and
+compose project, every port is a free one -- with the two commands a user
+types, `./setup.sh --build-all --review --curate --console --mlflow --desktop`
+and `./start.sh --review --curate --console --mlflow --no-browser`, and then
+use it: the generated administrator signs in on every page, a question goes
+through the web interface, its verdict through review into the golden set,
+SQL through the console, and MLflow is asked for the question's trace through
+its front door. Four of the nine are the four defects 6.0 shipped with every
+other tier green: a container that restarted for ever, a database nobody
+could sign in to, a lockout of everybody behind one address, and the desktop
+client's classes against a server that asks who it is. Everything is removed
+afterwards (`NL2SQL_ACCEPTANCE_KEEP=1` keeps it). It needs Docker with about
+3.5 GiB of its memory free -- it says so rather than starting -- and ten to
+twenty minutes; the tests that need an answer are skipped, saying why, when
+the chat model `.env` names cannot be reached.
 Everything else runs offline,
 in about five minutes -- `setup.sh` included, since it is exercised against
 fake binaries rather than real Docker -- as are `launch.sh`'s and
@@ -2041,7 +2061,7 @@ script, by a measurement of their own:
   fake stock entrypoint, `openssl`, `psql` and `gosu`; and all six
   `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1947 of 1947**.
+  the traces mention -- **1976 of 1976**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

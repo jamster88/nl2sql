@@ -1291,3 +1291,73 @@ def test_the_backup_keeps_the_settings_and_not_the_secrets(run_setup):
     assert not any(secret in backup for secret in secrets)
     assert "# POSTGRES_PASSWORD: carried into .env, not kept here" in backup
     assert (again.workdir / ".env.bak").stat().st_mode & 0o777 == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Another instance beside this one (V6-67)
+# ---------------------------------------------------------------------------
+
+
+def test_another_instance_has_its_own_database_volume_and_containers(run_setup):
+    result = run_setup(env={"NL2SQL_INSTANCE": "nl2sql-accept"})
+    assert result.returncode == 0, result.output
+    assert result.called("volume inspect nl2sql-accept-pgdata")
+    for name in ("postgres", "vectordb", "chunkdb", "snippetsdb"):
+        assert result.called(f"{{{{.State.Health.Status}}}} nl2sql-accept-{name}"), name
+    assert not result.called("nl2sql-pgdata")
+
+
+def test_an_instance_named_in_dotenv_is_used_and_kept(run_setup):
+    """How the acceptance tier names its stack: in the .env it starts from,
+    which setup.sh rewrites -- and must not lose the name in rewriting."""
+    dotenv = run_setup().workdir / ".env"  # a .env to start from
+    dotenv.write_text(dotenv.read_text() + "NL2SQL_INSTANCE=nl2sql-accept\nGUI_PORT=18080\n")
+    result = run_setup()
+    assert result.returncode == 0, result.output
+    assert result.called("volume inspect nl2sql-accept-pgdata")
+    kept = result.env_file()
+    assert (kept["NL2SQL_INSTANCE"], kept["GUI_PORT"]) == ("nl2sql-accept", "18080")
+
+
+# ---------------------------------------------------------------------------
+# --build-all: the stack as this checkout builds it (V6-67)
+# ---------------------------------------------------------------------------
+
+EVERY_SET = ("--review", "--curate", "--console", "--mlflow", "--desktop")
+
+
+def test_build_all_pulls_nothing_of_ours_and_builds_everything_it_pins(run_setup):
+    result = run_setup("--build-all", *EVERY_SET)
+    assert result.returncode == 0, result.output
+    assert not result.calls_matching("pull mcfaddja/nl2sql-agent"), "an image of ours was pulled"
+    assert not [call for call in result.calls_matching("pull ") if "rag-" not in call], result.calls_matching("pull ")
+    [build] = [call for call in result.calls if call.endswith(" build") and "--profile api" in call]
+    for profile in ("api", "gui", "review", "reviewgui", "curategui", "console", "consolegui",
+                    "mlflow", "auth", "directorygui", "desktop"):
+        assert f"--profile {profile} " in build + " ", profile
+    assert result.called("compose build postgres"), "the dataset is built too"
+    assert "Building every image from this checkout (--build-all)" in result.output
+
+
+def test_build_all_pins_the_local_builds(run_setup):
+    pinned = run_setup("--build-all", *EVERY_SET).env_file()
+    for image in ("AGENT", "GUI", "REVIEW", "REVIEW_GUI", "CURATE_GUI", "CONSOLE_GUI", "MLFLOW",
+                  "MLFLOW_DB", "DESKTOP", "LDAP", "AUTH", "DIRECTORY_GUI", "MLFLOW_PROXY"):
+        assert pinned[f"{image}_IMAGE_TAG"] == "local", image
+        assert not pinned[f"{image}_IMAGE_NAME"].startswith("mcfaddja/"), image
+    assert (pinned["IMAGE_NAME"], pinned["IMAGE_TAG"]) == ("nl2sql-retail-postgres", "latest")
+    # The knowledge-base stores have no Dockerfile here, and stay published.
+    assert pinned["VECTOR_IMAGE_NAME"].startswith("mcfaddja/")
+
+
+def test_build_all_builds_only_what_the_run_asked_for(run_setup):
+    result = run_setup("--build-all", "--no-auth")
+    [build] = [call for call in result.calls if call.endswith(" build") and "--profile api" in call]
+    assert "--profile review " in build, "the review image loads the snippets"
+    assert "--profile gui" not in build and "--profile auth" not in build
+
+
+def test_an_image_that_does_not_build_stops_setup_and_says_so(run_setup):
+    result = run_setup("--build-all", env={"FAKE_BUILD_ALL_FAILS": "1"})
+    assert result.returncode != 0
+    assert "an image did not build from this checkout" in result.output

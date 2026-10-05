@@ -20,6 +20,8 @@ their own and are listed under the release they shipped with. A version marked
 - A development certificate authority: a one-shot `pki` service gives every server its own key and certificate, and a client trusts `nl2sql-ca.crt` once.
 - `nl2sql-retail-postgres:v1_2`: no password in the image, TLS on, nothing over the network without it, and the superuser not over the network at all.
 - `SECURITY.md`, the threat model and the deployment tiers; `Multi-Agent_NL2SQL_arch6.md`, the architecture as built, with the sign-in design.
+- The acceptance tier (`--run-acceptance`): the whole stack, built from the checkout and started with `setup.sh` and `start.sh` beside any other, used on every page; four of its tests are 6.0's four shipped defects.
+- `NL2SQL_INSTANCE` names a stack, so a second one runs beside the first; `setup.sh --build-all` builds every image from the checkout instead of pulling.
 - `tests/security/`: every route guarded, every wire model strict, the compose posture.
 - The live tests find the databases' passwords where compose does, and fail rather than skip when a database refuses them.
 
@@ -27,6 +29,7 @@ their own and are listed under the release they shipped with. A version marked
 - A repair started from the failed attempt's leftovers; it starts clean now.
 - A narrator or supervisor that failed said nothing; `node_errors` says so.
 - Moving the API's, the review service's, the console's or the auth service's port in `.env` left every page asking the old one; they follow it now.
+- `start.sh --desktop` did not tell the window where to sign in, so with `AUTH_PORT` moved it signed in nowhere; it passes the auth service's address now.
 - The review service's banner said `auth NONE` over a service that required sign-in; it says sign-in, and names its own certificate.
 - The sensitive-column redaction promised a policy nothing applied; the claim is gone.
 - The trace over REST dropped the model, rung, route and hops; it carries them, and the interfaces show the model.
@@ -39,6 +42,9 @@ their own and are listed under the release they shipped with. A version marked
 - Sign-in is on in the code as well as in compose; CORS closed until opened; the job queue bounded (429); `EXPLAIN` time-boxed; tokens scrubbed from the access log.
 - A replica refuses a clear-text primary; the pages honour `X-Forwarded-Proto`.
 - Version 6.1.0 in every declaration; `setup.sh` pins `v6_1` and `nl2sql-retail-postgres:v1_2`.
+
+**Published**
+- All seventeen tags as `v6_1`, and `nl2sql-retail-postgres:v1_2` with `latest` moved onto it; the acceptance tier passed first, and `start.sh` then upgraded a running stack to them with every check passing.
 
 ## v6_0_1 (6.0.1) -- 2026-10-04
 

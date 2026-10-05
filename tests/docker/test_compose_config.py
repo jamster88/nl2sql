@@ -704,3 +704,60 @@ def test_no_upstream_names_a_port_of_its_own():
     text = (REPO_ROOT / "docker-compose.yml").read_text()
     assert re.findall(r"https://nl2sql-[a-z-]+:\d", text) == []
     assert len(re.findall(r":-https://nl2sql-", text)) == len(FOLLOWERS)
+
+
+# ---------------------------------------------------------------------------
+# Another instance beside this one (V6-67)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def instances(tmp_path_factory) -> tuple[dict, dict]:
+    """The file resolved as the usual stack and as the acceptance tier's."""
+    usual = _compose_config(tmp_path_factory.mktemp("compose"), profile=EVERY_PAGE)
+    other = _compose_config(tmp_path_factory.mktemp("compose"), profile=EVERY_PAGE,
+                            env={"NL2SQL_INSTANCE": "nl2sql-accept"})
+    return usual, other
+
+
+def test_the_usual_stack_is_named_as_it_always_was(instances):
+    usual, _ = instances
+    assert usual["name"] == "nl2sql"
+    assert usual["volumes"]["pgdata"]["name"] == "nl2sql-pgdata"
+    assert usual["services"]["api"]["container_name"] == "nl2sql-api"
+
+
+def test_another_instance_shares_no_container_or_volume_name_with_it(instances):
+    usual, other = instances
+    assert other["name"] == "nl2sql-accept"
+    assert other["volumes"]["pgdata"]["name"] == "nl2sql-accept-pgdata"
+    named = {name: service["container_name"] for name, service in other["services"].items() if "container_name" in service}
+    assert named and all(value.startswith("nl2sql-accept-") for value in named.values())
+    assert not set(named.values()) & {s.get("container_name") for s in usual["services"].values()}
+
+
+def test_every_container_is_reached_by_its_usual_name_in_either(instances):
+    """The name the others reach it by, and the one its certificate covers:
+    an alias on its own network, so it is the same in every instance."""
+    for config in instances:
+        for name, service in config["services"].items():
+            if "container_name" not in service:
+                continue
+            usual = service["container_name"].replace(config["name"], "nl2sql", 1)
+            assert service["networks"]["default"]["aliases"] == [usual], name
+
+
+@pytest.mark.parametrize("sets", [(), ("--review", "--curate", "--console", "--mlflow", "--desktop"), ("--no-auth",)])
+def test_the_profiles_setup_builds_with_resolve(run_setup, tmp_path, sets):
+    """`setup.sh --build-all` names the profiles to build by what the run
+    pins; compose refuses the lot if one names a service that depends on
+    another in a profile left out -- which the fake `docker` its own tests
+    run against cannot know, and the acceptance tier found."""
+    [build] = [call for call in run_setup("--build-all", *sets).calls if call.endswith(" build")
+               and "--profile api" in call]
+    profiles = build.split("compose ", 1)[1].rsplit(" build", 1)[0].split()
+    empty = tmp_path / "empty.env"
+    empty.write_text("")
+    resolved = subprocess.run(["docker", "compose", "--env-file", str(empty), *profiles, "config", "--quiet"],
+                              cwd=REPO_ROOT, capture_output=True, text=True, timeout=60)
+    assert resolved.returncode == 0, f"{' '.join(profiles)}: {resolved.stderr}"

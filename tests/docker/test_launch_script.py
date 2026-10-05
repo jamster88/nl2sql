@@ -1821,3 +1821,39 @@ def test_stores_published_wider_are_said_and_so_is_every_default_password(run_la
     assert "POSTGRES_PASSWORD is still the default every copy of this repository knows." in result.output
     assert "FEEDBACK_DB_PASSWORD is still the default" in result.output
     assert "VECTOR_DB_PASSWORD is still the default" not in result.output, "a generated one is not"
+
+
+# ---------------------------------------------------------------------------
+# Another instance beside this one (V6-67)
+# ---------------------------------------------------------------------------
+
+#: The default .env, as another stack's: the acceptance tier's runs beside
+#: the usual one under a name of its own.
+ANOTHER = (
+    "IMAGE_NAME=mcfaddja/nl2sql-retail-postgres\nIMAGE_TAG=v1\n"
+    "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG=v6_1\nNL2SQL_INSTANCE=nl2sql-accept\n"
+)
+
+
+def test_another_instance_waits_on_its_own_containers(run_launch):
+    result = run_launch("--api", "--gui", env_file=ANOTHER)
+    assert result.returncode == 0, result.output
+    for name in ("postgres", "api", "ldap", "auth", "directory-gui", "gui"):
+        assert result.called(f"{{{{.State.Health.Status}}}} nl2sql-accept-{name}"), name
+    assert not [call for call in result.calls if call.rstrip().endswith(" nl2sql-postgres")], (
+        "it asked about the other stack's database"
+    )
+    # Said by the names everyone knows them by.
+    assert "nl2sql-postgres is healthy" in result.output
+
+
+def test_the_shell_names_the_instance_over_dotenv(run_launch):
+    result = run_launch(env={"NL2SQL_INSTANCE": "from-the-shell"}, env_file=ANOTHER)
+    assert result.called("{{.State.Health.Status}} from-the-shell-postgres")
+
+
+def test_a_database_that_never_comes_up_is_named_as_compose_knows_it(run_launch):
+    result = run_launch(env={"FAKE_PG_HEALTH": "starting"}, env_file=ANOTHER)
+    assert result.returncode != 0
+    assert "nl2sql-postgres did not become healthy" in result.output
+    assert "docker compose logs postgres" in result.output

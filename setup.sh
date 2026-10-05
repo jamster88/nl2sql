@@ -78,6 +78,7 @@ EMBED_MODEL_NAME=""
 POSTGRES_PORT=""
 BUILD_POSTGRES=0
 BUILD_AGENT=0
+BUILD_ALL=0
 # The GUI is opt-in: most people ask questions from a terminal, and pulling
 # an image for a container that is never started is a download nobody asked
 # for. `./launch.sh --gui` still works without this -- it builds the image
@@ -168,6 +169,13 @@ Usage: ./setup.sh [options]
       --no-verify        Skip the end-of-setup retrieval check
       --build            Build the Postgres image locally instead of pulling
                          it (regenerates the dataset; takes a few minutes)
+      --build-all        Build every image this checkout has a Dockerfile for
+                         -- the dataset, the agent, every interface, the
+                         directory, the auth service, MLflow's three and the
+                         desktop client -- tagged local, and pin those instead
+                         of pulling them (the two knowledge-base stores are
+                         still pulled). How the acceptance tier runs, and how
+                         to try a change as the whole stack before publishing
       --reset            Delete the existing database volume first, so the
                          dataset comes from the image. DESTROYS local changes.
   -h, --help             Show this message
@@ -225,11 +233,26 @@ while [[ $# -gt 0 ]]; do
         --tokens) WITH_TOKENS=1; shift ;;
         --no-verify) VERIFY=0; shift ;;
         --build) BUILD_POSTGRES=1; shift ;;
+        --build-all) BUILD_ALL=1; BUILD_POSTGRES=1; shift ;;
         --reset) RESET=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
 done
+
+# With --build-all every image of ours is this checkout's, under its usual
+# name and the tag `local`, which no registry has: compose builds them below
+# instead of anything being pulled.
+if [[ $BUILD_ALL -eq 1 ]]; then
+    for local_image in AGENT:nl2sql-agent GUI:nl2sql-gui REVIEW:nl2sql-review \
+        REVIEW_GUI:nl2sql-review-gui CURATE_GUI:nl2sql-curate-gui CONSOLE_GUI:nl2sql-console-gui \
+        MLFLOW:nl2sql-mlflow MLFLOW_DB:nl2sql-mlflowdb DESKTOP:nl2sql-desktop-build \
+        LDAP:nl2sql-ldap AUTH:nl2sql-auth DIRECTORY_GUI:nl2sql-directory-gui \
+        MLFLOW_PROXY:nl2sql-mlflow-proxy; do
+        printf -v "${local_image%%:*}_IMAGE" '%s' "${local_image#*:}"
+        printf -v "${local_image%%:*}_TAG" '%s' local
+    done
+fi
 
 step() { printf '\n==> %s\n' "$1"; }
 info() { printf '    %s\n' "$1"; }
@@ -293,7 +316,18 @@ docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required ('d
 info "Docker $(docker version --format '{{.Server.Version}}') with Compose $(docker compose version --short)"
 
 # --- Existing data ---------------------------------------------------------
-VOLUME_NAME="nl2sql-pgdata"
+# The stack's name is `nl2sql` unless NL2SQL_INSTANCE -- in the shell or in
+# .env, where compose reads it -- gives it another, so that a second stack
+# (the acceptance tier's) can run beside this one. Its containers and its
+# retail volume are named after it.
+instance() {  # instance -- this stack's name
+    local name="${NL2SQL_INSTANCE:-}"
+    if [[ -z "$name" && -f .env ]]; then
+        name=$(grep -E '^NL2SQL_INSTANCE=' .env | tail -1 | cut -d= -f2- || true)
+    fi
+    printf '%s' "${name:-nl2sql}"
+}
+VOLUME_NAME="$(instance)-pgdata"
 if [[ $RESET -eq 1 ]]; then
     step "Removing the existing database volume"
     docker compose down -v >/dev/null 2>&1 || true
@@ -625,7 +659,9 @@ fi
 info "compose will use $POSTGRES_IMAGE:$POSTGRES_TAG"
 
 # --- Agent image -----------------------------------------------------------
-if [[ $BUILD_AGENT -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 1 ]]; then
+    : # built with everything else below
+elif [[ $BUILD_AGENT -eq 1 ]]; then
     step "Building the agent image from source"
     docker compose build agent
 else
@@ -641,7 +677,7 @@ fi
 # Pulled rather than built when asked for, the same way as the agent. Compose
 # builds a service that has a `build:` section whenever its image is missing,
 # so pulling it here is what makes the published image the one that runs.
-if [[ $WITH_GUI -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_GUI -eq 1 ]]; then
     step "Pulling $GUI_IMAGE:$GUI_TAG (the web interface)"
     if ! docker pull "$GUI_IMAGE:$GUI_TAG"; then
         warn "could not pull $GUI_IMAGE:$GUI_TAG (private repo, or not logged in);"
@@ -653,21 +689,21 @@ fi
 # the golden question set and the snippets, and nginx pages that talk to it.
 # The service comes first and on its own, because it is also what loads the
 # snippet store.
-if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_REVIEW_SERVICE -eq 1 ]]; then
     step "Pulling $REVIEW_IMAGE:$REVIEW_TAG (the review service, which loads the SQL snippets)"
     if ! docker pull "$REVIEW_IMAGE:$REVIEW_TAG"; then
         warn "could not pull $REVIEW_IMAGE:$REVIEW_TAG (private repo, or not logged in);"
         warn "compose will build it from source the first time it is needed."
     fi
 fi
-if [[ $WITH_REVIEW -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_REVIEW -eq 1 ]]; then
     step "Pulling $REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG (feedback review)"
     if ! docker pull "$REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG"; then
         warn "could not pull $REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG (private repo, or not logged in);"
         warn "./launch.sh --review will build it from source instead."
     fi
 fi
-if [[ $WITH_CURATE -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_CURATE -eq 1 ]]; then
     step "Pulling $CURATE_GUI_IMAGE:$CURATE_GUI_TAG (the curation interface)"
     if ! docker pull "$CURATE_GUI_IMAGE:$CURATE_GUI_TAG"; then
         warn "could not pull $CURATE_GUI_IMAGE:$CURATE_GUI_TAG (private repo, or not logged in);"
@@ -677,7 +713,7 @@ fi
 
 # The SQL console's interface. One image: the console behind it is the
 # agent's, pulled above, started with a different command.
-if [[ $WITH_CONSOLE -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_CONSOLE -eq 1 ]]; then
     step "Pulling $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (the SQL console)"
     if ! docker pull "$CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG"; then
         warn "could not pull $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (private repo, or not logged in);"
@@ -686,7 +722,7 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
 fi
 
 # MLflow's two, the server and its store: pulled together, as they run.
-if [[ $WITH_MLFLOW -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_MLFLOW -eq 1 ]]; then
     for pair in "$MLFLOW_IMAGE:$MLFLOW_TAG" "$MLFLOW_DB_IMAGE:$MLFLOW_DB_TAG"; do
         step "Pulling $pair (MLflow)"
         if ! docker pull "$pair"; then
@@ -714,7 +750,7 @@ javafx_platform() {
 }
 
 # Sign-in's images, and MLflow's front door with MLflow.
-if [[ $WITH_SIGNIN -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_SIGNIN -eq 1 ]]; then
     for pair in "$LDAP_IMAGE:$LDAP_TAG" "$AUTH_IMAGE:$AUTH_TAG" "$DIRECTORY_GUI_IMAGE:$DIRECTORY_GUI_TAG"; do
         step "Pulling $pair (sign-in)"
         if ! docker pull "$pair"; then
@@ -723,7 +759,7 @@ if [[ $WITH_SIGNIN -eq 1 ]]; then
         fi
     done
 fi
-if [[ $WITH_MLFLOW -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_MLFLOW -eq 1 ]]; then
     step "Pulling $MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG (MLflow's front door)"
     if ! docker pull "$MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG"; then
         warn "could not pull $MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG (private repo, or not logged in);"
@@ -731,7 +767,7 @@ if [[ $WITH_MLFLOW -eq 1 ]]; then
     fi
 fi
 
-if [[ $WITH_DESKTOP -eq 1 ]]; then
+if [[ $BUILD_ALL -eq 0 && $WITH_DESKTOP -eq 1 ]]; then
     desktop_pair="$DESKTOP_IMAGE:$DESKTOP_TAG-$(javafx_platform)"
     step "Pulling $desktop_pair (the desktop client)"
     if ! docker pull "$desktop_pair"; then
@@ -740,13 +776,32 @@ if [[ $WITH_DESKTOP -eq 1 ]]; then
     fi
 fi
 
+# Everything this run pins, built from this checkout: one build, which
+# compose runs in parallel and its cache makes quick the second time.
+if [[ $BUILD_ALL -eq 1 ]]; then
+    step "Building every image from this checkout (--build-all)"
+    info "tagged local and pinned in .env; nothing of ours is pulled"
+    build_profiles=(--profile api)
+    if [[ $WITH_GUI -eq 1 ]]; then build_profiles+=(--profile gui); fi
+    # The review service needs its databases' profiles to resolve at all.
+    if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then build_profiles+=(--profile feedback --profile review); fi
+    if [[ $WITH_REVIEW -eq 1 ]]; then build_profiles+=(--profile reviewgui); fi
+    if [[ $WITH_CURATE -eq 1 ]]; then build_profiles+=(--profile curategui); fi
+    if [[ $WITH_CONSOLE -eq 1 ]]; then build_profiles+=(--profile console --profile consolegui); fi
+    if [[ $WITH_MLFLOW -eq 1 ]]; then build_profiles+=(--profile mlflow); fi
+    if [[ $WITH_SIGNIN -eq 1 ]]; then build_profiles+=(--profile auth --profile directorygui); fi
+    if [[ $WITH_DESKTOP -eq 1 ]]; then build_profiles+=(--profile desktop); fi
+    JAVAFX_PLATFORM="$(javafx_platform)" docker compose "${build_profiles[@]}" build ||
+        die "an image did not build from this checkout. What compose said is above."
+fi
+
 # --- Start the databases ---------------------------------------------------
 step "Starting Postgres"
 docker compose up -d postgres
 
 info "waiting for the database to become healthy..."
 for _ in $(seq 1 60); do
-    status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-postgres 2>/dev/null || echo starting)
+    status=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-postgres" 2>/dev/null || echo starting)
     [[ "$status" == "healthy" ]] && break
     sleep 2
 done
@@ -769,7 +824,7 @@ if [[ $WITH_RAG -eq 1 ]]; then
 
     info "waiting for pgvector to become healthy..."
     for _ in $(seq 1 60); do
-        vstatus=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-vectordb 2>/dev/null || echo starting)
+        vstatus=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-vectordb" 2>/dev/null || echo starting)
         [[ "$vstatus" == "healthy" ]] && break
         sleep 2
     done
@@ -798,7 +853,7 @@ if [[ $WITH_RAG -eq 1 ]]; then
 
     info "waiting for the context store to become healthy..."
     for _ in $(seq 1 60); do
-        cstatus=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-chunkdb 2>/dev/null || echo starting)
+        cstatus=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-chunkdb" 2>/dev/null || echo starting)
         [[ "$cstatus" == "healthy" ]] && break
         sleep 2
     done
@@ -829,7 +884,7 @@ if [[ $WITH_RAG -eq 1 ]]; then
 
     info "waiting for the snippet store to become healthy..."
     for _ in $(seq 1 60); do
-        sstatus=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-snippetsdb 2>/dev/null || echo starting)
+        sstatus=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-snippetsdb" 2>/dev/null || echo starting)
         [[ "$sstatus" == "healthy" ]] && break
         sleep 2
     done

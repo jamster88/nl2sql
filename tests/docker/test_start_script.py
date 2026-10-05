@@ -655,6 +655,15 @@ def test_desktop_runs_the_jar_against_the_api(run_start):
     assert result.calls_matching("java -jar desktop/target/nl2sql-desktop.jar")
     assert result.calls_matching("--cacert ./nl2sql-ca.crt")
     assert result.calls_matching("--url https://localhost:8443")
+    assert result.calls_matching("--auth-url https://localhost:8446")
+
+
+def test_the_desktop_client_signs_in_where_this_stack_signs_people_in(run_start):
+    """The client's own default is the API's host on 8446. With AUTH_PORT
+    moved, that is nothing -- or another stack's auth service on this
+    machine, which is how the acceptance tier found it."""
+    result = run_start("--desktop", env={"AUTH_PORT": "18446", "API_PORT": "18443"})
+    assert result.calls_matching("--url https://localhost:18443 --auth-url https://localhost:18446")
 
 
 def test_desktop_is_an_interface_rather_than_an_addition_to_one(run_start):

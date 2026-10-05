@@ -121,8 +121,9 @@ says `authentication: session` gets the same panel). The status bar then
 says as whom, with a link to sign out.
 
 It posts to the auth service's `/auth/token` -- on the API's host, port
-8446, unless `--auth-url` says otherwise -- over the same TLS settings as
-the API. Since 6.1 the auth service presents a certificate of its own,
+8446, unless `--auth-url` says otherwise; `./start.sh --desktop` passes the
+port `.env` gives the auth service (`AUTH_PORT`) -- over the same TLS
+settings as the API. Since 6.1 the auth service presents a certificate of its own,
 issued by the same CA as the API's: the `--cacert` with that CA reaches
 both, and a `--fingerprint` must name both, comma-separated. The session
 comes back as a token, which every call to the API then carries as a bearer

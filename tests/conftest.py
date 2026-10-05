@@ -50,15 +50,26 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="also run tests marked 'java' (runs the desktop client's own "
         "test suite, which needs Maven and a JDK of 21 or later)",
     )
+    parser.addoption(
+        "--run-acceptance",
+        action="store_true",
+        default=False,
+        help="also run tests marked 'acceptance' (builds every image, starts "
+        "the whole stack beside any other with setup.sh and start.sh, and "
+        "uses every page; needs Docker, about 3.5 GiB of its memory free, and "
+        "10-20 minutes)",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    # Three opt-ins rather than one because the three needs are different: a
+    # Separate opt-ins rather than one because the needs are different: a
     # clone with Docker but no npm should still be able to run every
     # container test, a GUI developer with npm and no Docker daemon should
     # still be able to run the GUI's suite, and neither of them should be
-    # asked for a JDK to run the Python ones.
-    for name in ("docker", "node", "java"):
+    # asked for a JDK to run the Python ones. The acceptance tier is its own
+    # because it is the whole stack, beside whatever else runs: a quarter of
+    # an hour and three and a half gigabytes, which nobody wants by accident.
+    for name in ("docker", "node", "java", "acceptance"):
         if config.getoption(f"--run-{name}"):
             continue
         skip = pytest.mark.skip(reason=f"needs --run-{name}")

@@ -323,6 +323,14 @@ the URLs they print and open follow, and so does every page that proxies to
 a moved service (6.1; before it, moving `API_PORT`, `REVIEW_PORT`,
 `CONSOLE_PORT` or `AUTH_PORT` left the pages asking the old one).
 
+`NL2SQL_INSTANCE` (default `nl2sql`) names the stack itself: its compose
+project, every container (`nl2sql-api` becomes `<instance>-api`) and the
+retail database's volume. With it set in a second checkout's `.env`, and
+every port moved, a second stack runs beside the first -- the acceptance
+tier's does -- and the scripts wait on its containers, not the other's.
+Inside each stack the services still reach each other as `nl2sql-api` and so
+on, which is what their certificates are issued for.
+
 `docker compose ps` lists what is running, and
 `docker compose --profile '*' logs -f <service>` follows one service's log.
 
@@ -1274,6 +1282,7 @@ and, beside a standalone directory, the directory page.
 | `--build-agent` | Build the agent from this checkout instead of pulling it |
 | `-t`, `--tag TAG`, `-i`, `--image NAME` | Another retail database image |
 | `--build` | Build the retail database here, regenerating the data |
+| `--build-all` | Build every image this checkout has a Dockerfile for -- the dataset, the agent, every interface, the directory, the auth service, MLflow's three and the desktop client -- tagged `local`, and pin those instead of pulling the published ones (the two knowledge-base stores are still pulled). How the acceptance tier runs a release before it is published, and how to try a change as the whole stack |
 | `--gui-tag`, `--gui-image`, `--review-tag`, `--review-image`, `--review-gui-tag`, `--review-gui-image`, `--curate-gui-tag`, `--curate-gui-image`, `--console-gui-tag`, `--console-gui-image`, `--mlflow-tag`, `--mlflow-image`, `--mlflow-db-tag`, `--mlflow-db-image`, `--desktop-tag`, `--desktop-image`, `--vector-tag`, `--vector-image`, `--context-tag`, `--context-image` | Another version or repository of each image |
 | `--no-rag` | No knowledge base: the agent answers from the schema alone |
 | `--no-auth` | Sign-in off from now on (`AUTH_ENABLED=false` in `.env`); without it the sign-in images are pulled and pinned and their passwords generated into `.env` |

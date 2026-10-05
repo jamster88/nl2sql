@@ -1,4 +1,9 @@
-name: nl2sql
+# The project, and the prefix of every container and of the retail volume:
+# `nl2sql` unless NL2SQL_INSTANCE says otherwise, so a second stack -- the
+# acceptance tier's, or anyone's -- can run beside this one with its own
+# ports. Each service keeps its `nl2sql-*` name as an alias on its own
+# network, which is the name the others reach it by and its certificate covers.
+name: ${NL2SQL_INSTANCE:-nl2sql}
 
 services:
   postgres:
@@ -11,7 +16,10 @@ services:
         DB_USER: ${POSTGRES_USER:-nl2sql}
         DB_READER: ${POSTGRES_READER_USER:-nl2sql_reader}
     image: ${IMAGE_NAME:-nl2sql-retail-postgres}:${IMAGE_TAG:-latest}
-    container_name: nl2sql-postgres
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-postgres
+    networks:
+      default:
+        aliases: [nl2sql-postgres]
     restart: unless-stopped
     shm_size: 256mb
     stop_grace_period: 1m
@@ -68,7 +76,10 @@ services:
   # embeddings inside it, the same way the retail image ships its dataset.
   vectordb:
     image: ${VECTOR_IMAGE_NAME:-mcfaddja/nl2sql-rag-vectordb}:${VECTOR_IMAGE_TAG:-v3_2}
-    container_name: nl2sql-vectordb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-vectordb
+    networks:
+      default:
+        aliases: [nl2sql-vectordb]
     restart: unless-stopped
     stop_grace_period: 1m
     ports:
@@ -90,7 +101,10 @@ services:
   # vectordb above. Like that one, the image ships its data inside it.
   chunkdb:
     image: ${CONTEXT_IMAGE_NAME:-mcfaddja/nl2sql-rag-chunkdb}:${CONTEXT_IMAGE_TAG:-v3_2}
-    container_name: nl2sql-chunkdb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-chunkdb
+    networks:
+      default:
+        aliases: [nl2sql-chunkdb]
     restart: unless-stopped
     stop_grace_period: 1m
     environment:
@@ -127,7 +141,10 @@ services:
   # review/nl2sql_review/store.py.
   feedbackdb:
     image: ${FEEDBACK_IMAGE:-postgres:18}
-    container_name: nl2sql-feedbackdb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-feedbackdb
+    networks:
+      default:
+        aliases: [nl2sql-feedbackdb]
     restart: unless-stopped
     stop_grace_period: 1m
     environment:
@@ -162,7 +179,10 @@ services:
   # on every start, so there is nothing to bake in.
   correctionsdb:
     image: ${FIXES_IMAGE:-pgvector/pgvector:pg18}
-    container_name: nl2sql-correctionsdb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-correctionsdb
+    networks:
+      default:
+        aliases: [nl2sql-correctionsdb]
     restart: unless-stopped
     stop_grace_period: 1m
     environment:
@@ -192,7 +212,10 @@ services:
   # for one without being handed the other.
   completionsdb:
     image: ${FIXES_IMAGE:-pgvector/pgvector:pg18}
-    container_name: nl2sql-completionsdb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-completionsdb
+    networks:
+      default:
+        aliases: [nl2sql-completionsdb]
     restart: unless-stopped
     stop_grace_period: 1m
     environment:
@@ -226,7 +249,10 @@ services:
   # nothing has to be published to fill it. No profile: the agent reads it.
   snippetsdb:
     image: ${SNIPPETS_IMAGE:-pgvector/pgvector:pg18}
-    container_name: nl2sql-snippetsdb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-snippetsdb
+    networks:
+      default:
+        aliases: [nl2sql-snippetsdb]
     restart: unless-stopped
     stop_grace_period: 1m
     environment:
@@ -262,7 +288,10 @@ services:
       context: .
       dockerfile: agent/Dockerfile
     image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
-    container_name: nl2sql-pki
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-pki
+    networks:
+      default:
+        aliases: [nl2sql-pki]
     entrypoint: []
     command:
       - python
@@ -443,7 +472,10 @@ services:
       context: .
       dockerfile: agent/Dockerfile
     image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
-    container_name: nl2sql-api
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-api
+    networks:
+      default:
+        aliases: [nl2sql-api]
     restart: unless-stopped
     command: ["python", "-m", "nl2sql_agent.api"]
     entrypoint: []
@@ -555,7 +587,10 @@ services:
     # image and pins these two; without the pin, compose builds it here on
     # first start, which needs no registry and takes a couple of minutes.
     image: ${GUI_IMAGE_NAME:-nl2sql-gui}:${GUI_IMAGE_TAG:-latest}
-    container_name: nl2sql-gui
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-gui
+    networks:
+      default:
+        aliases: [nl2sql-gui]
     restart: unless-stopped
     depends_on:
       pki:
@@ -614,7 +649,10 @@ services:
       context: .
       dockerfile: review/Dockerfile
     image: ${REVIEW_IMAGE_NAME:-nl2sql-review}:${REVIEW_IMAGE_TAG:-latest}
-    container_name: nl2sql-review
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-review
+    networks:
+      default:
+        aliases: [nl2sql-review]
     restart: unless-stopped
     depends_on:
       pki:
@@ -742,7 +780,10 @@ services:
       context: .
       dockerfile: review/gui/Dockerfile
     image: ${REVIEW_GUI_IMAGE_NAME:-nl2sql-review-gui}:${REVIEW_GUI_IMAGE_TAG:-latest}
-    container_name: nl2sql-review-gui
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-review-gui
+    networks:
+      default:
+        aliases: [nl2sql-review-gui]
     restart: unless-stopped
     depends_on:
       pki:
@@ -792,7 +833,10 @@ services:
       context: .
       dockerfile: curate/Dockerfile
     image: ${CURATE_GUI_IMAGE_NAME:-nl2sql-curate-gui}:${CURATE_GUI_IMAGE_TAG:-latest}
-    container_name: nl2sql-curate-gui
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-curate-gui
+    networks:
+      default:
+        aliases: [nl2sql-curate-gui]
     restart: unless-stopped
     depends_on:
       pki:
@@ -846,7 +890,10 @@ services:
       context: .
       dockerfile: agent/Dockerfile
     image: ${AGENT_IMAGE_NAME:-nl2sql-agent}:${AGENT_IMAGE_TAG:-latest}
-    container_name: nl2sql-console
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-console
+    networks:
+      default:
+        aliases: [nl2sql-console]
     restart: unless-stopped
     command: ["python", "-m", "nl2sql_agent.console"]
     entrypoint: []
@@ -920,7 +967,10 @@ services:
       context: .
       dockerfile: console/Dockerfile
     image: ${CONSOLE_GUI_IMAGE_NAME:-nl2sql-console-gui}:${CONSOLE_GUI_IMAGE_TAG:-latest}
-    container_name: nl2sql-console-gui
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-console-gui
+    networks:
+      default:
+        aliases: [nl2sql-console-gui]
     restart: unless-stopped
     depends_on:
       pki:
@@ -977,7 +1027,10 @@ services:
       context: .
       dockerfile: ldap/Dockerfile
     image: ${LDAP_IMAGE_NAME:-nl2sql-ldap}:${LDAP_IMAGE_TAG:-latest}
-    container_name: nl2sql-ldap
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-ldap
+    networks:
+      default:
+        aliases: [nl2sql-ldap]
     # The name its certificate is issued for, and the one Postgres and the
     # auth service connect to. Set as the host name as well as the service
     # name because libldap checks a certificate against the name it was
@@ -1067,7 +1120,10 @@ services:
       context: .
       dockerfile: auth/Dockerfile
     image: ${AUTH_IMAGE_NAME:-nl2sql-auth}:${AUTH_IMAGE_TAG:-latest}
-    container_name: nl2sql-auth
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-auth
+    networks:
+      default:
+        aliases: [nl2sql-auth]
     restart: unless-stopped
     depends_on:
       pki:
@@ -1164,7 +1220,10 @@ services:
       context: .
       dockerfile: auth/gui/Dockerfile
     image: ${DIRECTORY_GUI_IMAGE_NAME:-nl2sql-directory-gui}:${DIRECTORY_GUI_IMAGE_TAG:-latest}
-    container_name: nl2sql-directory-gui
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-directory-gui
+    networks:
+      default:
+        aliases: [nl2sql-directory-gui]
     restart: unless-stopped
     depends_on:
       pki:
@@ -1206,7 +1265,10 @@ services:
     # Pinned by `setup.sh --mlflow`, like the other images; unpinned, compose
     # builds it here, which is a pull of the Postgres it is.
     image: ${MLFLOW_DB_IMAGE_NAME:-nl2sql-mlflowdb}:${MLFLOW_DB_IMAGE_TAG:-latest}
-    container_name: nl2sql-mlflowdb
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-mlflowdb
+    networks:
+      default:
+        aliases: [nl2sql-mlflowdb]
     restart: unless-stopped
     stop_grace_period: 1m
     environment:
@@ -1244,7 +1306,10 @@ services:
       context: .
       dockerfile: docker/mlflow/Dockerfile
     image: ${MLFLOW_IMAGE_NAME:-nl2sql-mlflow}:${MLFLOW_IMAGE_TAG:-latest}
-    container_name: nl2sql-mlflow
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-mlflow
+    networks:
+      default:
+        aliases: [nl2sql-mlflow]
     restart: unless-stopped
     depends_on:
       mlflowdb:
@@ -1293,7 +1358,10 @@ services:
       context: .
       dockerfile: docker/mlflow-proxy/Dockerfile
     image: ${MLFLOW_PROXY_IMAGE_NAME:-nl2sql-mlflow-proxy}:${MLFLOW_PROXY_IMAGE_TAG:-latest}
-    container_name: nl2sql-mlflow-proxy
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-mlflow-proxy
+    networks:
+      default:
+        aliases: [nl2sql-mlflow-proxy]
     restart: unless-stopped
     depends_on:
       pki:
@@ -1330,7 +1398,10 @@ services:
       context: .
       dockerfile: docker/apitest/Dockerfile
     image: ${APITEST_IMAGE_NAME:-nl2sql-apitest}:${APITEST_IMAGE_TAG:-latest}
-    container_name: nl2sql-apitest
+    container_name: ${NL2SQL_INSTANCE:-nl2sql}-apitest
+    networks:
+      default:
+        aliases: [nl2sql-apitest]
     depends_on:
       pki:
         condition: service_completed_successfully
@@ -1410,7 +1481,7 @@ volumes:
   # The retail database's own certificate, which it writes on first start.
   pgtls:
   pgdata:
-    name: nl2sql-pgdata
+    name: ${NL2SQL_INSTANCE:-nl2sql}-pgdata
   feedbackdata:
     # Staged feedback. With the two below, the volumes holding data a person
     # typed rather than data a build produced, which is what makes them the

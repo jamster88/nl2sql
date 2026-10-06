@@ -182,7 +182,7 @@ def test_writing_snippets_without_loading_them_is_reported():
 def test_the_snippet_document_and_store_default_to_the_compose_layout():
     settings = ReviewSettings()
     assert str(settings.snippets_document_path) == "/app/context_questions/sql_snippets.md"
-    assert settings.snippets_db_url.endswith(":5438/nl2sql_snippets")
+    assert settings.snippets_db_url.endswith(":5435/nl2sql_snippets")
     assert (settings.snippets_reader_user, settings.snippets_reader_password) == ("snippets_reader",) * 2
 
 

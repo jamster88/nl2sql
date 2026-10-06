@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-ARG PYTHON_IMAGE=python:3.12-slim
-ARG POSTGRES_IMAGE=postgres:18
+ARG PYTHON_IMAGE=python:3.12-slim@sha256:02108f5d322dd89f1c9e552442c25acb0543dfdbc455693a5599624f20d9155d
+ARG POSTGRES_IMAGE=postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
 
 # --- Stage 1: generate the synthetic dataset as CSVs -------------------------
 # Pinned to the build machine's own platform: on a multi-platform build every

@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.settings_names import proxy_names, read_names, settable_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -40,7 +42,7 @@ SIGNED_IN = ("api", "console", "review", "gui", "reviewgui", "curategui", "conso
 CHECKERS = ("api", "console", "review")
 
 #: Every profile, so every service resolves.
-PROFILES = ("agent", "api", "gui", "feedback", "review", "reviewgui", "curategui", "console", "consolegui",
+PROFILES = ("agent", "api", "gui", "review", "reviewgui", "curategui", "console", "consolegui",
             "mlflow", "auth", "directorygui")
 
 
@@ -75,6 +77,10 @@ def _read(*paths: str, pattern: str = r'"((?:LDAP|AUTH|MLFLOW)_[A-Z_]+)"') -> se
     return {name for path in paths for name in re.findall(pattern, (REPO_ROOT / path).read_text())}
 
 
+def _source(*paths: str) -> str:
+    return "".join((REPO_ROOT / path).read_text() for path in paths)
+
+
 def _volume(service: dict, target: str) -> dict:
     [found] = [volume for volume in service["volumes"] if volume["target"] == target]
     return found
@@ -105,16 +111,22 @@ def test_the_directory_keeps_its_people_and_writes_its_certificate_where_the_oth
 
 
 def test_every_setting_the_directory_reads_can_be_set_through_compose(services: dict):
-    read = _read("ldap/nl2sql_ldap/settings.py", "ldap/nl2sql_ldap/replica.py", pattern=r'"(LDAP_[A-Z_]+)"')
-    assert sorted(read - set(services["ldap"]["environment"])) == []
-    assert sorted(set(services["ldap"]["environment"]) - read) == []
+    """Each password as the file compose mounts, never itself (V6-38)."""
+    source = _source("ldap/nl2sql_ldap/settings.py", "ldap/nl2sql_ldap/replica.py")
+    assert _read("ldap/nl2sql_ldap/settings.py", "ldap/nl2sql_ldap/replica.py", pattern=r'"(LDAP_[A-Z_]+)"') <= read_names(source)
+    env = set(services["ldap"]["environment"])
+    assert sorted(settable_names(source) - env) == []
+    assert sorted(env - read_names(source)) == []
 
 
 def test_the_directory_starts_standalone_with_its_defaults(services: dict):
     env = services["ldap"]["environment"]
     assert (env["LDAP_MODE"], env["LDAP_BASE_DN"], env["LDAP_ADMIN_USER"]) == ("standalone", "dc=nl2sql,dc=local", "admin")
-    # Generated into .env by setup.sh; never a default anyone could guess.
-    assert env["LDAP_SERVICE_PASSWORD"] == env["LDAP_ADMIN_PASSWORD"] == ""
+    # Generated into secrets/ by setup.sh; never a default anyone could guess,
+    # and never in the container's environment.
+    assert env["LDAP_SERVICE_PASSWORD_FILE"] == "/run/secrets/ldap_service_password"
+    assert env["LDAP_ADMIN_PASSWORD_FILE"] == "/run/secrets/ldap_admin_password"
+    assert not any(key.endswith("PASSWORD") for key in env)
 
 
 # --- the auth service --------------------------------------------------------------
@@ -127,8 +139,9 @@ def test_the_auth_service_is_published_for_the_desktop_and_waits_for_what_it_nee
     assert (port["published"], port["target"]) == ("8446", 8446)
     # The directory's own API answers on 8447, which is not published (V6-58).
     assert auth["environment"]["AUTH_DIRECTORY_PORT"] == "8447"
-    # Its certificate is its own (V6-36), so it no longer waits for the API.
-    assert set(auth["depends_on"]) == {"pki", "postgres", "ldap"}
+    # Its certificate is its own (V6-36), so it no longer waits for the API;
+    # its role in the retail database is dbprep's to make (6.3, V6-41).
+    assert set(auth["depends_on"]) == {"pki", "dbprep", "postgres", "ldap"}
     assert auth["profiles"] == ["auth"]
 
 
@@ -142,18 +155,24 @@ def test_a_sign_in_verifies_the_database_against_its_own_certificate(services: d
 
 
 def test_every_setting_the_auth_service_reads_can_be_set_through_compose(services: dict):
-    read = _read("auth/nl2sql_auth/settings.py")
-    assert sorted(read - set(services["auth"]["environment"])) == []
-    assert sorted(set(services["auth"]["environment"]) - read) == []
+    source = _source("auth/nl2sql_auth/settings.py")
+    assert _read("auth/nl2sql_auth/settings.py") <= read_names(source)
+    env = set(services["auth"]["environment"])
+    assert sorted(settable_names(source) - env) == []
+    assert sorted(env - read_names(source)) == []
 
 
 def test_the_role_sync_signs_in_to_the_retail_database_as_its_own_role(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("rolesync"),
-        env={"AUTH_ROLESYNC_PASSWORD": "generated", "POSTGRES_DB": "retail", "POSTGRES_READER_USER": "reader"},
+        env={"POSTGRES_DB": "retail", "POSTGRES_READER_USER": "reader"},
     )
     env = config["services"]["auth"]["environment"]
-    assert env["AUTH_ROLESYNC_DB_URL"] == "postgresql://nl2sql_rolesync:generated@nl2sql-postgres:5432/retail"
+    assert env["AUTH_ROLESYNC_DB_URL"] == "postgresql://nl2sql_rolesync@nl2sql-postgres:5432/retail"
+    # The password beside it, from the file dbprep sets the role's from.
+    assert env["AUTH_ROLESYNC_DB_PASSWORD_FILE"] == "/run/secrets/auth_rolesync_password"
+    dbprep = config["services"]["dbprep"]["environment"]
+    assert dbprep["AUTH_ROLESYNC_PASSWORD_FILE"] == env["AUTH_ROLESYNC_DB_PASSWORD_FILE"]
     assert (env["AUTH_DB_NAME"], env["AUTH_READER_ROLE"]) == ("retail", "reader")
 
 
@@ -217,8 +236,9 @@ def test_the_directory_page_is_this_machines_and_waits_for_the_auth_service(serv
     assert (port["host_ip"], port["published"], port["target"]) == ("127.0.0.1", "8084", 8084)
     assert set(page["depends_on"]) == {"pki", "auth"}
     # Sign-in on the published port, the directory's API on the other.
-    assert page["environment"]["DIRECTORY_UPSTREAM"] == "https://nl2sql-auth:8446"
-    assert page["environment"]["DIRECTORY_API_UPSTREAM"] == "https://nl2sql-auth:8447"
+    assert page["environment"]["AUTH_UPSTREAM"] == "https://nl2sql-auth:8446"
+    assert page["environment"]["UPSTREAM"] == "https://nl2sql-auth:8447"
+    assert page["environment"]["NL2SQL_PAGE"] == "directory"
     assert page["profiles"] == ["directorygui"]
     # Told the mode so it can refuse to start beside a replica.
     assert page["environment"]["LDAP_MODE"] == "standalone"
@@ -229,15 +249,11 @@ def test_moving_the_directory_api_moves_the_page_with_it(tmp_path):
     the same in each, or the page proxies to a port nothing answers on."""
     services = _compose_config(tmp_path, env={"AUTH_DIRECTORY_PORT": "9447"})["services"]
     assert services["auth"]["environment"]["AUTH_DIRECTORY_PORT"] == "9447"
-    assert services["directorygui"]["environment"]["DIRECTORY_API_UPSTREAM"] == "https://nl2sql-auth:9447"
+    assert services["directorygui"]["environment"]["UPSTREAM"] == "https://nl2sql-auth:9447"
 
 
 def test_every_setting_the_directory_page_reads_can_be_set_through_compose_and_nothing_else_is(services: dict):
-    gui = REPO_ROOT / "auth" / "gui"
-    sources = (gui / "nginx.conf.template").read_text() + (gui / "10-nl2sql-directory-config.envsh").read_text()
-    computed = {"DIRECTORY_AUTH_HEADER", "DIRECTORY_GUI_LISTEN_TLS", "NGINX_DIRECTORY_UPSTREAM_TLS_CONF",
-                "NGINX_SERVER_TLS_CONF"}
-    read = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - computed
+    read = proxy_names("directory")
     env = set(services["directorygui"]["environment"])
     assert sorted(read - env) == []
     assert sorted(env - read) == []

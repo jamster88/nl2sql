@@ -40,6 +40,8 @@ import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
 
+from nl2sql_common.roles import FEEDBACK_WRITER, limit_role
+
 SUBMISSIONS = "feedback_submissions"
 PROMOTIONS = "feedback_promotions"
 
@@ -255,6 +257,14 @@ def ensure_writer_role(conn: psycopg.Connection, password: str) -> None:
         ).format(sql.Literal(WRITER_ROLE), role)
     )
     conn.execute(sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(role, sql.Literal(password)))
+    # Its limits (V6-39), and its one database: since 6.3 the store shares a
+    # server with three others, and CONNECT is nobody's by default there.
+    limit_role(conn, WRITER_ROLE, FEEDBACK_WRITER)
+    # Named in the server rather than read back here: this connection hands
+    # rows back as dicts, and the database's name is the server's to know.
+    conn.execute(sql.SQL(
+        "DO $$ BEGIN EXECUTE format('GRANT CONNECT ON DATABASE %I TO %I', current_database(), {}); END $$"
+    ).format(sql.Literal(WRITER_ROLE)))
 
     # Start from nothing every time: this is what makes the grants below the
     # whole truth about what the public process can do.

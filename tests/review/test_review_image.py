@@ -133,8 +133,9 @@ def test_it_has_a_health_check_that_follows_its_own_tls_setting(dockerfile: str)
     """Assuming https would make a working container look unhealthy the
     moment someone turns TLS off."""
     check = re.search(r"HEALTHCHECK.*?(?=\nLABEL)", dockerfile, re.S).group(0)
-    assert "/healthz" in check
-    assert "REVIEW_TLS_ENABLED" in check
+    # nl2sql_common.health: /healthz over its own listener, verified (V6-37),
+    # plain HTTP when REVIEW_TLS_ENABLED says so.
+    assert '"nl2sql_common.health", "REVIEW"' in check
 
 
 def test_the_dependency_layer_is_cached_separately(dockerfile: str):

@@ -69,6 +69,7 @@ from pathlib import Path
 
 import psycopg
 from psycopg import sql
+from nl2sql_common.roles import SNIPPETS_READER, limit_role
 from nl2sql_common.vectors import vector_literal
 
 TABLE = "sql_snippets"
@@ -406,6 +407,8 @@ def ensure_reader(conn: psycopg.Connection, role: str, password: str) -> None:
             sql.Identifier(role), sql.Literal(password)
         )
     )
+    # What it may cost the store (V6-39): the agent's retriever, one pool.
+    limit_role(conn, role, SNIPPETS_READER)
     database = conn.execute("SELECT current_database()").fetchone()[0]
     conn.execute(
         sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(

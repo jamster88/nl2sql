@@ -48,11 +48,14 @@ def test_every_page_takes_the_package_in_the_same_way(page: str, relative: str):
 
 
 @pytest.mark.parametrize("page", sorted(PAGES))
-def test_every_pages_image_is_built_with_the_package(page: str):
-    dockerfile = (ROOT / page / "Dockerfile").read_text()
-    assert "WORKDIR /build" in dockerfile, "../web and ../../web are both /web from /build"
-    assert "COPY web/package.json /web/package.json" in dockerfile and "COPY web/src/ /web/src/" in dockerfile
-    assert dockerfile.index("COPY web/src/") < dockerfile.index("RUN npm run build")
+def test_every_pages_build_stage_is_given_the_package(page: str):
+    """One image for every page since 6.3 (V6-37), a build stage each."""
+    dockerfile = (ROOT / "proxy" / "Dockerfile").read_text()
+    stage = next(part for part in dockerfile.split("\nFROM ")
+                 if f"COPY {page}/package.json {page}/package-lock.json ./" in part)
+    assert "WORKDIR /build" in stage, "../web and ../../web are both /web from /build"
+    assert "COPY web/package.json /web/package.json" in stage and "COPY web/src/ /web/src/" in stage
+    assert stage.index("COPY web/src/") < stage.index("RUN npm run build")
 
 
 def test_the_package_needs_nothing_of_its_own():

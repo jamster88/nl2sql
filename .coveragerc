@@ -54,3 +54,4 @@ include =
     docker/*
     multi-agent_arch_specs/*
     models/*
+    tools/*

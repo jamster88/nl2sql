@@ -75,23 +75,29 @@ run -- and whenever `.env` pins older images than the checkout ships -- and
 than the container calling itself healthy -- and opens it. `--no-browser`
 skips the last step; `BROWSER` chooses what does it.
 
-The image is published, and `setup.sh --gui` pulls and pins it:
+Since 6.3 the page is served by the proxy image, `nl2sql-proxy`, which
+carries every page and is told which one to serve (`NL2SQL_PAGE=gui`);
+[`proxy/README.md`](../proxy/README.md) has how it starts. It is published,
+and `setup.sh` pulls and pins it whenever a page will be served -- with
+sign-in on, always:
 
-    docker pull mcfaddja/nl2sql-gui:v6_2
-    ./setup.sh --gui        # pulls it and writes GUI_IMAGE_* into .env
+    docker pull mcfaddja/nl2sql-proxy:v6_3
+    ./setup.sh --gui        # pulls it and writes PROXY_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
-which works and takes a couple of minutes -- compose builds a service whose
+which works and takes several minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v6_2 .
+      -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v6_3 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
-`package.json`, and tests pin it to the agent's `__version__` and pin the two
-published tags to each other: the GUI and the API are built from one checkout
-and only ever tested together.
+`proxy/Dockerfile`, and tests pin it, and this page's `package.json`, to the
+agent's `__version__`, and pin the published tags to each other: the pages
+and the API are built from one checkout and only ever tested together.
+Until 6.3 this page was an image of its own, `nl2sql-gui`, whose tags up to
+`6.2` are still published.
 
 ### Against a running API, for development
 
@@ -124,7 +130,7 @@ this application:
    that browsers refuse to send credentials to.
 
 One same-origin hop removes all three. In the container that hop is nginx
-([`nginx.conf.template`](nginx.conf.template)); in development it is Vite's
+([`proxy/pages/gui.conf.template`](../proxy/pages/gui.conf.template)); in development it is Vite's
 dev server ([`vite.config.ts`](vite.config.ts)), which is the same three
 rules in another syntax. The browser talks plain HTTP to something on
 localhost; that something talks TLS to the API with a certificate it
@@ -307,24 +313,25 @@ Two smaller ones that predate all of it:
 
 The page itself has none: it asks its own origin for everything, so one build
 is deployable anywhere. Everything below configures the proxy in front of it,
-and is read at container start-up.
+and is read at container start-up. Each is set in `.env` by the name in the
+first column; compose hands it to the proxy image as the second.
 
-| Variable | Default | What |
-| --- | --- | --- |
-| `GUI_PORT` | `8080` | Port nginx listens on, and the one compose publishes |
-| `API_UPSTREAM` | `https://nl2sql-api:8443` | The API. An `http://` scheme turns certificate verification off, for the deployment behind a TLS terminator |
-| `API_SSL_NAME` | `nl2sql-api` | The name the certificate is verified against. Must be one the API's certificate covers (`API_TLS_HOSTNAMES`) |
-| `API_CACERT` | `/etc/nl2sql/tls/ca.crt` | What to verify against, the stack's CA, which the pki service puts beside this page's own certificate |
-| `API_TOKEN` | *(none)* | Sent as a bearer token with sign-in off. Held here so the browser never has it |
-| `API_READ_TIMEOUT` | `600s` | Must outlast a question, and `API_MAX_WAIT_SECONDS` |
-| `GUI_RESOLVER` | `127.0.0.11` | Docker's embedded DNS, for the per-request lookup |
-| `AUTH_ENABLED` | `true` | The page asks who you are, and admits `nl2sql_users`; the session cookie, not `API_TOKEN`, is what reaches the API. Only `false`, set by name, turns it off, and the page then says it is open |
-| `AUTH_UPSTREAM` | `https://nl2sql-auth:8446` | The auth service, which `/auth/` is proxied to -- `GUI_AUTH_UPSTREAM` in `.env` |
-| `AUTH_SSL_NAME` | `nl2sql-auth` | `GUI_AUTH_SSL_NAME` |
-| `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` | `GUI_AUTH_CACERT` |
-| `GUI_TLS_ENABLED` | `true` | Serve the page over HTTPS, with its own certificate, so a password is never sent in clear. Off only behind something that terminates TLS |
-| `GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | |
-| `GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | |
+| `.env` | Default | The proxy's | What |
+| --- | --- | --- | --- |
+| `GUI_PORT` | `8080` | `PROXY_PORT` | Port nginx listens on, and the one compose publishes |
+| `GUI_API_UPSTREAM` | `https://nl2sql-api:8443` | `UPSTREAM` | The API. An `http://` scheme turns certificate verification off, for the deployment behind a TLS terminator |
+| `GUI_API_SSL_NAME` | `nl2sql-api` | `UPSTREAM_SSL_NAME` | The name the certificate is verified against. Must be one the API's certificate covers (`API_TLS_HOSTNAMES`) |
+| `GUI_API_CACERT` | `/etc/nl2sql/tls/ca.crt` | `UPSTREAM_CACERT` | What to verify against, the stack's CA, which the pki service puts beside this page's own certificate |
+| `secrets/api_token` | *(empty)* | `UPSTREAM_TOKEN_FILE` | The API's token, sent as a bearer token with sign-in off. Held here so the browser never has it; a file, so it is in no container's environment (6.3) |
+| `GUI_API_READ_TIMEOUT` | `600s` | `UPSTREAM_READ_TIMEOUT` | Must outlast a question, and `API_MAX_WAIT_SECONDS` |
+| `GUI_RESOLVER` | `127.0.0.11` | `PROXY_RESOLVER` | Docker's embedded DNS, for the per-request lookup |
+| `AUTH_ENABLED` | `true` | `AUTH_ENABLED` | The page asks who you are, and admits `nl2sql_users`; the session cookie, not the token, is what reaches the API. Only `false`, set by name, turns it off, and the page then says it is open |
+| `GUI_AUTH_UPSTREAM` | `https://nl2sql-auth:8446` | `AUTH_UPSTREAM` | The auth service, which `/auth/` is proxied to |
+| `GUI_AUTH_SSL_NAME` | `nl2sql-auth` | `AUTH_SSL_NAME` | |
+| `GUI_AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` | `AUTH_CACERT` | |
+| `GUI_TLS_ENABLED` | `true` | `PROXY_TLS_ENABLED` | Serve the page over HTTPS, with its own certificate, so a password is never sent in clear. Off only behind something that terminates TLS |
+| `GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | `PROXY_TLS_CERT_FILE` | |
+| `GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | `PROXY_TLS_KEY_FILE` | |
 
 The `GUI_` settings in `.env` reach every interface at once -- the review,
 curation, console and directory pages and MLflow's front door read the same
@@ -336,7 +343,7 @@ compose stack.
 
 Behind `API_TLS_ENABLED=false`, point the GUI at it with
 `GUI_API_UPSTREAM=http://nl2sql-api:8443` -- the scheme is what decides, and
-the start-up script then writes no certificate block at all rather than
+the start-up script then writes no verification block at all rather than
 failing over a file that was never going to exist.
 
 ---

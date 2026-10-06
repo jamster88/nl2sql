@@ -110,7 +110,7 @@ def test_an_empty_variable_is_unset(monkeypatch):
 
 def test_every_field_has_a_variable_to_set_it_with():
     source = (CONSOLE / "settings.py").read_text()
-    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    read = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert read == set(CONSOLE_VARIABLES)
     assert set(SETTING_FIELDS) == set(CONSOLE_VARIABLES.values())
 
@@ -146,7 +146,7 @@ def test_the_three_configurations_worth_a_warning():
 def _agent_field_variables() -> dict[str, str]:
     """`config.Settings` field -> the variable `from_env` reads it from."""
     source = (AGENT / "config.py").read_text()
-    found = dict(re.findall(r'(\w+)=_env(?:_str|_bool|_int|_float)\(\s*"([A-Z_]+)"', source))
+    found = dict(re.findall(r'(\w+)=_env(?:_str|_bool|_int|_float|_url)\(\s*"([A-Z_]+)"', source))
     assert found, "no settings found in config.py -- the regex needs updating"
     return found
 

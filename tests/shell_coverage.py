@@ -50,30 +50,20 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # how it runs but not what is worth knowing about it.
     "docker/apitest/smoke.sh": ("tests/api/test_smoke_script.py",),
     # Sourced by the nginx image's entrypoint rather than executed, and by
-    # `sh` rather than bash, so it is traced the same way it runs.
-    "gui/10-nl2sql-config.envsh": ("tests/gui/test_gui_project.py",),
-    # The review interface's equivalent, sourced and traced the same way.
-    # The token it turns into a header is the one that can rewrite the
-    # golden question set, so its empty case matters more than most.
-    "review/gui/10-nl2sql-review-config.envsh": ("tests/review/test_review_project.py",),
-    # And the SQL console interface's: a page that runs SQL, so the same
-    # empty-token case matters as much.
-    "console/10-nl2sql-console-config.envsh": ("tests/console/test_console_project.py",),
-    # And the curation interface's: the review token again, for the page
-    # that writes the snippets and the golden set.
-    "curate/10-nl2sql-curate-config.envsh": ("tests/curate/test_curate_project.py",),
+    # `sh` rather than bash, so it is traced the same way it runs. Every
+    # page's start-up since 6.3 (V6-37): six copies of it until then.
+    "proxy/10-nl2sql-proxy.envsh": ("tests/proxy/test_proxy_startup.py",),
+    # The pages' health check, which verifies what the page serves.
+    "proxy/health.sh": ("tests/proxy/test_proxy_startup.py",),
     # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
     # running it for real would mean building the dataset image.
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),
-    # Writes sign-in's rules into pg_hba.conf; driven against a fake psql.
-    "docker/ldap_hba.sh": ("tests/docker/test_ldap_hba_script.py",),
+    # A runtime store from before 6.3 moved into its database in the one
+    # server (V6-40); against fake psql, pg_ctl, pg_dump and pg_restore.
+    "docker/migrate_store.sh": ("tests/docker/test_migrate_store.py",),
     # The retail image's entrypoint (v1_2), against a fake stock entrypoint,
     # openssl, psql and gosu.
     "docker/entrypoint.sh": ("tests/docker/test_retail_entrypoint.py",),
-    # The directory page's nginx start-up script; refuses beside a replica.
-    "auth/gui/10-nl2sql-directory-config.envsh": ("tests/auth/test_directory_gui_project.py",),
-    # MLflow's front door; writes the auth_request when sign-in is on.
-    "docker/mlflow-proxy/10-nl2sql-mlflow-proxy.envsh": ("tests/docker/test_mlflow_proxy.py",),
     # MLflow's own start (6.2): gives the account the artifact volume, then
     # drops to it; against fake id, find, chown and setpriv.
     "docker/mlflow/entrypoint.sh": ("tests/docker/test_mlflow_entrypoint.py",),

@@ -1,8 +1,13 @@
-"""The GUI image, and the hop it exists to make.
+"""The web interface, as the proxy image serves it, and the hop it exists to make.
+
+Since 6.3 every page is the proxy image (proxy/Dockerfile), told which one it
+serves by `NL2SQL_PAGE` (V6-37); this is its `gui` page, run as compose runs
+every container -- read-only, with no capabilities and no way to gain a
+privilege (V6-34), its token a mounted file (V6-38).
 
 Everything here runs two real containers on a private network: the agent
 image serving the REST API with a certificate issued the way compose's pki
-service issues one (6.1), and the GUI image in front of it, verifying it
+service issues one (6.1), and the page in front of it, verifying it
 against the CA. That pairing is the whole point of the container -- a browser
 is not given the API's certificate, so something has to stand in front and
 verify it -- and it cannot be tested any other way. A
@@ -33,7 +38,7 @@ pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-GUI_IMAGE = "nl2sql-gui:pytest"
+GUI_IMAGE = "nl2sql-proxy:pytest"
 API_IMAGE = "nl2sql-agent:pytest"
 NAME_PREFIX = "nl2sql-gui-test-"
 NETWORK_PREFIX = "nl2sql-gui-net-"
@@ -91,7 +96,7 @@ def _build(dockerfile: str, tag: str, available: bool) -> str:
 
 @pytest.fixture(scope="module")
 def gui_image(docker_daemon_available: bool) -> str:
-    return _build("gui/Dockerfile", GUI_IMAGE, docker_daemon_available)
+    return _build("proxy/Dockerfile", GUI_IMAGE, docker_daemon_available)
 
 
 @pytest.fixture(scope="module")
@@ -184,23 +189,36 @@ def stack(gui_image: str, api_image: str):
     subprocess.run(["docker", "network", "create", network], check=True, capture_output=True, timeout=30)
     subprocess.run(["docker", "volume", "create", volume], check=True, capture_output=True, timeout=30)
 
-    def run_gui(**env: str) -> int:
+    def run_gui(*, token: str = "", **env: str) -> int:
+        """The page, as compose runs it (x-hardened); `token` is the API
+        token's secret file, which the page reads with sign-in off."""
         name = f"{NAME_PREFIX}gui-{uuid.uuid4().hex[:8]}"
         port = free_port()
+        secret = Path(tempfile.mkdtemp()) / "api_token"
+        secret.write_text(token)
+        secret.chmod(0o644)
         cmd = [
             "docker", "run", "-d", "--name", name,
             "--network", network,
+            "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges:true",
             "-p", f"127.0.0.1:{port}:8080",
             "-v", f"{volume}:/etc/nl2sql/tls:ro",
-            "-e", "API_UPSTREAM=https://nl2sql-api:8443",
+            "-v", f"{secret}:/run/secrets/api_token:ro",
         ]
-        for key, value in {"AUTH_ENABLED": "false", **env}.items():
+        settings = {
+            "NL2SQL_PAGE": "gui", "PROXY_PORT": "8080", "UPSTREAM": "https://nl2sql-api:8443",
+            "UPSTREAM_SSL_NAME": "nl2sql-api", "UPSTREAM_TOKEN_FILE": "/run/secrets/api_token",
+            "AUTH_ENABLED": "false", **env,
+        }
+        for key, value in settings.items():
             cmd += ["-e", f"{key}={value}"]
         cmd.append(gui_image)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         assert result.returncode == 0, result.stderr
         started.append(name)
         _wait_for(f"https://127.0.0.1:{port}/index.html", name)
+        run_gui.last = name
         return port
 
     try:
@@ -286,7 +304,7 @@ def test_the_toolchain_did_not_ship(gui_image: str):
     everything the image needs to serve."""
     result = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "sh", gui_image,
-         "-c", "command -v node npm; ls /usr/share/nginx/html"],
+         "-c", "command -v node npm; ls /usr/share/nginx/html/gui"],
         capture_output=True, text=True, timeout=60,
     )
     assert "node" not in result.stdout.split("\n")[0]
@@ -295,7 +313,7 @@ def test_the_toolchain_did_not_ship(gui_image: str):
 
 def test_the_page_is_there_and_its_assets_are_hashed(gui_image: str):
     result = subprocess.run(
-        ["docker", "run", "--rm", "--entrypoint", "sh", gui_image, "-c", "ls /usr/share/nginx/html/assets"],
+        ["docker", "run", "--rm", "--entrypoint", "sh", gui_image, "-c", "ls /usr/share/nginx/html/gui/assets"],
         capture_output=True, text=True, timeout=60,
     )
     assets = result.stdout.split()
@@ -319,7 +337,7 @@ def test_the_bundle_carries_no_hard_coded_api_address(gui_image: str):
     """
     result = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "sh", gui_image,
-         "-c", "cat /usr/share/nginx/html/assets/*.js"],
+         "-c", "cat /usr/share/nginx/html/gui/assets/*.js"],
         capture_output=True, text=True, timeout=60,
     )
     for address in ("8443", "nl2sql-api", "localhost:", "127.0.0.1"):
@@ -374,7 +392,7 @@ def test_the_api_it_proxies_is_the_real_one(stack):
 def test_a_certificate_that_does_not_match_the_upstream_is_refused(stack):
     """`proxy_ssl_name` is checked against the certificate, so asking for a
     name it does not cover must fail rather than fall back to trusting it."""
-    port = stack(API_SSL_NAME="not-the-api.example.com")
+    port = stack(UPSTREAM_SSL_NAME="not-the-api.example.com")
     status, _ = _get(port, "/healthz")
     assert status == 502
 
@@ -383,14 +401,14 @@ def test_the_token_is_added_by_the_proxy_and_never_by_the_browser(stack):
     """The reason this container exists rather than a CORS configuration:
     the browser asks with no credentials at all and still gets an answer,
     because the token is added on this side of the hop."""
-    port = stack(API_TOKEN="s3cret-for-the-test")
+    port = stack(token="s3cret-for-the-test\n")
     assert _get(port, "/v1/meta")[0] == 200
 
 
 def test_without_the_token_the_api_refuses_what_the_proxy_forwards(stack):
     """The other half: the API really is checking, so the pass above is the
     proxy's doing rather than the API not caring."""
-    port = stack()  # no API_TOKEN on the GUI
+    port = stack()  # an empty token file on the page
     # The API container in this stack has no token either, so prove the
     # mechanism against the GUI's own behaviour: an Authorization header the
     # browser sends is replaced, not forwarded.
@@ -407,3 +425,55 @@ def test_the_progress_stream_is_not_buffered(stack):
     status, body = _get(stack(), "/v1/questions/does-not-exist/events")
     assert status == 404
     assert json.loads(body)["error"]["code"] == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# The proxy image's own guarantees (V6-34, V6-37)
+# ---------------------------------------------------------------------------
+
+
+def test_it_runs_read_only_as_nginx_with_no_capabilities(stack):
+    """What compose's x-hardened block asks of it, and it serves regardless:
+    everything it writes is under /tmp, and it is nginx's account, 101."""
+    stack()
+    name = stack.last
+    result = subprocess.run(
+        ["docker", "exec", name, "sh", "-c", "id -u; touch /etc/nginx/x 2>&1 || echo refused; ls /tmp/nginx"],
+        capture_output=True, text=True, timeout=30,
+    )
+    lines = result.stdout.split()
+    assert lines[0] == "101"
+    assert "refused" in result.stdout
+    assert "upstream-tls.conf" in result.stdout and "auth.conf" in result.stdout
+
+
+def test_its_health_check_verifies_the_certificate_it_is_answered_with(stack):
+    """The six images it replaced asked with --no-check-certificate. Against
+    the stack's CA it passes; against a CA that did not issue the page's
+    certificate it fails, which is what makes it a check."""
+    stack()
+    name = stack.last
+    good = subprocess.run(["docker", "exec", name, "nl2sql-proxy-health"], capture_output=True, text=True, timeout=30)
+    assert good.returncode == 0, good.stderr
+    bad = subprocess.run(
+        ["docker", "exec", "-e", "PROXY_HEALTH_CACERT=/etc/ssl/cert.pem", name, "nl2sql-proxy-health"],
+        capture_output=True, text=True, timeout=30,
+    )
+    assert bad.returncode != 0
+    assert "certificate" in bad.stderr.lower() or "ssl" in bad.stderr.lower()
+
+
+def test_it_serves_only_the_page_it_was_told_to(stack, gui_image: str):
+    """Every page's files are in the image; only one page's are served."""
+    status, body = _get(stack(), "/index.html")
+    assert status == 200
+    listing = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "sh", gui_image, "-c", "ls /usr/share/nginx/html"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert set(listing.stdout.split()) == {"gui", "review", "curate", "console", "directory"}
+    gui_index = subprocess.run(
+        ["docker", "run", "--rm", "--entrypoint", "cat", gui_image, "/usr/share/nginx/html/gui/index.html"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert body == gui_index.stdout

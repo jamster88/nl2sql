@@ -61,8 +61,9 @@ HOST_DEFAULTS = {
     "database_url": ("DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"),
     "vector_db_url": ("VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
     "context_db_url": ("CONTEXT_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
+    # The runtime stores' port since 6.3, all four databases on one server.
     "snippet_db_url": (
-        "SNIPPET_DB_URL", "postgresql+psycopg://snippets_reader:snippets_reader@localhost:5438/nl2sql_snippets",
+        "SNIPPET_DB_URL", "postgresql+psycopg://snippets_reader:snippets_reader@localhost:5435/nl2sql_snippets",
     ),
     "embed_base_url": ("EMBED_BASE_URL", "http://localhost:11434"),
     # MLflow's front door, the proxy's published port: HTTPS, and behind
@@ -72,6 +73,32 @@ HOST_DEFAULTS = {
     # turns tracing off even when it is up.
     "mlflow_tracking_uri": ("MLFLOW_TRACKING_URI", "https://localhost:5001"),
 }
+
+
+#: Each database's password as the stack keeps it since 6.3 (V6-38): a file
+#: in `secrets/`, which setup.sh generates. Put into the host default when the
+#: file is there; without it the default's own password stands.
+SECRETS = REPO_ROOT / "secrets"
+HOST_PASSWORDS = {
+    "database_url": "postgres_reader_password",
+    "vector_db_url": "vector_db_password",
+    "context_db_url": "context_db_password",
+    "snippet_db_url": "snippets_reader_password",
+}
+
+
+def host_default(field: str, url: str) -> str:
+    """`url`, with the password the stack generated for it, if it has one."""
+    from nl2sql_common.urls import with_password
+
+    name = HOST_PASSWORDS.get(field)
+    if name is None:
+        return url
+    try:
+        password = (SECRETS / name).read_text().strip()
+    except OSError:
+        return url
+    return with_password(url, password) if password else url
 
 
 # The four configurations --compare measures. Each is the one before it plus a
@@ -149,9 +176,9 @@ def build_settings(args: argparse.Namespace, configuration: str):
     trust_the_stack()
 
     settings = Settings.from_env()
-    for field, (variable, host_default) in HOST_DEFAULTS.items():
+    for field, (variable, default) in HOST_DEFAULTS.items():
         if variable not in os.environ:
-            setattr(settings, field, host_default)
+            setattr(settings, field, host_default(field, default))
     for field, value in CONFIGURATIONS[configuration].items():
         setattr(settings, field, value)
     if args.database_url:

@@ -38,8 +38,10 @@ from ragproc import snippets as sn
 from ragproc.config import Settings
 from ragproc.embedder import build_embedder
 
+from nl2sql_common.env import env_url, secret
+
 DEFAULT_DOCUMENT = Path(__file__).resolve().parent.parent / "context_questions" / "sql_snippets.md"
-DEFAULT_DB_URL = "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
+DEFAULT_DB_URL = "postgresql://snippets:snippets@localhost:5435/nl2sql_snippets"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -50,7 +52,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("document", nargs="?", default=str(DEFAULT_DOCUMENT), help="the snippet markdown file")
     p.add_argument(
         "--db-url",
-        default=os.getenv("SNIPPETS_DB_URL") or DEFAULT_DB_URL,
+        default=env_url("SNIPPETS_DB_URL", DEFAULT_DB_URL),
         help="snippet store connection URL, as its owner",
     )
     p.add_argument(
@@ -60,7 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument(
         "--reader-password",
-        default=os.getenv("SNIPPETS_READER_PASSWORD") or "snippets_reader",
+        default=secret("SNIPPETS_READER_PASSWORD") or "snippets_reader",
         help="its password",
     )
     p.add_argument("--backend", default=defaults.embed_backend, choices=["ollama", "sentence-transformers"])

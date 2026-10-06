@@ -105,31 +105,32 @@ the change and the store catches up on the next load, which
 
 ## Configuration
 
-Read by the nginx template and its start-up script, and set by compose from
-the names on the left.
+Served by the proxy image's `curate` page since 6.3
+([`proxy/README.md`](../proxy/README.md)), which reads the names in the
+middle; compose sets them from the names on the left.
 
 | Variable | Sets | Default |
 |---|---|---|
-| `CURATE_GUI_PORT` | `CURATE_GUI_PORT` | `8083` |
-| `CURATE_GUI_UPSTREAM` | `CURATE_UPSTREAM` | `https://nl2sql-review:8444` |
-| `CURATE_GUI_SSL_NAME` | `CURATE_SSL_NAME` | `nl2sql-review` |
-| `CURATE_GUI_CACERT` | `CURATE_CACERT` | `/etc/nl2sql/tls/ca.crt` |
-| `CURATE_GUI_READ_TIMEOUT` | `CURATE_READ_TIMEOUT` | `900s` -- a save waits for the loaders, and embedding takes a while |
-| `CURATE_GUI_RESOLVER` | `CURATE_GUI_RESOLVER` | `127.0.0.11`, Docker's DNS |
-| `REVIEW_TOKEN` | `CURATE_TOKEN` | *(unset)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
+| `CURATE_GUI_PORT` | `PROXY_PORT` | `8083` |
+| `CURATE_GUI_UPSTREAM` | `UPSTREAM` | `https://nl2sql-review:8444` |
+| `CURATE_GUI_SSL_NAME` | `UPSTREAM_SSL_NAME` | `nl2sql-review` |
+| `CURATE_GUI_CACERT` | `UPSTREAM_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `CURATE_GUI_READ_TIMEOUT` | `UPSTREAM_READ_TIMEOUT` | `900s` -- a save waits for the loaders, and embedding takes a while |
+| `CURATE_GUI_RESOLVER` | `PROXY_RESOLVER` | `127.0.0.11`, Docker's DNS |
+| `secrets/review_token` | `UPSTREAM_TOKEN_FILE` | *(empty)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
 | `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are and admits `nl2sql_curators`; their session, not a token, reaches the service, and their name is on what they write |
 | `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where `/auth/` is proxied: the sign-in form posts there |
 | `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
 | `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
-| `GUI_TLS_ENABLED` | `CURATE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate |
-| `GUI_TLS_CERT_FILE` | `CURATE_GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
-| `GUI_TLS_KEY_FILE` | `CURATE_GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
+| `GUI_TLS_ENABLED` | `PROXY_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate |
+| `GUI_TLS_CERT_FILE` | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
 
 The `GUI_` ones are shared by every interface, so one line in `.env` sets
 them all. [`auth/README.md`](../auth/README.md) has how sign-in works.
 
-`CURATE_GUI_IMAGE_NAME` and `CURATE_GUI_IMAGE_TAG` choose the image;
-`setup.sh --curate` pins them. The service's own settings -- where the
+`PROXY_IMAGE_NAME` and `PROXY_IMAGE_TAG` choose the image every page is
+served from; `setup.sh` pins them whenever a page will be served. The service's own settings -- where the
 documents are, the snippet store, whether a save reloads it -- are in
 [`review/README.md`](../review/README.md#configuration).
 
@@ -154,15 +155,19 @@ curate/
 │       ├── Steps.tsx            the loaders a write ran
 │       ├── Rows.tsx, Problem.tsx
 │       └── StatusBar.tsx
-├── nginx.conf.template          the page, and the proxy to the review service
-├── 10-nl2sql-curate-config.envsh   the token header, and the TLS block
-└── Dockerfile                   node builds it, nginx serves it
+└── package.json                 its own npm project
 ```
 
-A separate npm project and image from the review interface, though both
-front the same service: a curator writing snippets needs neither the queue
-nor the page people vote in, and an image is the unit `setup.sh` pins and
-compose starts. React and TypeScript, built by Vite, like the other three.
+Its nginx template is the proxy image's `service` page
+([`proxy/pages/service.conf.template`](../proxy/pages/service.conf.template)),
+which the review and console pages share; `proxy/Dockerfile` builds this
+project in a stage of its own.
+
+A separate npm project from the review interface, though both front the
+same service: a curator writing snippets needs neither the queue nor the
+page people vote in. Since 6.3 the two are pages of one image, each
+container serving only its own. React and TypeScript, built by Vite, like
+the other three.
 
 ```bash
 cd curate

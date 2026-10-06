@@ -21,12 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 USERS = {
     "agent/Dockerfile": "10001:10001",
     "docker/apitest/Dockerfile": "nobody",
-    "gui/Dockerfile": "101:101",
-    "review/gui/Dockerfile": "101:101",
-    "curate/Dockerfile": "101:101",
-    "console/Dockerfile": "101:101",
-    "auth/gui/Dockerfile": "101:101",
-    "docker/mlflow-proxy/Dockerfile": "101:101",
+    # Every page and MLflow's front door, one image since 6.3 (V6-37).
+    "proxy/Dockerfile": "101:101",
 }
 
 #: Images that start as root and drop it themselves: the file that does it,
@@ -53,10 +49,13 @@ DROPS = {
 
 
 def _tracked_dockerfiles() -> set[str]:
+    """Every Dockerfile in the working tree that git would track: added since
+    the last commit included, deleted since left out."""
     listed = subprocess.run(
-        ["git", "ls-files", "-z", "*Dockerfile", "*.Dockerfile"], cwd=ROOT, capture_output=True, text=True, check=True
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "*Dockerfile", "*.Dockerfile"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
     )
-    return {name for name in listed.stdout.split("\0") if name}
+    return {name for name in listed.stdout.split("\0") if name and (ROOT / name).is_file()}
 
 
 def _last_stage(text: str) -> str:

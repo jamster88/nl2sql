@@ -301,7 +301,7 @@ def test_snippets_are_on_and_read_as_a_reader_role_by_default(monkeypatch):
     assert settings.snippets_enabled is True
     assert settings.snippet_db_url == DEFAULT_SNIPPET_DB_URL
     url = make_url(DEFAULT_SNIPPET_DB_URL)
-    assert (url.username, url.host, url.database) == ("snippets_reader", "snippetsdb", "nl2sql_snippets")
+    assert (url.username, url.host, url.database) == ("snippets_reader", "nl2sql-stores", "nl2sql_snippets")
     assert (settings.snippets_top_k, settings.snippets_min_score) == (5, 0.35)
     assert (settings.snippets_min_similarity, settings.snippets_max_context_chars) == (0.62, 4000)
 

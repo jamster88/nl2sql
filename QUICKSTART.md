@@ -52,10 +52,10 @@ takes: seconds rather than minutes.
 The page is HTTPS with a certificate from a CA the stack made itself, so the
 browser warns about it the first time; accept it, or trust `nl2sql-ca.crt` --
 once, for every page -- as [`USAGE_GUIDE.md`](USAGE_GUIDE.md#signing-in) shows. Then sign in as
-`admin`, with the password the first run generated:
+`admin`, with the password the first run generated into `secrets/`:
 
 ```bash
-grep LDAP_ADMIN_PASSWORD .env
+cat secrets/ldap_admin_password
 ```
 
 Everyone else gets their own account on the directory page,

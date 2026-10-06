@@ -34,6 +34,7 @@ from nl2sql_common.env import env as _env
 from nl2sql_common.env import env_bool as _env_bool
 from nl2sql_common.env import env_int as _env_int
 from nl2sql_common.env import env_str as _env_str
+from nl2sql_common.env import secret as _secret
 
 #: 8445: the API is 8443 and the review service 8444, and this is the third
 #: of the same kind of process.
@@ -131,7 +132,7 @@ class ConsoleSettings:
             tls_enabled=_env_bool("CONSOLE_TLS_ENABLED", True),
             tls_cert_file=_env_str("CONSOLE_TLS_CERT_FILE", DEFAULT_CERT_FILE),
             tls_key_file=_env_str("CONSOLE_TLS_KEY_FILE", DEFAULT_KEY_FILE),
-            token=_env("CONSOLE_TOKEN"),
+            token=_secret("CONSOLE_TOKEN"),
             token_name=_env_str("CONSOLE_TOKEN_NAME", "console-token"),
             token_roles=_env_tuple("CONSOLE_TOKEN_ROLES", ()),
             cors_origins=_env_tuple("CONSOLE_CORS_ORIGINS", ()),

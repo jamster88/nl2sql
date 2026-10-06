@@ -65,7 +65,7 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.2.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
@@ -85,7 +85,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.2.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
             window.close();
         });
     }
@@ -649,7 +649,7 @@ class MainWindowTest {
             signInAs(window, "ada", "pw");
 
             assertFalse(window.signInView().node().isVisible());
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.2.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
             assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
             window.close();
         });

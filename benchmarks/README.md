@@ -235,8 +235,10 @@ attributable to that stage and nothing else:
 | `multi-shot` | on | on | off | v3 to v5.5 |
 | `snippets` | on | on | on | v5.6, the agent as it ships, and the default |
 
-The snippet store is found on its published port, `localhost:5438`, unless
-`SNIPPET_DB_URL` says otherwise. The measurements below predate the
+The snippet store is found on the runtime stores' published port,
+`localhost:5435` (6.3), unless `SNIPPET_DB_URL` says otherwise; each
+database's password is the one the stack generated, read from `secrets/`
+when the URL's variable is unset. The measurements below predate the
 `snippets` configuration.
 
 ## Options

@@ -24,6 +24,8 @@ from nl2sql_common.env import env_float as _env_float
 from nl2sql_common.env import env_int as _env_int
 from nl2sql_common.env import env_str as _env_str
 from nl2sql_common.env import env_tuple as _env_tuple
+from nl2sql_common.env import env_url as _env_url
+from nl2sql_common.env import secret as _secret
 
 #: Where the dummy certificate is written inside the container. A directory
 #: rather than the working tree: it is a volume in compose, so a regenerated
@@ -170,7 +172,7 @@ class ApiSettings:
             tls_allow_self_signed=_env_bool("API_TLS_ALLOW_SELF_SIGNED", True),
             tls_hostnames=_env_tuple("API_TLS_HOSTNAMES", DEFAULT_HOSTNAMES),
             tls_days=_env_int("API_TLS_DAYS", 365),
-            token=_env("API_TOKEN"),
+            token=_secret("API_TOKEN"),
             token_name=_env_str("API_TOKEN_NAME", "api-token"),
             token_roles=_env_tuple("API_TOKEN_ROLES", (USERS,)),
             cors_origins=_env_tuple("API_CORS_ORIGINS", ()),
@@ -188,7 +190,7 @@ class ApiSettings:
             max_wait_seconds=_env_float("API_MAX_WAIT_SECONDS", 900.0),
             event_stream_timeout_seconds=_env_float("API_EVENT_STREAM_TIMEOUT_SECONDS", 300.0),
             keepalive_seconds=_env_float("API_KEEPALIVE_SECONDS", 15.0),
-            feedback_db_url=_env("API_FEEDBACK_DB_URL"),
+            feedback_db_url=_env_url("API_FEEDBACK_DB_URL"),
             docs_enabled=_env_bool("API_DOCS_ENABLED", True),
             log_level=_env_str("API_LOG_LEVEL", "info"),
             source="environment",

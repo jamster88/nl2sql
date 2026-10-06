@@ -16,6 +16,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .urls import with_password
+
 #: What a switch reads as on. Anything else -- `false`, `0`, `no`, a typo --
 #: is off, except where a caller reads a switch the other way round.
 TRUE = frozenset({"1", "true", "yes", "on"})
@@ -67,3 +69,22 @@ def secret(name: str) -> str | None:
     if path:
         return Path(path).read_text().strip() or None
     return env(name)
+
+
+def env_url(name: str, default: str | None = None) -> str | None:
+    """A connection URL: `NAME`, or the file `NAME_FILE` names, else `default`
+    -- with its password replaced by the contents of the file
+    `<NAME without _URL>_PASSWORD_FILE` when that is set (V6-38).
+
+    Compose mounts each password as a secret file, so the URL a service is
+    given names who and where and carries no password: `DATABASE_URL`
+    beside `DATABASE_PASSWORD_FILE`. A URL with a password in it still works
+    on its own, for a service started by hand. An empty file is no password,
+    as an empty variable is no value.
+    """
+    url = secret(name) or default
+    stem = name[: -len("_URL")] if name.endswith("_URL") else name
+    password = secret(f"{stem}_PASSWORD")
+    if url is None or password is None:
+        return url
+    return with_password(url, password)

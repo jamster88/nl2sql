@@ -10,9 +10,10 @@ the tag `v5_1_2`, and a tag with fewer components names a line
 (`v5_1` is 5.1.x). The app images -- `nl2sql-agent`, `nl2sql-gui`,
 `nl2sql-review`, `nl2sql-review-gui`, `nl2sql-console-gui`, the five
 `nl2sql-desktop-build` platforms, since v5_5 `nl2sql-mlflow` and
-`nl2sql-mlflowdb`, since v5_6 `nl2sql-curate-gui`, and since v6_0
+`nl2sql-mlflowdb`, since v5_6 `nl2sql-curate-gui`, since v6_0
 `nl2sql-ldap`, `nl2sql-auth`, `nl2sql-directory-gui` and
-`nl2sql-mlflow-proxy` -- are released
+`nl2sql-mlflow-proxy`, and since v6_3 `nl2sql-proxy` in place of the six
+pages' -- are released
 together at one number, which
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds every
 declaration in the repository to. The dataset images --
@@ -32,6 +33,68 @@ Docker Hub's, in UTC; release dates are the repository's.
 file where a file is new; the tests a version merely extended are summarised.
 
 ---
+
+## v6_3 (6.3.0) -- 2026-10-05
+
+Phase 5 of the second adversarial review's mitigation plan
+(`adversary_reviews/v6_1_review_mitigation_plan.md`): container hardening and
+topology, on the non-root images 6.2 made. Before it, every container could
+write its own filesystem and held Docker's default capabilities with no
+ceiling on what it used (M-03); every password and token was an environment
+variable, which `docker inspect` shows anyone who can run it (M-06, S-10);
+six nginx images carried copies of one start-up script, and twelve health
+checks skipped verifying the certificate they were answered with (I-14,
+M-07, S-15); base images were tags that could move under a build (M-02,
+M-12, S-12); the service roles had no ceiling on what a session could cost
+(S-11); the four runtime stores were four Postgres servers, each owner its
+server's superuser (I-12, D-08); and the scripts prepared every database
+with SQL of their own (I-15, C-06). The plan item each change closes is named
+beside it; V6-40 and V6-41 are begun, as the plan's phase says, not finished.
+
+### Added
+- The `x-hardened` block in `docker-compose.yml` (V6-34), which every service starts from: `read_only`, `cap_drop: [ALL]`, `no-new-privileges` and a `/tmp` in memory. Each service has a `mem_limit` and a `pids_limit`; the ones that start as root to hand a volume over and drop -- the five Postgres servers, the directory, the auth service and MLflow -- get back only `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID` and `SETUID` (`x-postgres-caps`), `pki` only the first three, the review service and the desktop image only the last two, everything else none. The directory has a second in-memory directory for `slapd`'s socket. `tests/security/test_posture.py` holds every service to the block, and to giving back nothing beyond those five.
+- Compose `secrets:` (V6-38): nineteen files in `secrets/` -- the directory `0700`, ignored by git and by every build context -- mounted at `/run/secrets/<name>` in only the services that read them, and no password or token in any service's environment. `nl2sql_common.env.secret(NAME)` reads `NAME` or the file `NAME_FILE` names; `env_url(NAME)` reads a URL with no password in it and puts in the one from `<NAME minus _URL>_PASSWORD_FILE` (`nl2sql_common.urls.with_password`). Every settings module reads through them -- the agent's, the API's, the console's, the review service's, the auth service's, the directory's and the RAG loaders'. `setup.sh` writes the fifteen that must exist and leaves the service tokens and a replica's bind password empty until asked for; it and `launch.sh` move every password an older `.env` holds into its file, the same value, and take the line out of `.env` (`RETIRED_KEYS`).
+- `proxy/` -- one image, `nl2sql-proxy`, for every page and MLflow's front door (V6-37), replacing `nl2sql-gui`, `nl2sql-review-gui`, `nl2sql-curate-gui`, `nl2sql-console-gui`, `nl2sql-directory-gui` and `nl2sql-mlflow-proxy`. Five build stages, one per page, then nginx as account 101 with the five bundles side by side; `NL2SQL_PAGE` says which one a container serves, from that page's own root. One start-up script (`10-nl2sql-proxy.envsh`), one sign-in location, one template per kind of page (`gui`, `service`, `directory`, `mlflow`), all rendered into `/tmp/nginx` on a read-only root. `proxy/README.md`; `tests/proxy/test_proxy_startup.py`.
+- Health checks that verify (V6-37): `proxy/health.sh` asks a page's own listener as `localhost` -- a name every page's certificate covers -- against the stack's CA, and `python -m nl2sql_common.health API|REVIEW|CONSOLE|AUTH` does the same for the four Python services (`common/nl2sql_common/health.py`). The twelve that used `wget --no-check-certificate` or an unverified context are gone; `tests/security/test_posture.py` holds that none comes back. `tests/common/test_health.py`.
+- `tools/pin_images.py` (V6-35): every `FROM`, every `ARG *_IMAGE` default and every stock image compose runs is pinned by index digest as well as tag, and Alpine is one tag, 3.22 (`docker/apitest` and `desktop` were 3.21). The tool checks that nothing is unpinned and, with `--update`, asks the registry for each tag's digest and writes it in. `tests/security/test_pinned_images.py`, the tool at 100%.
+- `common/nl2sql_common/roles.py` -- role-level limits (V6-39): `RoleLimits` and `limit_role`, which set a role's `statement_timeout`, `work_mem`, `idle_in_transaction_session_timeout` and connection limit. The agent's reader (2 min, 16 MB, 1 min idle, 60 connections), the snippet store's reader (30 s, 30), the API's feedback writer (10 s, 4 MB, 20), the role sync (1 min, 4 MB, 10), each runtime store's owner (16 MB, 20) and every person the auth service makes (`AUTH_USER_STATEMENT_TIMEOUT_MS`, 16 MB, 1 min idle, `AUTH_USER_CONNECTION_LIMIT`), each applied where the role is made and checked again on every start. `tests/common/test_roles.py`.
+- The runtime stores in one server (V6-40, begun): a new `stores` service, stock `pgvector/pgvector:pg18` pinned by digest, on the `storesdata` volume and port 5435 (`STORES_DB_PORT`), holding the feedback, corrections, completions and snippet databases, each owned by its own role, none of them a superuser; the two that make roles of their own (feedback's writer, the snippets' reader) have `CREATEROLE`, and pgvector is made in the three that need it by the superuser, which only the socket reaches. The four old names are aliases on its network, so a URL written for 6.2 still reaches its database; every default URL names `nl2sql-stores`. The two RAG stores stay their own images, as the plan's V6-03 decides.
+- `docker/migrate_store.sh` and the `storesmigrate` service: a store from before 6.3, moved into its database. `launch.sh` runs it once for each old volume it finds -- `<instance>_feedbackdata`, `_correctionsdata`, `_completionsdata` -- with the volume mounted read-only: a Postgres of its own on a copy in `/tmp`, `pg_dump`, and `pg_restore` into a database that has no tables yet as its owner, without the row-level policies and extensions the review service and dbprep make again; the database is marked as moved, so it is never moved twice, and one already in use is refused rather than merged. The old volumes are kept, and `launch.sh` prints the command that removes them. `tests/docker/test_migrate_store.py`, against fakes and against a real store made the way 6.2 made one.
+- `common/nl2sql_ops/` and the `dbprep` service (V6-41, begun): `python -m nl2sql_ops prepare`, in the agent's image as its own account (10001), run by compose before anything that connects to a database. It holds each database's socket, a volume shared with nobody else (`pgsocket`, `storessocket`, `contextsocket`, `vectorsocket`, `mlflowsocket`), and over it -- the superuser over the socket -- makes the retail database's extensions, the agent's reader and the sign-in schema and role sync (what `docker/reader_role.sql`'s and `docker/auth_roles.sql`'s statements did, from Python), rewrites the sign-in block of `pg_hba.conf` through the server itself (`pg_read_file`, a large object exported over the file, `pg_hba_file_rules` checked before `pg_reload_conf`), makes the runtime stores' databases and owners, and sets every login's password from its file. `report` and `snippets` say what each database holds and whether the snippets are behind their document, for the scripts, as `STEP`/`INFO`/`WARN`/`STATE` lines. Neither `setup.sh` nor `launch.sh` runs SQL any more. The plan put this in the auth service; it is a one-shot instead, so the service that faces the network holds no superuser socket. `tests/ops/`, five of them live.
+- `tests/settings_names.py` -- the names a settings module reads, as compose may set them: a secret by its file, a URL beside its password file, and the proxy image's settings per page.
+- `tests/acceptance/test_stack.py` -- `test_nothing_runs_as_root_writes_its_image_or_shows_a_secret`: in the running stack, no process in any container is root, no container can write its own image, and no secret is in any container's environment.
+
+### Removed
+- `gui/Dockerfile`, `review/gui/Dockerfile`, `curate/Dockerfile`, `console/Dockerfile`, `auth/gui/Dockerfile` and `docker/mlflow-proxy/`, with their nginx templates and start-up fragments -- the proxy image's now. The pages' sources stay where they were.
+- `docker/auth_roles.sql` and `docker/ldap_hba.sh` -- `nl2sql_ops` does both; `docker/reader_role.sql` stays, for the image build.
+- The `feedbackdb`, `correctionsdb`, `completionsdb` and `snippetsdb` services, their ports 5436 to 5438, and the `feedback` profile.
+- `setup.sh`'s twelve per-page image flags -- `--gui-image`, `--review-gui-tag` and the rest -- for `--proxy-image` and `--proxy-tag`.
+
+### Fixed
+- The retail database's health check asked over the socket, which the entrypoint's own temporary server answers while it sets the passwords -- so the container could report healthy before Postgres had really started. It asks over TCP now, which that server does not listen on.
+- `tests/agent/test_database_live.py` -- one test connected without the module's reachability check, and failed rather than skipped when no database was up.
+
+### Updated
+- `docker/mlflow/entrypoint.sh` -- builds the tracking store's URL from `MLFLOW_DB_*` and the password file and hands it to MLflow as `MLFLOW_BACKEND_STORE_URI`; the URL with its password is no longer on the server's command line, where `ps` and `docker inspect` showed it.
+- `docker/apitest/smoke.sh` -- reads the token from `API_TOKEN_FILE` when `API_TOKEN` is unset, and never prints it.
+- `docker-compose.yml` -- the blocks and anchors above; `dbprep` before every service that connects to a database; the URLs without passwords, beside their files; the six pages as the proxy image; the Python services' health checks.
+- `setup.sh` -- `secrets/`; the databases prepared by `dbprep` and its report relayed; `--proxy-image`, `--proxy-tag`, and the proxy pinned whenever a page will be served -- the directory's, with sign-in on; the snippets loaded as the review image's account with no URL on its command line; `v6_3`, twelve tags.
+- `launch.sh` -- `secrets/`; the four stores started as one; the stores from before moved; `dbprep` run on every start and its report shown as the contents table; the CA copied out again when it has changed, with a warning to trust it again; `--feedback` the same as `--api`, since a verdict is staged whenever the API is up.
+- `start.sh` -- re-pins `.env` when the pages' image is missing; help and messages for `secrets/`.
+- `tests/live_stores.py` -- the live tests find each password in `secrets/`, or an older `.env`, and the four runtime stores on one port.
+- The compose tests (`tests/docker/test_compose_config.py` and the API's, GUI's, review's, curation's, console's, auth's and MLflow's) hold the 6.3 shape; `tests/docker/test_gui_container.py` and `tests/console/test_console_container.py` run the proxy image as compose does -- read-only, with no capabilities, its token a mounted file -- and check its health check fails against a CA that did not issue its certificate; `tests/auth/test_auth_live.py` prepares its database with `nl2sql_ops`.
+- Version 6.3.0 in every declaration, `proxy/Dockerfile` among them (thirty places); `setup.sh` pins `v6_3`.
+
+### Documentation
+- `README.md` -- the containers, the twelve tags and how to publish them, digests, upgrading to 6.3, the runtime stores' settings, and a new section, *What each container may use*: the limits, the secrets, the sockets and the role ceilings. `USAGE_GUIDE.md`, `QUICKSTART.md`, `SECURITY.md` (as of 6.3.0), `agent/API.md`, `common/README.md`, `review/README.md`, `console/README.md`, `curate/README.md`, `gui/README.md`, `auth/README.md`, `ldap/README.md`, `rag/README.md`; `proxy/README.md`, new; `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_3.md`, what 6.3 changed in arch6.
+
+### Verified
+Before publishing, against images built from this checkout, beside the 6.2 stack this machine runs and without touching it.
+- The acceptance tier (`--run-acceptance`): 10 passed, none skipped, from a clean start -- every image built from the checkout, the stack started with the user's two commands beside the running one, the administrator signed in on every page, a question answered and its verdict promoted, SQL through the console, the trace through MLflow's front door, the desktop client signing in -- and the new one: of the seventeen containers running, none has a process running as root, every one is read-only, has dropped every capability, cannot gain a privilege and has a memory and process ceiling, and no secret is in any container's environment, command or arguments, the two one-shots' included.
+- The live-store tests against that stack, kept after its run: 471 passed and the RAG tier's 337, the tests that make a scratch database against a throwaway pgvector, as a superuser -- since 6.3 no store's owner may make one. One count differed, the golden set the acceptance run had just grown by a pair; one teardown restored a writer's password on a server that had none, and now restores it only where a staging table is.
+- The docker tier: 372 passed, then 39 after the four failures it found were fixed -- the proxy image shipping nginx's own welcome page, the API's health-check test still expecting a shell, a live test that failed rather than skipped with no database, and the migration's collation warning, which `PGOPTIONS` came too late to quiet. The migration against a real store made the way 6.2 made one: its rows moved, owned by the store's owner, its policies left for the review service, marked, and a second run moving nothing.
+- Python coverage at 100% of 16,092 statements and 3,776 branches across all four tiers; the shell scripts at 100% of 1,714 commands; every page's suite (`--run-node`, 50) and the desktop client's (`--run-java`, 6), each at 100%; the offline suite, 4,824.
+- Not run here: `tests/docker/test_compose_rag_integration.py`, which runs `docker compose up` in this checkout's own project -- the running 6.2 stack's, which 6.3's compose file would have recreated; and the published-tag checks, which wait for the push.
 
 ## v6_2 (6.2.0) -- 2026-10-04
 

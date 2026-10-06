@@ -46,8 +46,7 @@ def _pinned(name: str) -> str:
 PINNED = [
     _pinned(name)
     for name in (
-        "AGENT", "GUI", "REVIEW", "REVIEW_GUI", "CURATE_GUI", "CONSOLE_GUI", "MLFLOW", "MLFLOW_DB",
-        "MLFLOW_PROXY", "LDAP", "AUTH", "DIRECTORY_GUI",
+        "AGENT", "REVIEW", "PROXY", "MLFLOW", "MLFLOW_DB", "LDAP", "AUTH",
     )
 ]
 PINNED += [f"{_pinned('DESKTOP')}-{platform}" for platform in DESKTOP_PLATFORMS]
@@ -124,16 +123,17 @@ def test_setup_sh_does_not_pin_the_retail_image_from_before_the_reader_role():
 
 
 def test_the_list_is_every_image_setup_sh_moves_together():
-    """Thirteen image families, the desktop one per platform: seventeen
-    references.
+    """Eight image families, the desktop one per platform: twelve references.
+    Thirteen families and seventeen references until 6.3 made the six page
+    images one (V6-37).
 
     Read off `setup.sh` as well as counted: every image it pins at the
     agent's tag moves with the release, and one added there and not here --
     the curation interface was, in 5.6, and 6.0's four sign-in images until
     their first publish -- would never be asked about."""
-    assert len(PINNED) == 17
+    assert len(PINNED) == 12
     families = {reference.split(":")[0] for reference in PINNED}
-    assert len(families) == 13
+    assert len(families) == 8
     release = re.search(r'^AGENT_TAG="([^"]+)"', SETUP_SH, re.MULTILINE).group(1)
     moving = {
         re.search(rf'^{name}_IMAGE="([^"]+)"', SETUP_SH, re.MULTILINE).group(1)

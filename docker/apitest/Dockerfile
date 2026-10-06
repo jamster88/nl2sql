@@ -9,7 +9,7 @@
 # curl and jq are all it has, which is also the smallest thing a GUI author
 # can copy from: every request in smoke.sh translates line for line into
 # fetch(), requests, or HttpClient.
-FROM alpine:3.21
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 
 RUN apk add --no-cache curl jq ca-certificates bash
 

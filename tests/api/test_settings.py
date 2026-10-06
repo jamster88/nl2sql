@@ -84,7 +84,7 @@ def test_every_setting_can_be_set_from_the_environment(clean_env):
     container, which is the only way most people will run this.
     """
     source = (Path(__file__).resolve().parents[2] / "agent" / SETTINGS_PY).with_suffix(".py")
-    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source.read_text()))
+    read = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source.read_text()))
     assert len(read) == len(SETTING_FIELDS), (
         f"{len(SETTING_FIELDS)} settings but {len(read)} environment variables: "
         "a field was added without a way to set it, or the other way round"

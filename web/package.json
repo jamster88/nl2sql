@@ -1,6 +1,6 @@
 {
   "name": "@nl2sql/web",
-  "version": "6.2.0",
+  "version": "6.3.0",
   "private": true,
   "description": "What every page of the stack shares: sign-in, the error a service answers with, wording helpers, and the dev server's proxies. Source, compiled by each page with its own toolchain.",
   "type": "module",

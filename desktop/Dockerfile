@@ -14,7 +14,7 @@
 # used on macOS x86-64 and arm64, so a jar carrying both would carry one of
 # them twice under one name and load whichever came first. The published tags
 # say which -- `v5_5-mac-aarch64`, `v5_5-linux` and so on.
-FROM --platform=$BUILDPLATFORM maven:3.9.16-eclipse-temurin-21 AS build
+FROM --platform=$BUILDPLATFORM maven:3.9.16-eclipse-temurin-21@sha256:99e61abcff91a9b1333463bd8451fb18495d6eba9250ac66a338b518f8278320 AS build
 
 # mac-aarch64, mac, linux, linux-aarch64 or win.
 ARG JAVAFX_PLATFORM=linux
@@ -39,7 +39,7 @@ RUN mvn -B -q -Djavafx.platform=${JAVAFX_PLATFORM} -DskipTests package
 # user's machine, so it is the one a multi-architecture manifest needs a
 # variant of. The jar inside is byte-identical in both, because the builder
 # above produced it once.
-FROM alpine:3.21
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 RUN apk add --no-cache su-exec~0.2
 COPY --chmod=755 desktop/copy-out.sh /usr/local/bin/nl2sql-copy-out
 
@@ -47,7 +47,7 @@ COPY --from=build /src/target/nl2sql-desktop.jar /opt/nl2sql/nl2sql-desktop.jar
 
 LABEL org.opencontainers.image.title="nl2sql-desktop build" \
       org.opencontainers.image.description="Carries the nl2sql desktop client's jar, built for one JavaFX platform." \
-      org.opencontainers.image.version="6.2.0" \
+      org.opencontainers.image.version="6.3.0" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # The default command copies the jar to a bind mount, which is the whole of

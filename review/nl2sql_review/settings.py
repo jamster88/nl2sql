@@ -27,6 +27,8 @@ from nl2sql_common.env import (
     env_float as _env_float,
     env_bool as _env_bool,
     env_tuple as _env_tuple,
+    env_url as _env_url,
+    secret as _secret,
 )
 
 #: The document that *is* the golden set. Everything downstream -- the
@@ -54,8 +56,8 @@ DEFAULT_RETAIL_DB_URL = "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432
 #: answer's correction and a *correct but incomplete* answer's completion.
 #: Each is its own Postgres with pgvector -- its records and its RAG side by
 #: side -- apart from the golden set and apart from each other.
-DEFAULT_CORRECTIONS_DB_URL = "postgresql://corrections:corrections@localhost:5436/nl2sql_corrections"
-DEFAULT_COMPLETIONS_DB_URL = "postgresql://completions:completions@localhost:5437/nl2sql_completions"
+DEFAULT_CORRECTIONS_DB_URL = "postgresql://corrections:corrections@localhost:5435/nl2sql_corrections"
+DEFAULT_COMPLETIONS_DB_URL = "postgresql://completions:completions@localhost:5435/nl2sql_completions"
 
 #: The SQL snippets' source of truth, as the golden question document is the
 #: golden pairs': written here, then loaded into the snippet store.
@@ -63,7 +65,7 @@ DEFAULT_SNIPPETS_DOCUMENT = "/app/context_questions/sql_snippets.md"
 
 #: The snippet store, as its owner: the loader creates its tables and the
 #: read-only role the agent connects as.
-DEFAULT_SNIPPETS_DB_URL = "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
+DEFAULT_SNIPPETS_DB_URL = "postgresql://snippets:snippets@localhost:5435/nl2sql_snippets"
 
 #: This service's own certificate, which the stack's pki service issues from
 #: its development CA (6.1; until then it presented the agent API's). Mounted
@@ -210,7 +212,7 @@ class ReviewSettings:
             tls_enabled=_env_bool("REVIEW_TLS_ENABLED", True),
             tls_cert_file=_env_str("REVIEW_TLS_CERT_FILE", DEFAULT_CERT_FILE),
             tls_key_file=_env_str("REVIEW_TLS_KEY_FILE", DEFAULT_KEY_FILE),
-            token=_env("REVIEW_TOKEN"),
+            token=_secret("REVIEW_TOKEN"),
             token_name=_env_str("REVIEW_TOKEN_NAME", "review-token"),
             token_roles=_env_tuple("REVIEW_TOKEN_ROLES", ()),
             cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ()),
@@ -219,34 +221,28 @@ class ReviewSettings:
             auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             reviewer_roles=_env_tuple("REVIEW_REVIEWER_ROLES", (REVIEWERS,)),
             curator_roles=_env_tuple("REVIEW_CURATOR_ROLES", (CURATORS,)),
-            feedback_db_url=_env_str(
-                "FEEDBACK_DB_URL", "postgresql://feedback:feedback@localhost:5435/nl2sql_feedback"
-            ),
-            writer_password=_env_str("FEEDBACK_WRITER_PASSWORD", "nl2sql_feedback_writer"),
+            feedback_db_url=_env_url("FEEDBACK_DB_URL", "postgresql://feedback:feedback@localhost:5435/nl2sql_feedback"),
+            writer_password=_secret("FEEDBACK_WRITER_PASSWORD") or "nl2sql_feedback_writer",
             manage_schema=_env_bool("REVIEW_MANAGE_SCHEMA", True),
-            retail_db_url=_env_str("RETAIL_DB_URL", DEFAULT_RETAIL_DB_URL),
+            retail_db_url=_env_url("RETAIL_DB_URL", DEFAULT_RETAIL_DB_URL),
             validate_timeout_ms=_env_int("REVIEW_VALIDATE_TIMEOUT_MS", 30000),
             validate_max_rows=_env_int("REVIEW_VALIDATE_MAX_ROWS", 200),
-            corrections_db_url=_env_str("CORRECTIONS_DB_URL", DEFAULT_CORRECTIONS_DB_URL),
-            completions_db_url=_env_str("COMPLETIONS_DB_URL", DEFAULT_COMPLETIONS_DB_URL),
+            corrections_db_url=_env_url("CORRECTIONS_DB_URL", DEFAULT_CORRECTIONS_DB_URL),
+            completions_db_url=_env_url("COMPLETIONS_DB_URL", DEFAULT_COMPLETIONS_DB_URL),
             embed_fixes=_env_bool("REVIEW_EMBED_FIXES", True),
             document=_env_str("REVIEW_DOCUMENT", DEFAULT_DOCUMENT),
             rag_dir=_env_str("REVIEW_RAG_DIR", DEFAULT_RAG_DIR),
             reload_context=_env_bool("REVIEW_RELOAD_CONTEXT", True),
             reload_vectors=_env_bool("REVIEW_RELOAD_VECTORS", True),
             reload_timeout_seconds=_env_float("REVIEW_RELOAD_TIMEOUT_SECONDS", 600.0),
-            chunk_db_url=_env_str(
-                "CHUNK_DB_URL", "postgresql://ragproc:ragproc@localhost:5433/nl2sql_chunks"
-            ),
-            vector_db_url=_env_str(
-                "VECTOR_DB_URL", "postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors"
-            ),
+            chunk_db_url=_env_url("CHUNK_DB_URL", "postgresql://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
+            vector_db_url=_env_url("VECTOR_DB_URL", "postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
             ollama_url=_env_str("OLLAMA_URL", "http://localhost:11434"),
             embed_model=_env_str("EMBED_MODEL", "bge-m3"),
             snippets_document=_env_str("REVIEW_SNIPPETS_DOCUMENT", DEFAULT_SNIPPETS_DOCUMENT),
-            snippets_db_url=_env_str("SNIPPETS_DB_URL", DEFAULT_SNIPPETS_DB_URL),
+            snippets_db_url=_env_url("SNIPPETS_DB_URL", DEFAULT_SNIPPETS_DB_URL),
             snippets_reader_user=_env_str("SNIPPETS_READER_USER", "snippets_reader"),
-            snippets_reader_password=_env_str("SNIPPETS_READER_PASSWORD", "snippets_reader"),
+            snippets_reader_password=_secret("SNIPPETS_READER_PASSWORD") or "snippets_reader",
             reload_snippets=_env_bool("REVIEW_RELOAD_SNIPPETS", True),
             docs_enabled=_env_bool("REVIEW_DOCS_ENABLED", True),
             log_level=_env_str("REVIEW_LOG_LEVEL", "info"),

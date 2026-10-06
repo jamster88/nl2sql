@@ -31,7 +31,7 @@ def dockerfile() -> str:
 
 
 def test_the_base_image_is_pinned(dockerfile: str):
-    assert re.search(r"^FROM alpine:3\.\d+$", dockerfile, re.MULTILINE)
+    assert re.search(r"^FROM alpine:3\.\d+@sha256:[0-9a-f]{64}$", dockerfile, re.MULTILINE)
 
 
 def test_the_overlays_each_mode_needs_are_installed(dockerfile: str):

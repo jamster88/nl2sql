@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from nl2sql_auth.rolesync import (
+    LIMITS_SQL,
     MANAGED_SQL,
     NAMES_SQL,
     READER_SQL,
@@ -27,6 +28,15 @@ from nl2sql_auth.rolesync import (
     plan,
     wanted,
 )
+
+#: A person's settings as the sync leaves them (AUTH_USER_STATEMENT_TIMEOUT_MS
+#: at its default).
+CURRENT = [
+    "default_transaction_read_only=on",
+    "statement_timeout=60000",
+    "work_mem=16MB",
+    "idle_in_transaction_session_timeout=60000",
+]
 
 ROLES = {
     "nl2sql-users": "nl2sql_users",
@@ -108,9 +118,12 @@ class Rows:
 class FakeConn:
     """Answers the three reads; records every write as Postgres would read it."""
 
-    def __init__(self, *, names=(), managed=(), reader=(), fail=(), fail_reads=False):
+    def __init__(self, *, names=(), managed=(), reader=(), limits=None, fail=(), fail_reads=False):
         self.names = list(names)
         self.managed = list(managed)
+        #: Each managed person's settings and connection limit; by default
+        #: what the sync gives a person, so only the tests about limits see any.
+        self.limits = limits if limits is not None else [(row[0], CURRENT, 5) for row in self.managed]
         self.reader = list(reader)
         self.fail = fail
         self.fail_reads = fail_reads
@@ -129,11 +142,14 @@ class FakeConn:
         yield
 
     def execute(self, query, params=None):
-        if query in (NAMES_SQL, MANAGED_SQL, READER_SQL):
+        if query in (NAMES_SQL, MANAGED_SQL, READER_SQL, LIMITS_SQL):
             if self.fail_reads:
                 raise psycopg.errors.UndefinedObject('role "nl2sql_reader" does not exist')
             if query is NAMES_SQL:
                 return Rows([(name,) for name in self.names])
+            if query is LIMITS_SQL:
+                assert params == {"marker": "nl2sql_ldap"}
+                return Rows(self.limits)
             if query is READER_SQL:
                 assert params == {"reader": "nl2sql_reader"}
                 return Rows([(name,) for name in self.reader])
@@ -174,7 +190,10 @@ def test_a_new_person_is_made_a_limited_read_only_role_the_reader_can_become():
         'GRANT "nl2sql_users" TO "alice" WITH INHERIT TRUE, SET FALSE',
         'GRANT "alice" TO "nl2sql_reader" WITH INHERIT FALSE, SET TRUE',
         'ALTER ROLE "alice" SET default_transaction_read_only = on',
-        'ALTER ROLE "alice" SET statement_timeout = 60000',
+        'ALTER ROLE "alice" CONNECTION LIMIT 5',
+        'ALTER ROLE "alice" SET "statement_timeout" = \'60000\'',
+        'ALTER ROLE "alice" SET "work_mem" = \'16MB\'',
+        'ALTER ROLE "alice" SET "idle_in_transaction_session_timeout" = \'60000\'',
         "COMMENT ON ROLE \"alice\" IS 'Alice <a@x>'",
     ]
     assert conn.transactions == 1, "one person, one transaction"
@@ -261,7 +280,7 @@ def test_an_error_without_words_is_named_by_its_type():
     conn = FakeConn()
 
     def blank(query, params=None):
-        if query in (NAMES_SQL, MANAGED_SQL, READER_SQL):
+        if query in (NAMES_SQL, MANAGED_SQL, READER_SQL, LIMITS_SQL):
             return Rows([])
         raise psycopg.errors.InsufficientPrivilege("")
 
@@ -274,7 +293,41 @@ def test_the_limits_on_a_persons_own_login_come_from_the_settings():
     conn = FakeConn()
     _sync(conn, [Person("alice", groups=("nl2sql-users",))], statement_timeout_ms=5000, connection_limit=2).run_once()
     assert conn.statements[0].endswith("CONNECTION LIMIT 2")
-    assert 'ALTER ROLE "alice" SET statement_timeout = 5000' in conn.statements
+    assert 'ALTER ROLE "alice" SET "statement_timeout" = \'5000\'' in conn.statements
+
+
+def test_a_person_made_before_the_limits_is_given_them_and_the_rest_are_left():
+    """A role made by 6.2 has a timeout and a connection limit and nothing
+    else; the next sync gives it the rest, and leaves a current one alone."""
+    conn = FakeConn(
+        names=["bob", "carol"],
+        managed=[("bob", "Bob", ["nl2sql_users"]), ("carol", "Carol", ["nl2sql_users"])],
+        reader=["bob", "carol"],
+        limits=[("bob", ["default_transaction_read_only=on", "statement_timeout=60000"], 5), ("carol", CURRENT, 5)],
+    )
+    people = [Person("bob", "Bob", "", ("nl2sql-users",)), Person("carol", "Carol", "", ("nl2sql-users",))]
+    result = _sync(conn, people).run_once()
+    assert result.ok and result.changed == ["bob"]
+    assert conn.statements == [
+        'ALTER ROLE "bob" CONNECTION LIMIT 5',
+        'ALTER ROLE "bob" SET "statement_timeout" = \'60000\'',
+        'ALTER ROLE "bob" SET "work_mem" = \'16MB\'',
+        'ALTER ROLE "bob" SET "idle_in_transaction_session_timeout" = \'60000\'',
+    ]
+
+
+def test_a_changed_connection_limit_is_a_difference_too():
+    sync = _sync(FakeConn())
+    assert sync.limits.differ(CURRENT, 3), "the setting says 5"
+    assert not sync.limits.differ(CURRENT, 5)
+    assert plan(
+        {"carol": Wanted(frozenset({"nl2sql_users"}), "Carol")},
+        {"carol": ("Carol", frozenset({"nl2sql_users"}))},
+        {"carol"},
+        {"carol"},
+        limits=sync.limits,
+        current={"carol": (CURRENT, 3)},
+    ).limits == ["carol"]
 
 
 def test_the_loop_runs_until_stopped_and_can_be_woken_early():

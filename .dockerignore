@@ -6,6 +6,13 @@ __pycache__
 *.pyc
 .DS_Store
 
+# The stack's passwords and tokens. No Dockerfile copies them, and none should
+# be sent to the daemon in a build context either: a context is uploaded
+# whole, and kept in its cache.
+.env
+.env.bak
+secrets
+
 # The GUIs' build inputs and outputs. node_modules alone is over four
 # thousand files and a hundred megabytes *each*, and every image installs
 # its own from the lockfile -- so sending them is a hundred megabytes

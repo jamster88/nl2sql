@@ -8,11 +8,35 @@ Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
 SQL console's interface, the desktop client's jar, since v5_5 MLflow's
 server and store, since v5_6 the curation interface, and since v6_0 the
-directory, the auth service, the directory page and MLflow's front door -- are released together
+directory, the auth service, the directory page and MLflow's front door --
+every page and the front door one image, the proxy, since v6_3 -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v6_3 (6.3.0) -- 2026-10-05
+
+**Added**
+- Every container is read-only, holds no capability it does not use, cannot gain a privilege, and has a ceiling on its memory and processes.
+- Every password and token is a file in `secrets/`, mounted into only the services that read it; none is in any container's environment.
+- One image, `nl2sql-proxy`, serves every page and MLflow's front door; twelve tags where there were seventeen.
+- Every health check verifies the certificate it is answered with.
+- The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`; `launch.sh` moves a store from before into it.
+- A one-shot, `dbprep`, prepares every database in Python over its own socket; neither script runs SQL.
+- Every role a service connects as has a statement timeout, a memory ceiling and a connection limit.
+- Every base image and stock image is pinned by digest; `tools/pin_images.py` checks and moves them.
+
+**Updated**
+- `.env` holds no password; `setup.sh` and `launch.sh` move the ones an older `.env` holds into `secrets/`.
+- The first sign-in's password is `cat secrets/ldap_admin_password`.
+- `setup.sh --proxy-image`/`--proxy-tag` replace the six pages' flags.
+- `--feedback` is the same as `--api`: verdicts are staged whenever the API is up.
+- `launch.sh --api` replaces `nl2sql-ca.crt` when the stack's CA has changed, and says to trust it again.
+- MLflow's store URL is built from the password file, never on its command line.
+
+**Fixed**
+- The retail database's health check could pass while its entrypoint's socket-only server was still setting passwords; it asks over TCP.
 
 ## v6_2 (6.2.0) -- 2026-10-04
 

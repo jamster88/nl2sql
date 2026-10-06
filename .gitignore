@@ -6,6 +6,8 @@ output/
 *.db
 .env
 .env.bak
+# Every password and token (6.3, V6-38): setup.sh and launch.sh write them here.
+secrets/
 data_gen/data_model_detail.md
 data_gen/old_ddl.sql
 basic_agent_steps.md

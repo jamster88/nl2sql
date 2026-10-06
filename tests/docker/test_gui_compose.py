@@ -1,4 +1,4 @@
-"""The GUI as compose resolves it.
+"""The GUI as compose resolves it: the proxy image's `gui` page (6.3, V6-37).
 
 Behind `--run-docker` for the same reason as the other compose tests:
 `docker compose config` only parses and resolves, but it needs a working
@@ -20,14 +20,11 @@ from pathlib import Path
 
 import pytest
 
+from tests.settings_names import proxy_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-
-#: Worked out by the start-up script -- the sign-in hop's TLS include and this
-#: listener's -- rather than set by anyone.
-SIGN_IN_COMPUTED = {"NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF"}
-GUI = REPO_ROOT / "gui"
 
 
 def _compose_config(tmp_path: Path, *, env: dict | None = None) -> dict:
@@ -94,12 +91,13 @@ def test_the_proxy_verifies_against_a_name_the_api_s_certificate_covers(config: 
     """The one thing neither file can be right about on its own.
 
     The API generates a certificate for API_TLS_HOSTNAMES; the GUI verifies
-    the connection against API_SSL_NAME. If someone renames the service, or
-    trims the hostname list, the two drift apart and every request through
-    the proxy becomes a 502 that names neither setting.
+    the connection against GUI_API_SSL_NAME (the proxy's UPSTREAM_SSL_NAME).
+    If someone renames the service, or trims the hostname list, the two drift
+    apart and every request through the proxy becomes a 502 that names
+    neither setting.
     """
     covered = set(config["services"]["api"]["environment"]["API_TLS_HOSTNAMES"].split(","))
-    verified = gui["environment"]["API_SSL_NAME"]
+    verified = gui["environment"]["UPSTREAM_SSL_NAME"]
     assert verified in covered, (
         f"the GUI verifies the API as {verified!r}, which is not in the API's "
         f"generated certificate ({sorted(covered)})"
@@ -107,7 +105,7 @@ def test_the_proxy_verifies_against_a_name_the_api_s_certificate_covers(config: 
 
 
 def test_the_proxy_reaches_the_api_by_the_same_name_it_verifies(gui: dict):
-    assert gui["environment"]["API_SSL_NAME"] in gui["environment"]["API_UPSTREAM"]
+    assert gui["environment"]["UPSTREAM_SSL_NAME"] in gui["environment"]["UPSTREAM"]
 
 
 def test_it_verifies_the_api_against_the_ca_beside_its_own_certificate(gui: dict, config: dict):
@@ -116,8 +114,8 @@ def test_it_verifies_the_api_against_the_ca_beside_its_own_certificate(gui: dict
     writes it."""
     mounts = {mount["target"]: mount for mount in gui["volumes"]}
     env = gui["environment"]
-    certificate_dir = str(Path(env["API_CACERT"]).parent)
-    assert env["API_CACERT"].endswith("/ca.crt") and env["AUTH_CACERT"] == env["API_CACERT"]
+    certificate_dir = str(Path(env["UPSTREAM_CACERT"]).parent)
+    assert env["UPSTREAM_CACERT"].endswith("/ca.crt") and env["AUTH_CACERT"] == env["UPSTREAM_CACERT"]
     assert mounts[certificate_dir]["read_only"] is True
     assert mounts[certificate_dir]["source"] == "guitls"
     assert gui["depends_on"]["pki"]["condition"] == "service_completed_successfully"
@@ -138,18 +136,20 @@ def test_only_the_pki_service_writes_a_tls_volume(config: dict):
 # ---------------------------------------------------------------------------
 
 
-def test_the_gui_is_given_the_same_token_as_the_server(tmp_path_factory):
-    """Holding it is the whole job. A GUI with a different token, or none,
-    produces a page where every request is a 401."""
-    config = _compose_config(
-        tmp_path_factory.mktemp("token"), env={"API_TOKEN": "a-shared-secret"}
-    )
-    assert config["services"]["gui"]["environment"]["API_TOKEN"] == "a-shared-secret"
-    assert config["services"]["api"]["environment"]["API_TOKEN"] == "a-shared-secret"
+def test_the_gui_is_given_the_same_token_as_the_server(config: dict, gui: dict):
+    """Holding it is the whole job, with sign-in off. A GUI with a different
+    token, or none, produces a page where every request is a 401. The same
+    secret file as the API's, since 6.3 (V6-38)."""
+    api = config["services"]["api"]
+    assert gui["environment"]["UPSTREAM_TOKEN_FILE"] == api["environment"]["API_TOKEN_FILE"]
+    assert [secret["source"] for secret in gui["secrets"]] == ["api_token"]
 
 
-def test_no_token_is_the_default(gui: dict):
-    assert gui["environment"]["API_TOKEN"] == ""
+def test_no_token_is_in_its_environment(gui: dict, tmp_path_factory):
+    config = _compose_config(tmp_path_factory.mktemp("token"), env={"API_TOKEN": "a-shared-secret"})
+    environment = config["services"]["gui"]["environment"]
+    assert "a-shared-secret" not in json.dumps(environment)
+    assert [name for name in environment if "TOKEN" in name] == ["UPSTREAM_TOKEN_FILE"]
 
 
 # ---------------------------------------------------------------------------
@@ -163,12 +163,12 @@ def test_the_published_port_follows_the_configured_one(tmp_path_factory):
     config = _compose_config(tmp_path_factory.mktemp("port"), env={"GUI_PORT": "9123"})
     gui = config["services"]["gui"]
 
-    assert gui["environment"]["GUI_PORT"] == "9123"
+    assert gui["environment"]["PROXY_PORT"] == "9123"
     assert [(p["published"], p["target"]) for p in gui["ports"]] == [("9123", 9123)]
 
 
 def test_the_default_port_is_the_documented_one(gui: dict):
-    assert gui["environment"]["GUI_PORT"] == "8080"
+    assert gui["environment"]["PROXY_PORT"] == "8080"
     assert [(p["published"], p["target"]) for p in gui["ports"]] == [("8080", 8080)]
 
 
@@ -178,13 +178,8 @@ def test_the_default_port_is_the_documented_one(gui: dict):
 
 
 def _template_variables() -> set[str]:
-    """Every ${NAME} the nginx template and its start-up script substitute."""
-    sources = (GUI / "nginx.conf.template").read_text() + (GUI / "10-nl2sql-config.envsh").read_text()
-    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)(?::-)?", sources))
-    # Computed by the start-up script from API_TOKEN rather than set by
-    # anyone, and deliberately not settable: a caller who set it directly
-    # would bypass the empty-token handling.
-    return names - {"API_AUTH_HEADER", "NGINX_UPSTREAM_TLS_CONF", *SIGN_IN_COMPUTED, "GUI_LISTEN_TLS"}
+    """Every setting the proxy image reads for this page."""
+    return proxy_names("gui")
 
 
 def test_every_setting_the_proxy_reads_can_be_set_through_compose(gui: dict):
@@ -210,21 +205,23 @@ def test_a_plain_http_api_can_be_configured_without_a_rebuild(tmp_path_factory):
         tmp_path_factory.mktemp("http"),
         env={"GUI_API_UPSTREAM": "http://nl2sql-api:8443"},
     )
-    assert config["services"]["gui"]["environment"]["API_UPSTREAM"] == "http://nl2sql-api:8443"
+    assert config["services"]["gui"]["environment"]["UPSTREAM"] == "http://nl2sql-api:8443"
 
 
 def test_it_can_be_built_here_as_well_as_pulled(gui: dict):
     """Both, like the agent service: the image name is what `setup.sh --gui`
     pins to the published tag, and the build context is the fallback for a
-    clone that cannot reach the registry -- or does not want to.
+    clone that cannot reach the registry -- or does not want to. One image
+    for every page since 6.3, told which it is.
     """
-    assert gui["build"]["dockerfile"].endswith("gui/Dockerfile")
-    assert gui["image"] == "nl2sql-gui:latest"
+    assert gui["build"]["dockerfile"].endswith("proxy/Dockerfile")
+    assert gui["image"] == "nl2sql-proxy:latest"
+    assert gui["environment"]["NL2SQL_PAGE"] == "gui"
 
 
-def test_a_pinned_gui_image_is_what_compose_runs(tmp_path_factory):
+def test_a_pinned_proxy_image_is_what_compose_runs(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("pinned"),
-        env={"GUI_IMAGE_NAME": "mcfaddja/nl2sql-gui", "GUI_IMAGE_TAG": "v4_2"},
+        env={"PROXY_IMAGE_NAME": "mcfaddja/nl2sql-proxy", "PROXY_IMAGE_TAG": "v6_3"},
     )
-    assert config["services"]["gui"]["image"] == "mcfaddja/nl2sql-gui:v4_2"
+    assert config["services"]["gui"]["image"] == "mcfaddja/nl2sql-proxy:v6_3"

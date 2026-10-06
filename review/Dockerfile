@@ -21,7 +21,7 @@
 # either way. No USER line for that reason: the owner is the host's, unknown
 # until the container starts.
 
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:02108f5d322dd89f1c9e552442c25acb0543dfdbc455693a5599624f20d9155d
 
 WORKDIR /app
 
@@ -68,14 +68,11 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8444
 
-ARG REVIEW_VERSION=6.2.0
+ARG REVIEW_VERSION=6.3.0
 ENV REVIEW_VERSION=${REVIEW_VERSION}
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os,urllib.request,ssl;\
-ctx=ssl._create_unverified_context();\
-scheme='https' if os.getenv('REVIEW_TLS_ENABLED','true').lower() not in ('0','false','no') else 'http';\
-urllib.request.urlopen(f\"{scheme}://127.0.0.1:{os.getenv('REVIEW_PORT','8444')}/healthz\", context=ctx, timeout=4)" || exit 1
+    CMD ["python", "-m", "nl2sql_common.health", "REVIEW"]
 
 LABEL org.opencontainers.image.title="nl2sql feedback review service" \
       org.opencontainers.image.description="Reviews captured feedback and promotes it into the golden question set" \

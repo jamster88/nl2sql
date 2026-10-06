@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -31,15 +32,18 @@ def run(tmp_path):
     for name, body in FAKES.items():
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
+    # The image's Python, which encodes the store's password for its URL.
+    (bin_dir / "python").symlink_to(sys.executable)
     log = tmp_path / "log"
     artifacts = tmp_path / "artifacts"
 
-    def go(*command: str, uid: int = 0) -> list[str]:
+    def go(*command: str, uid: int = 0, **extra: str) -> list[str]:
         env = {
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "FAKE_UID": str(uid),
             "FAKE_LOG": str(log),
             "MLFLOW_ARTIFACTS_DIR": str(artifacts),
+            **extra,
         }
         command = ["sh", str(SCRIPT), *command]
         trace = os.environ.get("NL2SQL_SHELL_TRACE")
@@ -76,3 +80,36 @@ def test_the_image_starts_through_it_as_an_account_of_its_own():
     assert "useradd --system --uid 10002" in dockerfile
     assert 'ENTRYPOINT ["/usr/local/bin/nl2sql-mlflow-entrypoint"]' in dockerfile
     assert "docker/mlflow/entrypoint.sh /usr/local/bin/nl2sql-mlflow-entrypoint" in dockerfile
+
+
+# --- the tracking store's URL (6.3, V6-38) -------------------------------------------------
+
+STORE = {"MLFLOW_DB_USER": "tracer", "MLFLOW_DB_HOST": "store", "MLFLOW_DB_NAME": "traces"}
+
+
+def test_the_store_url_is_built_from_the_password_file(run, tmp_path):
+    """Handed to the server in its environment, which `mlflow server` reads
+    for --backend-store-uri: on the command line, as it was until 6.3, the
+    password was in `ps` and `docker inspect`. Encoded, for a password
+    chosen by hand."""
+    secret = tmp_path / "mlflow_db_password"
+    secret.write_text("p@ss/word\n")
+    said = run("sh", "-c", 'echo "$MLFLOW_BACKEND_STORE_URI"', uid=10002,
+               MLFLOW_DB_PASSWORD_FILE=str(secret), **STORE)
+    assert said == ["postgresql://tracer:p%40ss%2Fword@store:5432/traces"]
+
+
+def test_a_store_url_given_outright_is_used_as_it_is(run, tmp_path):
+    secret = tmp_path / "mlflow_db_password"
+    secret.write_text("unused")
+    said = run("sh", "-c", 'echo "$MLFLOW_BACKEND_STORE_URI"', uid=10002,
+               MLFLOW_BACKEND_STORE_URI="sqlite:////tmp/mlflow.db", MLFLOW_DB_PASSWORD_FILE=str(secret), **STORE)
+    assert said == ["sqlite:////tmp/mlflow.db"]
+
+
+def test_compose_gives_the_server_no_url_with_a_password_in_it():
+    import yaml
+
+    server = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]["mlflow"]
+    assert not any("backend-store-uri" in part for part in server["command"])
+    assert server["environment"]["MLFLOW_DB_PASSWORD_FILE"] == "/run/secrets/mlflow_db_password"

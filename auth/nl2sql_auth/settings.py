@@ -27,6 +27,7 @@ from nl2sql_common.env import (
     env_float as _env_float,
     env_bool as _env_bool,
     env_tuple as _env_tuple,
+    env_url as _env_url,
     secret as _secret,
 )
 
@@ -190,7 +191,7 @@ class AuthSettings:
             db_sslmode=_env_str("AUTH_DB_SSLMODE", "verify-full"),
             db_sslrootcert=_env_str("AUTH_DB_SSLROOTCERT", DEFAULT_DB_CACERT),
             db_connect_timeout=_env_int("AUTH_DB_CONNECT_TIMEOUT", 5),
-            rolesync_url=_secret("AUTH_ROLESYNC_DB_URL"),
+            rolesync_url=_env_url("AUTH_ROLESYNC_DB_URL"),
             reader_role=_env_str("AUTH_READER_ROLE", "nl2sql_reader"),
             group_roles=group_roles(_env("AUTH_GROUP_ROLES")),
             role_sync_interval=_env_float("AUTH_ROLE_SYNC_INTERVAL", 30.0),

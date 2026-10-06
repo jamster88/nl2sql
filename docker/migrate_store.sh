@@ -75,14 +75,16 @@ stop() {
     rm -rf "$work"
 }
 trap stop EXIT
-pg_ctl -D "$work" -w -s -l "$work/server.log" \
-    -o "-c listen_addresses='' -c unix_socket_directories=$work -c logging_collector=off" start
-
-# Quietly: an old store made by postgres:18 and opened here, in the stores'
-# image, is told its collation version differs -- which matters to its
+# Quietly (client_min_messages, the server's own default): an old store made
+# by postgres:18 and opened here, in the stores' image, is told on every
+# connection that its collation version differs -- which matters to its
 # indexes, and the restore builds every index anew under this server's.
-PGOPTIONS="-c client_min_messages=error" \
-    pg_dump -h "$work" -U "$owner" -d "$db" -Fc --no-owner --no-privileges -f "$work/dump"
+# Postgres says so before it reads a client's own options, so PGOPTIONS
+# cannot quiet it; the server's default can.
+pg_ctl -D "$work" -w -s -l "$work/server.log" \
+    -o "-c listen_addresses='' -c unix_socket_directories=$work -c logging_collector=off -c client_min_messages=error" start
+
+pg_dump -h "$work" -U "$owner" -d "$db" -Fc --no-owner --no-privileges -f "$work/dump"
 pg_restore -l "$work/dump" | grep -v -E ' (POLICY|EXTENSION) ' > "$work/list" || true
 pg_restore -h "$target" -U postgres -d "$db" --role="$owner" --no-owner --no-privileges \
     --exit-on-error -L "$work/list" "$work/dump"

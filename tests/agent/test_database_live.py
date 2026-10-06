@@ -59,7 +59,9 @@ def test_run_select_executes_a_real_query(db: Database):
     assert result.truncated is False
 
 
-def test_run_select_respects_max_rows_and_marks_truncated():
+def test_run_select_respects_max_rows_and_marks_truncated(db: Database):
+    """Through `db` for its reachability check alone: on its own, with no
+    database up, this test failed rather than skipping as its neighbours do."""
     limited = Database(POSTGRES_URL, max_rows=2)
     result = limited.run_select("SELECT * FROM dim_date ORDER BY date_key")
     assert len(result.rows) == 2

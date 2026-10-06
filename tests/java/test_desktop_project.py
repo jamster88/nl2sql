@@ -272,7 +272,7 @@ def test_every_published_image_moves_at_the_same_tag():
     setup_sh = (REPO_ROOT / "setup.sh").read_text()
     tags = {
         name: re.search(rf'^{name}="(\S+)"', setup_sh, re.MULTILINE).group(1)
-        for name in ("AGENT_TAG", "GUI_TAG", "REVIEW_TAG", "REVIEW_GUI_TAG", "DESKTOP_TAG")
+        for name in ("AGENT_TAG", "PROXY_TAG", "REVIEW_TAG", "DESKTOP_TAG")
     }
     assert len(set(tags.values())) == 1, tags
 

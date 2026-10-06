@@ -633,9 +633,10 @@ Nothing here assumes it -- CORS and the query-string token exist so a browser
 can call the API directly when that is simpler -- but the stream is plain SSE
 and relays without translation.
 
-[`gui/nginx.conf.template`](../gui/nginx.conf.template) is that service, at
-its smallest: thirty lines of nginx that verify this server's certificate,
-add the token, and pass the event stream through unbuffered. The three
+[`proxy/pages/gui.conf.template`](../proxy/pages/gui.conf.template) -- the
+web interface's page in the proxy image -- is that service, at its
+smallest: fifty lines of nginx that verify this server's certificate, add
+the token with sign-in off, and pass the event stream through unbuffered. The three
 settings that keep it unbuffered are the ones worth copying --
 `proxy_buffering off`, `proxy_cache off` and `gzip off` -- because without
 any one of them the stream is held until the answer is finished, and it
@@ -682,7 +683,7 @@ an unset variable through as an empty string, and empty is read as absent.
 | `AUTH_ENABLED` | `true` | Accept signed-in people; their questions run as them. Only `false`, `0`, `no` or `off` turns it off, and the server then says it is open |
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against. Read when it appears and again when it changes |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
-| `API_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
+| `API_TOKEN` / `API_TOKEN_FILE` | *(none)*; `/run/secrets/api_token` in compose | A static service token, or the file holding it -- the file wins when both are set, and since 6.3 compose sets only the file, so the token is in no container's environment: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
 | `API_TOKEN_NAME` | `api-token` | Who the token is: its questions are recorded under `token:<name>` |
 | `API_TOKEN_ROLES` | `nl2sql_users` | The roles it holds, and no others. `nl2sql_admins` here lets it reload |
 | `API_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly |
@@ -741,6 +742,7 @@ It is configured entirely from the environment, which is what compose sets:
 | --- | --- | --- |
 | `API_BASE_URL` | `https://nl2sql-api:8443` | The API to drive |
 | `API_TOKEN` | *(none)* | Presented as a bearer token when set |
+| `API_TOKEN_FILE` | *(none)*; `/run/secrets/api_token` in compose | Read for the token when `API_TOKEN` is not set (6.3). The token itself is never printed: the log says only `bearer token` |
 | `API_CACERT` | *(none)*; the stack's CA in compose | A CA file to verify against; tried first |
 | `API_INSECURE` | `false` | Allow `--insecure` as a last resort. With this false and nothing to verify against, it refuses to run |
 | `APITEST_QUESTION` | `How many stores are there?` | The question to ask, unless one is given as an argument |

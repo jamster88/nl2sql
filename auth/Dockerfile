@@ -21,7 +21,7 @@
 # either (V6-31, `server.main`). No USER line for that reason: a named
 # volume Docker or a 6.1 container made is root's, and only root can hand
 # it over. Its TLS key is the account's already, from the pki service.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:02108f5d322dd89f1c9e552442c25acb0543dfdbc455693a5599624f20d9155d
 
 WORKDIR /app
 
@@ -56,15 +56,12 @@ RUN mkdir -p /etc/nl2sql/tls /etc/nl2sql/ldap-tls /etc/nl2sql/pg-tls /etc/nl2sql
 
 EXPOSE 8446
 
-ARG AUTH_VERSION=6.2.0
+ARG AUTH_VERSION=6.3.0
 ENV AUTH_VERSION=${AUTH_VERSION} \
     PYTHONUNBUFFERED=1
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os,urllib.request,ssl;\
-ctx=ssl._create_unverified_context();\
-scheme='https' if os.getenv('AUTH_TLS_ENABLED','true').lower() not in ('0','false','no') else 'http';\
-urllib.request.urlopen(f\"{scheme}://127.0.0.1:{os.getenv('AUTH_PORT','8446')}/healthz\", context=ctx, timeout=4)" || exit 1
+    CMD ["python", "-m", "nl2sql_common.health", "AUTH"]
 
 LABEL org.opencontainers.image.title="nl2sql auth service" \
       org.opencontainers.image.description="Sign-in against the retail database and its directory, the session, the role sync and the directory's web interface" \

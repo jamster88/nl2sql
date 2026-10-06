@@ -554,7 +554,7 @@ Every setting is an environment variable with a CLI override:
 | `EXAMPLES_GROUNDING_WEIGHT` | -- | 0.25 |
 | `EXAMPLES_MAX_CONTEXT_CHARS` | -- | 8000 |
 | `SNIPPETS_ENABLED` | `--snippets` / `--no-snippets` | on |
-| `SNIPPET_DB_URL` | `--snippet-db-url` | the compose snippetsdb, as the read-only `snippets_reader` role |
+| `SNIPPET_DB_URL` | `--snippet-db-url` | the snippets database in the compose runtime stores (`nl2sql-stores`, 6.3), as the read-only `snippets_reader` role, with its password from `SNIPPET_DB_PASSWORD_FILE` |
 | `SNIPPETS_TOP_K` | `--snippets-top-k` | 5 |
 | `SNIPPETS_MIN_SCORE` | -- | 0.35, the combined score a snippet must reach |
 | `SNIPPETS_MIN_SIMILARITY` | -- | 0.62, the cosine similarity at which meaning alone qualifies a snippet |

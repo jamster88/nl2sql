@@ -25,7 +25,7 @@
 #
 # No port is published in compose. Only the retail database and the auth
 # service talk to this, on the stack's own network.
-FROM alpine:3.22
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 
 RUN apk add --no-cache \
         openldap~2.6.8 \
@@ -75,6 +75,6 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=5 \
 
 LABEL org.opencontainers.image.title="nl2sql directory" \
       org.opencontainers.image.description="OpenLDAP for the nl2sql stack: standalone, or a read-only replica of another directory" \
-      org.opencontainers.image.version="6.2.0"
+      org.opencontainers.image.version="6.3.0"
 
 ENTRYPOINT ["python3", "-m", "nl2sql_ldap"]

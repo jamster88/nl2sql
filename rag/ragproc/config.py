@@ -10,6 +10,8 @@ import os
 import re
 from dataclasses import dataclass
 
+from nl2sql_common.env import env_url
+
 # Chunk store (plain Postgres) -- deliberately not 5432, which is the retail
 # testing database.
 DEFAULT_CHUNK_DB_URL = "postgresql://ragproc:ragproc@localhost:5433/nl2sql_chunks"
@@ -45,8 +47,8 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            chunk_db_url=os.getenv("CHUNK_DB_URL", DEFAULT_CHUNK_DB_URL),
-            vector_db_url=os.getenv("VECTOR_DB_URL", DEFAULT_VECTOR_DB_URL),
+            chunk_db_url=env_url("CHUNK_DB_URL", DEFAULT_CHUNK_DB_URL),
+            vector_db_url=env_url("VECTOR_DB_URL", DEFAULT_VECTOR_DB_URL),
             embed_backend=os.getenv("EMBED_BACKEND", "ollama"),
             embed_model=os.getenv("EMBED_MODEL", DEFAULT_EMBED_MODEL),
             embed_dim=_env_int("EMBED_DIM", DEFAULT_EMBED_DIM),

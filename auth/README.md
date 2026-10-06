@@ -7,7 +7,7 @@ this directory or beside it:
 | --- | --- | --- |
 | the directory | [`ldap/`](../ldap/README.md), container `nl2sql-ldap` | people, their passwords and the four groups; standalone, or a read-only replica of another directory |
 | the auth service | `auth/nl2sql_auth`, container `nl2sql-auth`, port 8446 | signs people in, issues the session, keeps the database's roles in step with the directory, serves the directory page's API |
-| the directory page | `auth/gui`, container `nl2sql-directory-gui`, port 8084 | people and groups, for `nl2sql-admins`; standalone only |
+| the directory page | `auth/gui`, served by the proxy image's `directory` page (6.3), container `nl2sql-directory-gui`, port 8084 | people and groups, for `nl2sql-admins`; standalone only |
 
 and one package every other service imports, `nl2sql_identity`: the
 session format and the guard the API, the SQL console and the review
@@ -23,8 +23,10 @@ static token, or none.
 ## How a sign-in works
 
 The password is checked by **the retail database**, not by this service.
-`launch.sh` writes two lines at the top of the database's `pg_hba.conf`
-(`docker/ldap_hba.sh`): the roles that keep their own passwords -- the
+The `dbprep` one-shot writes two lines at the top of the database's
+`pg_hba.conf` on every start (`common/nl2sql_ops/retail.py`, through the
+server itself, checked by `pg_hba_file_rules` before it is reloaded; until
+6.3, `docker/ldap_hba.sh` from `launch.sh`): the roles that keep their own passwords -- the
 agent's reader and the role sync -- by `scram-sha-256`, and every member of
 `nl2sql_ldap` by `ldap`, which binds to the directory as
 `uid=<name>,ou=people,<base>` over StartTLS. Signing in is this service
@@ -85,7 +87,8 @@ refused with `401 session_revoked`:
 The lists live in the retail database, in a schema the sync's login writes
 and nobody reads: the reader -- and so the services' rechecks -- may only
 call `nl2sql_auth.session_revoked(user, jti, issued_at)`, which answers yes
-or no about one session (`docker/auth_roles.sql`). This service forgets its
+or no about one session (made by the `dbprep` one-shot,
+`nl2sql_ops.retail.ensure_signin`). This service forgets its
 own answers at once; every other service within its minute, or at once on
 an administrator's `POST /v1/admin/reload` to the API. A token counts whole
 seconds, so a sign-in in the second a password changed is signed at the
@@ -117,8 +120,8 @@ own log.
 
 All four can ask questions: the three narrower ones are members of
 `nl2sql_users` (`WITH INHERIT TRUE, SET FALSE` -- what it may read, never who
-it is). `docker/auth_roles.sql` makes them, and what each may `SELECT`, on
-every start. Which groups a service lets in is that service's setting:
+it is). The `dbprep` one-shot makes them, and what each may `SELECT`, on
+every start (`docker/auth_roles.sql` until 6.3, which `launch.sh` ran). Which groups a service lets in is that service's setting:
 `REVIEW_REVIEWER_ROLES`, `REVIEW_CURATOR_ROLES`, `CONSOLE_ALLOWED_ROLES`,
 `MLFLOW_ALLOWED_ROLES`.
 
@@ -168,7 +171,8 @@ has the commands.
 
 ## MLflow's front door
 
-MLflow has no login of its own. `docker/mlflow-proxy` is nginx in front of
+MLflow has no login of its own. The proxy image's `mlflow` page
+([`proxy/README.md`](../proxy/README.md)) is nginx in front of
 it, over HTTPS, asking `GET /auth/verify` about every request (nginx's
 `auth_request`): `204` lets it through, `401` sends a browser to sign in
 (`/auth/login`, a plain HTML form served here) and answers an API client
@@ -282,11 +286,11 @@ The auth service's, read from the environment; compose passes each from
 | `AUTH_DB_SSLMODE` | `verify-full` | a person's password crosses this hop; anything weaker is warned about at start |
 | `AUTH_DB_SSLROOTCERT` | `/etc/nl2sql/pg-tls/server.crt` | the database's own certificate, from the `pgtls` volume |
 | `AUTH_DB_CONNECT_TIMEOUT` | `5` | seconds |
-| `AUTH_ROLESYNC_DB_URL` | -- | compose builds it from `AUTH_ROLESYNC_USER` (`nl2sql_rolesync`) and `AUTH_ROLESYNC_PASSWORD`, which setup.sh generates; held to `AUTH_DB_SSLMODE` unless it says `sslmode=` itself |
+| `AUTH_ROLESYNC_DB_URL` | -- | compose builds it from `AUTH_ROLESYNC_USER` (`nl2sql_rolesync`), with no password; the password is read from `AUTH_ROLESYNC_DB_PASSWORD_FILE`, `secrets/auth_rolesync_password`, which setup.sh generates and dbprep sets the role's from (6.3); held to `AUTH_DB_SSLMODE` unless it says `sslmode=` itself |
 | `AUTH_READER_ROLE` | `nl2sql_reader` | the role granted each person's, to become them |
 | `AUTH_GROUP_ROLES` | the four above | `group=role,group=role` |
 | `AUTH_ROLE_SYNC_INTERVAL` | `30` | seconds |
-| `AUTH_USER_STATEMENT_TIMEOUT_MS` | `60000` | each person's own |
+| `AUTH_USER_STATEMENT_TIMEOUT_MS` | `60000` | each person's own; with 16 MB of `work_mem` and a minute idle in a transaction (6.3), checked again by every sync |
 | `AUTH_USER_CONNECTION_LIMIT` | `5` | each person's own |
 | `AUTH_LDAP_URL` | `ldap://nl2sql-ldap:389` | for the directory page and password changes |
 | `AUTH_LDAP_STARTTLS` | `true` | |
@@ -294,7 +298,7 @@ The auth service's, read from the environment; compose passes each from
 | `AUTH_LDAP_TIMEOUT` | `10` | seconds |
 | `LDAP_MODE` | `standalone` | the directory's, so a replica is never edited |
 | `LDAP_BASE_DN` | `dc=nl2sql,dc=local` | |
-| `LDAP_SERVICE_PASSWORD` | -- | this service's account in the directory |
+| `LDAP_SERVICE_PASSWORD` | -- | this service's account in the directory; compose gives `LDAP_SERVICE_PASSWORD_FILE`, `secrets/ldap_service_password`, which wins when set (6.3) |
 | `LDAP_MIN_PASSWORD_LENGTH` | `12` | |
 | `MLFLOW_ALLOWED_ROLES` | `nl2sql_reviewers,nl2sql_admins` | |
 | `AUTH_CORS_ORIGINS` | -- | |

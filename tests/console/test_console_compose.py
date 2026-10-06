@@ -15,6 +15,9 @@ What carries weight here is what no single file shows:
 * **Its ports are this machine's.** Every other port in the file is opened
   the way Docker opens ports; a page that runs SQL is published on loopback
   unless someone says otherwise.
+
+Since 6.3 its page is the proxy image's `console` page (V6-37), and the
+reader's password and its token are files (V6-38).
 """
 
 from __future__ import annotations
@@ -29,16 +32,13 @@ import pytest
 
 from nl2sql_agent.config import Settings
 from nl2sql_agent.console.settings import AGENT_SETTINGS, SERVICE_HOSTNAME
+from tests.settings_names import proxy_names, read_names, settable_names
 
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-#: Worked out by the start-up script -- the sign-in hop's TLS include and this
-#: listener's -- rather than set by anyone.
-SIGN_IN_COMPUTED = {"NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF"}
-CONSOLE = REPO_ROOT / "console"
-PROFILES = ("agent", "api", "gui", "feedback", "review", "reviewgui", "console", "consolegui")
+PROFILES = ("agent", "api", "gui", "review", "reviewgui", "console", "consolegui")
 
 
 def _compose_config(tmp_path: Path, *profiles: str, env: dict | None = None) -> dict:
@@ -114,9 +114,9 @@ def test_it_runs_the_agents_image_as_a_third_way_in(console: dict, config: dict)
 
 def test_it_reads_the_agents_database_as_the_agents_role(console: dict, config: dict):
     url = console["environment"]["DATABASE_URL"]
-    assert url == config["services"]["agent"]["environment"]["DATABASE_URL"]
-    assert url.startswith("postgresql+psycopg://nl2sql_reader:")
-    assert "@postgres:5432/nl2sql_retail" in url
+    agent = config["services"]["agent"]["environment"]
+    assert url == agent["DATABASE_URL"] == "postgresql+psycopg://nl2sql_reader@postgres:5432/nl2sql_retail"
+    assert console["environment"]["DATABASE_PASSWORD_FILE"] == agent["DATABASE_PASSWORD_FILE"]
 
 
 def test_it_runs_under_the_agents_limits(console: dict, config: dict):
@@ -136,24 +136,27 @@ def test_a_limit_changed_on_the_host_changes_for_both(tmp_path_factory):
     for name in AGENT_SETTINGS:
         assert console[name] == agent[name]
     assert console["MAX_PLAN_COST"] == "5000"
-    assert console["DATABASE_URL"].startswith("postgresql+psycopg://someone:")
+    assert console["DATABASE_URL"].startswith("postgresql+psycopg://someone@")
 
 
 def test_it_holds_no_credential_but_the_readers(console: dict):
     """One database, one role. None of the stores the agent retrieves from,
     none of the feedback system's, and never the retail owner."""
     environment = json.dumps(console["environment"])
-    for marker in ("vectordb", "chunkdb", "feedbackdb", "correctionsdb", "completionsdb", "nl2sql:nl2sql@"):
+    for marker in ("vectordb", "chunkdb", "nl2sql-stores", "//nl2sql@"):
         assert marker not in environment
     assert [key for key in console["environment"] if key.endswith("_URL")] == ["DATABASE_URL"]
+    assert [secret["source"] for secret in console["secrets"]] == ["postgres_reader_password", "console_token"]
 
 
 def test_it_waits_for_the_database_and_its_certificate_and_nothing_else(console: dict):
     """Not the API: its certificate is its own, issued by the pki service,
-    and the retail database is the only thing it talks to."""
-    assert set(console["depends_on"]) == {"pki", "postgres"}
+    and the retail database is the only thing it talks to -- once dbprep has
+    made the reader it connects as and set its password (6.3)."""
+    assert set(console["depends_on"]) == {"pki", "dbprep", "postgres"}
     assert console["depends_on"]["postgres"]["condition"] == "service_healthy"
     assert console["depends_on"]["pki"]["condition"] == "service_completed_successfully"
+    assert console["depends_on"]["dbprep"]["condition"] == "service_completed_successfully"
 
 
 # ---------------------------------------------------------------------------
@@ -166,11 +169,11 @@ def test_the_console_is_issued_its_own_certificate(config: dict):
 
 
 def test_the_console_gui_verifies_a_name_that_certificate_covers(consolegui: dict, config: dict):
-    assert consolegui["environment"]["CONSOLE_SSL_NAME"] in _issued(config, "console")
+    assert consolegui["environment"]["UPSTREAM_SSL_NAME"] in _issued(config, "console")
 
 
 def test_the_console_gui_proxies_the_name_it_verifies(consolegui: dict, console: dict):
-    assert consolegui["environment"]["CONSOLE_SSL_NAME"] in consolegui["environment"]["CONSOLE_UPSTREAM"]
+    assert consolegui["environment"]["UPSTREAM_SSL_NAME"] in consolegui["environment"]["UPSTREAM"]
     assert console["container_name"] == SERVICE_HOSTNAME
 
 
@@ -197,24 +200,27 @@ def test_the_console_gui_waits_for_the_console(consolegui: dict):
 
 
 def test_the_token_never_reaches_the_browser(consolegui: dict, console: dict):
-    """Held by nginx in the interface's container and by the console."""
-    assert "CONSOLE_TOKEN" in consolegui["environment"]
-    assert "CONSOLE_TOKEN" in console["environment"]
+    """Held by nginx in the interface's container and by the console: one
+    secret file, in neither's environment (V6-38)."""
+    assert consolegui["environment"]["UPSTREAM_TOKEN_FILE"] == console["environment"]["CONSOLE_TOKEN_FILE"]
+    assert console["environment"]["CONSOLE_TOKEN_FILE"] == "/run/secrets/console_token"
+    assert "CONSOLE_TOKEN" not in consolegui["environment"] and "CONSOLE_TOKEN" not in console["environment"]
 
 
 def test_the_proxy_outlasts_the_agents_statement_timeout(consolegui: dict):
     """A query can run until the database cancels it, and a proxy that gives
     up first turns the database's answer into a gateway error."""
-    timeout = consolegui["environment"]["CONSOLE_READ_TIMEOUT"]
+    timeout = consolegui["environment"]["UPSTREAM_READ_TIMEOUT"]
     assert timeout.endswith("s")
     assert int(timeout.rstrip("s")) * 1000 > Settings().statement_timeout_ms
 
 
-def test_the_three_interfaces_are_three_images(config: dict):
+def test_the_three_interfaces_are_three_pages_of_one_image(config: dict):
+    """One image since 6.3 (V6-37), each container serving only its page."""
     services = config["services"]
-    images = {services[name]["image"] for name in ("gui", "reviewgui", "consolegui")}
-    dockerfiles = {services[name]["build"]["dockerfile"] for name in ("gui", "reviewgui", "consolegui")}
-    assert len(images) == len(dockerfiles) == 3
+    names = ("gui", "reviewgui", "consolegui")
+    assert len({services[name]["image"] for name in names}) == 1
+    assert [services[name]["environment"]["NL2SQL_PAGE"] for name in names] == ["gui", "review", "console"]
 
 
 # ---------------------------------------------------------------------------
@@ -263,10 +269,11 @@ def test_the_published_port_follows_the_configured_one(tmp_path_factory):
 
 
 def test_the_console_is_health_checked_on_the_scheme_it_serves(console: dict):
-    test = " ".join(console["healthcheck"]["test"])
-    assert "/healthz" in test
-    assert "CONSOLE_TLS_ENABLED" in test
-    assert "CONSOLE_TOKEN" not in test
+    """The shared check (6.3, V6-37): the scheme CONSOLE_TLS_ENABLED says,
+    the certificate verified, no token needed."""
+    assert console["healthcheck"]["test"] == ["CMD", "python", "-m", "nl2sql_common.health", "CONSOLE"]
+    health = (REPO_ROOT / "common" / "nl2sql_common" / "health.py").read_text()
+    assert '_TLS_ENABLED"' in health and '"CONSOLE": 8445' in health and "TOKEN" not in health
 
 
 @pytest.mark.parametrize("service", ["console", "consolegui"])
@@ -279,34 +286,35 @@ def test_both_restart_unless_stopped(config: dict, service: str):
 # ---------------------------------------------------------------------------
 
 
-def _console_settings() -> set[str]:
+def _console_source() -> str:
     source = (REPO_ROOT / "agent" / "nl2sql_agent" / "console" / "settings.py").read_text()
-    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
-    assert read, "no environment variables found in console/settings.py -- the regex needs updating"
-    return read | set(AGENT_SETTINGS)
+    assert "CONSOLE_TOKEN" in read_names(source), "no environment variables found in console/settings.py"
+    return source
+
+
+#: The agent's settings the console runs under; the database URL is read with
+#: its password from the file beside it, as config.py reads it.
+SHARED = {*AGENT_SETTINGS, "DATABASE_PASSWORD_FILE"}
 
 
 def test_every_setting_the_console_reads_can_be_set_through_compose(console: dict):
-    missing = sorted(_console_settings() - set(console["environment"]))
+    missing = sorted((settable_names(_console_source()) | set(AGENT_SETTINGS)) - set(console["environment"]))
     assert missing == [], f"the console reads these, but compose never passes them: {missing}"
 
 
 def test_every_variable_compose_sets_on_the_console_is_one_it_reads(console: dict):
-    unread = sorted(set(console["environment"]) - _console_settings())
+    unread = sorted(set(console["environment"]) - read_names(_console_source()) - SHARED)
     assert unread == [], f"compose sets {unread} on the console, which nothing in it reads"
 
 
 def test_an_unset_console_setting_arrives_empty_so_the_default_stands(console: dict):
-    for name in ("CONSOLE_TOKEN", "CONSOLE_MAX_ROWS", "CONSOLE_CORS_ORIGINS", "MAX_ROWS"):
+    for name in ("CONSOLE_MAX_ROWS", "CONSOLE_CORS_ORIGINS", "MAX_ROWS"):
         assert console["environment"][name] == "", f"{name} is pinned in compose rather than forwarded"
 
 
 def _proxy_variables() -> set[str]:
-    """Every ${NAME} the interface's nginx template and start-up script substitute."""
-    sources = (CONSOLE / "nginx.conf.template").read_text() + (CONSOLE / "10-nl2sql-console-config.envsh").read_text()
-    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources))
-    # Worked out by the start-up script rather than set by anyone.
-    return names - {"CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF", *SIGN_IN_COMPUTED, "CONSOLE_GUI_LISTEN_TLS"}
+    """Every setting the proxy image reads for the console's page."""
+    return proxy_names("console")
 
 
 def test_every_setting_the_console_proxy_reads_can_be_set_through_compose(consolegui: dict):

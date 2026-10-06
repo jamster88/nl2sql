@@ -36,6 +36,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.settings_names import proxy_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -86,9 +88,11 @@ def _flags(service: dict) -> dict[str, str]:
 
 
 def _base(dockerfile: str) -> str:
-    """The image a Dockerfile is built from."""
+    """The image a Dockerfile is built from, by name and tag: every base is
+    pinned by digest as well since 6.3 (V6-35), which tests/security/
+    test_pinned_images.py checks."""
     [base] = re.findall(r"^FROM (\S+)$", (REPO_ROOT / dockerfile).read_text(), re.MULTILINE)
-    return base
+    return base.partition("@sha256:")[0]
 
 
 def _pin(path: str, package: str) -> str:
@@ -202,7 +206,9 @@ def test_the_store_is_not_published(mlflowdb: dict):
 
 
 def test_the_store_keeps_its_data_in_its_own_volume(mlflowdb: dict, config: dict):
-    [mount] = mlflowdb["volumes"]
+    mount, socket = mlflowdb["volumes"]
+    # Its socket, shared with the dbprep one-shot alone (6.3, V6-41).
+    assert (socket["source"], socket["target"]) == ("mlflowsocket", "/var/run/postgresql")
     assert mount["target"] == "/var/lib/postgresql/data"
     assert mount["source"] == "mlflowdata"
     assert mlflowdb["environment"]["PGDATA"].startswith(mount["target"] + "/")
@@ -210,27 +216,33 @@ def test_the_store_keeps_its_data_in_its_own_volume(mlflowdb: dict, config: dict
 
 
 def test_the_store_is_health_checked_and_the_server_waits_for_it(mlflowdb: dict, mlflow: dict):
-    assert "pg_isready -U mlflow -d mlflow" in " ".join(mlflowdb["healthcheck"]["test"])
+    assert "pg_isready -h 127.0.0.1 -U mlflow -d mlflow" in " ".join(mlflowdb["healthcheck"]["test"])
     assert mlflow["depends_on"]["mlflowdb"]["condition"] == "service_healthy"
 
 
 def test_the_server_reaches_the_store_as_the_store_was_created(mlflow: dict, mlflowdb: dict):
-    env = mlflowdb["environment"]
-    assert _flags(mlflow)["backend-store-uri"] == (
-        f"postgresql://{env['POSTGRES_USER']}:{env['POSTGRES_PASSWORD']}@"
-        f"{mlflowdb['container_name']}:5432/{env['POSTGRES_DB']}"
+    """The URL is built by the server's entrypoint, from these and the
+    password file (6.3, V6-38): on the command line, as it was until 6.3,
+    the password was in `ps` and `docker inspect`."""
+    store, server = mlflowdb["environment"], mlflow["environment"]
+    assert "backend-store-uri" not in _flags(mlflow)
+    assert (server["MLFLOW_DB_USER"], server["MLFLOW_DB_NAME"], server["MLFLOW_DB_HOST"]) == (
+        store["POSTGRES_USER"], store["POSTGRES_DB"], mlflowdb["container_name"],
     )
+    assert server["MLFLOW_DB_PASSWORD_FILE"] == store["POSTGRES_PASSWORD_FILE"] == "/run/secrets/mlflow_db_password"
+    entrypoint = (REPO_ROOT / "docker" / "mlflow" / "entrypoint.sh").read_text()
+    assert 'MLFLOW_BACKEND_STORE_URI="postgresql://${MLFLOW_DB_USER:-mlflow}:${password}@' in entrypoint
 
 
 def test_the_stores_credentials_reach_both_sides_from_one_setting(tmp_path_factory):
     config = _compose_config(
-        tmp_path_factory.mktemp("creds"),
-        env={"MLFLOW_DB_USER": "tracer", "MLFLOW_DB_PASSWORD": "pw", "MLFLOW_DB_NAME": "traces"},
+        tmp_path_factory.mktemp("creds"), env={"MLFLOW_DB_USER": "tracer", "MLFLOW_DB_NAME": "traces"},
     )
-    assert _flags(config["services"]["mlflow"])["backend-store-uri"] == (
-        "postgresql://tracer:pw@nl2sql-mlflowdb:5432/traces"
+    server = config["services"]["mlflow"]["environment"]
+    assert (server["MLFLOW_DB_USER"], server["MLFLOW_DB_NAME"]) == ("tracer", "traces")
+    assert "pg_isready -h 127.0.0.1 -U tracer -d traces" in " ".join(
+        config["services"]["mlflowdb"]["healthcheck"]["test"]
     )
-    assert "pg_isready -U tracer -d traces" in " ".join(config["services"]["mlflowdb"]["healthcheck"]["test"])
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +283,8 @@ def test_the_interface_is_this_machines_unless_someone_says_otherwise(mlflow: di
 
 def test_the_front_door_asks_about_every_request_over_https(proxy: dict):
     env = proxy["environment"]
-    assert (env["AUTH_ENABLED"], env["MLFLOW_PROXY_TLS_ENABLED"]) == ("true", "true")
-    assert env["MLFLOW_UPSTREAM"] == "http://nl2sql-mlflow:5000"
+    assert (env["AUTH_ENABLED"], env["PROXY_TLS_ENABLED"], env["NL2SQL_PAGE"]) == ("true", "true", "mlflow")
+    assert env["UPSTREAM"] == "http://nl2sql-mlflow:5000"
     assert env["AUTH_UPSTREAM"] == "https://nl2sql-auth:8446"
     # It waits for MLflow, and for its own certificate from the pki service
     # (V6-36), which it also verifies the auth service with -- so it waits
@@ -286,11 +298,7 @@ def test_the_front_door_asks_about_every_request_over_https(proxy: dict):
 
 
 def test_every_setting_the_front_door_reads_can_be_set_through_compose_and_nothing_else_is(proxy: dict):
-    root = REPO_ROOT / "docker" / "mlflow-proxy"
-    sources = (root / "nginx.conf.template").read_text() + (root / "10-nl2sql-mlflow-proxy.envsh").read_text()
-    computed = {"MLFLOW_AUTH_HEADER", "MLFLOW_PROXY_LISTEN_TLS", "NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF",
-                "NGINX_SIGNIN_CONF", "NGINX_UPSTREAM_TLS_CONF"}
-    read = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - computed
+    read = proxy_names("mlflow")
     assert sorted(read - set(proxy["environment"])) == []
     assert sorted(set(proxy["environment"]) - read) == []
 

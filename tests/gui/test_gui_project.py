@@ -11,7 +11,6 @@ production.
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -49,12 +48,14 @@ def vitest_config() -> str:
 
 @pytest.fixture(scope="module")
 def nginx_template() -> str:
-    return (GUI / "nginx.conf.template").read_text()
+    """The page's server block in the one proxy image (V6-37)."""
+    return (REPO_ROOT / "proxy" / "pages" / "gui.conf.template").read_text()
 
 
 @pytest.fixture(scope="module")
-def dockerfile() -> str:
-    return (GUI / "Dockerfile").read_text()
+def site_conf() -> str:
+    """What every page serves of its own: the bundle, cached, from any path."""
+    return (REPO_ROOT / "proxy" / "shared" / "site.conf").read_text()
 
 
 @pytest.fixture(scope="module")
@@ -219,7 +220,7 @@ def test_a_reconnecting_browser_can_resume_where_it_left_off(api_location: str):
 
 
 def test_the_proxy_outlasts_a_question(api_location: str):
-    assert "proxy_read_timeout ${API_READ_TIMEOUT};" in api_location
+    assert "proxy_read_timeout ${UPSTREAM_READ_TIMEOUT};" in api_location
 
 
 def test_the_upstream_is_resolved_per_request(api_location: str):
@@ -228,306 +229,22 @@ def test_the_upstream_is_resolved_per_request(api_location: str):
     That stops the GUI starting when the API is not up yet, and leaves it
     talking to a stale address after the API is restarted onto a new one.
     """
-    assert "resolver ${GUI_RESOLVER}" in api_location
-    assert "set $upstream ${API_UPSTREAM};" in api_location
+    assert "resolver ${PROXY_RESOLVER}" in api_location
+    assert "set $upstream ${UPSTREAM};" in api_location
     assert "proxy_pass $upstream$request_uri;" in api_location
 
 
 def test_the_certificate_block_is_written_at_start_up(api_location: str):
     """It has to be, because it is wrong when the upstream is plain HTTP."""
-    assert "include /etc/nginx/nl2sql-upstream-tls.conf;" in api_location
+    assert "include /tmp/nginx/upstream-tls.conf;" in api_location
     assert "proxy_ssl_verify" not in api_location
 
 
-def test_the_page_is_served_from_any_path_but_the_assets_are_immutable(nginx_template: str):
-    assert "try_files $uri $uri/ /index.html;" in nginx_template
-    assert 'add_header Cache-Control "public, immutable";' in nginx_template
-    assert 'add_header Cache-Control "no-cache";' in nginx_template
-
-
-# ---------------------------------------------------------------------------
-# The start-up script nginx sources
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def config_envsh() -> Path:
-    return GUI / "10-nl2sql-config.envsh"
-
-
-def _env(tmp_path: Path, **overrides: str) -> dict[str, str]:
-    """The environment nginx would source this script in, redirected to a
-    temporary directory so the test does not write to /etc."""
-    env = {
-        "PATH": "/usr/bin:/bin",
-        "NGINX_UPSTREAM_TLS_CONF": str(tmp_path / "upstream-tls.conf"),
-        "NGINX_AUTH_TLS_CONF": str(tmp_path / "auth-tls.conf"),
-        "NGINX_SERVER_TLS_CONF": str(tmp_path / "server-tls.conf"),
-        "API_UPSTREAM": "https://nl2sql-api:8443",
-        "API_CACERT": "/etc/nl2sql/tls/server.crt",
-        "API_SSL_NAME": "nl2sql-api",
-        # Plain unless a test says otherwise, so each decision is tested on
-        # its own rather than every test needing every certificate.
-        "AUTH_UPSTREAM": "http://nl2sql-auth:8446",
-        "AUTH_CACERT": "/etc/nl2sql/tls/server.crt",
-        "AUTH_SSL_NAME": "nl2sql-auth",
-        "GUI_TLS_ENABLED": "false",
-        "GUI_TLS_CERT_FILE": "/etc/nl2sql/tls/server.crt",
-        "GUI_TLS_KEY_FILE": "/etc/nl2sql/tls/server.key",
-    }
-    env.update(overrides)
-    return env
-
-
-def _source(script: Path, env: dict[str, str], then: str = "true") -> subprocess.CompletedProcess:
-    command = ["sh", "-c", f". {script}; {then}"]
-    if os.environ.get("NL2SQL_SHELL_TRACE"):
-        # See tests/shell_coverage.py. `sh -x` rather than `bash -x`: this
-        # script is sourced by the nginx image's entrypoint, which is not
-        # bash, and it is run here the same way.
-        #
-        # The name is written in rather than derived: POSIX sh has no
-        # BASH_SOURCE, and `$0` under `sh -c` is the shell. Only one script
-        # is sourced here, so the label is known without asking.
-        env = {**env, "PS4": f"+@{script.name}@${{LINENO}}@ "}
-        command = ["sh", "-x", "-c", f". {script}; {then}"]
-    result = subprocess.run(command, capture_output=True, text=True, env=env)
-    directory = os.environ.get("NL2SQL_SHELL_TRACE")
-    if directory:
-        with open(os.path.join(directory, "trace.log"), "a") as handle:
-            handle.write(result.stderr)
-    return result
-
-
-def test_the_start_up_script_is_valid_shell(config_envsh: Path):
-    result = subprocess.run(["sh", "-n", str(config_envsh)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
-
-def test_the_start_up_script_is_executable(config_envsh: Path):
-    assert config_envsh.stat().st_mode & 0o111
-
-
-def test_it_is_sourced_rather_than_run(config_envsh: Path, dockerfile: str):
-    """The `.envsh` extension is what tells the nginx entrypoint to source it,
-    and an exported variable has to survive into the envsubst step after."""
-    assert config_envsh.suffix == ".envsh"
-    assert "/docker-entrypoint.d/10-nl2sql-config.envsh" in dockerfile
-
-
-@pytest.mark.parametrize(
-    ("token", "expected"),
-    [("s3cret", "Bearer s3cret"), ("", ""), (None, "")],
-)
-def test_no_token_means_no_authorization_header(config_envsh: Path, token, expected, tmp_path):
-    """nginx omits a header whose value is empty, so "no token" has to
-    produce an empty string rather than the word "Bearer" on its own. Only
-    with sign-in switched off, which the page says on its way up."""
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", AUTH_ENABLED="false")
-    if token is not None:
-        env["API_TOKEN"] = token
-    result = _source(config_envsh, env, 'printf "%s" "$API_AUTH_HEADER"')
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == expected
-    assert "nl2sql-gui: sign-in is off (AUTH_ENABLED=false)" in result.stderr
-
-
-@pytest.mark.parametrize("enabled", ["true", "1", "yes", "on", "", "maybe", None])
-def test_with_sign_in_on_the_proxy_adds_no_token(config_envsh: Path, enabled, tmp_path):
-    """The browser's session goes through instead; a token here would sign
-    every visitor in as the service. On is the default (V6-54): unset,
-    empty or misspelt is on, and only a named "off" turns it off."""
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", API_TOKEN="s3cret")
-    env.pop("AUTH_ENABLED", None)
-    if enabled is not None:
-        env["AUTH_ENABLED"] = enabled
-    result = _source(config_envsh, env, 'printf "%s" "$API_AUTH_HEADER"')
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == ""
-
-
-def test_the_sign_in_hop_is_verified_too(config_envsh: Path, tmp_path: Path):
-    cacert = tmp_path / "server.crt"
-    cacert.write_text("readable")
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", AUTH_UPSTREAM="https://nl2sql-auth:8446", AUTH_CACERT=str(cacert))
-    assert _source(config_envsh, env).returncode == 0
-    written = (tmp_path / "auth-tls.conf").read_text()
-    assert "proxy_ssl_verify on;" in written and "proxy_ssl_name nl2sql-auth;" in written
-
-
-def test_a_sign_in_hop_with_no_certificate_refuses_to_start(config_envsh: Path, tmp_path: Path):
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", AUTH_UPSTREAM="https://nl2sql-auth:8446",
-               AUTH_CACERT=str(tmp_path / "absent.crt"))
-    result = _source(config_envsh, env)
-    assert result.returncode != 0
-    assert "AUTH_UPSTREAM is https://nl2sql-auth:8446 but there is no readable" in result.stderr
-    assert "certificate at AUTH_CACERT" in result.stderr
-
-
-def test_the_page_is_https_with_the_apis_certificate(config_envsh: Path, tmp_path: Path):
-    cert, key = tmp_path / "server.crt", tmp_path / "server.key"
-    cert.write_text("c")
-    key.write_text("k")
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", GUI_TLS_ENABLED="true",
-               GUI_TLS_CERT_FILE=str(cert), GUI_TLS_KEY_FILE=str(key))
-    result = _source(config_envsh, env, 'printf "[%s]" "$GUI_LISTEN_TLS"')
-    assert result.returncode == 0, result.stderr
-    assert result.stdout == "[ ssl]"
-    written = (tmp_path / "server-tls.conf").read_text()
-    assert f"ssl_certificate {cert};" in written and f"ssl_certificate_key {key};" in written
-
-
-def test_an_https_page_with_no_certificate_refuses_to_start(config_envsh: Path, tmp_path: Path):
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", GUI_TLS_ENABLED="true",
-               GUI_TLS_CERT_FILE=str(tmp_path / "absent.crt"))
-    result = _source(config_envsh, env)
-    assert result.returncode != 0
-    assert "GUI_TLS_ENABLED is on but" in result.stderr
-    assert "set GUI_TLS_ENABLED=false" in result.stderr
-
-
-@pytest.mark.parametrize("off", ["false", "0", "no", "off"])
-def test_a_plain_page_is_said_to_be_one(config_envsh: Path, off, tmp_path: Path):
-    env = _env(tmp_path, API_UPSTREAM="http://api:8443", GUI_TLS_ENABLED=off)
-    result = _source(config_envsh, env, 'printf "[%s]" "$GUI_LISTEN_TLS"')
-    assert result.stdout == "[]"
-    assert "every password typed into it" in (tmp_path / "server-tls.conf").read_text()
-
-
-def test_an_https_upstream_is_verified_against_the_certificate(config_envsh: Path, tmp_path: Path):
-    cacert = tmp_path / "server.crt"
-    cacert.write_text("not really a certificate, but it is readable")
-    env = _env(
-        tmp_path,
-        API_UPSTREAM="https://nl2sql-api:8443",
-        API_CACERT=str(cacert),
-        API_SSL_NAME="nl2sql-api",
-    )
-
-    assert _source(config_envsh, env).returncode == 0
-    written = (tmp_path / "upstream-tls.conf").read_text()
-    assert "proxy_ssl_verify on;" in written
-    assert f"proxy_ssl_trusted_certificate {cacert};" in written
-    assert "proxy_ssl_name nl2sql-api;" in written
-
-
-def test_an_https_upstream_with_no_certificate_refuses_to_start(config_envsh: Path, tmp_path: Path):
-    """Rather than quietly proxying without verifying, or dying with nginx's
-    own BIO error, which says nothing about what to do."""
-    env = _env(tmp_path, API_UPSTREAM="https://nl2sql-api:8443", API_CACERT=str(tmp_path / "absent.crt"))
-    result = _source(config_envsh, env)
-
-    assert result.returncode != 0
-    assert "there is no readable" in result.stderr
-    assert "certificate at API_CACERT" in result.stderr
-    # The likeliest cause, named: under compose the file is the stack's CA
-    # certificate, which the pki service writes into this page's own volume.
-    assert "the pki service writes beside this" in result.stderr
-    assert "so this usually means that volume is not mounted here" in result.stderr
-
-
-def test_a_plain_http_upstream_needs_no_certificate(config_envsh: Path, tmp_path: Path):
-    """API_TLS_ENABLED=false is a supported deployment -- behind something
-    that terminates TLS itself -- and there is no certificate anywhere in it."""
-    env = _env(tmp_path, API_UPSTREAM="http://nl2sql-api:8443", API_CACERT=str(tmp_path / "absent.crt"))
-
-    assert _source(config_envsh, env).returncode == 0
-    written = (tmp_path / "upstream-tls.conf").read_text()
-    assert "proxy_ssl_verify" not in written
-    assert "clear text" in written
-
-
-# ---------------------------------------------------------------------------
-# The image
-# ---------------------------------------------------------------------------
-
-
-def _stages(dockerfile: str) -> list[tuple[str, str]]:
-    """(image, stage name) per FROM, with any `--platform=` flag skipped."""
-    return re.findall(r"^FROM (?:--platform=\S+ )?(\S+)(?: AS (\S+))?", dockerfile, re.MULTILINE)
-
-
-def test_the_toolchain_does_not_ship(dockerfile: str):
-    """Two stages exist so the result has no node, no npm and no
-    node_modules in it -- only the few hundred kilobytes they produced."""
-    stages = _stages(dockerfile)
-    assert len(stages) == 2
-    assert stages[0][0].startswith("node:")
-    assert stages[1][0].startswith("nginx:")
-
-
-def test_both_base_images_are_pinned_to_a_version(dockerfile: str):
-    for image, _ in _stages(dockerfile):
-        assert ":" in image and not image.endswith(":latest")
-
-
-def test_the_build_stage_is_not_emulated(dockerfile: str):
-    """Its output is JavaScript, CSS and HTML -- the same bytes whatever the
-    image runs on. Without `$BUILDPLATFORM` a multi-arch publish runs
-    `npm ci` under QEMU once per architecture, for an identical result.
-    """
-    assert re.search(r"^FROM --platform=\$BUILDPLATFORM node:", dockerfile, re.MULTILINE)
-
-
-def test_the_serving_stage_is_built_for_the_target(dockerfile: str):
-    """nginx is a binary, so that half must not be pinned to the builder."""
-    nginx = re.search(r"^FROM (?:--platform=\S+ )?(nginx:\S+)", dockerfile, re.MULTILINE)
-    assert nginx, "the serving stage is missing"
-    assert "--platform" not in nginx.group(0)
-
-
-def test_the_dependency_layer_is_cached_on_the_lockfile(dockerfile: str):
-    """Copying the sources first would rebuild the whole tree on every edit."""
-    lock = dockerfile.index("package-lock.json")
-    sources = dockerfile.index("gui/src/")
-    assert lock < sources
-
-
-def test_envsubst_is_filtered_to_this_project_s_variables(dockerfile: str):
-    """Unfiltered, it would also substitute nginx's own $uri and $host."""
-    assert 'NGINX_ENVSUBST_FILTER="^(API_|GUI_|AUTH_)"' in dockerfile
-
-
-def test_no_token_is_baked_into_the_image(dockerfile: str):
-    """A token in an ENV is a token in every layer of the image."""
-    assert not re.search(r"^\s*API_TOKEN=", dockerfile, re.MULTILINE)
-
-
-def test_the_image_says_when_it_is_ready(dockerfile: str):
-    assert "HEALTHCHECK" in dockerfile
-
-
-def test_the_image_label_says_the_version_this_actually_is(dockerfile: str, package_json: dict):
-    """The same rule the agent image is held to: `__version__`, the image
-    label and the published tag all say the same thing, because a bump that
-    misses one ships an image that lies about itself.
-    """
-    label = re.search(r'org\.opencontainers\.image\.version="([^"]+)"', dockerfile)
-    assert label, "the GUI image no longer labels its version"
-    assert label.group(1) == package_json["version"] == __version__
-
-
-def test_the_published_gui_tag_names_a_version_this_actually_is():
-    """`setup.sh` pins the tag it pulls. A tag that is not a prefix of the
-    version pulls an image that is not this checkout."""
-    setup_sh = (REPO_ROOT / "setup.sh").read_text()
-    match = re.search(r'^GUI_TAG="v([\d_]+)"', setup_sh, re.MULTILINE)
-    assert match, "setup.sh no longer pins a GUI tag of the form vN or vN_M"
-    tagged = match.group(1).split("_")
-    assert tagged == __version__.split(".")[: len(tagged)], (
-        f"setup.sh pulls the GUI at v{match.group(1)}, but this package is {__version__}"
-    )
-
-
-def test_the_agent_and_the_gui_are_published_at_the_same_tag():
-    """They are built from one checkout and only tested together. Two tags
-    that can drift apart is two versions of "which GUI goes with which API".
-    """
-    setup_sh = (REPO_ROOT / "setup.sh").read_text()
-    agent = re.search(r'^AGENT_TAG="(\S+)"', setup_sh, re.MULTILINE)
-    gui = re.search(r'^GUI_TAG="(\S+)"', setup_sh, re.MULTILINE)
-    assert agent and gui
-    assert agent.group(1) == gui.group(1)
+def test_the_page_is_served_from_any_path_but_the_assets_are_immutable(nginx_template: str, site_conf: str):
+    assert "include /etc/nginx/nl2sql/shared/site.conf;" in nginx_template
+    assert "try_files $uri $uri/ /index.html;" in site_conf
+    assert 'add_header Cache-Control "public, immutable";' in site_conf
+    assert 'add_header Cache-Control "no-cache";' in site_conf
 
 
 # ---------------------------------------------------------------------------

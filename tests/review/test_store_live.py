@@ -24,8 +24,11 @@ database it writes to. So the password is restored at teardown, and the one
 test that proves a password *can* be rotated puts it back itself.
 
 Opt-in (`pytest --run-docker`). Connects at FEEDBACK_DB_URL (default: the
-compose feedbackdb on localhost:5435) and skips rather than fails when
-nothing is listening.
+compose runtime stores on localhost:5435) and skips rather than fails when
+nothing is listening -- or when it may not make the scratch database, which
+on a 6.3 stack it may not: no store's owner has `CREATEDB` since the stores
+became one server (V6-40). Point FEEDBACK_DB_URL at a throwaway pgvector,
+as a superuser, to run them.
 """
 
 from __future__ import annotations
@@ -103,9 +106,14 @@ def owner():
         admin.execute(f'DROP DATABASE IF EXISTS "{name}"')
         # The role survives the database. Put its password back to the one a
         # running review service would have set, so a live stack keeps
-        # working after the suite has run.
-        with connection(ADMIN_URL) as conn:
-            ensure_writer_role(conn, LIVE_PASSWORD)
+        # working after the suite has run -- where there is one: a server
+        # whose own database holds no staging table (a throwaway pgvector,
+        # which is where these run since 6.3's stores may not make a
+        # database) has no writer anybody connects as, and nothing to fence.
+        live = admin.execute("SELECT to_regclass(%s) IS NOT NULL", (SUBMISSIONS,)).fetchone()[0]
+        if live:
+            with connection(ADMIN_URL) as conn:
+                ensure_writer_role(conn, LIVE_PASSWORD)
         admin.close()
 
 

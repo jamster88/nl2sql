@@ -23,10 +23,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nl2sql-common"
-version = "6.2.0"
+version = "6.3.0"
 description = "What every nl2sql service shares: identity, settings, errors, the API envelope"
 requires-python = ">=3.11"
 dependencies = []
 
 [tool.setuptools]
-packages = ["nl2sql_common", "nl2sql_identity"]
+packages = ["nl2sql_common", "nl2sql_identity", "nl2sql_ops"]

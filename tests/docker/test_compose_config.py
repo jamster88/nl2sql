@@ -24,6 +24,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.settings_names import read_names, settable_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -103,9 +105,11 @@ def test_the_scripts_read_the_agents_settings_from_real_compose(script: str):
 
 def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
     # pki has no profile: it is the one-shot that issues every TLS server
-    # its certificate, and any of them may be what is started.
+    # its certificate, and any of them may be what is started. Nor has
+    # dbprep, the one-shot that prepares every database (6.3), nor the
+    # runtime stores, one server since 6.3.
     assert set(agent_profile_config["services"]) == {
-        "postgres", "vectordb", "chunkdb", "snippetsdb", "agent", "pki"
+        "postgres", "vectordb", "chunkdb", "stores", "agent", "pki", "dbprep"
     }
 
 
@@ -116,7 +120,7 @@ def test_postgres_service_shape(agent_profile_config: dict):
     assert postgres["restart"] == "unless-stopped"
     assert "pg_isready" in " ".join(postgres["healthcheck"]["test"])
 
-    volume, pgtls, ldaptls = postgres["volumes"]
+    volume, pgtls, ldaptls, socket = postgres["volumes"]
     assert volume["source"] == "pgdata"
     # Must match ENV PGDATA in docker/Dockerfile, or the image's baked data
     # is invisible to the named volume that's supposed to seed from it.
@@ -127,14 +131,18 @@ def test_postgres_service_shape(agent_profile_config: dict):
     # which libldap finds through LDAPTLS_CACERT, in the volume the
     # directory writes it to -- read-only here.
     assert (ldaptls["source"], ldaptls["target"], ldaptls["read_only"]) == ("ldaptls", "/etc/nl2sql/ldap-tls", True)
+    # Its socket, shared with the dbprep one-shot alone (6.3, V6-41).
+    assert (socket["source"], socket["target"]) == ("pgsocket", "/var/run/postgresql")
+    # The owner's password is a secret file (V6-38); the reader's is dbprep's
+    # to set, so it is not here at all.
     assert postgres["environment"] == {
         "LDAPTLS_CACERT": "/etc/nl2sql/ldap-tls/ldap.crt",
-        "POSTGRES_PASSWORD": "nl2sql",
+        "POSTGRES_PASSWORD_FILE": "/run/secrets/postgres_password",
         "POSTGRES_READER_USER": "nl2sql_reader",
-        "POSTGRES_READER_PASSWORD": "nl2sql_reader",
         "POSTGRES_TLS_HOSTNAMES": "",
         "POSTGRES_REQUIRE_TLS": "",
     }
+    assert [secret["source"] for secret in postgres["secrets"]] == ["postgres_password"]
     # No password is a build argument any more (V6-07).
     assert not any("PASSWORD" in name for name in postgres["build"]["args"])
 
@@ -149,8 +157,9 @@ def test_vectordb_service_shape(agent_profile_config: dict):
     assert vectordb["restart"] == "unless-stopped"
     assert "pg_isready" in " ".join(vectordb["healthcheck"]["test"])
 
-    [volume] = vectordb["volumes"]
+    volume, socket = vectordb["volumes"]
     assert volume["source"] == "vectordata"
+    assert (socket["source"], socket["target"]) == ("vectorsocket", "/var/run/postgresql")
     # Same PGDATA convention as the retail image: outside the base image's
     # declared VOLUME, so the embeddings baked into the image are visible.
     assert volume["target"] == "/var/lib/pgdata"
@@ -195,39 +204,41 @@ def test_agent_database_url_points_at_the_compose_postgres_service_as_the_read_o
     agent_profile_config: dict,
 ):
     """The agent only ever reads, so it connects as the reader role the image
-    creates (docker/reader_role.sql), never as the owner that loaded the data.
+    creates (docker/reader_role.sql), never as the owner that loaded the data
+    -- with the reader's password from its secret file, beside a URL that
+    carries none (6.3, V6-38).
     """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
-    postgres_env = agent_profile_config["services"]["postgres"]["environment"]
-    agent_env = agent_profile_config["services"]["agent"]["environment"]
-    reader, password = postgres_args["DB_READER"], postgres_env["POSTGRES_READER_PASSWORD"]
-    assert f"{reader}:{password}@postgres:5432/{postgres_args['DB_NAME']}" in agent_env["DATABASE_URL"]
+    agent = agent_profile_config["services"]["agent"]
+    reader = postgres_args["DB_READER"]
+    assert agent["environment"]["DATABASE_URL"] == (
+        f"postgresql+psycopg://{reader}@postgres:5432/{postgres_args['DB_NAME']}"
+    )
+    assert agent["environment"]["DATABASE_PASSWORD_FILE"] == "/run/secrets/postgres_reader_password"
     assert reader != postgres_args["DB_USER"]
-    assert f"{postgres_args['DB_USER']}:" not in agent_env["DATABASE_URL"]
 
 
 def test_the_owners_credentials_never_reach_the_agent_container(agent_profile_config: dict):
     """Least privilege at the compose level: the only Postgres identity in the
-    agent's environment is the reader. The owner's password is the postgres
-    service's own environment and nothing else's.
+    agent's environment is the reader. The owner's password is a secret
+    mounted into the postgres service and nothing else.
     """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
-    agent_env = agent_profile_config["services"]["agent"]["environment"]
+    agent = agent_profile_config["services"]["agent"]
     owner = postgres_args["DB_USER"]
-    owner_password = agent_profile_config["services"]["postgres"]["environment"]["POSTGRES_PASSWORD"]
-    for key, value in agent_env.items():
-        assert f"{owner}:" not in str(value), f"{key} carries the owner's login"
-        assert f":{owner_password}@" not in str(value), f"{key} carries the owner's password"
+    for key, value in agent["environment"].items():
+        assert f"//{owner}@" not in str(value) and f"//{owner}:" not in str(value), f"{key} carries the owner's login"
+    assert "postgres_password" not in {secret["source"] for secret in agent["secrets"]}
 
 
 def test_the_reader_role_can_be_renamed_from_the_environment(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("compose"),
         profile="agent",
-        env={"POSTGRES_READER_USER": "ro", "POSTGRES_READER_PASSWORD": "secret"},
+        env={"POSTGRES_READER_USER": "ro"},
     )
     assert config["services"]["postgres"]["build"]["args"]["DB_READER"] == "ro"
-    assert "ro:secret@postgres:5432/" in config["services"]["agent"]["environment"]["DATABASE_URL"]
+    assert "//ro@postgres:5432/" in config["services"]["agent"]["environment"]["DATABASE_URL"]
 
 
 def test_named_volumes_are_declared_persistent(agent_profile_config: dict):
@@ -300,15 +311,16 @@ def test_vector_credentials_flow_into_both_the_healthcheck_and_the_agent_url(tmp
     config = _compose_config(
         tmp_path_factory.mktemp("compose"),
         profile="agent",
-        env={"VECTOR_DB_USER": "vuser", "VECTOR_DB_PASSWORD": "vpass", "VECTOR_DB_NAME": "vectors_db"},
+        env={"VECTOR_DB_USER": "vuser", "VECTOR_DB_NAME": "vectors_db"},
     )
     healthcheck = " ".join(config["services"]["vectordb"]["healthcheck"]["test"])
     assert "-U vuser" in healthcheck
     assert "-d vectors_db" in healthcheck
-    assert (
-        config["services"]["agent"]["environment"]["VECTOR_DB_URL"]
-        == "postgresql+psycopg://vuser:vpass@vectordb:5432/vectors_db"
-    )
+    agent = config["services"]["agent"]["environment"]
+    assert agent["VECTOR_DB_URL"] == "postgresql+psycopg://vuser@vectordb:5432/vectors_db"
+    # The password, one secret file that dbprep sets the login's from (6.3).
+    assert agent["VECTOR_DB_PASSWORD_FILE"] == "/run/secrets/vector_db_password"
+    assert "vector_db_password" in {secret["source"] for secret in config["services"]["dbprep"]["secrets"]}
 
 
 def test_retrieval_can_be_turned_off_through_the_environment(tmp_path_factory):
@@ -355,9 +367,9 @@ def test_every_agent_environment_variable_is_one_the_agent_actually_reads(agent_
     from nl2sql_agent.config import Settings
 
     source = Path(Settings.__module__.replace(".", "/"))  # nl2sql_agent/config
-    config_py = (REPO_ROOT / "agent" / source).with_suffix(".py").read_text()
+    read = read_names((REPO_ROOT / "agent" / source).with_suffix(".py").read_text())
     for name in agent_profile_config["services"]["agent"]["environment"]:
-        assert f'"{name}"' in config_py, f"compose sets {name}, but config.py never reads it"
+        assert name in read, f"compose sets {name}, but config.py never reads it"
 
 
 # ---------------------------------------------------------------------------
@@ -371,14 +383,15 @@ def test_the_agent_is_pointed_at_the_context_store(agent_profile_config: dict):
     fails at the first question rather than at startup.
     """
     env = agent_profile_config["services"]["agent"]["environment"]
-    assert env["CONTEXT_DB_URL"] == (
-        "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2sql_chunks"
-    )
+    assert env["CONTEXT_DB_URL"] == "postgresql+psycopg://ragproc@chunkdb:5432/nl2sql_chunks"
+    assert env["CONTEXT_DB_PASSWORD_FILE"] == "/run/secrets/context_db_password"
 
 
 def test_the_agent_waits_for_every_database_to_be_healthy(agent_profile_config: dict):
     depends = agent_profile_config["services"]["agent"]["depends_on"]
-    assert set(depends) == {"postgres", "vectordb", "chunkdb", "snippetsdb"}
+    assert set(depends) == {"postgres", "vectordb", "chunkdb", "stores", "dbprep"}
+    # Each database healthy, and prepared: the reader made and its password set.
+    assert depends.pop("dbprep")["condition"] == "service_completed_successfully"
     assert all(d["condition"] == "service_healthy" for d in depends.values())
 
 
@@ -446,10 +459,8 @@ def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 
-def _settings_read() -> set[str]:
-    """Every environment variable config.py reads, by name."""
-    source = Path(REPO_ROOT / "agent" / "nl2sql_agent" / "config.py").read_text()
-    return set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple)?|os\.getenv)\(\s*"([A-Z_]+)"', source))
+def _config_py() -> str:
+    return (REPO_ROOT / "agent" / "nl2sql_agent" / "config.py").read_text()
 
 
 def test_every_setting_the_agent_reads_can_be_set_through_compose(agent_profile_config: dict):
@@ -458,7 +469,7 @@ def test_every_setting_the_agent_reads_can_be_set_through_compose(agent_profile_
     it.
     """
     env = set(agent_profile_config["services"]["agent"]["environment"])
-    missing = sorted(_settings_read() - env)
+    missing = sorted(settable_names(_config_py()) - env)
     assert missing == [], f"config.py reads these, but compose never passes them: {missing}"
 
 
@@ -469,7 +480,7 @@ def test_every_variable_compose_sets_on_the_agent_is_one_it_reads(agent_profile_
     that setting it changes nothing and says nothing.
     """
     env = set(agent_profile_config["services"]["agent"]["environment"])
-    unread = sorted(env - _settings_read())
+    unread = sorted(env - read_names(_config_py()))
     assert unread == [], f"compose passes these to the agent, and config.py never reads them: {unread}"
 
 
@@ -523,9 +534,10 @@ def test_the_context_store_volume_is_declared_and_project_scoped(agent_profile_c
     volumes = agent_profile_config["volumes"]
     assert "chunkdata" in volumes
     assert volumes["chunkdata"].get("name", "") in ("", "nl2sql_chunkdata")
-    [volume] = [v for v in agent_profile_config["services"]["chunkdb"]["volumes"]]
+    volume, socket = agent_profile_config["services"]["chunkdb"]["volumes"]
     assert volume["source"] == "chunkdata"
     assert volume["target"] == "/var/lib/pgdata"
+    assert (socket["source"], socket["target"]) == ("contextsocket", "/var/run/postgresql")
 
 
 def test_the_resolved_config_does_not_depend_on_the_developers_shell(tmp_path_factory):
@@ -599,12 +611,14 @@ def _profile_sets() -> list[str]:
     ).stdout.split("\0")
     found = set()
     for path in filter(None, tracked):
-        found |= set(re.findall(r"docker compose((?: --profile [a-z]+)+)", (REPO_ROOT / path).read_text()))
+        # A file deleted in the working tree is still listed until the commit.
+        if (REPO_ROOT / path).is_file():
+            found |= set(re.findall(r"docker compose((?: --profile [a-z]+)+)", (REPO_ROOT / path).read_text()))
     return sorted(profiles.strip() for profiles in found)
 
 
 def test_the_scripts_and_documents_name_profiles_to_check():
-    assert {"--profile api --profile gui", "--profile feedback --profile review"} <= set(_profile_sets())
+    assert {"--profile api --profile gui", "--profile review --profile reviewgui"} <= set(_profile_sets())
 
 
 @pytest.mark.parametrize("profiles", _profile_sets())
@@ -674,16 +688,16 @@ def test_names_given_to_the_stack_reach_every_identity(tmp_path_factory):
 #: default answered 502 to every request once the port was moved -- which
 #: USAGE_GUIDE.md says anyone may do in `.env`.
 FOLLOWERS = [
-    ("gui", "API_UPSTREAM", "API_PORT"), ("gui", "AUTH_UPSTREAM", "AUTH_PORT"),
-    ("reviewgui", "REVIEW_UPSTREAM", "REVIEW_PORT"), ("reviewgui", "AUTH_UPSTREAM", "AUTH_PORT"),
-    ("curategui", "CURATE_UPSTREAM", "REVIEW_PORT"), ("curategui", "AUTH_UPSTREAM", "AUTH_PORT"),
-    ("consolegui", "CONSOLE_UPSTREAM", "CONSOLE_PORT"), ("consolegui", "AUTH_UPSTREAM", "AUTH_PORT"),
-    ("directorygui", "DIRECTORY_UPSTREAM", "AUTH_PORT"),
-    ("directorygui", "DIRECTORY_API_UPSTREAM", "AUTH_DIRECTORY_PORT"),
+    ("gui", "UPSTREAM", "API_PORT"), ("gui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("reviewgui", "UPSTREAM", "REVIEW_PORT"), ("reviewgui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("curategui", "UPSTREAM", "REVIEW_PORT"), ("curategui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("consolegui", "UPSTREAM", "CONSOLE_PORT"), ("consolegui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("directorygui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("directorygui", "UPSTREAM", "AUTH_DIRECTORY_PORT"),
     ("mlflowproxy", "AUTH_UPSTREAM", "AUTH_PORT"), ("apitest", "API_BASE_URL", "API_PORT"),
 ]
 EVERY_PAGE = ("api", "gui", "review", "reviewgui", "curategui", "console", "consolegui",
-              "auth", "directorygui", "mlflow", "feedback")
+              "auth", "directorygui", "mlflow")
 
 
 @pytest.fixture(scope="module")
@@ -740,13 +754,17 @@ def test_another_instance_shares_no_container_or_volume_name_with_it(instances):
 
 def test_every_container_is_reached_by_its_usual_name_in_either(instances):
     """The name the others reach it by, and the one its certificate covers:
-    an alias on its own network, so it is the same in every instance."""
+    an alias on its own network, so it is the same in every instance. The
+    runtime stores answer to the four names they had before 6.3 as well, so
+    a URL written then still reaches its database."""
+    legacy = ["nl2sql-feedbackdb", "nl2sql-correctionsdb", "nl2sql-completionsdb", "nl2sql-snippetsdb"]
     for config in instances:
         for name, service in config["services"].items():
             if "container_name" not in service:
                 continue
             usual = service["container_name"].replace(config["name"], "nl2sql", 1)
-            assert service["networks"]["default"]["aliases"] == [usual], name
+            expected = [usual, *legacy] if name == "stores" else [usual]
+            assert service["networks"]["default"]["aliases"] == expected, name
 
 
 @pytest.mark.parametrize("sets", [(), ("--review", "--curate", "--console", "--mlflow", "--desktop"), ("--no-auth",)])

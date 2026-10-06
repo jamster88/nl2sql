@@ -5,7 +5,7 @@ from .examples import GoldenPairLibrary
 from .graph import Nl2SqlAgent
 from .retrieval import KnowledgeBase
 
-__version__ = "6.2.0"
+__version__ = "6.3.0"
 
 __all__ = [
     "GoldenPairLibrary",

@@ -38,9 +38,11 @@ def test_a_clean_run_succeeds_and_ends_by_showing_the_next_command(run_launch):
     assert 'docker compose run --rm agent "How many stores are there?"' in result.output
 
 
-def test_it_starts_all_three_databases(run_launch):
+def test_it_starts_every_database(run_launch):
+    """The retail database, the runtime stores -- the agent's snippets and
+    every verdict are in them (6.3) -- and the two knowledge stores."""
     result = run_launch()
-    assert result.called("compose up -d postgres vectordb chunkdb")
+    assert result.called("compose up -d postgres stores vectordb chunkdb")
 
 
 def test_it_waits_for_every_container_to_be_healthy(run_launch):
@@ -48,7 +50,7 @@ def test_it_waits_for_every_container_to_be_healthy(run_launch):
     connections; the agent would then fail on its first query.
     """
     result = run_launch()
-    for container in ("nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb"):
+    for container in ("nl2sql-postgres", "nl2sql-stores", "nl2sql-vectordb", "nl2sql-chunkdb"):
         assert result.called(f"inspect --format {{{{.State.Health.Status}}}} {container}")
 
 
@@ -87,39 +89,29 @@ def test_a_missing_env_file_hands_off_to_setup_rather_than_guessing(run_launch):
 
 
 def test_it_reports_what_each_database_actually_holds(run_launch):
+    """Read by the dbprep service (nl2sql_ops.report), said here as it said it."""
     result = run_launch()
+    assert result.called("compose run --rm --no-deps -T dbprep python -m nl2sql_ops report")
+    assert "==> Checking what is actually in each database" in result.output
     assert "194101 sales rows" in result.output
     assert "53 embedded chunks" in result.output
-    assert "45 golden pairs" in result.output
+    assert "48 golden pairs" in result.output
 
 
-def test_an_empty_retail_database_is_called_out(run_launch):
-    """Healthy and empty is the failure mode a volume created before the image
-    shipped its data produces, and nothing else reports it.
-    """
-    result = run_launch(env={"FAKE_ROW_COUNT": "0"})
-    assert "no sales rows" in result.output
-    assert "--reset" in result.output
-    assert "connect and then answer nothing" in result.output
-
-
-def test_an_empty_knowledge_base_warns_that_retrieval_will_be_skipped(run_launch):
-    result = run_launch(env={"FAKE_CHUNK_COUNT": "0"})
-    assert "no embedded chunks" in result.output
-    assert "schema-only" in result.output
-
-
-def test_golden_pairs_without_their_vectors_is_reported(run_launch):
-    """The pairs live in one database and their embeddings in another, so they
-    can be out of step. Multi-shot needs both.
-    """
-    result = run_launch(env={"FAKE_VECTOR_COUNT": "0"})
-    assert "Multi-shot needs both" in result.output
-
-
-def test_vectors_without_their_pairs_is_reported(run_launch):
-    result = run_launch(env={"FAKE_PAIR_COUNT": "0"})
-    assert "Multi-shot needs both" in result.output
+def test_a_warning_in_the_report_is_a_warning_here_and_a_state_line_is_not_said(run_launch):
+    """Healthy and empty is the failure a volume made before the image
+    shipped its data produces, and nothing else reports it: the report's
+    warnings are this script's, and its STATE lines are for scripts."""
+    report = "\n".join((
+        "STEP Checking what is actually in each database", "STATE retail_rows=0",
+        "WARN the retail database is up but has no sales rows in it.",
+        "WARN The agent will connect and then answer nothing. Try: ./setup.sh --reset",
+    ))
+    result = run_launch(env={"FAKE_REPORT": report})
+    assert result.returncode == 0
+    assert "WARNING: the retail database is up but has no sales rows in it." in result.output
+    assert "Try: ./setup.sh --reset" in result.output
+    assert "STATE" not in result.output
 
 
 def test_a_container_that_never_becomes_healthy_fails_loudly(run_launch):
@@ -191,15 +183,14 @@ def test_a_missing_embedding_model_explains_why_it_matters(run_launch):
 
 def test_no_rag_starts_only_the_retail_database(run_launch):
     result = run_launch("--no-rag")
-    assert result.called("compose up -d postgres")
-    assert not result.calls_matching("up -d postgres vectordb")
+    assert result.called("compose up -d postgres stores")
+    assert not result.calls_matching("vectordb chunkdb")
 
 
-def test_no_rag_skips_the_retrieval_checks_entirely(run_launch):
-    result = run_launch("--no-rag")
-    assert "embedded chunks" not in result.output
-    assert "golden pairs" not in result.output
-    assert "bge-m3" not in result.output
+def test_no_rag_skips_the_embedding_model_check(run_launch):
+    """The report reads only the stores that are running (nl2sql_ops.report),
+    and without retrieval there is no embedding model to ask about."""
+    assert "bge-m3" not in run_launch("--no-rag").output
 
 
 def test_no_rag_still_checks_the_chat_model(run_launch):
@@ -241,56 +232,35 @@ def test_quiet_still_prints_problems(run_launch):
 # ---------------------------------------------------------------------------
 
 
-def test_it_creates_the_agents_read_only_role_on_every_start(run_launch):
-    """The published image predates the role and a volume keeps whatever roles
-    it had, so launch (re)creates it each time rather than assuming it.
-    """
+def test_the_databases_are_prepared_by_the_one_shot_on_every_start(run_launch):
+    """The published image predates the role, and a volume keeps whatever
+    roles it had: the dbprep service makes it -- and sign-in's roles, the
+    runtime stores' databases and every password -- on every start. This
+    script runs no SQL itself (V6-41)."""
     result = run_launch()
-    [call] = result.calls_matching("reader=")
-    assert "compose exec -T -e NL2SQL_READER_PASSWORD postgres psql -U postgres" in call
-    assert "-d nl2sql_retail" in call
-    assert "reader=nl2sql_reader" in call and "owner=nl2sql" in call
-    # The password by name, never as an argument (V6-55).
-    assert "password" not in call.lower().replace("nl2sql_reader_password", "")
-    assert result.called(f"env NL2SQL_READER_PASSWORD={result.env_file()['POSTGRES_READER_PASSWORD']}")
+    prepare = result.index_of("compose run --rm --no-deps -T dbprep")
+    assert result.index_of("nl2sql-stores") < prepare < result.index_of("nl2sql_ops report")
+    assert "==> Preparing the databases" in result.output
     assert "can read every table and write none" in result.output
+    assert not result.calls_matching("psql") and not result.calls_matching("compose exec")
 
 
-def test_the_role_is_created_even_without_rag(run_launch):
-    assert run_launch("--no-rag").called("reader=nl2sql_reader")
+def test_the_databases_are_prepared_even_without_rag(run_launch):
+    assert run_launch("--no-rag").called("compose run --rm --no-deps -T dbprep")
 
 
-def test_the_role_follows_the_credentials_compose_will_use(run_launch):
-    """Shell overrides win, then .env -- the same precedence compose applies
-    to DATABASE_URL, or the agent would be handed a role that does not exist.
-    """
-    from_env_file = run_launch(env_file="IMAGE_NAME=x\nPOSTGRES_READER_USER=dotenv_reader\nPOSTGRES_DB=other_db\n")
-    [call] = from_env_file.calls_matching("reader=")
-    assert "reader=dotenv_reader" in call and "-d other_db" in call
-
-    from_shell = run_launch(env={"POSTGRES_READER_USER": "shell_reader", "POSTGRES_USER": "shell_owner"},
-                            env_file="POSTGRES_READER_USER=dotenv_reader\n")
-    call = from_shell.calls_matching("reader=")[-1]  # the sandbox log spans both runs
-    assert "reader=shell_reader" in call and "owner=shell_owner" in call
-
-
-def test_a_role_that_cannot_be_created_warns_that_the_agent_cannot_connect(run_launch):
-    result = run_launch(env={"FAKE_READER_ROLE_FAILS": "1"})
+def test_databases_that_cannot_be_prepared_are_warned_about_and_the_rest_goes_on(run_launch):
+    """Every service that connects to a database waits for the one-shot, so
+    compose will say so again; this says it first, with the reason."""
+    result = run_launch(env={"FAKE_DBPREP_FAILS": "AUTH_ROLESYNC_PASSWORD's secret is empty: run ./setup.sh"})
     assert result.returncode == 0
-    assert "read-only role" in result.output
-    assert "fail to connect" in result.output
+    assert "the databases could not be prepared, so what connects to them will not start. It said:" in result.output
+    assert "dbprep: AUTH_ROLESYNC_PASSWORD's secret is empty: run ./setup.sh" in result.output
 
 
-def test_it_installs_the_trigram_extension_the_literal_matcher_prefers(run_launch):
-    """Same reasoning as the reader role: the published image predates
-    pg_trgm and an existing volume keeps whatever extensions it had. The
-    agent falls back to difflib without it, so a failure warns rather than
-    stopping the launch.
-    """
-    result = run_launch()
-    [call] = result.calls_matching("CREATE EXTENSION")
-    assert "compose exec -T postgres psql -U postgres" in call
-    assert "IF NOT EXISTS pg_trgm" in call
+def test_a_warning_the_one_shot_gives_is_a_warning_here(run_launch):
+    result = run_launch(env={"FAKE_DBPREP_WARNS": "could not create pg_trgm; literal matching falls back to difflib"})
+    assert "WARNING: could not create pg_trgm; literal matching falls back to difflib" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -298,53 +268,8 @@ def test_it_installs_the_trigram_extension_the_literal_matcher_prefers(run_launc
 # ---------------------------------------------------------------------------
 
 
-def test_it_reports_the_schema_index_table_selection_depends_on(run_launch):
-    """v4 picks tables from the DDL-chunk vectors instead of asking the
-    model. An empty collection is the failure that looks like bad table
-    selection rather than like a missing store.
-    """
-    result = run_launch()
-    assert "schema index: 20 DDL chunks" in result.output
-
-
-def test_a_missing_schema_index_warns_about_table_selection(run_launch):
-    result = run_launch(env={"FAKE_DDL_CHUNKS": "0"})
-    assert "no ddl_index_embeddings collection" in result.output
-    assert "Table selection falls back" in result.output
-
-
-def test_a_database_with_the_trigram_extension_says_which_scorer_it_gets(run_launch):
-    result = run_launch(env={"FAKE_TRGM_INSTALLED": "1"})
-    assert "literal matching: pg_trgm installed (trigram search)" in result.output
-    assert "pg_trgm is not installed" not in result.output
-
-
-def test_a_database_without_the_trigram_extension_is_warned_about(run_launch):
-    """The agent falls back to difflib without pg_trgm, which is a quieter
-    kind of wrong: literal matching still works, just less well, so nothing
-    fails and the only sign is this line.
-
-    Asserted explicitly rather than incidentally. It used to be covered by a
-    test that happened to quote two words shared with nothing else in the
-    script; adding an unrelated warning elsewhere made those two words
-    ambiguous and the coverage evaporated without anything breaking.
-    """
-    result = run_launch(env={"FAKE_TRGM_INSTALLED": "0"})
-    assert result.returncode == 0
-    assert "pg_trgm is not installed" in result.output
-    assert "falls back to difflib" in result.output
-
-
 def test_it_confirms_the_agents_role_holds_select_and_nothing_else(run_launch):
     assert "the agent's role holds SELECT and nothing else" in run_launch().output
-
-
-def test_a_role_that_gained_a_write_grant_is_called_out(run_launch):
-    """Least privilege is checked on every start, not only in the test
-    suite: a volume outlives the image that set the grants.
-    """
-    result = run_launch(env={"FAKE_READER_EXTRA_GRANTS": "3"})
-    assert "holds 3 non-SELECT grants" in result.output
 
 
 def test_an_env_pinning_an_older_agent_image_is_called_out(run_launch):
@@ -471,8 +396,8 @@ def test_turning_tls_off_is_called_out_as_clear_text(run_launch):
 
 def test_an_api_with_no_token_warns_before_it_is_exposed(run_launch):
     result = run_launch("--api", "--no-auth")
-    assert "no API_TOKEN is set" in result.output
-    assert "Set API_TOKEN in .env before exposing this off this machine" in result.output
+    assert "no API token is set" in result.output
+    assert "./setup.sh --tokens makes one, before exposing this off this machine" in result.output
 
 
 def test_with_sign_in_on_no_token_is_nothing_to_warn_about(run_launch):
@@ -579,15 +504,8 @@ def test_the_feedback_stack_is_not_started_unless_it_is_asked_for(run_launch):
     """Most people ask questions and never review anything, and this stack
     opens the port that can rewrite the golden question set."""
     result = run_launch()
-    assert not result.called("up -d feedbackdb")
     assert not result.called("up -d review")
-    assert "staging database" not in result.output
-
-
-def test_the_feedback_flag_starts_the_staging_database(run_launch):
-    result = run_launch("--feedback")
-    assert result.called("--profile feedback up -d feedbackdb")
-    assert "Staging database is healthy on port 5435" in result.output
+    assert "Review service" not in result.output
 
 
 def test_asking_for_feedback_asks_for_the_api_that_writes_to_it(run_launch):
@@ -602,37 +520,10 @@ def test_feedback_alone_does_not_drag_the_review_stack_in(run_launch):
     assert not result.called("up -d reviewgui")
 
 
-def test_the_staging_port_follows_what_compose_will_use(run_launch):
-    result = run_launch("--feedback", env_file="IMAGE_NAME=x\nFEEDBACK_DB_PORT=5999\n")
-    assert "Staging database is healthy on port 5999" in result.output
-
-
-def test_an_api_with_nowhere_to_write_is_warned_about(run_launch):
-    """The database is up and the API has not been told where it is, which
-    looks exactly like working until someone votes."""
-    result = run_launch("--feedback")
-    assert "API_FEEDBACK_DB_URL is not set" in result.output
-    assert "setup.sh writes one into .env" in result.output
-
-
-def test_a_configured_api_is_not_warned_about(run_launch):
-    result = run_launch(
-        "--feedback",
-        env_file="IMAGE_NAME=x\nAPI_FEEDBACK_DB_URL=postgresql://w:p@nl2sql-feedbackdb:5432/nl2sql_feedback\n",
-    )
-    assert "API_FEEDBACK_DB_URL is not set" not in result.output
-
-
-def test_a_staging_database_that_never_comes_up_is_reported(run_launch):
-    result = run_launch("--feedback", env={"FAKE_FEEDBACK_HEALTH": "starting"}, timeout=180)
-    assert "the staging database did not become healthy" in result.output
-    assert "docker compose --profile feedback logs feedbackdb" in result.output
-
-
 def test_the_review_flag_starts_the_service_and_its_interface(run_launch):
     result = run_launch("--review")
-    assert result.called("--profile feedback --profile review up -d review")
-    assert result.called("--profile feedback --profile review --profile reviewgui up -d reviewgui")
+    assert result.called("--profile review up -d review")
+    assert result.called("--profile review --profile reviewgui up -d reviewgui")
     assert "Review service is healthy at https://localhost:8444" in result.output
     assert "Review interface is healthy at https://localhost:8081" in result.output
 
@@ -641,7 +532,7 @@ def test_asking_for_review_asks_for_everything_under_it(run_launch):
     """The interface is nothing without the service, and the service is
     nothing without the database in front of it."""
     result = run_launch("--review")
-    assert result.called("--profile feedback up -d feedbackdb")
+    assert result.called("up -d postgres stores")
     assert result.called("--profile api up -d api")
 
 
@@ -661,13 +552,13 @@ def test_the_review_ports_follow_what_compose_will_use(run_launch):
 def test_a_review_service_that_never_comes_up_is_reported(run_launch):
     result = run_launch("--review", env={"FAKE_REVIEW_HEALTH": "starting"}, timeout=240)
     assert "the review service did not become healthy" in result.output
-    assert "--profile feedback --profile review logs review" in result.output
+    assert "--profile review logs review" in result.output
 
 
 def test_a_review_interface_that_never_comes_up_is_reported(run_launch):
     result = run_launch("--review", env={"FAKE_REVIEW_GUI_HEALTH": "starting"}, timeout=240)
     assert "the review interface did not become healthy" in result.output
-    assert "--profile feedback --profile review --profile reviewgui logs reviewgui" in result.output
+    assert "--profile review --profile reviewgui logs reviewgui" in result.output
 
 
 def test_a_container_that_died_is_not_waited_out(run_launch):
@@ -703,38 +594,12 @@ def test_the_closing_lines_name_the_three_fields_a_reviewer_must_write(run_launc
     assert "expected result" in output
 
 
-def test_the_review_flag_starts_both_fix_stores_before_the_service(run_launch):
-    """The service creates their schemas on its own start, so they have to be
-    up first -- the order the staging database gets for the same reason."""
+def test_the_stores_the_review_service_writes_are_up_before_it(run_launch):
+    """It creates its schemas in the runtime stores on its own start, so they
+    have to be up first -- and since 6.3 they are, with the databases."""
     result = run_launch("--review")
-    assert result.called("--profile feedback --profile review up -d correctionsdb completionsdb")
-    for container in ("nl2sql-correctionsdb", "nl2sql-completionsdb"):
-        assert result.called(f"inspect --format {{{{.State.Health.Status}}}} {container}")
-    assert result.output.index("Corrections store is healthy") < result.output.index(
-        "Review service is healthy"
-    )
-
-
-def test_feedback_alone_does_not_start_the_fix_stores(run_launch):
-    assert not run_launch("--feedback").called("up -d correctionsdb")
-
-
-def test_the_fix_store_ports_follow_what_compose_will_use(run_launch):
-    result = run_launch(
-        "--review", env_file="IMAGE_NAME=x\nCORRECTIONS_DB_PORT=6436\nCOMPLETIONS_DB_PORT=6437\n"
-    )
-    assert "Corrections store is healthy on port 6436" in result.output
-    assert "Completions store is healthy on port 6437" in result.output
-    assert "ports 6436 and 6437" in result.output
-
-
-@pytest.mark.parametrize("store", ["CORRECTIONS", "COMPLETIONS"])
-def test_a_fix_store_that_never_comes_up_is_reported_and_the_rest_goes_on(run_launch, store):
-    result = run_launch("--review", env={f"FAKE_{store}_HEALTH": "starting"}, timeout=240)
-    assert "the corrections and completions stores did not both become healthy" in result.output
-    assert "golden-set promotion still works" in result.output
-    assert "logs correctionsdb completionsdb" in result.output
-    assert "Review service is healthy" in result.output
+    assert result.index_of("up -d postgres stores") < result.index_of("--profile review up -d review")
+    assert not result.called("correctionsdb") and not result.called("feedbackdb")
 
 
 def test_the_closing_lines_name_the_three_panes_and_where_each_goes(run_launch):
@@ -830,9 +695,9 @@ def test_a_review_proxy_a_restart_does_not_fix_is_reported_too(run_launch):
     result = run_launch("--review", env={"FAKE_PROXY_DEAD": "8081"})
 
     assert result.called("restart reviewgui")
-    assert "cannot reach the review service" in result.output
+    assert "the review interface is up but cannot reach the review service." in result.output
     assert "Review interface is healthy" not in result.output
-    assert "docker compose --profile feedback --profile review --profile reviewgui logs reviewgui" in result.output
+    assert "docker compose --profile review --profile reviewgui logs reviewgui" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -941,26 +806,26 @@ def test_a_console_proxy_a_restart_does_not_fix_is_reported(run_launch):
 @pytest.mark.parametrize("bind", ["127.0.0.1", "localhost", "::1"])
 def test_a_console_on_this_machine_only_needs_no_token(run_launch, bind):
     result = run_launch("--console", env_file=f"IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS={bind}\n")
-    assert "with no CONSOLE_TOKEN" not in result.output
+    assert "with no token" not in result.output
 
 
 def test_a_console_opened_to_the_network_without_a_token_is_warned_about(run_launch):
     result = run_launch("--console", "--no-auth", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\n")
-    assert "the SQL console is published on 0.0.0.0 with no CONSOLE_TOKEN, so" in result.output
+    assert "the SQL console is published on 0.0.0.0 with no token, so" in result.output
     assert "anything that can reach it may run SQL as the agent's database role." in result.output
 
 
 def test_a_console_opened_to_the_network_with_sign_in_on_is_not(run_launch):
     """Only reviewers and curators get past its sign-in."""
     result = run_launch("--console", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\n")
-    assert "with no CONSOLE_TOKEN" not in result.output
+    assert "with no token" not in result.output
 
 
 def test_a_console_opened_to_the_network_with_a_token_is_not(run_launch):
     result = run_launch(
         "--console", env_file="IMAGE_NAME=x\nCONSOLE_BIND_ADDRESS=0.0.0.0\nCONSOLE_TOKEN=s3cret\n"
     )
-    assert "with no CONSOLE_TOKEN" not in result.output
+    assert "with no token" not in result.output
 
 
 def test_the_closing_lines_say_where_the_console_is_and_what_it_answers(run_launch):
@@ -1298,7 +1163,7 @@ def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
 # document has grown is answered from fewer pairs than it holds until it is
 # loaded -- which is what this flag does, and what the check below says.
 
-LOAD = "--profile feedback --profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review"
+LOAD = "--profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review"
 
 
 def _golden_document(tmp_path: Path, pairs: int) -> None:
@@ -1318,7 +1183,7 @@ def test_load_golden_runs_both_loaders_in_the_review_image_before_the_stores_are
     assert "==> Loading the golden pairs from context_questions/translated_questions.md" in result.output
     assert "48 rows written, 0 stale rows removed" in result.output
     assert "question         -> golden_pair_question_vectors: 0 embedded, 48 already current, 0 removed" in result.output
-    assert result.index_of(LOAD) < result.index_of("SELECT count(*) FROM golden_pairs")
+    assert result.index_of(LOAD) < result.index_of("nl2sql_ops report"), "counted after the load"
     # The script is passed to `sh -c` across several lines, which the call log
     # records as several entries.
     script = "\n".join(result.calls[result.index_of(LOAD):][:6])
@@ -1355,21 +1220,6 @@ def test_load_golden_with_no_rag_says_there_is_nothing_to_load(run_launch):
     assert not result.called(LOAD)
 
 
-def test_a_context_store_behind_the_document_is_called_out(run_launch, tmp_path):
-    _golden_document(tmp_path, 48)
-    result = run_launch()
-
-    assert (
-        "the context store holds 45 golden pairs, and context_questions/translated_questions.md 48." in result.output
-    )
-    assert "The agent's worked examples are the store's until it is loaded: ./start.sh --load-golden" in result.output
-
-
-def test_a_context_store_that_matches_the_document_says_nothing(run_launch, tmp_path):
-    _golden_document(tmp_path, 45)
-    assert "golden pairs, and context_questions" not in run_launch().output
-
-
 # ---------------------------------------------------------------------------
 # The SQL snippets (v5.6): the store launch.sh fills from its document
 # ---------------------------------------------------------------------------
@@ -1377,25 +1227,22 @@ def test_a_context_store_that_matches_the_document_says_nothing(run_launch, tmp_
 SNIPPET_LOAD = "07_load_snippets.py"
 
 
-def test_the_snippet_store_is_started_and_waited_on_with_the_other_stores(run_launch):
+def test_the_runtime_stores_are_started_and_waited_on_with_the_other_databases(run_launch):
     result = run_launch()
-    assert result.called("up -d postgres vectordb chunkdb snippetsdb")
-    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-snippetsdb")
-    assert "nl2sql-snippetsdb is healthy" in result.output
+    assert result.called("up -d postgres stores vectordb chunkdb")
+    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-stores")
+    assert "nl2sql-stores is healthy" in result.output
 
 
-def test_a_store_that_holds_the_document_is_not_loaded_and_says_what_it_holds(run_launch):
-    result = run_launch()
-    # Both halves of the comparison are taken inside the store's container.
-    assert result.called("compose exec -T snippetsdb sha256sum")
-    assert result.called("SELECT document_hash FROM sql_snippet_source")
+def test_a_store_that_holds_the_document_is_not_loaded(run_launch):
+    result = run_launch(env={"FAKE_SNIPPETS_STATE": "current"})
+    assert result.called("compose run --rm --no-deps -T dbprep python -m nl2sql_ops snippets")
     assert not result.called(SNIPPET_LOAD)
     assert "Loading the SQL snippets" not in result.output
-    assert "SQL snippets: 32 snippets, 32 embedded meanings" in result.output
 
 
 def test_a_store_behind_its_document_is_loaded_in_the_review_image(run_launch):
-    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": "", "FAKE_SNIPPETS_EMBEDDED": "3"})
+    result = run_launch(env={"FAKE_SNIPPETS_STATE": "behind", "FAKE_SNIPPETS_EMBEDDED": "3"})
 
     assert result.returncode == 0
     assert "==> Loading the SQL snippets from context_questions/sql_snippets.md" in result.output
@@ -1406,35 +1253,19 @@ def test_a_store_behind_its_document_is_loaded_in_the_review_image(run_launch):
     script = "\n".join(result.calls[result.index_of(SNIPPET_LOAD) - 2:][:4])
     assert '07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT"' in script
     assert "DB_URL" not in script, "a store's URL, password and all, is the loader's environment, not its argv"
-    # Counted after the load had its chance, so the count is what the agent sees.
-    assert result.index_of(SNIPPET_LOAD) < result.index_of("SELECT count(*) FROM sql_snippets")
+    # Reported after the load had its chance, so the count is what the agent sees.
+    assert result.index_of(SNIPPET_LOAD) < result.index_of("nl2sql_ops report")
 
 
-def test_a_document_edited_since_the_last_load_is_loaded_again(run_launch):
-    # The store recorded the old hash; the checkout's document hashes to another.
-    result = run_launch(env={"FAKE_SNIPPETS_DOC_HASH": "edited", "FAKE_SNIPPETS_EMBEDDED": "1"})
-    assert "the snippet store is behind the document" in result.output
-    assert result.called(SNIPPET_LOAD)
-    assert "vectors -> sql_snippet_vectors: 1 embedded, 31 already current" in result.output
-
-
-def test_a_document_the_store_cannot_hash_loads_nothing(run_launch):
-    # No hash from the store's container is no comparison: an empty answer
-    # must not read as "different" and reload on every start.
-    result = run_launch(env={"FAKE_SNIPPETS_DOC_HASH": "", "FAKE_SNIPPETS_LOADED_HASH": "old"})
-    assert result.called("compose exec -T snippetsdb sha256sum")
+def test_a_store_that_cannot_be_compared_loads_nothing(run_launch):
+    """`unknown` -- no store to ask, or no document -- must not read as
+    behind and reload on every start."""
+    result = run_launch(env={"FAKE_SNIPPETS_STATE": "unknown"})
     assert not result.called(SNIPPET_LOAD)
-    assert "SQL snippets: 32 snippets, 32 embedded meanings" in result.output
-
-
-@pytest.mark.parametrize("vectors", ["0", ""])
-def test_snippets_whose_meanings_are_not_embedded_are_counted_as_none(run_launch, vectors):
-    result = run_launch(env={"FAKE_SNIPPET_VECTORS": vectors})
-    assert "SQL snippets: 32 snippets, 0 embedded meanings" in result.output
 
 
 def test_a_snippet_load_the_embedding_host_stopped_is_a_warning(run_launch):
-    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": "old", "FAKE_SNIPPETS_LOAD_FAILS": "1"})
+    result = run_launch(env={"FAKE_SNIPPETS_STATE": "behind", "FAKE_SNIPPETS_LOAD_FAILS": "1"})
 
     assert result.returncode == 0
     assert (
@@ -1446,34 +1277,28 @@ def test_a_snippet_load_the_embedding_host_stopped_is_a_warning(run_launch):
 
 
 def test_a_review_image_from_before_snippets_is_named_as_the_reason(run_launch):
-    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": "", "FAKE_SNIPPETS_OLD_IMAGE": "1"})
+    result = run_launch(env={"FAKE_SNIPPETS_STATE": "behind", "FAKE_SNIPPETS_OLD_IMAGE": "1"})
     assert "the pinned review image predates SQL snippets, so it cannot load them." in result.output
     assert "./setup.sh pulls the image this checkout ships" in result.output
 
 
-def test_an_empty_snippet_store_is_warned_about(run_launch):
-    result = run_launch(env={"FAKE_SNIPPET_COUNT": "0"})
-    assert "the snippet store holds no SQL snippets, so the generator is shown none." in result.output
-    assert "check the review image can run" in result.output
-
-
 def test_without_the_document_nothing_is_compared_or_loaded(run_launch, tmp_path):
     (tmp_path / "repo" / "context_questions" / "sql_snippets.md").unlink()
-    result = run_launch(env={"FAKE_SNIPPETS_LOADED_HASH": ""})
-    assert not result.called("sha256sum")
+    result = run_launch(env={"FAKE_SNIPPETS_STATE": "behind"})
+    assert not result.called("nl2sql_ops snippets")
     assert not result.called(SNIPPET_LOAD)
 
 
 def test_no_rag_starts_no_snippet_store_and_loads_nothing(run_launch):
-    result = run_launch("--no-rag", env={"FAKE_SNIPPETS_LOADED_HASH": ""})
-    assert not result.called("snippetsdb")
+    result = run_launch("--no-rag", env={"FAKE_SNIPPETS_STATE": "behind"})
+    assert not result.called("nl2sql_ops snippets")
     assert not result.called(SNIPPET_LOAD)
 
 
-def test_a_snippet_store_that_never_comes_up_stops_the_start(run_launch):
-    result = run_launch(env={"FAKE_SNIPPETS_HEALTH": "starting"}, timeout=240)
+def test_runtime_stores_that_never_come_up_stop_the_start(run_launch):
+    result = run_launch(env={"FAKE_STORES_HEALTH": "starting"}, timeout=240)
     assert result.returncode != 0
-    assert "nl2sql-snippetsdb did not become healthy" in result.output
+    assert "nl2sql-stores did not become healthy" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -1483,10 +1308,9 @@ def test_a_snippet_store_that_never_comes_up_stops_the_start(run_launch):
 
 def test_curate_starts_the_review_service_and_its_own_page_but_not_the_review_page(run_launch):
     result = run_launch("--curate")
-    assert result.called("--profile feedback up -d feedbackdb")
-    assert result.called("--profile feedback --profile review up -d correctionsdb completionsdb")
-    assert result.called("--profile feedback --profile review up -d review")
-    assert result.called("--profile feedback --profile review --profile curategui up -d curategui")
+    assert result.called("up -d postgres stores")
+    assert result.called("--profile review up -d review")
+    assert result.called("--profile review --profile curategui up -d curategui")
     assert not result.called("up -d reviewgui")
     assert "Curation interface is healthy at https://localhost:8083" in result.output
 
@@ -1525,7 +1349,7 @@ def test_a_curation_page_that_never_comes_up_is_reported(run_launch):
     )
     assert "the curation interface did not become healthy." in result.output
     assert (
-        "docker compose --profile feedback --profile review --profile curategui logs curategui"
+        "docker compose --profile review --profile curategui logs curategui"
         in result.output
     )
 
@@ -1546,26 +1370,15 @@ def test_a_curation_proxy_a_restart_does_not_fix_is_reported(run_launch):
 # Sign-in
 # ---------------------------------------------------------------------------
 
-SIGNIN_SECRETS = ("LDAP_ADMIN_PASSWORD", "LDAP_SERVICE_PASSWORD", "AUTH_ROLESYNC_PASSWORD")
+SIGNIN_SECRETS = ("ldap_admin_password", "ldap_service_password", "auth_rolesync_password")
 
 
-def _ldap_hba_calls(result) -> list[str]:
-    path = result.workdir.parent / "ldap-hba"
-    return path.read_text().splitlines() if path.exists() else []
-
-
-def test_with_the_api_the_database_is_prepared_and_the_directory_and_auth_service_start(run_launch):
+def test_with_the_api_the_directory_and_auth_service_start_after_it(run_launch):
     result = run_launch("--api")
     assert result.returncode == 0
-    # The database's half: the group roles and the role sync's login, then
-    # the pg_hba lines -- naming the two roles that keep their own passwords.
-    assert result.called("-v rolesync=nl2sql_rolesync")
-    [hba] = _ldap_hba_calls(result)
-    assert "NL2SQL_SIGNIN=on" in hba and "NL2SQL_DB=nl2sql_retail" in hba
-    assert "NL2SQL_SERVICE_ROLES=nl2sql_reader,nl2sql_rolesync" in hba
-    assert "NL2SQL_LDAP_BASE_DN=dc=nl2sql,dc=local" in hba
-    assert "-u postgres" in hba and hba.rstrip().endswith("postgres sh -s")
-    # Then the sign-in services, after the API.
+    # The database's half -- the group roles, the sync's login, the pg_hba
+    # lines -- is the dbprep service's, which the auth service waits for.
+    assert result.index_of("compose run --rm --no-deps -T dbprep") < result.index_of("--profile api up -d api")
     assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d auth")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-ldap")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-auth")
@@ -1574,23 +1387,31 @@ def test_with_the_api_the_database_is_prepared_and_the_directory_and_auth_servic
     assert "Directory page is healthy at https://localhost:8084" in result.output
 
 
-def test_every_variable_ldap_hba_requires_is_passed(run_launch):
-    """The fake `docker` takes any environment it is given, so a variable
-    the script needs and launch.sh never passes looked fine here -- and
-    6.0.0's launch.sh left out NL2SQL_LDAP_HOST, which the real stack found:
-    nobody could sign in. Held to the script's own `${NAME:?}` list."""
-    required = set(re.findall(r"\$\{(NL2SQL_[A-Z_]+):\?", (REPO_ROOT / "docker" / "ldap_hba.sh").read_text()))
-    assert {"NL2SQL_DB", "NL2SQL_SERVICE_ROLES", "NL2SQL_LDAP_HOST", "NL2SQL_LDAP_BASE_DN"} <= required
-    [hba] = _ldap_hba_calls(run_launch("--api"))
-    passed = set(re.findall(r"-e (NL2SQL_[A-Z_]+)=\S", hba))
-    assert required <= passed, f"launch.sh does not pass {sorted(required - passed)}"
-    assert "NL2SQL_LDAP_HOST=nl2sql-ldap" in hba, "the name the directory's certificate is issued for"
+def test_compose_hands_the_one_shot_every_setting_it_reads(run_launch):
+    """The fake `docker` takes whatever it is given, so a setting the
+    one-shot needs and is never handed looked fine here -- 6.0.0's launch.sh
+    left out the directory's host the same way, and nobody could sign in.
+    Every name nl2sql_ops.settings reads is in the dbprep service's
+    environment, as itself or as the secret file beside it."""
+    import yaml
+
+    read = set(re.findall(r'(?:env_str|env_int|env_bool|secret)\("([A-Z_]+)"',
+                          (REPO_ROOT / "common" / "nl2sql_ops" / "settings.py").read_text()))
+    assert {"POSTGRES_READER_PASSWORD", "AUTH_ROLESYNC_PASSWORD", "LDAP_BASE_DN", "AUTH_ENABLED"} <= read
+    given = set(yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]["dbprep"]["environment"])
+    # Fixed in the image or for tests alone: the sockets' and documents' paths,
+    # and the directory's host and port and how it is reached -- the name its
+    # certificate is issued for, nl2sql-ldap, on 389 with StartTLS.
+    fixed = {"NL2SQL_SOCKETS_DIR", "NL2SQL_GOLDEN_DOCUMENT", "NL2SQL_SNIPPETS_DOCUMENT",
+             "NL2SQL_LDAP_HOST", "NL2SQL_LDAP_PORT", "NL2SQL_LDAP_TLS"}
+    missing = {name for name in read - fixed if name not in given and f"{name}_FILE" not in given}
+    assert missing == set(), f"compose does not hand dbprep {sorted(missing)}"
 
 
 def test_the_closing_lines_say_who_signs_in_first_and_where_people_are_added(run_launch):
     output = " ".join(run_launch("--gui").output.split())
     assert "==> Sign-in is on. Every page asks who you are. The first person is admin," in output
-    assert "grep LDAP_ADMIN_PASSWORD .env" in output
+    assert "cat secrets/ldap_admin_password" in output
     assert "nl2sql-users ask questions, nl2sql-reviewers review and read MLflow" in output
     assert "open https://localhost:8084" in output
     assert "LDAP_SEED_FILE in .env, with ldap/seed/people.example.csv as the shape" in output
@@ -1602,29 +1423,32 @@ def test_the_closing_lines_say_who_signs_in_first_and_where_people_are_added(run
 def test_a_terminal_only_start_has_nobody_to_sign_in_and_leaves_pg_hba_alone(run_launch):
     result = run_launch()
     assert not result.called("--profile auth")
-    assert not result.called("rolesync=")
-    assert _ldap_hba_calls(result) == []
     assert "Sign-in is" not in result.output
 
 
-def test_an_env_from_before_sign_in_is_given_its_passwords_once_and_only_it_can_read_them(run_launch):
+def test_a_checkout_from_before_secrets_is_given_its_passwords_once_in_secrets(run_launch):
+    """6.3 (V6-38): every password a file in secrets/, which only its owner
+    can open, the files in it readable to the containers' own accounts."""
     result = run_launch("--api")
-    values = result.env_file()
-    for key in SIGNIN_SECRETS:
-        assert re.fullmatch(r"[0-9a-f]{48}", values[key]), key
-    assert len({values[key] for key in SIGNIN_SECRETS}) == 3
-    assert "generated 3 sign-in password(s) into .env, which only you can read" in result.output
+    secrets = result.secrets()
+    for name in SIGNIN_SECRETS:
+        assert re.fullmatch(r"[0-9a-f]{48}", secrets[name]), name
+    assert len({secrets[name] for name in SIGNIN_SECRETS}) == 3
+    assert "Generated 15 password(s) into secrets/, which only you can open" in result.output
+    assert (result.workdir / "secrets").stat().st_mode & 0o777 == 0o700
     assert (result.workdir / ".env").stat().st_mode & 0o777 == 0o600
 
 
-def test_passwords_already_in_env_are_never_replaced(run_launch):
-    kept = "".join(f"{key}=kept-{index}\n" for index, key in enumerate(SIGNIN_SECRETS))
-    result = run_launch("--api", env_file="IMAGE_NAME=x\n" + kept)
-    assert [result.env_file()[key] for key in SIGNIN_SECRETS] == ["kept-0", "kept-1", "kept-2"]
-    assert "sign-in password(s)" not in result.output
-    # Handed to psql by name, never on its command line (V6-55).
-    assert result.called("env NL2SQL_ROLESYNC_PASSWORD=kept-2")
-    assert not result.called("kept-2 ") and not result.called("rolesync_password=")
+def test_a_password_in_env_is_moved_into_its_file_and_out_of_env_and_never_replaced(run_launch):
+    """A store keeps the password it was given, so a .env's value from before
+    6.3 is the one the file must hold -- and the file is then the one copy."""
+    kept = "".join(f"{name.upper()}=kept-{index}\n" for index, name in enumerate(SIGNIN_SECRETS))
+    result = run_launch("--api", env_file="IMAGE_NAME=x\n" + kept + "API_TOKEN=tok\n")
+    assert [result.secrets()[name] for name in SIGNIN_SECRETS] == ["kept-0", "kept-1", "kept-2"]
+    assert result.secrets()["api_token"] == "tok"
+    assert not [key for key in result.env_file() if key.endswith(("_PASSWORD", "_TOKEN"))]
+    again = run_launch("--api", env_file="IMAGE_NAME=x\n")
+    assert [again.secrets()[name] for name in SIGNIN_SECRETS] == ["kept-0", "kept-1", "kept-2"]
 
 
 @pytest.mark.parametrize("how", ["flag", "env"])
@@ -1635,13 +1459,9 @@ def test_with_sign_in_off_nothing_is_started_and_pg_hba_is_put_back(run_launch, 
         result = run_launch("--gui", env_file="IMAGE_NAME=x\nAUTH_ENABLED=false\n")
     assert result.returncode == 0
     assert not result.called("--profile auth")
-    assert not result.called("rolesync=")
-    [hba] = _ldap_hba_calls(result)
-    assert "NL2SQL_SIGNIN=off" in hba
     assert "==> Sign-in is off (AUTH_ENABLED=false)" in result.output
     assert "every page and port is open to whoever can reach it" in result.output
     assert "Sign-in is on" not in result.output
-    assert not any(key in result.env_file() for key in SIGNIN_SECRETS)
 
 
 def test_no_auth_reaches_every_service_compose_starts(run_launch):
@@ -1684,20 +1504,6 @@ def test_a_directory_page_that_does_not_come_up_is_reported(run_launch):
     assert "open https://localhost:8084" not in output
 
 
-@pytest.mark.parametrize("failing", ["FAKE_AUTH_ROLES_FAIL", "FAKE_LDAP_HBA_FAILS"])
-def test_a_database_that_cannot_be_prepared_for_sign_in_is_warned_about(run_launch, failing):
-    result = run_launch("--api", env={failing: "1"})
-    assert result.returncode == 0
-    assert "could not prepare the retail database for sign-in, so nobody will be able to." in result.output
-    assert "Check what it said: docker compose logs postgres" in result.output
-
-
-def test_pg_hba_that_cannot_be_put_back_is_warned_about(run_launch):
-    result = run_launch("--no-auth", env={"FAKE_LDAP_HBA_FAILS": "1"})
-    assert result.returncode == 0
-    assert "could not take the sign-in lines out of the retail database's pg_hba.conf." in result.output
-
-
 def test_plain_pages_are_probed_and_named_over_http(run_launch):
     result = run_launch("--gui", env_file="IMAGE_NAME=x\nGUI_TLS_ENABLED=false\n")
     assert "GUI is healthy at http://localhost:8080" in result.output
@@ -1705,99 +1511,46 @@ def test_plain_pages_are_probed_and_named_over_http(run_launch):
 
 
 # ---------------------------------------------------------------------------
-# Store passwords (6.1): generated once, kept, and told to each store by name
+# Every password a file in secrets/ (6.1 V6-08, 6.3 V6-38)
 # ---------------------------------------------------------------------------
 
 STORE_SECRETS = (
-    "POSTGRES_PASSWORD", "POSTGRES_READER_PASSWORD", "CONTEXT_DB_PASSWORD", "VECTOR_DB_PASSWORD",
-    "SNIPPETS_DB_PASSWORD", "SNIPPETS_READER_PASSWORD", "FEEDBACK_DB_PASSWORD", "FEEDBACK_WRITER_PASSWORD",
-    "CORRECTIONS_DB_PASSWORD", "COMPLETIONS_DB_PASSWORD", "MLFLOW_DB_PASSWORD",
+    "postgres_password", "postgres_reader_password", "context_db_password", "vector_db_password",
+    "stores_db_password", "snippets_db_password", "snippets_reader_password", "feedback_db_password",
+    "feedback_writer_password", "corrections_db_password", "completions_db_password", "mlflow_db_password",
 )
 
 
-def test_every_store_password_a_dotenv_lacks_is_generated_before_anything_starts(run_launch):
-    """V6-08. A .env from before 6.1 has none, and compose would fall back to
-    the password every copy of this repository shares."""
+def test_every_store_password_is_generated_before_anything_starts(run_launch):
+    """V6-08. A checkout from before 6.1 has none, and compose would fall
+    back to the password every copy of this repository shares."""
     result = run_launch()
-    values = result.env_file()
-    assert all(re.fullmatch(r"[0-9a-f]{48}", values[key]) for key in STORE_SECRETS)
-    assert len({values[key] for key in STORE_SECRETS}) == len(STORE_SECRETS)
-    assert "Generated 11 database password(s) into .env, which only you can read" in result.output
-    assert result.index_of("env NL2SQL_PASSWORD=") > result.index_of("compose up -d postgres")
-    assert oct((result.workdir / ".env").stat().st_mode & 0o777) == "0o600"
+    secrets = result.secrets()
+    assert all(re.fullmatch(r"[0-9a-f]{48}", secrets[name]) for name in STORE_SECRETS)
+    assert len({secrets[name] for name in STORE_SECRETS}) == len(STORE_SECRETS)
+    assert result.output.index("password(s) into secrets/") < result.output.index("==> Starting 4 service(s)")
 
 
-def test_store_passwords_already_in_env_are_never_replaced(run_launch):
-    kept = "".join(f"{key}=kept-{index}\n" for index, key in enumerate(STORE_SECRETS))
-    result = run_launch(env_file="RAG_ENABLED=true\n" + kept)
-    assert [result.env_file()[key] for key in STORE_SECRETS] == [f"kept-{i}" for i in range(len(STORE_SECRETS))]
-    assert "database password(s)" not in result.output
+def test_store_passwords_are_never_replaced_and_said_only_when_made(run_launch):
+    first = run_launch().secrets()
+    again = run_launch()
+    assert [again.secrets()[name] for name in STORE_SECRETS] == [first[name] for name in STORE_SECRETS]
+    assert "password(s) into secrets/" not in again.output
 
 
-@pytest.mark.parametrize(
-    ("service", "role", "key"),
-    [
-        ("vectordb", "ragproc", "VECTOR_DB_PASSWORD"),
-        ("chunkdb", "ragproc", "CONTEXT_DB_PASSWORD"),
-        ("snippetsdb", "snippets", "SNIPPETS_DB_PASSWORD"),
-        ("snippetsdb", "snippets_reader", "SNIPPETS_READER_PASSWORD"),
-    ],
-)
-def test_each_retrieval_store_is_told_its_password_by_name(run_launch, service, role, key):
-    """A volume made from a published image, or before 6.1, keeps the old
-    password until the role is told the new one -- over the store's own
-    socket, the password in the environment and never an argument."""
-    kept = "".join(f"{name}={name.lower()}-value\n" for name in STORE_SECRETS)
-    result = run_launch(env_file="RAG_ENABLED=true\n" + kept)
-    [call] = [c for c in result.calls_matching(f"exec -T -e NL2SQL_PASSWORD {service} ") if f"role={role} " in c]
-    assert f"{key.lower()}-value" not in call
-    assert result.called(f"env NL2SQL_PASSWORD={key.lower()}-value")
+def test_the_optional_secrets_are_empty_files_until_someone_makes_them(run_launch):
+    secrets = run_launch().secrets()
+    for name in ("api_token", "review_token", "console_token", "ldap_upstream_bind_password"):
+        assert secrets[name] == "", name
 
 
-@pytest.mark.parametrize(
-    ("args", "service", "profiles"),
-    [
-        (("--feedback",), "feedbackdb", "--profile feedback"),
-        (("--review",), "correctionsdb", "--profile feedback --profile review"),
-        (("--review",), "completionsdb", "--profile feedback --profile review"),
-        (("--mlflow",), "mlflowdb", "--profile mlflow"),
-    ],
-)
-def test_each_other_store_is_told_its_password_once_it_is_up(run_launch, args, service, profiles):
-    result = run_launch(*args)
-    assert result.calls_matching(f"compose {profiles} exec -T -e NL2SQL_PASSWORD {service} psql")
-
-
-def test_mlflows_store_is_told_before_the_server_that_logs_in_with_it_starts(run_launch):
+def test_mlflows_store_is_given_its_password_by_the_server_s_dependency_on_the_one_shot(run_launch):
+    """No password is set by this script: the server waits for dbprep, which
+    sets its store's from the secret (docker-compose.yml)."""
     result = run_launch("--mlflow")
-    server = next(i for i, call in enumerate(result.calls) if call.endswith("--profile mlflow up -d mlflow"))
-    assert result.index_of("--profile mlflow up -d mlflowdb") < result.index_of("exec -T -e NL2SQL_PASSWORD mlflowdb") < server
-
-
-@pytest.mark.parametrize(
-    ("service", "said"),
-    [
-        ("vectordb", "could not set the vector store's password; the agent may not reach it."),
-        ("chunkdb", "could not set the context store's password; the agent may not reach it."),
-        ("snippetsdb", "could not set the snippet store's password; it may not load."),
-    ],
-)
-def test_a_store_that_refuses_its_password_is_said_and_the_start_goes_on(run_launch, service, said):
-    result = run_launch(env={"FAKE_SET_PASSWORD_FAILS": service})
-    assert result.returncode == 0
-    assert said in result.output
-
-
-def test_a_snippet_reader_that_refuses_its_password_is_said(run_launch):
-    """The reader's call is the second against snippetsdb; failing only it
-    needs the fake to tell the two apart by the role they name."""
-    result = run_launch(env={"FAKE_SET_PASSWORD_FAILS": "snippetsdb psql -X -q -U snippets -d nl2sql_snippets -v ON_ERROR_STOP=1 -v role=snippets_reader"})
-    assert "could not set the snippet reader's password; the agent may not read snippets." in result.output
-
-
-def test_a_store_that_refuses_its_password_fails_its_own_start(run_launch):
-    result = run_launch("--feedback", env={"FAKE_SET_PASSWORD_FAILS": "feedbackdb"})
-    assert "the staging database did not become healthy." in result.output
+    assert result.index_of("--profile mlflow up -d mlflowdb") < next(
+        i for i, call in enumerate(result.calls) if call.endswith("--profile mlflow up -d mlflow"))
+    assert not result.calls_matching("NL2SQL_PASSWORD")
 
 
 # ---------------------------------------------------------------------------
@@ -1820,9 +1573,9 @@ def test_stores_published_wider_are_said_and_so_is_every_default_password(run_la
         env_file="RAG_ENABLED=true\nPOSTGRES_PASSWORD=nl2sql\nFEEDBACK_DB_PASSWORD=feedback\n",
     )
     assert "the databases are published on 0.0.0.0 (DB_BIND_ADDRESS), not only on this machine." in result.output
-    assert "POSTGRES_PASSWORD is still the default every copy of this repository knows." in result.output
-    assert "FEEDBACK_DB_PASSWORD is still the default" in result.output
-    assert "VECTOR_DB_PASSWORD is still the default" not in result.output, "a generated one is not"
+    assert "secrets/postgres_password is still the default every copy of this repository knows." in result.output
+    assert "secrets/feedback_db_password is still the default" in result.output
+    assert "secrets/vector_db_password is still the default" not in result.output, "a generated one is not"
 
 
 # ---------------------------------------------------------------------------
@@ -1859,3 +1612,77 @@ def test_a_database_that_never_comes_up_is_named_as_compose_knows_it(run_launch)
     assert result.returncode != 0
     assert "nl2sql-postgres did not become healthy" in result.output
     assert "docker compose logs postgres" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The runtime stores from before 6.3 (V6-40)
+# ---------------------------------------------------------------------------
+
+
+def test_no_old_store_volume_is_nothing_to_move(run_launch):
+    result = run_launch()
+    assert not result.called("storesmigrate")
+    assert "from before 6.3" not in result.output
+
+
+def test_each_old_store_is_moved_into_its_database_and_its_volume_kept(run_launch):
+    result = run_launch(env={"FAKE_LEGACY_VOLUMES": "feedback completions snippets"})
+    assert result.returncode == 0
+    moves = result.calls_matching("storesmigrate")
+    assert len(moves) == 2, "the snippets are loaded from their document, not moved"
+    assert "--profile migrate run --rm --no-deps -T -v nl2sql_feedbackdata:/legacy:ro" in moves[0]
+    assert "-e NL2SQL_DB=nl2sql_feedback -e NL2SQL_OWNER=feedback -e NL2SQL_VOLUME=nl2sql_feedbackdata" in moves[0]
+    assert "moved nl2sql_feedback from nl2sql_feedbackdata into the runtime stores" in result.output
+    assert "moved nl2sql_completions" in result.output
+    assert ("the stores' volumes from before 6.3 are kept; once you have looked, docker volume rm "
+            "nl2sql_feedbackdata nl2sql_completionsdata nl2sql_snippetsdata") in result.output
+    # After the databases are made, before anything that writes them starts.
+    assert result.index_of("compose run --rm --no-deps -T dbprep") < result.index_of("storesmigrate")
+
+
+def test_a_store_moved_already_says_nothing_but_that_its_volume_is_kept(run_launch):
+    result = run_launch(env={"FAKE_LEGACY_VOLUMES": "corrections", "FAKE_MIGRATED": "corrections"})
+    assert "moved nl2sql_corrections" not in result.output
+    assert "docker volume rm nl2sql_correctionsdata" in result.output
+
+
+def test_a_move_that_fails_is_warned_about_and_the_rest_goes_on(run_launch):
+    result = run_launch(env={"FAKE_LEGACY_VOLUMES": "feedback corrections", "FAKE_MIGRATE_FAILS": "feedback"})
+    assert result.returncode == 0
+    assert "the feedback store from before 6.3 was not moved into the runtime stores. It said:" in result.output
+    assert "already has 2 tables, so it is not merged into it." in result.output
+    assert "moved nl2sql_corrections" in result.output
+
+
+def test_another_instance_moves_its_own_old_stores(run_launch):
+    result = run_launch(env={"FAKE_LEGACY_VOLUMES": "feedback", "NL2SQL_INSTANCE": "nl2sql-accept"})
+    assert result.called("volume inspect nl2sql-accept_feedbackdata")
+
+
+# ---------------------------------------------------------------------------
+# The stack's CA, where a client was told to trust it
+# ---------------------------------------------------------------------------
+
+
+def test_a_ca_copy_that_still_matches_is_left_alone(run_launch, tmp_path):
+    (tmp_path / "repo" / "nl2sql-ca.crt").write_text("not really a certificate\n")
+    result = run_launch("--api")
+    assert result.called("cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt.new")
+    assert "the stack's CA is a new one" not in result.output
+    assert not (tmp_path / "repo" / "nl2sql-ca.crt.new").exists()
+
+
+def test_a_ca_made_again_since_replaces_the_copy_and_says_to_trust_it_again(run_launch, tmp_path):
+    """The daemon restart that took the CA's volume left a copy that verified
+    nothing, and a plain start said nothing about it (found 2026-10-05)."""
+    (tmp_path / "repo" / "nl2sql-ca.crt").write_text("the old CA\n")
+    result = run_launch("--api", env={"FAKE_CA": "the new CA"})
+    assert (tmp_path / "repo" / "nl2sql-ca.crt").read_text() == "the new CA\n"
+    assert "the stack's CA is a new one, so ./nl2sql-ca.crt was replaced with it." in result.output
+    assert "Trust it again wherever you trusted the old one" in result.output
+
+
+def test_no_copy_is_made_where_nobody_asked_for_one(run_launch, tmp_path):
+    result = run_launch("--api")
+    assert not result.called("nl2sql-ca.crt.new")
+    assert not (tmp_path / "repo" / "nl2sql-ca.crt").exists()

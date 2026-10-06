@@ -31,7 +31,10 @@ if str(RAG_DIR) not in sys.path:
 CHUNK_DB_URL = live_stores.url("chunks", variable="TEST_CHUNK_DB_URL", driver="postgresql")
 VECTOR_DB_URL = live_stores.url("vectors", variable="TEST_VECTOR_DB_URL", driver="postgresql")
 #: The snippet store, as its owner -- the compose service on its published
-#: port. Like the two above, tests only ever touch a throwaway database in it.
+#: port. Like the two above, tests only ever touch a throwaway database in it;
+#: since 6.3 its owner may not make one (V6-40), so against a stack's own
+#: stores the snippet tests skip -- point TEST_SNIPPETS_DB_URL at a
+#: throwaway pgvector, as a superuser, to run them.
 SNIPPETS_DB_URL = live_stores.url("snippets", variable="TEST_SNIPPETS_DB_URL", driver="postgresql")
 
 

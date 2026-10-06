@@ -21,8 +21,8 @@ planner gate -- and beside every result, what the agent would have made of
 it.
 
 ```
-browser ──▶ nl2sql-console-gui   nginx on 127.0.0.1:8082: the page, and a proxy
-                  │               that adds CONSOLE_TOKEN and verifies TLS
+browser ──▶ nl2sql-console-gui   the proxy image on 127.0.0.1:8082: the page, and
+                  │               a proxy that adds the token and verifies TLS
                   ▼
             nl2sql-console       python -m nl2sql_agent.console, the agent image
                   │               static validator ─▶ planner gate ─▶ executor
@@ -241,7 +241,7 @@ empty unless set, so the default below stands.
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
 | `CONSOLE_ALLOWED_ROLES` | `nl2sql_reviewers,nl2sql_curators` | Who may use it, signed in |
-| `CONSOLE_TOKEN` | *(unset)* | A static service token (or `X-API-Key`): required on every `/v1` route when sign-in is off, accepted beside sessions when it is on |
+| `CONSOLE_TOKEN` | *(unset)*; compose gives `CONSOLE_TOKEN_FILE`, `/run/secrets/console_token` | A static service token (or `X-API-Key`): required on every `/v1` route when sign-in is off, accepted beside sessions when it is on. Read from the file `CONSOLE_TOKEN_FILE` names when that is set, which wins (6.3) |
 | `CONSOLE_TOKEN_NAME` | `console-token` | Who the token is |
 | `CONSOLE_TOKEN_ROLES` | *(the allowed roles)* | The roles it holds, and no others; unset, `CONSOLE_ALLOWED_ROLES` |
 | `CONSOLE_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly, comma-separated |
@@ -269,29 +269,30 @@ documented with the rest of the agent's in
 
 ### The interface
 
-Read by the nginx template and its start-up script, and set by compose from
-the names on the left.
+Served by the proxy image's `console` page since 6.3
+([`proxy/README.md`](../proxy/README.md)), which reads the names on the
+right; compose sets them from the names on the left.
 
 | Variable | Sets | Default |
 |---|---|---|
-| `CONSOLE_GUI_PORT` | `CONSOLE_GUI_PORT` | `8082` |
-| `CONSOLE_GUI_UPSTREAM` | `CONSOLE_UPSTREAM` | `https://nl2sql-console:8445` |
-| `CONSOLE_GUI_SSL_NAME` | `CONSOLE_SSL_NAME` | `nl2sql-console` |
-| `CONSOLE_GUI_CACERT` | `CONSOLE_CACERT` | `/etc/nl2sql/tls/ca.crt` |
-| `CONSOLE_GUI_READ_TIMEOUT` | `CONSOLE_READ_TIMEOUT` | `120s` -- longer than the statement timeout, or the proxy cuts off an answer that is coming |
-| `CONSOLE_GUI_RESOLVER` | `CONSOLE_GUI_RESOLVER` | `127.0.0.11`, Docker's DNS |
-| `CONSOLE_TOKEN` | `CONSOLE_TOKEN` | *(unset)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
+| `CONSOLE_GUI_PORT` | `PROXY_PORT` | `8082` |
+| `CONSOLE_GUI_UPSTREAM` | `UPSTREAM` | `https://nl2sql-console:8445` |
+| `CONSOLE_GUI_SSL_NAME` | `UPSTREAM_SSL_NAME` | `nl2sql-console` |
+| `CONSOLE_GUI_CACERT` | `UPSTREAM_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `CONSOLE_GUI_READ_TIMEOUT` | `UPSTREAM_READ_TIMEOUT` | `120s` -- longer than the statement timeout, or the proxy cuts off an answer that is coming |
+| `CONSOLE_GUI_RESOLVER` | `PROXY_RESOLVER` | `127.0.0.11`, Docker's DNS |
+| `secrets/console_token` | `UPSTREAM_TOKEN_FILE` | *(empty)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
 | `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are, and sends the session rather than a token |
 | `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where `/auth/` is proxied: the sign-in form posts there |
 | `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
 | `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
-| `GUI_TLS_ENABLED` | `CONSOLE_GUI_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
-| `GUI_TLS_CERT_FILE` | `CONSOLE_GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
-| `GUI_TLS_KEY_FILE` | `CONSOLE_GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
+| `GUI_TLS_ENABLED` | `PROXY_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
+| `GUI_TLS_CERT_FILE` | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
+| `CONSOLE_BIND_ADDRESS` | compose alone | `127.0.0.1`: the host address both the console's ports are published on |
 
 The `GUI_` ones are shared: one line in `.env` sets them for every
-interface. And one for compose alone: `CONSOLE_BIND_ADDRESS` (`127.0.0.1`),
-the host address both ports are published on.
+interface.
 
 ### Flags
 
@@ -337,14 +338,19 @@ console/
 │       ├── PromptView.tsx       the agent's view of a table
 │       ├── History.tsx
 │       └── StatusBar.tsx
-├── nginx.conf.template          the page, and the proxy to the console
-├── 10-nl2sql-console-config.envsh   the token header, and the TLS block
-└── Dockerfile                   node builds it, nginx serves it
+└── package.json                 its own npm project
 ```
 
-A separate npm project and image from the other two interfaces, for the
-review interface's reason: an entry point in the public GUI's project would
-be served by the public GUI's image, to anyone who could reach it.
+Its nginx template is the proxy image's `service` page
+([`proxy/pages/service.conf.template`](../proxy/pages/service.conf.template)),
+shared with the review and curation pages, which differ from it only in
+their upstream; `proxy/Dockerfile` builds this project in a stage of its own.
+
+A separate npm project from the other interfaces, for the review
+interface's reason: an entry point in the public GUI's project would be part
+of the public GUI's build. Since 6.3 the bundles share one image, and each
+container serves only the page `NL2SQL_PAGE` names, from that page's own
+root -- the web interface's container answers nothing with this page's files.
 
 ## Tests
 

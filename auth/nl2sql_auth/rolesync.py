@@ -11,8 +11,10 @@ interface changes someone:
   its comment -- which is where signing in reads it from;
 * the agent's reader is granted each such role WITH SET, so a question can
   run as the person who asked it (`SET LOCAL ROLE`);
-* a person's own login is read-only and time-limited when they connect
-  directly, with psql or a BI tool;
+* a person's own login is read-only and limited -- a statement timeout,
+  `work_mem`, an idle-in-transaction timeout, a connection limit
+  (`nl2sql_common.roles`) -- when they connect directly, with psql or a BI
+  tool, and a person made by an earlier release is given what they lack;
 * a person no longer in any mapped group, or no longer in the directory, has
   their role dropped -- or, if Postgres will not drop it, disabled;
 * a person the password policy has locked has every session from before the
@@ -38,11 +40,18 @@ from typing import Callable, Iterable
 import psycopg
 from psycopg import sql
 
+from nl2sql_common.roles import RoleLimits, limit_role
 from nl2sql_ldap.layout import login_problem
 
 from .revocation import Revocations
 
 MARKER = "nl2sql_ldap"
+
+#: A person's sort and hash memory, and how long their transaction may sit
+#: idle: the two limits a person's role gained in 6.3, beside the statement
+#: timeout and connection limit it has had since 6.0 (AUTH_USER_*).
+PERSON_WORK_MEM = "16MB"
+PERSON_IDLE_IN_TRANSACTION_MS = 60_000
 
 #: The people this sync made -- every member of the marker but the sync's own
 #: login, which holds ADMIN on it -- with their comment and which of the
@@ -54,6 +63,17 @@ SELECT person.rolname,
              FROM pg_auth_members grant_
              JOIN pg_roles held ON held.oid = grant_.roleid
              WHERE grant_.member = person.oid AND held.rolname = ANY(%(roles)s))
+FROM pg_auth_members marker
+JOIN pg_roles person ON person.oid = marker.member
+WHERE marker.roleid = %(marker)s::regrole
+  AND person.rolname <> current_user
+"""
+
+#: Each person's role settings and connection limit, to find one whose
+#: limits are not what the sync gives a person now (made by an earlier
+#: release, or before a setting changed).
+LIMITS_SQL = """
+SELECT person.rolname, COALESCE(person.rolconfig, ARRAY[]::text[]), person.rolconnlimit
 FROM pg_auth_members marker
 JOIN pg_roles person ON person.oid = marker.member
 WHERE marker.roleid = %(marker)s::regrole
@@ -88,11 +108,14 @@ class Plan:
     revoke: list[tuple[str, str]] = field(default_factory=list)
     comment: list[tuple[str, str]] = field(default_factory=list)  # (person, text)
     reader: list[str] = field(default_factory=list)
+    limits: list[str] = field(default_factory=list)
     remove: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
-        return bool(self.create or self.grant or self.revoke or self.comment or self.reader or self.remove)
+        return bool(
+            self.create or self.grant or self.revoke or self.comment or self.reader or self.limits or self.remove
+        )
 
 
 @dataclass
@@ -136,8 +159,15 @@ def plan(
     managed: dict[str, tuple[str, frozenset[str]]],
     names: set[str],
     reader_holds: set[str],
+    *,
+    limits: RoleLimits | None = None,
+    current: dict[str, tuple[list[str], int]] | None = None,
 ) -> Plan:
-    """What to change to get from `managed` to `desired`. Pure: no database."""
+    """What to change to get from `managed` to `desired`. Pure: no database.
+
+    `current` is each managed person's role settings and connection limit;
+    one that lacks any of `limits` is listed to be given them.
+    """
     result = Plan()
     for person, want in sorted(desired.items()):
         if person not in managed:
@@ -155,6 +185,8 @@ def plan(
             result.comment.append((person, want.comment))
         if person not in reader_holds:
             result.reader.append(person)
+        if limits is not None and current is not None and person in current and limits.differ(*current[person]):
+            result.limits.append(person)
     result.remove = sorted(set(managed) - set(desired))
     return result
 
@@ -181,6 +213,13 @@ class RoleSync:
         self.reader = reader
         self.statement_timeout_ms = statement_timeout_ms
         self.connection_limit = connection_limit
+        #: What every person's own login may cost the database (V6-39).
+        self.limits = RoleLimits(
+            statement_timeout_ms=statement_timeout_ms,
+            work_mem=PERSON_WORK_MEM,
+            idle_in_transaction_ms=PERSON_IDLE_IN_TRANSACTION_MS,
+            connection_limit=connection_limit,
+        )
         self._connect = connect
         self._clock = clock
         self.revocations = revocations
@@ -209,9 +248,7 @@ class RoleSync:
             self._grant(conn, granted, person)
         self._reader(conn, person)
         conn.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(role))
-        conn.execute(
-            sql.SQL("ALTER ROLE {} SET statement_timeout = {}").format(role, sql.Literal(self.statement_timeout_ms))
-        )
+        limit_role(conn, person, self.limits)
         self._comment(conn, person, want.comment)
 
     @staticmethod
@@ -278,7 +315,11 @@ class RoleSync:
             try:
                 names = {row[0] for row in conn.execute(NAMES_SQL).fetchall()}
                 reader_holds = {row[0] for row in conn.execute(READER_SQL, {"reader": self.reader}).fetchall()}
-                changes = plan(desired, self._managed(conn), names, reader_holds)
+                current = {
+                    name: (list(config), connlimit)
+                    for name, config, connlimit in conn.execute(LIMITS_SQL, {"marker": MARKER}).fetchall()
+                }
+                changes = plan(desired, self._managed(conn), names, reader_holds, limits=self.limits, current=current)
             except psycopg.Error as exc:
                 result.ok = False
                 result.errors.append(f"reading the retail database's roles: {_first_line(exc)}")
@@ -295,6 +336,8 @@ class RoleSync:
                 steps.append((person, lambda p=person, t=text: self._comment(conn, p, t)))
             for person in changes.reader:
                 steps.append((person, lambda p=person: self._reader(conn, p)))
+            for person in changes.limits:
+                steps.append((person, lambda p=person: limit_role(conn, p, self.limits)))
             for person, step in steps:
                 try:
                     with conn.transaction():

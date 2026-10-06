@@ -1,10 +1,11 @@
 """Sign-in end to end: the retail database, the directory, the auth service.
 
-Opt-in (`pytest --run-docker`). Builds the retail database, the directory
-and the auth images from this checkout, starts them on a network of their
-own -- nothing published to the host, nothing shared with a running stack --
-prepares the database the way launch.sh does (docker/reader_role.sql,
-docker/auth_roles.sql, docker/ldap_hba.sh), and then signs people in:
+Opt-in (`pytest --run-docker`). Builds the retail database, the directory,
+the auth service, the agent and the proxy images from this checkout, starts
+them on a network of their own -- nothing published to the host, nothing
+shared with a running stack -- prepares the database the way every start does
+since 6.3, with the dbprep one-shot (`python -m nl2sql_ops prepare`, in the
+agent's image, over the database's own socket), and then signs people in:
 
 * the first administrator, whom the directory made on its first start and
   the role sync made a role;
@@ -49,7 +50,10 @@ READER_PASSWORD = "reader-password-1"
 PG_TLS = "/etc/nl2sql/pg-tls"
 LDAP_IMAGE = "nl2sql-ldap:pytest"
 AUTH_IMAGE = "nl2sql-auth:pytest"
-PROXY_IMAGE = "nl2sql-mlflow-proxy:pytest"
+#: Every page's image since 6.3; MLflow's front door is its `mlflow` page.
+PROXY_IMAGE = "nl2sql-proxy:pytest"
+#: The agent's image, which carries the dbprep one-shot.
+AGENT_IMAGE = "nl2sql-agent:pytest"
 #: MLflow's own server, as the last release published it -- a tag that exists
 #: to pull before this one is pushed. Only its HTTP surface is used here,
 #: against a throwaway SQLite store.
@@ -75,9 +79,11 @@ def stack(docker_daemon_available):
     docker("build", "-q", "-f", str(REPO_ROOT / "docker" / "Dockerfile"), "-t", RETAIL, str(REPO_ROOT))
     docker("build", "-q", "-f", str(REPO_ROOT / "ldap" / "Dockerfile"), "-t", LDAP_IMAGE, str(REPO_ROOT))
     docker("build", "-q", "-f", str(REPO_ROOT / "auth" / "Dockerfile"), "-t", AUTH_IMAGE, str(REPO_ROOT))
+    docker("build", "-q", "-f", str(REPO_ROOT / "agent" / "Dockerfile"), "-t", AGENT_IMAGE, str(REPO_ROOT))
     net = f"nl2sql-signin-{uuid.uuid4().hex[:8]}"
     tls = f"{net}-ldaptls"
     pgtls = f"{net}-pgtls"
+    socket = f"{net}-pgsocket"
     names = {part: f"{net}-{part}" for part in ("ldap", "pg", "auth", "mlflow", "proxy")}
     docker("network", "create", net)
     try:
@@ -89,8 +95,8 @@ def stack(docker_daemon_available):
         docker(
             "run", "-d", "--name", names["pg"], "--network", net, "--network-alias", "nl2sql-postgres",
             "-v", f"{tls}:/etc/nl2sql/ldap-tls:ro", "-e", "LDAPTLS_CACERT=/etc/nl2sql/ldap-tls/ldap.crt",
-            "-v", f"{pgtls}:{PG_TLS}", "-e", f"POSTGRES_PASSWORD={OWNER_PASSWORD}",
-            "-e", f"POSTGRES_READER_PASSWORD={READER_PASSWORD}", RETAIL,
+            "-v", f"{pgtls}:{PG_TLS}", "-v", f"{socket}:/var/run/postgresql",
+            "-e", f"POSTGRES_PASSWORD={OWNER_PASSWORD}", RETAIL,
         )
         # Over TCP: the server the entrypoint sets passwords through answers
         # on the socket only, so a socket check can catch it before it stops.
@@ -99,17 +105,7 @@ def stack(docker_daemon_available):
             and docker("inspect", "-f", "{{.State.Health.Status}}", names["ldap"], check=False).stdout.strip() == "healthy",
             "the database and the directory",
         )
-        psql = ["exec", "-i", "-u", "postgres", names["pg"], "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail"]
-        docker(*psql[:2], "-e", f"NL2SQL_READER_PASSWORD={READER_PASSWORD}", *psql[2:],
-               "-v", "reader=nl2sql_reader", "-v", "owner=nl2sql",
-               "-f", "-", input=(REPO_ROOT / "docker" / "reader_role.sql").read_text())
-        apply_auth_roles(names["pg"])
-        docker(
-            "exec", "-i", "-u", "postgres", "-e", "NL2SQL_SIGNIN=on", "-e", "NL2SQL_DB=nl2sql_retail",
-            "-e", "NL2SQL_SERVICE_ROLES=nl2sql_reader,nl2sql_rolesync", "-e", "NL2SQL_LDAP_HOST=nl2sql-ldap",
-            "-e", "NL2SQL_LDAP_BASE_DN=dc=nl2sql,dc=local", names["pg"], "sh", "-s",
-            input=(REPO_ROOT / "docker" / "ldap_hba.sh").read_text(),
-        )
+        prepare(socket)
         docker(
             "run", "-d", "--name", names["auth"], "--network", net, "-v", f"{tls}:/etc/nl2sql/ldap-tls:ro",
             "-v", f"{pgtls}:{PG_TLS}:ro",
@@ -117,33 +113,39 @@ def stack(docker_daemon_available):
             "-e", "AUTH_ROLESYNC_DB_URL=postgresql://nl2sql_rolesync:sync-password-1@nl2sql-postgres:5432/nl2sql_retail",
             "-e", "LDAP_SERVICE_PASSWORD=svc-password-1", AUTH_IMAGE,
         )
-        docker("build", "-q", "-f", str(REPO_ROOT / "docker" / "mlflow-proxy" / "Dockerfile"), "-t", PROXY_IMAGE, str(REPO_ROOT))
+        docker("build", "-q", "-f", str(REPO_ROOT / "proxy" / "Dockerfile"), "-t", PROXY_IMAGE, str(REPO_ROOT))
         docker(
             "run", "-d", "--name", names["mlflow"], "--network", net, "--network-alias", "nl2sql-mlflow", MLFLOW,
             "mlflow", "server", "--host", "0.0.0.0", "--port", "5000", "--backend-store-uri", "sqlite:////tmp/mlflow.db",
             "--allowed-hosts", "nl2sql-mlflow:*",
         )
         docker(
-            "run", "-d", "--name", names["proxy"], "--network", net, "-e", "AUTH_ENABLED=true",
-            "-e", "MLFLOW_PROXY_TLS_ENABLED=false", "-e", f"AUTH_UPSTREAM=http://{names['auth']}:8446", PROXY_IMAGE,
+            "run", "-d", "--name", names["proxy"], "--network", net,
+            "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
+            "-e", "NL2SQL_PAGE=mlflow", "-e", "PROXY_PORT=5001", "-e", "AUTH_ENABLED=true",
+            "-e", "PROXY_TLS_ENABLED=false", "-e", "UPSTREAM=http://nl2sql-mlflow:5000",
+            "-e", f"AUTH_UPSTREAM=http://{names['auth']}:8446", PROXY_IMAGE,
         )
-        yield names
+        yield {**names, "socket": socket}
     finally:
         for container in names.values():
             docker("rm", "-f", container, check=False)
         docker("network", "rm", net, check=False)
-        docker("volume", "rm", tls, pgtls, check=False)
+        docker("volume", "rm", tls, pgtls, socket, check=False)
 
 
-#: Run inside the auth container, which has Python and nothing else needed.
-def apply_auth_roles(pg: str) -> None:
-    """docker/auth_roles.sql, as launch.sh applies it on every start."""
-    docker(
-        "exec", "-i", "-u", "postgres", "-e", "NL2SQL_ROLESYNC_PASSWORD=sync-password-1", pg,
-        "psql", "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", "nl2sql_retail",
-        "-v", "reader=nl2sql_reader", "-v", "owner=nl2sql", "-v", "rolesync=nl2sql_rolesync",
-        "-f", "-", input=(REPO_ROOT / "docker" / "auth_roles.sql").read_text(),
+def prepare(socket: str) -> None:
+    """The dbprep one-shot, as compose runs it on every start: the agent's
+    image as its own account, holding the database's socket and the two
+    passwords it sets -- the reader's and the role sync's."""
+    result = docker(
+        "run", "--rm", "--user", "10001:10001", "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL",
+        "-v", f"{socket}:/run/nl2sql/sockets/retail",
+        "-e", f"POSTGRES_READER_PASSWORD={READER_PASSWORD}", "-e", "AUTH_ROLESYNC_PASSWORD=sync-password-1",
+        "-e", "NL2SQL_LDAP_HOST=nl2sql-ldap", "--entrypoint", "python", AGENT_IMAGE, "-m", "nl2sql_ops", "prepare",
+        check=False,
     )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 REQUEST = """
@@ -206,7 +208,7 @@ def test_the_first_administrator_signs_in_through_the_database(stack):
 
 
 def test_preparing_the_database_again_on_a_later_start_changes_no_membership(stack):
-    """launch.sh applies auth_roles.sql on every start, as the superuser. Its
+    """dbprep prepares the database on every start, as the superuser. Its
     repairs once granted again what the sync already had, which Postgres
     records as a second membership, with the superuser as its grantor."""
     memberships = [
@@ -217,7 +219,7 @@ def test_preparing_the_database_again_on_a_later_start_changes_no_membership(sta
     ]
     wait_until(lambda: "admin|nl2sql_reader" in docker(*memberships).stdout, "the sync to make the administrator a role")
     before = docker(*memberships).stdout
-    apply_auth_roles(stack["pg"])
+    prepare(stack["socket"])
     assert docker(*memberships).stdout == before
     reader_rows = [line for line in before.splitlines() if line.startswith("admin|nl2sql_reader|")]
     assert len(reader_rows) == 1 and reader_rows[0].endswith("|f|f|t"), reader_rows

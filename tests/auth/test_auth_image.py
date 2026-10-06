@@ -24,7 +24,7 @@ def dockerfile() -> str:
 
 
 def test_the_base_image_is_pinned(dockerfile: str):
-    assert re.search(r"^FROM python:3\.\d+-slim$", dockerfile, re.MULTILINE)
+    assert re.search(r"^FROM python:3\.\d+-slim@sha256:[0-9a-f]{64}$", dockerfile, re.MULTILINE)
 
 
 def test_it_carries_its_three_packages_and_nothing_of_the_agents(dockerfile: str):

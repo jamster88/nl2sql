@@ -5,9 +5,12 @@ tested as itself, because what it promises is made of things only a real
 server does: a UNIQUE that turns a double click into one record, ids drawn
 from a sequence that never hands one out twice, a vector column sized by the model, and a cosine search.
 
-Each test gets a throwaway database inside the store's own container,
+Each test gets a throwaway database inside the store's own server,
 created from template0 and dropped afterwards, so nothing here touches a
-fix somebody actually saved. The embedder is a deterministic fake -- the
+fix somebody actually saved. Since 6.3 no store's owner may create a
+database (V6-40), so against a stack's own stores these skip; point
+CORRECTIONS_DB_URL and COMPLETIONS_DB_URL at a throwaway pgvector, as a
+superuser, to run them. The embedder is a deterministic fake -- the
 real one is exercised by the review service's end-to-end run -- so a
 question's vector is a function of its words and a search result can be
 asserted exactly.

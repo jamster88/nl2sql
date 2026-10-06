@@ -26,7 +26,7 @@ it is published. `./launch.sh --desktop` then builds the desktop client's jar,
 which the last test drives.
 
 The tests sign in as the administrator the directory made on its first
-start, with the password `setup.sh` generated -- read from the copy's `.env`
+start, with the password `setup.sh` generated -- read from the copy's `secrets/`
 and never printed -- and then: every page, a question through the web
 interface, its verdict and its promotion into the golden set, the SQL
 console, MLflow behind its front door with the question's trace in it, and
@@ -70,8 +70,7 @@ PAGES = ("--review", "--curate", "--console", "--mlflow")
 HEADROOM_MIB = 3584
 #: The ports a stack publishes, each moved to a free one for this run.
 PORTS = (
-    "POSTGRES_PORT", "CONTEXT_DB_PORT", "VECTOR_DB_PORT", "SNIPPETS_DB_PORT", "FEEDBACK_DB_PORT",
-    "CORRECTIONS_DB_PORT", "COMPLETIONS_DB_PORT", "API_PORT", "REVIEW_PORT", "CONSOLE_PORT",
+    "POSTGRES_PORT", "CONTEXT_DB_PORT", "VECTOR_DB_PORT", "STORES_DB_PORT", "API_PORT", "REVIEW_PORT", "CONSOLE_PORT",
     "AUTH_PORT", "GUI_PORT", "REVIEW_GUI_PORT", "CURATE_GUI_PORT", "CONSOLE_GUI_PORT",
     "DIRECTORY_GUI_PORT", "MLFLOW_PORT",
 )
@@ -148,7 +147,8 @@ class Stack:
 
     @property
     def admin_password(self) -> str:
-        return _dotenv(self.root / ".env")["LDAP_ADMIN_PASSWORD"]
+        """As setup.sh generated it: a file in secrets/ since 6.3 (V6-38)."""
+        return (self.root / "secrets" / "ldap_admin_password").read_text().strip()
 
     def url(self, port: str, path: str = "") -> str:
         return f"https://localhost:{self.ports[port]}{path}"
@@ -164,7 +164,7 @@ class Stack:
 
     def compose(self, *args: str, timeout: int = 600) -> subprocess.CompletedProcess:
         profiles = [flag for name in ("api", "gui", "review", "reviewgui", "curategui", "console",
-                                      "consolegui", "auth", "directorygui", "mlflow", "feedback", "desktop")
+                                      "consolegui", "auth", "directorygui", "mlflow", "desktop", "migrate")
                     for flag in ("--profile", name)]
         return subprocess.run(["docker", "compose", *profiles, *args], cwd=self.root, env=self.env,
                               capture_output=True, text=True, timeout=timeout)
@@ -283,16 +283,43 @@ def test_every_container_is_up_healthy_and_has_never_restarted(stack: Stack):
     so only a stack compose made can show it."""
     rows = _docker("ps", "--all", "--filter", f"label=com.docker.compose.project={stack.instance}",
                    "--format", "{{.Names}}", check=True).stdout.split()
-    assert len(rows) >= 20, rows
+    # 19 since 6.3: the four runtime stores are one server, and the dbprep
+    # service prepares the databases as the pki service issues certificates.
+    assert len(rows) >= 19, rows
     for name in rows:
         state = json.loads(_docker("inspect", "--format", "{{json .State}}", name, check=True).stdout)
         restarts = int(_docker("inspect", "--format", "{{.RestartCount}}", name, check=True).stdout)
-        if name.endswith("-pki"):
+        if name.endswith(("-pki", "-dbprep")):
             assert (state["Status"], state["ExitCode"]) == ("exited", 0), name
             continue
         assert state["Status"] == "running" and restarts == 0, f"{name}: {state['Status']}, {restarts} restarts"
         if state.get("Health"):
             assert state["Health"]["Status"] == "healthy", name
+
+
+def test_nothing_runs_as_root_writes_its_image_or_shows_a_secret(stack: Stack):
+    """6.3 (V6-34, V6-38), held across the whole stack as compose made it:
+    no process in any container is root's -- those that start as root to hand
+    over their volumes have dropped by now -- every root filesystem is
+    read-only and every container has given up new privileges, and no
+    password or token is in any container's environment or command line,
+    where `docker inspect` would show it."""
+    secrets = [path.read_text().strip() for path in (stack.root / "secrets").iterdir()]
+    assert len([value for value in secrets if value]) >= 15
+    rows = _docker("ps", "--filter", f"label=com.docker.compose.project={stack.instance}",
+                   "--format", "{{.Names}}", check=True).stdout.split()
+    for name in rows:
+        # With the PID: Docker's `top` refuses a format without one. The user
+        # is named as Docker's own machine names that uid -- nginx's 101 may
+        # read `statd` -- so root is the one name that matters.
+        processes = _docker("top", name, "-o", "pid,user,args", check=True).stdout.splitlines()[1:]
+        assert not [line for line in processes if line.split()[1] in ("root", "0")], f"{name}: {processes}"
+        host = json.loads(_docker("inspect", "--format", "{{json .HostConfig}}", name, check=True).stdout)
+        assert host["ReadonlyRootfs"] and "no-new-privileges:true" in host["SecurityOpt"], name
+        assert "ALL" in host["CapDrop"] and host["Memory"] > 0 and host["PidsLimit"] > 0, name
+    for name in rows + [f"{stack.instance}-dbprep", f"{stack.instance}-pki"]:
+        shown = _docker("inspect", "--format", "{{json .Config.Env}} {{json .Config.Cmd}} {{json .Args}}", name).stdout
+        assert not [value for value in secrets if value and value in shown], f"a secret is in {name}'s configuration"
 
 
 def test_the_generated_administrator_signs_in_on_every_page_and_each_reaches_its_service(stack, sessions):

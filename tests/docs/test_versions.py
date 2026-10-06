@@ -40,14 +40,10 @@ DECLARATIONS = {
     "review/Dockerfile": r"^ARG REVIEW_VERSION=([\d.]+)",
     "auth/Dockerfile": r"^ARG AUTH_VERSION=([\d.]+)",
     "ldap/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "review/gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "console/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "curate/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "auth/gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
+    # Every page and MLflow's front door, one image since 6.3 (V6-37).
+    "proxy/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "docker/mlflow/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "docker/mlflowdb/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "docker/mlflow-proxy/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "desktop/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "desktop/pom.xml": r"^  <version>([\d.]+)</version>",
     "gui/package.json": r'^  "version": "([\d.]+)"',
@@ -144,7 +140,7 @@ def test_the_readme_counts_the_places_a_release_moves_and_the_tags_it_publishes(
 
 
 def test_the_published_tags_are_this_version():
-    """`setup.sh` pins thirteen tags and they all move together. A tag is the
+    """`setup.sh` pins eight tag families and they all move together. A tag is the
     version with dots turned into underscores, truncated to however many
     components the tag carries -- so `v4_5` is 4.5.x and `v4_5_1` is exactly
     4.5.1, which is what a correction is published as now that a published
@@ -154,9 +150,8 @@ def test_the_published_tags_are_this_version():
     tags = {
         name: re.search(rf'^{name}="v([\d_]+)"', setup_sh, re.MULTILINE).group(1)
         for name in (
-            "AGENT_TAG", "GUI_TAG", "REVIEW_TAG", "REVIEW_GUI_TAG", "CURATE_GUI_TAG", "CONSOLE_GUI_TAG",
-            "DESKTOP_TAG", "MLFLOW_TAG", "MLFLOW_DB_TAG", "LDAP_TAG", "AUTH_TAG", "DIRECTORY_GUI_TAG",
-            "MLFLOW_PROXY_TAG",
+            "AGENT_TAG", "REVIEW_TAG", "PROXY_TAG", "DESKTOP_TAG", "MLFLOW_TAG", "MLFLOW_DB_TAG",
+            "LDAP_TAG", "AUTH_TAG",
         )
     }
 
@@ -172,13 +167,13 @@ def test_the_published_tags_are_this_version():
 #: baseline the retrieval comparison is measured against, and named on purpose.
 _INTERFACE_IMAGE = re.compile(
     r"mcfaddja/nl2sql-(?:gui|review|review-gui|curate-gui|console-gui|desktop-build|mlflow|mlflowdb|ldap|auth"
-    r"|directory-gui|mlflow-proxy):(v[\d_]+)"
+    r"|directory-gui|mlflow-proxy|proxy):(v[\d_]+)"
 )
-#: A publish of any of the thirteen images `setup.sh` moves together. The dataset
+#: A publish of any of the images `setup.sh` moves together. The dataset
 #: and knowledge-base images are versioned on their own and are not among them.
 _PUBLISH = re.compile(
     r"--push\s+-t\s+mcfaddja/nl2sql-(?:agent|gui|review|review-gui|curate-gui|console-gui|desktop-build|mlflow"
-    r"|mlflowdb|ldap|auth|directory-gui|mlflow-proxy):(v[\d_]+)"
+    r"|mlflowdb|ldap|auth|directory-gui|mlflow-proxy|proxy):(v[\d_]+)"
 )
 
 

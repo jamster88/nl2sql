@@ -7,12 +7,14 @@
 #   nl2sql-postgres    the retail dataset, already inside the image
 #   nl2sql-vectordb    pgvector holding the embedded knowledge base
 #   nl2sql-chunkdb     the golden question/SQL pairs and their BM25 statistics
-#   nl2sql-snippetsdb  the SQL snippets, loaded from context_questions/
+#   nl2sql-stores      feedback, corrections, completions and the SQL
+#                      snippets, four databases in one server
 #   agent              the agent image, run on demand
 #
-# It pulls each image -- and the web, review, curation, SQL console, MLflow and
-# desktop images when their flags ask for them -- starts the databases, writes a .env
-# so plain compose commands pick all of that up, checks that the chat and
+# It pulls each image -- and the pages' image, MLflow and the desktop
+# client's when their flags ask for them -- writes every password into
+# secrets/, starts the databases, has the dbprep service prepare them, writes
+# a .env so plain compose commands pick all of that up, checks that the chat and
 # embedding models are reachable, and finally proves the agent container can
 # actually retrieve from the knowledge base. When it finishes you can just run:
 #
@@ -27,42 +29,31 @@ POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 # the owner's and the reader's from .env on every start.
 POSTGRES_TAG="v1_2"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v6_2"
-GUI_IMAGE="mcfaddja/nl2sql-gui"
-GUI_TAG="v6_2"
+AGENT_TAG="v6_3"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v6_2"
-REVIEW_GUI_IMAGE="mcfaddja/nl2sql-review-gui"
-REVIEW_GUI_TAG="v6_2"
-# The curation interface: a page in front of the review service, for writing
-# SQL snippets, golden pairs and fixes directly. --curate adds it.
-CURATE_GUI_IMAGE="mcfaddja/nl2sql-curate-gui"
-CURATE_GUI_TAG="v6_2"
-# The SQL console's interface. The console behind it runs from the agent
-# image above, started with a different command, so this is the one image
-# --console adds.
-CONSOLE_GUI_IMAGE="mcfaddja/nl2sql-console-gui"
-CONSOLE_GUI_TAG="v6_2"
+REVIEW_TAG="v6_3"
+# Every page -- the web interface, and the review, curation, console and
+# directory pages -- and MLflow's front door: one image since 6.3 (V6-37),
+# each container told which page it serves. The console behind its page runs
+# from the agent image above, started with a different command.
+PROXY_IMAGE="mcfaddja/nl2sql-proxy"
+PROXY_TAG="v6_3"
 # MLflow, where the agent's runs are traced: its server and the Postgres it
 # keeps traces in, both published with the release. --mlflow adds them.
 MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
-MLFLOW_TAG="v6_2"
+MLFLOW_TAG="v6_3"
 MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
-MLFLOW_DB_TAG="v6_2"
+MLFLOW_DB_TAG="v6_3"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v6_2"
+DESKTOP_TAG="v6_3"
 LDAP_IMAGE="mcfaddja/nl2sql-ldap"
-LDAP_TAG="v6_2"
+LDAP_TAG="v6_3"
 AUTH_IMAGE="mcfaddja/nl2sql-auth"
-AUTH_TAG="v6_2"
-DIRECTORY_GUI_IMAGE="mcfaddja/nl2sql-directory-gui"
-DIRECTORY_GUI_TAG="v6_2"
-MLFLOW_PROXY_IMAGE="mcfaddja/nl2sql-mlflow-proxy"
-MLFLOW_PROXY_TAG="v6_2"
+AUTH_TAG="v6_3"
 # The release this checkout ships: the agent's tag before any flag changes
 # it. Written into .env, so start.sh can tell a tag someone chose for this
 # checkout from one an older checkout left behind.
@@ -79,10 +70,12 @@ POSTGRES_PORT=""
 BUILD_POSTGRES=0
 BUILD_AGENT=0
 BUILD_ALL=0
-# The GUI is opt-in: most people ask questions from a terminal, and pulling
+# The pages are opt-in: most people ask questions from a terminal, and pulling
 # an image for a container that is never started is a download nobody asked
 # for. `./launch.sh --gui` still works without this -- it builds the image
-# from this checkout instead, which is slower but needs no registry.
+# from this checkout instead, which is slower but needs no registry. Sign-in,
+# on by default, has a page of its own (the directory's), so the pages' image
+# is pulled with it.
 WITH_GUI=0
 WITH_REVIEW=0
 WITH_CURATE=0
@@ -107,45 +100,39 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v6_2)
+      --agent-tag TAG    Agent image tag to pull (default: v6_3)
       --build-agent      Build the agent image from source instead of pulling
-      --gui              Also pull and pin the web interface, so ./launch.sh
-                         --gui starts it instead of building it here
-      --gui-image NAME   GUI image repository (default: mcfaddja/nl2sql-gui)
-      --gui-tag TAG      GUI image tag to pull (default: v6_2)
+      --gui              Also pull and pin the pages' image, so ./launch.sh
+                         --gui starts the web interface instead of building it
       --review           Also pull and pin the feedback review service and
-                         its interface (implies --gui)
+                         the pages' image (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v6_2)
-      --review-gui-image N   Review interface image
-                         (default: mcfaddja/nl2sql-review-gui)
-      --review-gui-tag TAG   Review interface image tag (default: v6_2)
-      --curate           Also pull and pin the curation interface, where SQL
-                         snippets, golden pairs and fixes are written directly,
-                         each run against the retail database first
-      --curate-gui-image N   Curation interface image
-                         (default: mcfaddja/nl2sql-curate-gui)
-      --curate-gui-tag TAG   Curation interface image tag (default: v6_2)
-      --console          Also pull and pin the SQL console's interface, where
-                         the retail database is queried as the agent sees it
-                         (the console itself runs from the agent image)
-      --console-gui-image N  SQL console interface image
-                         (default: mcfaddja/nl2sql-console-gui)
-      --console-gui-tag TAG  SQL console interface image tag (default: v6_2)
+      --review-tag TAG   Review service image tag (default: v6_3)
+      --curate           Also pull and pin the pages' image for the curation
+                         interface, where SQL snippets, golden pairs and fixes
+                         are written directly, each run against the retail
+                         database first
+      --console          Also pull and pin the pages' image for the SQL
+                         console's interface, where the retail database is
+                         queried as the agent sees it (the console itself
+                         runs from the agent image)
+      --proxy-image N    The pages' image: every page and MLflow's front door
+                         (default: mcfaddja/nl2sql-proxy)
+      --proxy-tag TAG    The pages' image tag (default: v6_3)
       --mlflow           Also pull and pin MLflow -- its server and the
                          Postgres it keeps traces in -- so ./launch.sh
                          --mlflow starts it instead of building it here
       --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
-      --mlflow-tag TAG   MLflow server image tag (default: v6_2)
+      --mlflow-tag TAG   MLflow server image tag (default: v6_3)
       --mlflow-db-image N    MLflow store image
                          (default: mcfaddja/nl2sql-mlflowdb)
-      --mlflow-db-tag TAG    MLflow store image tag (default: v6_2)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v6_3)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v6_2). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v6_3). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_2)
@@ -161,21 +148,24 @@ Usage: ./setup.sh [options]
                          directory, no auth service, every page and port open
                          to whoever can reach it. Without it, the directory,
                          the auth service and the directory page are pulled
-                         and pinned, and their passwords generated into .env
+                         and pinned, and their passwords generated into
+                         secrets/
       --tokens           Also generate the three service tokens, for scripts and
-                         other services: API_TOKEN, REVIEW_TOKEN, CONSOLE_TOKEN.
+                         other services: secrets/api_token, review_token and
+                         console_token.
                          Kept once made; without this none is set, and
                          signing in is the only way in
       --no-verify        Skip the end-of-setup retrieval check
       --build            Build the Postgres image locally instead of pulling
                          it (regenerates the dataset; takes a few minutes)
       --build-all        Build every image this checkout has a Dockerfile for
-                         -- the dataset, the agent, every interface, the
-                         directory, the auth service, MLflow's three and the
-                         desktop client -- tagged local, and pin those instead
-                         of pulling them (the two knowledge-base stores are
-                         still pulled). How the acceptance tier runs, and how
-                         to try a change as the whole stack before publishing
+                         -- the dataset, the agent, the pages' image, the
+                         review service, the directory, the auth service,
+                         MLflow's two and the desktop client -- tagged local,
+                         and pin those instead of pulling them (the two
+                         knowledge-base stores are still pulled). How the
+                         acceptance tier runs, and how to try a change as the
+                         whole stack before publishing
       --reset            Delete the existing database volume first, so the
                          dataset comes from the image. DESTROYS local changes.
   -h, --help             Show this message
@@ -193,26 +183,20 @@ while [[ $# -gt 0 ]]; do
         --agent-tag) AGENT_TAG="$2"; shift 2 ;;
         --build-agent) BUILD_AGENT=1; shift ;;
         --gui) WITH_GUI=1; shift ;;
-        --gui-image) GUI_IMAGE="$2"; WITH_GUI=1; shift 2 ;;
-        --gui-tag) GUI_TAG="$2"; WITH_GUI=1; shift 2 ;;
         # The review interface is no use without the web interface in front
         # of it -- feedback has to be given before it can be reviewed -- so
         # asking for one pulls both.
         --review) WITH_REVIEW=1; WITH_GUI=1; shift ;;
         --review-image) REVIEW_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         --review-tag) REVIEW_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
-        --review-gui-image) REVIEW_GUI_IMAGE="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
-        --review-gui-tag) REVIEW_GUI_TAG="$2"; WITH_REVIEW=1; WITH_GUI=1; shift 2 ;;
         # Its own page, not the review interface's: a curator writing
         # snippets needs neither the queue nor the page people vote in.
         --curate) WITH_CURATE=1; shift ;;
-        --curate-gui-image) CURATE_GUI_IMAGE="$2"; WITH_CURATE=1; shift 2 ;;
-        --curate-gui-tag) CURATE_GUI_TAG="$2"; WITH_CURATE=1; shift 2 ;;
         # Not --gui as well: the console is for troubleshooting the agent's
         # answers, and those come from a terminal as often as from a page.
         --console) WITH_CONSOLE=1; shift ;;
-        --console-gui-image) CONSOLE_GUI_IMAGE="$2"; WITH_CONSOLE=1; shift 2 ;;
-        --console-gui-tag) CONSOLE_GUI_TAG="$2"; WITH_CONSOLE=1; shift 2 ;;
+        --proxy-image) PROXY_IMAGE="$2"; WITH_GUI=1; shift 2 ;;
+        --proxy-tag) PROXY_TAG="$2"; WITH_GUI=1; shift 2 ;;
         # Both halves together: the server is no use without its store.
         --mlflow) WITH_MLFLOW=1; shift ;;
         --mlflow-image) MLFLOW_IMAGE="$2"; WITH_MLFLOW=1; shift 2 ;;
@@ -244,11 +228,9 @@ done
 # name and the tag `local`, which no registry has: compose builds them below
 # instead of anything being pulled.
 if [[ $BUILD_ALL -eq 1 ]]; then
-    for local_image in AGENT:nl2sql-agent GUI:nl2sql-gui REVIEW:nl2sql-review \
-        REVIEW_GUI:nl2sql-review-gui CURATE_GUI:nl2sql-curate-gui CONSOLE_GUI:nl2sql-console-gui \
+    for local_image in AGENT:nl2sql-agent REVIEW:nl2sql-review PROXY:nl2sql-proxy \
         MLFLOW:nl2sql-mlflow MLFLOW_DB:nl2sql-mlflowdb DESKTOP:nl2sql-desktop-build \
-        LDAP:nl2sql-ldap AUTH:nl2sql-auth DIRECTORY_GUI:nl2sql-directory-gui \
-        MLFLOW_PROXY:nl2sql-mlflow-proxy; do
+        LDAP:nl2sql-ldap AUTH:nl2sql-auth; do
         printf -v "${local_image%%:*}_IMAGE" '%s' "${local_image#*:}"
         printf -v "${local_image%%:*}_TAG" '%s' local
     done
@@ -259,53 +241,13 @@ info() { printf '    %s\n' "$1"; }
 warn() { printf '    WARNING: %s\n' "$1" >&2; }
 die() { printf '\nERROR: %s\n' "$1" >&2; exit 1; }
 
-# --- Read-only role --------------------------------------------------------
-# The agent connects as a role that can SELECT and nothing else, not as the
-# owner that loaded the data. A volume created from an image that predates
-# that role keeps whatever roles it had, so the role is (re)created on every
-# start; docker/reader_role.sql is idempotent. Local connections inside the
-# container are trusted, which is why no superuser password is needed here.
-compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
+# What compose hands the agent: the shell's value, then .env's.
+compose_env() {  # compose_env KEY DEFAULT
     local value="${!1:-}"
     if [[ -z "$value" && -f .env ]]; then
         value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
     fi
     printf '%s' "${value:-$2}"
-}
-
-ensure_extensions() {
-    docker compose exec -T postgres psql -U postgres -q \
-        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
-        -v ON_ERROR_STOP=1 \
-        -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null
-}
-
-# The password through the environment, read in SQL with \getenv: on a psql
-# command line it would be in `ps` for as long as psql ran.
-ensure_reader_role() {
-    NL2SQL_READER_PASSWORD="$(compose_env POSTGRES_READER_PASSWORD nl2sql_reader)" \
-    docker compose exec -T -e NL2SQL_READER_PASSWORD postgres psql -U postgres -q \
-        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
-        -v ON_ERROR_STOP=1 \
-        -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
-        -v owner="$(compose_env POSTGRES_USER nl2sql)" \
-        -f - < docker/reader_role.sql >/dev/null
-}
-
-# set_password SERVICE DATABASE LOGIN ROLE KEY -- ROLE's password made what
-# .env says KEY is, over the container's own socket. A store that came from
-# an image, or a volume made before 6.1, has the password every copy of this
-# repository shares until it is told otherwise.
-set_password() {
-    local service="$1" database="$2" login="$3" role="$4" key="$5" value
-    value="$(compose_env "$key" "")"
-    [[ -n "$value" ]] || return 0
-    NL2SQL_PASSWORD="$value" docker compose exec -T -e NL2SQL_PASSWORD "$service" \
-        psql -X -q -U "$login" -d "$database" -v ON_ERROR_STOP=1 -v role="$role" -f - >/dev/null <<'SQL'
-\getenv password NL2SQL_PASSWORD
-SELECT format('ALTER ROLE %I PASSWORD %L', :'role', :'password')
-WHERE EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
-SQL
 }
 
 # --- Prerequisites ---------------------------------------------------------
@@ -416,27 +358,19 @@ carry EMBED_MODEL_NAME EMBED_MODEL
 carry POSTGRES_PORT POSTGRES_PORT
 
 # The optional image sets are pinned only when asked for, so "was it asked
-# for last time" is the same question as "is it pinned in .env".
-if [[ $WITH_GUI -eq 0 && -n "$(env_value GUI_IMAGE_NAME)" ]]; then
-    WITH_GUI=1
-fi
-# By the review interface's pin, not the service's: since 5.6 the service is
-# pinned whenever retrieval is on, because it carries the snippet loader.
-if [[ $WITH_REVIEW -eq 0 && -n "$(env_value REVIEW_GUI_IMAGE_NAME)" ]]; then
-    WITH_REVIEW=1
-fi
-if [[ $WITH_CURATE -eq 0 && -n "$(env_value CURATE_GUI_IMAGE_NAME)" ]]; then
-    WITH_CURATE=1
-fi
+# for last time" is the same question as "is it pinned in .env". A .env from
+# before 6.3 pinned a page's image of its own; any of them is the pages' now.
+for page_pin in PROXY_IMAGE_NAME GUI_IMAGE_NAME REVIEW_GUI_IMAGE_NAME CURATE_GUI_IMAGE_NAME CONSOLE_GUI_IMAGE_NAME; do
+    if [[ $WITH_GUI -eq 0 && -n "$(env_value "$page_pin")" ]]; then
+        WITH_GUI=1
+    fi
+done
 # The review service's image: for its own pages, and -- with retrieval on --
 # because it carries the loader that fills the snippet store from its
 # document, which launch.sh runs on start and this script at its end.
 WITH_REVIEW_SERVICE=0
 if [[ $WITH_REVIEW -eq 1 || $WITH_CURATE -eq 1 || $WITH_RAG -eq 1 ]]; then
     WITH_REVIEW_SERVICE=1
-fi
-if [[ $WITH_CONSOLE -eq 0 && -n "$(env_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
-    WITH_CONSOLE=1
 fi
 if [[ $WITH_MLFLOW -eq 0 && -n "$(env_value MLFLOW_IMAGE_NAME)" ]]; then
     WITH_MLFLOW=1
@@ -449,48 +383,81 @@ fi
 case "$(env_value AUTH_ENABLED)" in
     0|false|no|off|FALSE|NO|OFF) WITH_SIGNIN=0 ;;
 esac
+# The pages' image, for any page: the ones asked for, the directory's with
+# sign-in, MLflow's front door with MLflow.
+WITH_PROXY=0
+if [[ $WITH_GUI -eq 1 || $WITH_REVIEW -eq 1 || $WITH_CURATE -eq 1 || $WITH_CONSOLE -eq 1 ||
+      $WITH_MLFLOW -eq 1 || $WITH_SIGNIN -eq 1 ]]; then
+    WITH_PROXY=1
+fi
 
-# --- Passwords --------------------------------------------------------------
-# Generated once and then carried from one .env to the next for as long as
-# there is one: a store, the directory and the database keep the ones they
-# were given, so a new one here would be a password nothing accepts.
+# --- Passwords and tokens ------------------------------------------------------
+# Every one a file in secrets/ (6.3, V6-38), which compose mounts into the
+# services that need it and nowhere else -- never an environment variable,
+# which `docker inspect` shows to anyone who can run it. Generated once and
+# never replaced: a store, the directory and the database keep the ones they
+# were given, so a new one here would be a password nothing accepts. A .env
+# from before 6.3 held them; each is moved from there once, and the line
+# leaves .env.
 #
-#   LDAP_ADMIN_PASSWORD     the first person, admin, in every group -- what
+#   ldap_admin_password     the first person, admin, in every group -- what
 #                           signs in to the directory page the first time
-#   LDAP_SERVICE_PASSWORD   the auth service's account in the directory
-#   AUTH_ROLESYNC_PASSWORD  the role that keeps the database's people in
+#   ldap_service_password   the auth service's account in the directory
+#   auth_rolesync_password  the role that keeps the database's people in
 #                           step with the directory's
-#   and, since 6.1, every store's owner and the roles that read them --
-#   until then each was the same in every copy of this repository.
+#   and every store's owner and the roles that read them, and the runtime
+#   stores' superuser. The three service tokens only when asked for
+#   (--tokens) or made before; a replica's bind password is the one you give
+#   it, in secrets/ldap_upstream_bind_password. Both are empty files otherwise.
 #
 # Hex, so each can sit in a URL and a shell line as it is. 24 bytes from
 # /dev/urandom; `od -N` reads exactly that many, so nothing is cut short.
-signin_secret() {
+SECRETS_DIR="secrets"
+SECRET_NAMES=(ldap_admin_password ldap_service_password auth_rolesync_password
+    postgres_password postgres_reader_password context_db_password vector_db_password
+    stores_db_password snippets_db_password snippets_reader_password feedback_db_password
+    feedback_writer_password corrections_db_password completions_db_password mlflow_db_password)
+TOKEN_NAMES=(api_token review_token console_token)
+GIVEN_NAMES=(ldap_upstream_bind_password)
+
+new_secret() {
     od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
 }
 
-SECRET_KEYS=(LDAP_ADMIN_PASSWORD LDAP_SERVICE_PASSWORD AUTH_ROLESYNC_PASSWORD
-    POSTGRES_PASSWORD POSTGRES_READER_PASSWORD CONTEXT_DB_PASSWORD VECTOR_DB_PASSWORD
-    SNIPPETS_DB_PASSWORD SNIPPETS_READER_PASSWORD FEEDBACK_DB_PASSWORD FEEDBACK_WRITER_PASSWORD
-    CORRECTIONS_DB_PASSWORD COMPLETIONS_DB_PASSWORD MLFLOW_DB_PASSWORD)
-# The service tokens, for scripts: only when asked for (--tokens), or when
-# an earlier run made them.
-TOKEN_KEYS=(API_TOKEN REVIEW_TOKEN CONSOLE_TOKEN)
-for secret_key in "${SECRET_KEYS[@]}" "${TOKEN_KEYS[@]}"; do
-    printf -v "$secret_key" '%s' ""
-    carry "$secret_key" "$secret_key"
-done
-for secret_key in "${SECRET_KEYS[@]}"; do
-    if [[ -z "${!secret_key}" ]]; then
-        printf -v "$secret_key" '%s' "$(signin_secret)"
-    fi
-done
-if [[ $WITH_TOKENS -eq 1 ]]; then
-    for secret_key in "${TOKEN_KEYS[@]}"; do
-        if [[ -z "${!secret_key}" ]]; then
-            printf -v "$secret_key" '%s' "$(signin_secret)"
+# The directory is its owner's alone; the files in it are readable, because
+# the account each container runs as -- 10001, nginx's 101, postgres's 999 --
+# is not the person who owns this checkout, and on Linux a bind-mounted file
+# keeps the mode it has here.
+ensure_secret_files() {  # ensure_secret_files -- print how many were made new
+    local name key value made=0
+    mkdir -p "$SECRETS_DIR"
+    chmod 700 "$SECRETS_DIR"
+    for name in "${SECRET_NAMES[@]}" "${TOKEN_NAMES[@]}" "${GIVEN_NAMES[@]}"; do
+        [[ -s "$SECRETS_DIR/$name" ]] && continue
+        # Its key in a .env from before 6.3: the shell's first, as compose read it.
+        key=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')
+        value="${!key:-}"
+        if [[ -z "$value" ]]; then
+            value="$(env_value "$key")"
         fi
+        if [[ -z "$value" ]]; then
+            case " ${SECRET_NAMES[*]} " in
+                *" $name "*) value="$(new_secret)"; made=$((made + 1)) ;;
+            esac
+        fi
+        if [[ -z "$value" && $WITH_TOKENS -eq 1 ]]; then
+            case " ${TOKEN_NAMES[*]} " in
+                *" $name "*) value="$(new_secret)"; made=$((made + 1)) ;;
+            esac
+        fi
+        (umask 022 && printf '%s' "$value" > "$SECRETS_DIR/$name")
     done
+    printf '%s' "$made"
+}
+
+made=$(ensure_secret_files)
+if [[ "$made" -gt 0 ]]; then
+    step "Generated $made password(s) and token(s) into $SECRETS_DIR/, which only you can open"
 fi
 
 step "Writing .env"
@@ -509,32 +476,13 @@ fi
     echo "IMAGE_TAG=$POSTGRES_TAG"
     echo "AGENT_IMAGE_NAME=$AGENT_IMAGE"
     echo "AGENT_IMAGE_TAG=$AGENT_TAG"
-    # Only pinned when it was asked for. Left unset, compose falls back to
-    # nl2sql-gui:latest and builds it from this checkout on first start.
-    if [[ $WITH_GUI -eq 1 ]]; then
-        echo "GUI_IMAGE_NAME=$GUI_IMAGE"
-        echo "GUI_IMAGE_TAG=$GUI_TAG"
-    fi
-    # Same reasoning as the GUI above: pinned only when it was asked for, so
-    # compose does not go looking for an image nobody wanted -- except that
-    # the review service is wanted whenever retrieval is on, for its loader.
+    # Pinned only when it was asked for, so compose does not go looking for
+    # an image nobody wanted -- except that the review service is wanted
+    # whenever retrieval is on, for its loader. Left unset, compose falls
+    # back to a local tag and builds it from this checkout on first start.
     if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then
         echo "REVIEW_IMAGE_NAME=$REVIEW_IMAGE"
         echo "REVIEW_IMAGE_TAG=$REVIEW_TAG"
-    fi
-    if [[ $WITH_REVIEW -eq 1 ]]; then
-        echo "REVIEW_GUI_IMAGE_NAME=$REVIEW_GUI_IMAGE"
-        echo "REVIEW_GUI_IMAGE_TAG=$REVIEW_GUI_TAG"
-    fi
-    if [[ $WITH_CURATE -eq 1 ]]; then
-        echo "CURATE_GUI_IMAGE_NAME=$CURATE_GUI_IMAGE"
-        echo "CURATE_GUI_IMAGE_TAG=$CURATE_GUI_TAG"
-    fi
-    # And again. The console itself needs no pin of its own: it is the
-    # agent's image, pinned above.
-    if [[ $WITH_CONSOLE -eq 1 ]]; then
-        echo "CONSOLE_GUI_IMAGE_NAME=$CONSOLE_GUI_IMAGE"
-        echo "CONSOLE_GUI_IMAGE_TAG=$CONSOLE_GUI_TAG"
     fi
     # The same again for MLflow's two. Unpinned, compose builds both here,
     # which is a pull of MLflow's and Postgres's own images.
@@ -560,35 +508,19 @@ fi
         echo "LDAP_IMAGE_TAG=$LDAP_TAG"
         echo "AUTH_IMAGE_NAME=$AUTH_IMAGE"
         echo "AUTH_IMAGE_TAG=$AUTH_TAG"
-        echo "DIRECTORY_GUI_IMAGE_NAME=$DIRECTORY_GUI_IMAGE"
-        echo "DIRECTORY_GUI_IMAGE_TAG=$DIRECTORY_GUI_TAG"
     else
         echo "AUTH_ENABLED=false"
     fi
-    if [[ $WITH_MLFLOW -eq 1 ]]; then
-        echo "MLFLOW_PROXY_IMAGE_NAME=$MLFLOW_PROXY_IMAGE"
-        echo "MLFLOW_PROXY_IMAGE_TAG=$MLFLOW_PROXY_TAG"
+    # Every page's image, and MLflow's front door's: one since 6.3.
+    if [[ $WITH_PROXY -eq 1 ]]; then
+        echo "PROXY_IMAGE_NAME=$PROXY_IMAGE"
+        echo "PROXY_IMAGE_TAG=$PROXY_TAG"
     fi
-    for secret_key in "${SECRET_KEYS[@]}"; do
-        echo "$secret_key=${!secret_key}"
-    done
-    for secret_key in "${TOKEN_KEYS[@]}"; do
-        if [[ -n "${!secret_key}" ]]; then echo "$secret_key=${!secret_key}"; fi
-    done
     echo "VECTOR_IMAGE_NAME=$VECTOR_IMAGE"
     echo "VECTOR_IMAGE_TAG=$VECTOR_TAG"
     echo "CONTEXT_IMAGE_NAME=$CONTEXT_IMAGE"
     echo "CONTEXT_IMAGE_TAG=$CONTEXT_TAG"
     echo "RAG_ENABLED=$([[ $WITH_RAG -eq 1 ]] && echo true || echo false)"
-    # Where the API writes a verdict from the web interface. Written
-    # unconditionally, and harmless when the feedback profile is not up: the
-    # API reports feedback as unavailable, /v1/meta says so, and the web
-    # interface keeps verdicts in the browser exactly as it did before.
-    #
-    # The role named here is INSERT-only on one table and cannot read a
-    # submission back. The review service creates it, and resets its grants,
-    # on every start -- see review/nl2sql_review/store.py.
-    echo "API_FEEDBACK_DB_URL=postgresql://nl2sql_feedback_writer:\${FEEDBACK_WRITER_PASSWORD:-nl2sql_feedback_writer}@nl2sql-feedbackdb:5432/\${FEEDBACK_DB_NAME:-nl2sql_feedback}"
     # Where the agent sends its traces: the mlflow service, which
     # `./launch.sh --mlflow` starts. Harmless when it is not up, the same
     # way: a run that finds no server is answered untraced, and the next is
@@ -606,7 +538,8 @@ fi
     if [[ -n "$EMBED_MODEL_NAME" ]]; then echo "EMBED_MODEL=$EMBED_MODEL_NAME"; fi
     if [[ -n "$POSTGRES_PORT" ]]; then echo "POSTGRES_PORT=$POSTGRES_PORT"; fi
 } > .env
-# Passwords, so both files are their owner's alone.
+# No password is in either since 6.3, but they are a map of what runs where:
+# their owner's alone, as they always were.
 chmod 600 .env
 if [[ $had_env -eq 1 ]]; then
     chmod 600 .env.bak
@@ -618,10 +551,31 @@ fi
 # which start.sh now does when a checkout ships newer images, quietly lose
 # whatever someone had added since. Only from the file just moved aside: an
 # older .env.bak is a backup, not a source.
+# What 6.3 no longer keeps in .env: every password and token, which are in
+# secrets/ now, the API's feedback URL, which named one and compose now
+# writes itself, and the six page images', which are one image.
+RETIRED_KEYS=(LDAP_ADMIN_PASSWORD LDAP_SERVICE_PASSWORD AUTH_ROLESYNC_PASSWORD POSTGRES_PASSWORD
+    POSTGRES_READER_PASSWORD CONTEXT_DB_PASSWORD VECTOR_DB_PASSWORD SNIPPETS_DB_PASSWORD
+    SNIPPETS_READER_PASSWORD FEEDBACK_DB_PASSWORD FEEDBACK_WRITER_PASSWORD CORRECTIONS_DB_PASSWORD
+    COMPLETIONS_DB_PASSWORD MLFLOW_DB_PASSWORD STORES_DB_PASSWORD LDAP_UPSTREAM_BIND_PASSWORD
+    API_TOKEN REVIEW_TOKEN CONSOLE_TOKEN API_FEEDBACK_DB_URL
+    GUI_IMAGE_NAME GUI_IMAGE_TAG REVIEW_GUI_IMAGE_NAME REVIEW_GUI_IMAGE_TAG
+    CURATE_GUI_IMAGE_NAME CURATE_GUI_IMAGE_TAG CONSOLE_GUI_IMAGE_NAME CONSOLE_GUI_IMAGE_TAG
+    DIRECTORY_GUI_IMAGE_NAME DIRECTORY_GUI_IMAGE_TAG MLFLOW_PROXY_IMAGE_NAME MLFLOW_PROXY_IMAGE_TAG)
+
+retired() {  # retired KEY -- one of those
+    local key
+    for key in "${RETIRED_KEYS[@]}"; do
+        [[ "$key" == "$1" ]] && return 0
+    done
+    return 1
+}
+
 keep_settings() {  # keep_settings -- append each KEY=value on stdin .env lacks; print how many
     local line kept=0
     while IFS= read -r line; do
         if grep -q "^${line%%=*}=" .env; then continue; fi
+        if retired "${line%%=*}"; then continue; fi
         if [[ $kept -eq 0 ]]; then echo "# Kept from the previous .env" >> .env; fi
         printf '%s\n' "$line" >> .env
         kept=$((kept + 1))
@@ -630,15 +584,15 @@ keep_settings() {  # keep_settings -- append each KEY=value on stdin .env lacks;
 }
 
 # The backup keeps what the last .env said, less its secrets: every one of
-# them is in the new .env, and a second copy of each, in a file nothing
-# reads, is one more place to take them from.
+# them is in secrets/, and a second copy of each, in a file nothing reads, is
+# one more place to take them from.
 scrub_backup() {
     local line key work
     work="$(mktemp .env.bak.XXXXXX)"
     while IFS= read -r line || [[ -n "$line" ]]; do
         key="${line%%=*}"
         if [[ "$line" == *=* && "$key" =~ (PASSWORD|TOKEN|SECRET) ]]; then
-            printf '# %s: carried into .env, not kept here\n' "$key"
+            printf '# %s: in secrets/, not kept here\n' "$key"
         else
             printf '%s\n' "$line"
         fi
@@ -673,51 +627,26 @@ else
     fi
 fi
 
-# --- GUI image -------------------------------------------------------------
+# --- The pages' image ----------------------------------------------------------
 # Pulled rather than built when asked for, the same way as the agent. Compose
 # builds a service that has a `build:` section whenever its image is missing,
 # so pulling it here is what makes the published image the one that runs.
-if [[ $BUILD_ALL -eq 0 && $WITH_GUI -eq 1 ]]; then
-    step "Pulling $GUI_IMAGE:$GUI_TAG (the web interface)"
-    if ! docker pull "$GUI_IMAGE:$GUI_TAG"; then
-        warn "could not pull $GUI_IMAGE:$GUI_TAG (private repo, or not logged in);"
-        warn "./launch.sh --gui will build it from source instead."
+# One image for every page and MLflow's front door (V6-37).
+if [[ $BUILD_ALL -eq 0 && $WITH_PROXY -eq 1 ]]; then
+    step "Pulling $PROXY_IMAGE:$PROXY_TAG (every page, and MLflow's front door)"
+    if ! docker pull "$PROXY_IMAGE:$PROXY_TAG"; then
+        warn "could not pull $PROXY_IMAGE:$PROXY_TAG (private repo, or not logged in);"
+        warn "./launch.sh will build it from source the first time a page starts."
     fi
 fi
 
-# The review service and its interfaces: a Python service that can rewrite
-# the golden question set and the snippets, and nginx pages that talk to it.
-# The service comes first and on its own, because it is also what loads the
-# snippet store.
+# The review service: a Python service that can rewrite the golden question
+# set and the snippets, and what loads the snippet store.
 if [[ $BUILD_ALL -eq 0 && $WITH_REVIEW_SERVICE -eq 1 ]]; then
     step "Pulling $REVIEW_IMAGE:$REVIEW_TAG (the review service, which loads the SQL snippets)"
     if ! docker pull "$REVIEW_IMAGE:$REVIEW_TAG"; then
         warn "could not pull $REVIEW_IMAGE:$REVIEW_TAG (private repo, or not logged in);"
         warn "compose will build it from source the first time it is needed."
-    fi
-fi
-if [[ $BUILD_ALL -eq 0 && $WITH_REVIEW -eq 1 ]]; then
-    step "Pulling $REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG (feedback review)"
-    if ! docker pull "$REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG"; then
-        warn "could not pull $REVIEW_GUI_IMAGE:$REVIEW_GUI_TAG (private repo, or not logged in);"
-        warn "./launch.sh --review will build it from source instead."
-    fi
-fi
-if [[ $BUILD_ALL -eq 0 && $WITH_CURATE -eq 1 ]]; then
-    step "Pulling $CURATE_GUI_IMAGE:$CURATE_GUI_TAG (the curation interface)"
-    if ! docker pull "$CURATE_GUI_IMAGE:$CURATE_GUI_TAG"; then
-        warn "could not pull $CURATE_GUI_IMAGE:$CURATE_GUI_TAG (private repo, or not logged in);"
-        warn "./launch.sh --curate will build it from source instead."
-    fi
-fi
-
-# The SQL console's interface. One image: the console behind it is the
-# agent's, pulled above, started with a different command.
-if [[ $BUILD_ALL -eq 0 && $WITH_CONSOLE -eq 1 ]]; then
-    step "Pulling $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (the SQL console)"
-    if ! docker pull "$CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG"; then
-        warn "could not pull $CONSOLE_GUI_IMAGE:$CONSOLE_GUI_TAG (private repo, or not logged in);"
-        warn "./launch.sh --console will build it from source instead."
     fi
 fi
 
@@ -749,22 +678,16 @@ javafx_platform() {
     esac
 }
 
-# Sign-in's images, and MLflow's front door with MLflow.
+# Sign-in's images: the directory and the auth service. Its page is the
+# pages' image, pulled above.
 if [[ $BUILD_ALL -eq 0 && $WITH_SIGNIN -eq 1 ]]; then
-    for pair in "$LDAP_IMAGE:$LDAP_TAG" "$AUTH_IMAGE:$AUTH_TAG" "$DIRECTORY_GUI_IMAGE:$DIRECTORY_GUI_TAG"; do
+    for pair in "$LDAP_IMAGE:$LDAP_TAG" "$AUTH_IMAGE:$AUTH_TAG"; do
         step "Pulling $pair (sign-in)"
         if ! docker pull "$pair"; then
             warn "could not pull $pair (private repo, or not logged in);"
             warn "./launch.sh will build it from source the first time sign-in starts."
         fi
     done
-fi
-if [[ $BUILD_ALL -eq 0 && $WITH_MLFLOW -eq 1 ]]; then
-    step "Pulling $MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG (MLflow's front door)"
-    if ! docker pull "$MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG"; then
-        warn "could not pull $MLFLOW_PROXY_IMAGE:$MLFLOW_PROXY_TAG (private repo, or not logged in);"
-        warn "./launch.sh --mlflow will build MLflow's front door from source instead."
-    fi
 fi
 
 if [[ $BUILD_ALL -eq 0 && $WITH_DESKTOP -eq 1 ]]; then
@@ -782,126 +705,85 @@ if [[ $BUILD_ALL -eq 1 ]]; then
     step "Building every image from this checkout (--build-all)"
     info "tagged local and pinned in .env; nothing of ours is pulled"
     build_profiles=(--profile api)
-    if [[ $WITH_GUI -eq 1 ]]; then build_profiles+=(--profile gui); fi
-    # The review service needs its databases' profiles to resolve at all.
-    if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then build_profiles+=(--profile feedback --profile review); fi
-    if [[ $WITH_REVIEW -eq 1 ]]; then build_profiles+=(--profile reviewgui); fi
-    if [[ $WITH_CURATE -eq 1 ]]; then build_profiles+=(--profile curategui); fi
-    if [[ $WITH_CONSOLE -eq 1 ]]; then build_profiles+=(--profile console --profile consolegui); fi
+    # The pages' image, once, through the one page that names it: the others
+    # are the same image and would only build it again.
+    if [[ $WITH_PROXY -eq 1 ]]; then build_profiles+=(--profile gui); fi
+    if [[ $WITH_REVIEW_SERVICE -eq 1 ]]; then build_profiles+=(--profile review); fi
     if [[ $WITH_MLFLOW -eq 1 ]]; then build_profiles+=(--profile mlflow); fi
-    if [[ $WITH_SIGNIN -eq 1 ]]; then build_profiles+=(--profile auth --profile directorygui); fi
+    if [[ $WITH_SIGNIN -eq 1 ]]; then build_profiles+=(--profile auth); fi
     if [[ $WITH_DESKTOP -eq 1 ]]; then build_profiles+=(--profile desktop); fi
     JAVAFX_PLATFORM="$(javafx_platform)" docker compose "${build_profiles[@]}" build ||
         die "an image did not build from this checkout. What compose said is above."
 fi
 
 # --- Start the databases ---------------------------------------------------
-step "Starting Postgres"
-docker compose up -d postgres
+# The retail database, the runtime stores and, with retrieval, the two
+# knowledge stores -- then the dbprep service, which makes each what .env and
+# secrets/ say over its own socket (V6-41): the agent's reader, sign-in's
+# roles and its pg_hba lines, the stores' databases and owners, every
+# password. Nothing here runs SQL itself.
+db_services=(postgres stores)
+if [[ $WITH_RAG -eq 1 ]]; then db_services+=(vectordb chunkdb); fi
+step "Starting the databases: ${db_services[*]}"
+docker compose up -d "${db_services[@]}"
 
-info "waiting for the database to become healthy..."
-for _ in $(seq 1 60); do
-    status=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-postgres" 2>/dev/null || echo starting)
-    [[ "$status" == "healthy" ]] && break
-    sleep 2
+info "waiting for them to become healthy..."
+for db_service in "${db_services[@]}"; do
+    status=""
+    for _ in $(seq 1 60); do
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-$db_service" 2>/dev/null || echo starting)
+        [[ "$status" == "healthy" ]] && break
+        sleep 2
+    done
+    [[ "$status" == "healthy" ]] || die "$db_service did not become healthy. Check 'docker compose logs $db_service'."
 done
-[[ "${status:-}" == "healthy" ]] || die "Postgres did not become healthy. Check 'docker compose logs postgres'."
 
-rows=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-nl2sql}" \
-    -d "${POSTGRES_DB:-nl2sql_retail}" -tAc \
-    "SELECT count(*) FROM fact_pos_retail_sales" 2>/dev/null || echo "")
-[[ -n "$rows" ]] || die "the database is up but the dataset is missing. Try --reset."
-info "database ready with $rows sales rows"
-
-ensure_extensions || warn "could not create pg_trgm; literal matching falls back to difflib."
-ensure_reader_role || die "could not create the agent's read-only role. Check 'docker compose logs postgres'."
-info "read-only role $(compose_env POSTGRES_READER_USER nl2sql_reader) ready for the agent"
-
-# --- Retrieval stores ------------------------------------------------------
-if [[ $WITH_RAG -eq 1 ]]; then
-    step "Starting the knowledge base"
-    docker compose up -d vectordb
-
-    info "waiting for pgvector to become healthy..."
-    for _ in $(seq 1 60); do
-        vstatus=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-vectordb" 2>/dev/null || echo starting)
-        [[ "$vstatus" == "healthy" ]] && break
-        sleep 2
+# The one-shot's lines, as it said them: STEP, INFO and WARN are this
+# script's step, info and warn; STATE is for the script to read.
+relay() {  # relay < LINES
+    local kind text
+    while IFS=' ' read -r kind text; do
+        case "$kind" in
+            STEP) step "$text" ;;
+            INFO) info "$text" ;;
+            WARN) warn "$text" ;;
+        esac
     done
-    [[ "${vstatus:-}" == "healthy" ]] || die "pgvector did not become healthy. Check 'docker compose logs vectordb'."
-    set_password vectordb "$(compose_env VECTOR_DB_NAME nl2sql_vectors)" "$(compose_env VECTOR_DB_USER ragproc)" \
-        "$(compose_env VECTOR_DB_USER ragproc)" VECTOR_DB_PASSWORD ||
-        die "could not set the knowledge base's password. Check 'docker compose logs vectordb'."
+}
 
-    chunks=$(docker compose exec -T vectordb psql -U "${VECTOR_DB_USER:-ragproc}" \
-        -d "${VECTOR_DB_NAME:-nl2sql_vectors}" -tAc "
-        SELECT sum(n) FROM (
-            SELECT (xpath('/row/c/text()',
-                    query_to_xml('SELECT count(*) AS c FROM ' || quote_ident(tablename),
-                                 false, true, '')))[1]::text::bigint AS n
-            FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%\_embeddings'
-        ) t" 2>/dev/null | tr -d '[:space:]' || echo "")
-    if [[ -n "$chunks" && "$chunks" != "0" ]]; then
-        info "knowledge base ready with $chunks embedded chunks"
-    else
-        warn "the knowledge base is up but has no embedded chunks in it."
-        warn "Retrieval will be skipped until it is populated."
-    fi
-
-    step "Starting the context store"
-    docker compose up -d chunkdb
-
-    info "waiting for the context store to become healthy..."
-    for _ in $(seq 1 60); do
-        cstatus=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-chunkdb" 2>/dev/null || echo starting)
-        [[ "$cstatus" == "healthy" ]] && break
-        sleep 2
-    done
-    [[ "${cstatus:-}" == "healthy" ]] || die "the context store did not become healthy. Check 'docker compose logs chunkdb'."
-    set_password chunkdb "$(compose_env CONTEXT_DB_NAME nl2sql_chunks)" "$(compose_env CONTEXT_DB_USER ragproc)" \
-        "$(compose_env CONTEXT_DB_USER ragproc)" CONTEXT_DB_PASSWORD ||
-        die "could not set the context store's password. Check 'docker compose logs chunkdb'."
-
-    pairs=$(docker compose exec -T chunkdb psql -U "${CONTEXT_DB_USER:-ragproc}" \
-        -d "${CONTEXT_DB_NAME:-nl2sql_chunks}" -tAc \
-        "SELECT count(*) FROM golden_pairs" 2>/dev/null | tr -d '[:space:]' || echo "")
-    if [[ -n "$pairs" && "$pairs" != "0" ]]; then
-        info "context store ready with $pairs golden question/SQL pairs"
-    else
-        warn "the context store is up but holds no golden pairs."
-        warn "Worked examples will be skipped until it is populated."
-    fi
+step "Preparing the databases"
+if prepared=$(docker compose run --rm --no-deps -T dbprep 2>&1); then
+    printf '%s\n' "$prepared" | tr -d '\r' | relay
+else
+    printf '%s\n' "$prepared" | tail -5 >&2
+    die "the databases could not be prepared, so nothing could use them. What it said is above."
 fi
 
 # --- The SQL snippets --------------------------------------------------------
 # The one store no image ships: it is built from context_questions/
 # sql_snippets.md, so it is loaded here, after the images and before the
-# models are checked -- by the loader in the review service's image, which
-# needs the embedding model for the meanings and loads the rows without it.
+# models are checked -- by the loader in the review service's image, as its
+# account, which needs the embedding model for the meanings and loads the
+# rows without it. The store's URL and password are the service's own.
 if [[ $WITH_RAG -eq 1 ]]; then
-    step "Starting the snippet store, and loading the SQL snippets into it"
-    docker compose up -d snippetsdb
-
-    info "waiting for the snippet store to become healthy..."
-    for _ in $(seq 1 60); do
-        sstatus=$(docker inspect --format '{{.State.Health.Status}}' "$(instance)-snippetsdb" 2>/dev/null || echo starting)
-        [[ "$sstatus" == "healthy" ]] && break
-        sleep 2
-    done
-    [[ "${sstatus:-}" == "healthy" ]] || die "the snippet store did not become healthy. Check 'docker compose logs snippetsdb'."
-    set_password snippetsdb "$(compose_env SNIPPETS_DB_NAME nl2sql_snippets)" "$(compose_env SNIPPETS_DB_USER snippets)" \
-        "$(compose_env SNIPPETS_DB_USER snippets)" SNIPPETS_DB_PASSWORD ||
-        die "could not set the snippet store's password. Check 'docker compose logs snippetsdb'."
-
-    if loaded=$(docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+    step "Loading the SQL snippets"
+    if loaded=$(docker compose --profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review -c '
         cd "$REVIEW_RAG_DIR" &&
-        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL" \
+        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" \
             --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1); then
         while IFS= read -r line; do info "$line"; done < <(printf '%s\n' "$loaded" | grep -E 'rows written|vectors ->' | sed 's/^ *//')
     else
         warn "the SQL snippets did not load completely; ./launch.sh tries again on every start. It said:"
         while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$loaded" | tail -3)
     fi
+fi
+
+# --- What each database holds --------------------------------------------------
+reported=$(docker compose run --rm --no-deps -T dbprep python -m nl2sql_ops report 2>&1 | tr -d '\r' || true)
+printf '%s\n' "$reported" | relay
+retail_rows=$(printf '%s\n' "$reported" | sed -n 's/^STATE retail_rows=//p')
+if [[ -z "$retail_rows" || "$retail_rows" == 0 ]]; then
+    die "the database is up but the dataset is missing. Try --reset."
 fi
 
 # --- Ollama ----------------------------------------------------------------
@@ -1008,12 +890,12 @@ cat <<EOF
 ==> Setup complete. Running now:
 
     nl2sql-postgres    the retail dataset
+    nl2sql-stores      feedback, corrections, completions and SQL snippets
 EOF
 if [[ $WITH_RAG -eq 1 ]]; then
     cat <<EOF
     nl2sql-vectordb    the embedded knowledge base
     nl2sql-chunkdb     the golden pairs and their BM25 index
-    nl2sql-snippetsdb  the SQL snippets the generator is shown
 EOF
 fi
 cat <<EOF
@@ -1059,7 +941,7 @@ EOF
 if [[ $WITH_SIGNIN -eq 1 ]]; then
     cat <<EOF
     Every page asks who you are. The first person is $(compose_env LDAP_ADMIN_USER admin), whose password
-    is LDAP_ADMIN_PASSWORD in .env; they add everyone else on the directory
+    is in secrets/ldap_admin_password; they add everyone else on the directory
     page, which ./launch.sh --api starts at https://localhost:8084.
 
 EOF

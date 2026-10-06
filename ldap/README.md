@@ -37,11 +37,13 @@ The first start makes the base entry, the four groups, the auth service's
 account (`cn=nl2sql-auth,ou=services`, password `LDAP_SERVICE_PASSWORD`) and
 the first administrator: `LDAP_ADMIN_USER` (default `admin`), in every
 group, with the password `LDAP_ADMIN_PASSWORD`. `setup.sh` -- or `launch.sh`,
-for a `.env` written before sign-in existed -- generates both passwords into
-`.env`, which only its owner can read:
+for a checkout set up before sign-in existed -- generates both passwords into
+`secrets/` (6.3; `.env` until then), a file each, in a directory only its
+owner can list, and compose mounts each where the directory reads it as
+`LDAP_SERVICE_PASSWORD_FILE` and `LDAP_ADMIN_PASSWORD_FILE`:
 
 ```bash
-grep LDAP_ADMIN_PASSWORD .env
+cat secrets/ldap_admin_password
 ```
 
 Then, also on the first start only, `LDAP_SEED_FILE` is loaded, if set. Put
@@ -108,9 +110,11 @@ LDAP_UPSTREAM_URI=ldaps://dc1.example.com:636
 LDAP_UPSTREAM_FLAVOUR=ad
 LDAP_UPSTREAM_BASE_DN=dc=example,dc=com
 LDAP_UPSTREAM_BIND_DN=CN=svc-nl2sql,OU=Service Accounts,DC=example,DC=com
-LDAP_UPSTREAM_BIND_PASSWORD=...
 LDAP_UPSTREAM_CACERT=/seed/example-ca.pem
 LDAP_REPLICA_GROUPS=CN=NL2SQL Users,OU=Groups,DC=example,DC=com=nl2sql-users;CN=NL2SQL Reviewers,OU=Groups,DC=example,DC=com=nl2sql-reviewers
+
+# and its password, in the file compose mounts for it (6.3) -- not in .env
+printf '%s' '...' > secrets/ldap_upstream_bind_password
 ```
 
 Every `LDAP_REPLICA_INTERVAL` seconds (60) it searches the primary, page by
@@ -142,18 +146,20 @@ worked, is on the auth service's `/readyz`.
 
 ## Settings
 
-Read from the environment; compose passes each from `.env`. A `_FILE`
-variant of each password (`LDAP_ADMIN_PASSWORD_FILE`, ...) reads it from a
-file instead, for Docker secrets.
+Read from the environment; compose passes each from `.env`, and each
+password as the file in `secrets/` it mounts -- `LDAP_ADMIN_PASSWORD_FILE`,
+`LDAP_SERVICE_PASSWORD_FILE`, `LDAP_UPSTREAM_BIND_PASSWORD_FILE` -- never the
+password itself (6.3). The variable without `_FILE` still works for a
+directory started by hand; the file wins when both are set.
 
 | Variable | Default | |
 | --- | --- | --- |
 | `LDAP_MODE` | `standalone` | or `replica` |
 | `LDAP_BASE_DN` | `dc=nl2sql,dc=local` | this directory's own base |
 | `LDAP_ORGANISATION` | `nl2sql` | |
-| `LDAP_SERVICE_PASSWORD` | -- | the auth service's account; generated into `.env` |
+| `LDAP_SERVICE_PASSWORD` | -- | the auth service's account; generated into `secrets/ldap_service_password` |
 | `LDAP_ADMIN_USER` | `admin` | the first administrator (standalone) |
-| `LDAP_ADMIN_PASSWORD` | -- | their password; generated into `.env` |
+| `LDAP_ADMIN_PASSWORD` | -- | their password; generated into `secrets/ldap_admin_password` |
 | `LDAP_ADMIN_NAME` | `Directory administrator` | |
 | `LDAP_SEED_FILE` | -- | CSV or LDIF loaded on the first start (standalone) |
 | `LDAP_GROUPS` | the four above | comma-separated |
@@ -170,7 +176,7 @@ file instead, for Docker secrets.
 | `LDAP_UPSTREAM_URI` | -- | the primary (replica) |
 | `LDAP_UPSTREAM_FLAVOUR` | `generic` | `ad`, `openldap` or `generic` |
 | `LDAP_UPSTREAM_BIND_DN` | -- | an account that can read people and groups there |
-| `LDAP_UPSTREAM_BIND_PASSWORD` | -- | |
+| `LDAP_UPSTREAM_BIND_PASSWORD` | -- | `secrets/ldap_upstream_bind_password` in compose; empty for a standalone directory |
 | `LDAP_UPSTREAM_BASE_DN` | -- | |
 | `LDAP_UPSTREAM_USER_BASE` | the base | |
 | `LDAP_UPSTREAM_GROUP_BASE` | the base | |

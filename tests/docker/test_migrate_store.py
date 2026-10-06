@@ -35,7 +35,7 @@ printf 'pg_ctl %s\n' "$*" >> "$FAKE_LOG"
 exit 0
 """
 FAKE_PG_DUMP = r"""#!/usr/bin/env bash
-printf 'pg_dump %s PGOPTIONS=%s\n' "$*" "${PGOPTIONS-}" >> "$FAKE_LOG"
+printf 'pg_dump %s\n' "$*" >> "$FAKE_LOG"
 while [ $# -gt 0 ]; do [ "$1" = -f ] && echo dump > "$2"; shift; done
 """
 FAKE_PG_RESTORE = r"""#!/usr/bin/env bash
@@ -80,7 +80,7 @@ def run(tmp_path: Path):
         }
         command = ["bash", str(SCRIPT)]
         if os.environ.get("NL2SQL_SHELL_TRACE"):
-            environment["PS4"] = "+@${BASH_SOURCE}@${LINENO}@ "
+            environment["PS4"] = "+@${BASH_SOURCE##*/}@${LINENO}@ "
             command = ["bash", "-x", str(SCRIPT)]
         result = subprocess.run(command, capture_output=True, text=True, env=environment)
         directory = os.environ.get("NL2SQL_SHELL_TRACE")
@@ -103,7 +103,10 @@ def test_an_old_store_is_dumped_from_a_copy_and_restored_as_its_owner(run):
     log = run.log.read_text()
     assert "pg_ctl -D " in log and "listen_addresses=''" in log, "the old server listens on no port"
     assert f"-D {run.work}/legacy." in log, "on a copy: the volume itself is read-only"
-    assert "PGOPTIONS=-c client_min_messages=error" in log
+    # Quieted as the server's default: Postgres warns of an old store's
+    # collation version before it reads a client's PGOPTIONS.
+    start = next(line for line in log.splitlines() if line.startswith("pg_ctl") and line.endswith(" start"))
+    assert "-c client_min_messages=error" in start
     assert "pg_dump -h" in log and "-U feedback -d nl2sql_feedback -Fc --no-owner --no-privileges" in log
     restore = next(line for line in log.splitlines() if line.startswith("pg_restore -h"))
     assert f"-h {run.tmp / 'sockets'} -U postgres -d nl2sql_feedback --role=feedback --no-owner --no-privileges" in restore

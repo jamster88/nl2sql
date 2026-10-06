@@ -2,9 +2,11 @@
 
 A test is given the URL in its own variable when one is set -- `POSTGRES_URL`,
 `TEST_VECTOR_DB_URL` and the rest, as before. Otherwise it is given the
-stack's: the port, the login, the password and the database name read the way
-compose reads them for the containers, from the shell and then from `.env`,
-falling back to the defaults compose falls back to.
+stack's: the port, the login and the database name read the way compose
+reads them for the containers, from the shell and then from `.env`, falling
+back to the defaults compose falls back to -- and the password from the file
+in `secrets/` compose mounts for it (6.3), or, for a stack from before, from
+`.env`.
 
 Before 6.1 those defaults were every store's password, and a URL written out
 in each test file was right for every stack. Since 6.1 `setup.sh` and
@@ -27,19 +29,27 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 #: Read when a test asks, not at import, so a test of this module can point
-#: it elsewhere.
+#: them elsewhere.
 DOTENV = REPO_ROOT / ".env"
+SECRETS = REPO_ROOT / "secrets"
 
 
 @dataclass(frozen=True)
 class Store:
     """One database as compose publishes it: each part the variable compose
-    reads and the default it falls back to."""
+    reads and the default it falls back to. The password's variable is the
+    one a stack from before 6.3 kept in `.env`; its file is the one in
+    `secrets/` since."""
 
     port: tuple[str, str]
     user: tuple[str, str]
     password: tuple[str, str]
     database: tuple[str, str]
+
+    @property
+    def secret(self) -> str:
+        """The file in `secrets/` this password is in."""
+        return self.password[0].lower()
 
 
 STORES = {
@@ -51,13 +61,14 @@ STORES = {
                     ("CONTEXT_DB_PASSWORD", "ragproc"), ("CONTEXT_DB_NAME", "nl2sql_chunks")),
     "vectors": Store(("VECTOR_DB_PORT", "5434"), ("VECTOR_DB_USER", "ragproc"),
                      ("VECTOR_DB_PASSWORD", "ragproc"), ("VECTOR_DB_NAME", "nl2sql_vectors")),
-    "feedback": Store(("FEEDBACK_DB_PORT", "5435"), ("FEEDBACK_DB_USER", "feedback"),
+    # The four runtime stores: one server since 6.3, on one port.
+    "feedback": Store(("STORES_DB_PORT", "5435"), ("FEEDBACK_DB_USER", "feedback"),
                       ("FEEDBACK_DB_PASSWORD", "feedback"), ("FEEDBACK_DB_NAME", "nl2sql_feedback")),
-    "corrections": Store(("CORRECTIONS_DB_PORT", "5436"), ("CORRECTIONS_DB_USER", "corrections"),
+    "corrections": Store(("STORES_DB_PORT", "5435"), ("CORRECTIONS_DB_USER", "corrections"),
                          ("CORRECTIONS_DB_PASSWORD", "corrections"), ("CORRECTIONS_DB_NAME", "nl2sql_corrections")),
-    "completions": Store(("COMPLETIONS_DB_PORT", "5437"), ("COMPLETIONS_DB_USER", "completions"),
+    "completions": Store(("STORES_DB_PORT", "5435"), ("COMPLETIONS_DB_USER", "completions"),
                          ("COMPLETIONS_DB_PASSWORD", "completions"), ("COMPLETIONS_DB_NAME", "nl2sql_completions")),
-    "snippets": Store(("SNIPPETS_DB_PORT", "5438"), ("SNIPPETS_DB_USER", "snippets"),
+    "snippets": Store(("STORES_DB_PORT", "5435"), ("SNIPPETS_DB_USER", "snippets"),
                       ("SNIPPETS_DB_PASSWORD", "snippets"), ("SNIPPETS_DB_NAME", "nl2sql_snippets")),
 }
 
@@ -81,6 +92,17 @@ def setting(key: str, default: str) -> str:
     return os.environ.get(key) or _dotenv().get(key) or default
 
 
+def password(store: Store) -> str:
+    """The shell's, when a test run exports one; else the file compose
+    mounts; else what a stack from before 6.3 kept in `.env`."""
+    key, default = store.password
+    try:
+        held = (SECRETS / store.secret).read_text().strip()
+    except OSError:
+        held = ""
+    return os.environ.get(key) or held or _dotenv().get(key) or default
+
+
 def url(store: str, *, variable: str, driver: str = "postgresql+psycopg") -> str:
     """The URL a live test connects with: `variable` when it is set, else the
     stack's own, published on this machine."""
@@ -88,8 +110,8 @@ def url(store: str, *, variable: str, driver: str = "postgresql+psycopg") -> str
     if given:
         return given
     parts = STORES[store]
-    user, password = (quote(setting(*pair), safe="") for pair in (parts.user, parts.password))
-    return f"{driver}://{user}:{password}@localhost:{setting(*parts.port)}/{setting(*parts.database)}"
+    user, secret = quote(setting(*parts.user), safe=""), quote(password(parts), safe="")
+    return f"{driver}://{user}:{secret}@localhost:{setting(*parts.port)}/{setting(*parts.database)}"
 
 
 def redacted(address: str) -> str:
@@ -112,6 +134,6 @@ def unreachable(what: str, address: str, exc: Exception) -> NoReturn:
     if any(phrase in message for phrase in _REFUSED):
         pytest.fail(
             f"{what} at {redacted(address)} is up but refused the login, so nothing here ran. "
-            f"The password is the stack's (.env) unless a URL variable says otherwise: {message}"
+            f"The password is the stack's (secrets/) unless a URL variable says otherwise: {message}"
         )
     pytest.skip(f"no reachable {what} at {redacted(address)}: {message}")

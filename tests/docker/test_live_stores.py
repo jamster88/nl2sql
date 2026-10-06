@@ -18,7 +18,15 @@ VARIABLE = "NL2SQL_LIVE_STORES_TEST_URL"
 
 
 @pytest.fixture
-def dotenv(tmp_path, monkeypatch):
+def secrets(tmp_path, monkeypatch):
+    path = tmp_path / "secrets"
+    path.mkdir()
+    monkeypatch.setattr(live_stores, "SECRETS", path)
+    return path
+
+
+@pytest.fixture
+def dotenv(tmp_path, monkeypatch, secrets):
     path = tmp_path / ".env"
     monkeypatch.setattr(live_stores, "DOTENV", path)
     for store in live_stores.STORES.values():
@@ -38,6 +46,26 @@ def test_without_one_it_is_the_stacks_with_the_password_dotenv_holds(dotenv):
     assert live_stores.url("retail", variable=VARIABLE) == (
         "postgresql+psycopg://nl2sql_reader:a%2Fb%40c@localhost:15432/nl2sql_retail"
     )
+
+
+def test_the_password_is_the_file_compose_mounts_before_any_left_in_dotenv(dotenv, secrets):
+    """6.3 moved every password into secrets/; a .env from before may still
+    name one, which the file the containers really read wins over."""
+    dotenv.write_text("POSTGRES_READER_PASSWORD=stale\n")
+    (secrets / "postgres_reader_password").write_text("from-file\n")
+    assert live_stores.url("retail", variable=VARIABLE) == (
+        "postgresql+psycopg://nl2sql_reader:from-file@localhost:5432/nl2sql_retail"
+    )
+
+
+def test_the_four_runtime_stores_are_one_port(dotenv, secrets):
+    (secrets / "snippets_db_password").write_text("s")
+    dotenv.write_text("STORES_DB_PORT=15435\n")
+    assert live_stores.url("snippets", variable=VARIABLE, driver="postgresql") == (
+        "postgresql://snippets:s@localhost:15435/nl2sql_snippets"
+    )
+    assert {store.port for name, store in live_stores.STORES.items()
+            if name in ("feedback", "corrections", "completions", "snippets")} == {("STORES_DB_PORT", "5435")}
 
 
 def test_the_shell_wins_over_dotenv_as_it_does_for_compose(dotenv, monkeypatch):
@@ -71,5 +99,5 @@ def test_nothing_listening_is_a_skip():
 )
 def test_a_server_that_refuses_the_login_is_a_failure(said):
     with pytest.raises(pytest.fail.Exception, match="refused the login") as raised:
-        live_stores.unreachable("Postgres", "postgresql://u:secret@h/db", OSError(said))
-    assert "secret" not in str(raised.value)
+        live_stores.unreachable("Postgres", "postgresql://u:hunter2@h/db", OSError(said))
+    assert "hunter2" not in str(raised.value)

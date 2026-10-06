@@ -22,8 +22,9 @@ imports `@nl2sql/web/...`, which its configuration resolves here
 (`sharedPackage(import.meta.url)`), and compiles it with its own toolchain;
 React and the testing library are the page's, resolved from the page's
 `node_modules` (`dedupe`), so a page never holds two Reacts. `tsconfig.json`
-says the same to TypeScript. Each page's image copies `web/package.json` and
-`web/src/` to `/web`, which is `../web` (or `../../web`) from its `/build`.
+says the same to TypeScript. Each page's build stage in the proxy image
+(`proxy/Dockerfile`, 6.3) copies `web/package.json` and `web/src/` to `/web`,
+which is `../web` (or `../../web`) from its `/build`.
 
 ## Tests
 

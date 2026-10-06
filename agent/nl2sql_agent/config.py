@@ -13,6 +13,7 @@ from nl2sql_common.env import (
     env_float as _env_float,
     env_int as _env_int,
     env_str as _env_str,
+    env_url as _env_url,
 )
 
 DEFAULT_OLLAMA_BASE_URL = "http://192.168.10.82:11434"
@@ -48,7 +49,7 @@ DEFAULT_CONTEXT_DB_URL = "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2s
 # joins, filters, measures, dimensions -- with an embedding of what each
 # means. Read as a role that can SELECT and nothing else, which the loader
 # (rag/07_load_snippets.py) creates.
-DEFAULT_SNIPPET_DB_URL = "postgresql+psycopg://snippets_reader:snippets_reader@snippetsdb:5432/nl2sql_snippets"
+DEFAULT_SNIPPET_DB_URL = "postgresql+psycopg://snippets_reader:snippets_reader@nl2sql-stores:5432/nl2sql_snippets"
 
 # The MLflow experiment every run's trace is filed under. One experiment for
 # the agent wherever it runs -- the CLI, the API, the benchmark -- so its
@@ -271,16 +272,16 @@ class Settings:
             ollama_connect_timeout=_env_float("OLLAMA_CONNECT_TIMEOUT", 5.0),
             num_predict=_env_int("OLLAMA_NUM_PREDICT", 2048),
             ollama_timeout=_env_float("OLLAMA_TIMEOUT", 600.0),
-            database_url=_env_str("DATABASE_URL", DEFAULT_DATABASE_URL),
+            database_url=_env_url("DATABASE_URL", DEFAULT_DATABASE_URL),
             db_schema=_env_str("DB_SCHEMA", "public"),
             rag_enabled=_env_bool("RAG_ENABLED", True),
-            vector_db_url=_env_str("VECTOR_DB_URL", DEFAULT_VECTOR_DB_URL),
+            vector_db_url=_env_url("VECTOR_DB_URL", DEFAULT_VECTOR_DB_URL),
             embed_model=_env_str("EMBED_MODEL", DEFAULT_EMBED_MODEL),
             embed_base_url=_env_str("EMBED_BASE_URL", DEFAULT_EMBED_BASE_URL),
             rag_top_k=_env_int("RAG_TOP_K", 4),
             rag_max_context_chars=_env_int("RAG_MAX_CONTEXT_CHARS", 12000),
             examples_enabled=_env_bool("EXAMPLES_ENABLED", True),
-            context_db_url=_env_str("CONTEXT_DB_URL", DEFAULT_CONTEXT_DB_URL),
+            context_db_url=_env_url("CONTEXT_DB_URL", DEFAULT_CONTEXT_DB_URL),
             examples_top_k=_env_int("EXAMPLES_TOP_K", 3),
             examples_candidate_k=_env_int("EXAMPLES_CANDIDATE_K", 10),
             example_weight_question=_env_float("EXAMPLE_WEIGHT_QUESTION", 0.50),
@@ -295,7 +296,7 @@ class Settings:
             examples_max_context_chars=_env_int("EXAMPLES_MAX_CONTEXT_CHARS", 8000),
             multi_shot_enabled=_env_bool("MULTI_SHOT_ENABLED", True),
             snippets_enabled=_env_bool("SNIPPETS_ENABLED", True),
-            snippet_db_url=_env_str("SNIPPET_DB_URL", DEFAULT_SNIPPET_DB_URL),
+            snippet_db_url=_env_url("SNIPPET_DB_URL", DEFAULT_SNIPPET_DB_URL),
             snippets_top_k=_env_int("SNIPPETS_TOP_K", 5),
             snippets_min_score=_env_float("SNIPPETS_MIN_SCORE", 0.35),
             snippets_min_similarity=_env_float("SNIPPETS_MIN_SIMILARITY", 0.62),

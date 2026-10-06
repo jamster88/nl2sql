@@ -73,7 +73,7 @@ names the image itself reads.
 | `PROXY_PORT` | *(none)* | The port it listens on, inside its container |
 | `PROXY_TLS_ENABLED` | `true` | HTTPS on that port, with the page's own certificate. `false` only behind something that terminates TLS, which must send `X-Forwarded-Proto: https` |
 | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | The page's certificate, from the pki service |
-| `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | Its key, readable by account 101 alone |
+| `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | Its key, which the pki service gives to nginx's account, 101 |
 | `PROXY_RESOLVER` | `127.0.0.11` | The DNS server upstreams are resolved through, per request |
 | `UPSTREAM` | *(none)* | The service this page is in front of |
 | `UPSTREAM_SSL_NAME` | *(none)* | The name its certificate is checked for, when it is `https://` |

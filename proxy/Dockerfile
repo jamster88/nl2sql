@@ -81,7 +81,9 @@ COPY --from=directory /build/dist/ /usr/share/nginx/html/directory/
 # nginx's own configuration, replaced: it reads what the start-up script
 # writes under /tmp, which is the one place a read-only container can write
 # (V6-34), and it runs as nginx's account with no `user` directive to switch.
-RUN rm -f /etc/nginx/conf.d/default.conf
+# nginx's own welcome and error pages go too: what this image serves is the
+# five pages' bundles, each from its own root, and nothing else.
+RUN rm -f /etc/nginx/conf.d/default.conf /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 COPY proxy/nginx.conf /etc/nginx/nginx.conf
 COPY proxy/shared/ /etc/nginx/nl2sql/shared/
 COPY proxy/pages/ /etc/nginx/nl2sql/pages/

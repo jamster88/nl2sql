@@ -96,7 +96,7 @@ def test_every_setting_the_agent_reads_is_documented(agent_readme: str):
     never looked for.
     """
     config_py = (AGENT_DIR / "nl2sql_agent" / "config.py").read_text()
-    env_vars = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple)?|os\.getenv)\(\s*"([A-Z_]+)"', config_py))
+    env_vars = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret|os\.getenv)\(\s*"([A-Z_]+)"', config_py))
     # Any call handed an upper-case name: a reader added under a new name is
     # caught here rather than silently left out of the check.
     named = set(re.findall(r'\w\(\s*"([A-Z][A-Z0-9_]+)"', config_py))
@@ -153,7 +153,7 @@ def test_every_api_setting_is_documented(agent_api_doc: str):
     config.py and the agent README's table, checked the same way.
     """
     source = (AGENT_DIR / "nl2sql_agent" / "api" / "settings.py").read_text()
-    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    names = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert names, "no environment variables found in api/settings.py -- the regex needs updating"
     for name in sorted(names):
         assert f"`{name}`" in agent_api_doc, f"{name} is read by the server but absent from API.md"
@@ -298,7 +298,10 @@ def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_rea
     """setup.sh pins a tag per image; if the README's tag tables do not list
     it, the default nobody passes is also the one nobody has read about.
     """
-    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE", "CONSOLE_GUI_IMAGE", "MLFLOW_IMAGE", "MLFLOW_DB_IMAGE"):
+    for var in (
+        "POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "REVIEW_IMAGE", "PROXY_IMAGE", "MLFLOW_IMAGE",
+        "MLFLOW_DB_IMAGE", "LDAP_IMAGE", "AUTH_IMAGE",
+    ):
         image = re.search(rf'^{var}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         tag = re.search(rf'^{var.replace("_IMAGE", "_TAG")}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         assert f"{image}:{tag}" in root_readme, f"README never shows {image}:{tag}"
@@ -644,7 +647,9 @@ def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(r
 def _documented_with_defaults(service: str, readme: str, document: str) -> None:
     """Every setting a compose service takes from `.env`, image pins aside,
     has a row in `document` -- with the default compose falls back to, where
-    that is one value."""
+    that is one value. An image pinned by digest (6.3, V6-35) is documented
+    by name and tag: the digest is tools/pin_images.py's to keep, and a row
+    quoting it would be one more place to move each time it does."""
     settings = {
         name: default
         for name, default in _compose_defaults(_compose_service(service)).items()
@@ -654,12 +659,18 @@ def _documented_with_defaults(service: str, readme: str, document: str) -> None:
     for name, default in sorted(settings.items()):
         rows = _rows(readme, name)
         assert rows, f"compose's {service} reads {name}, which {document} never lists"
-        if default and "," not in default:
+        if "@sha256:" in default:
+            image = default.split("@", 1)[0]
+            assert any(f"`{image}`" in row and "digest" in row for row in rows), (
+                f"{document} never says {name} is {image}, pinned by digest"
+            )
+        elif default and "," not in default:
             assert any(f"`{default}`" in row for row in rows), f"{document} never says {name} defaults to {default}"
 
 
-def test_every_setting_the_snippet_store_reads_is_documented_with_its_default(root_readme: str):
-    _documented_with_defaults("snippetsdb", root_readme, "README.md")
+def test_every_setting_the_runtime_stores_read_is_documented_with_their_default(root_readme: str):
+    """The four runtime stores, one server since 6.3 (V6-40)."""
+    _documented_with_defaults("stores", root_readme, "README.md")
 
 
 def test_every_setting_the_curation_page_reads_is_documented_with_its_default():
@@ -684,7 +695,7 @@ def test_every_review_setting_is_documented():
     """The console's rule, for the service that can rewrite the golden set and
     the snippets: two of its settings had no row until this test asked."""
     source = (REPO_ROOT / "review" / "nl2sql_review" / "settings.py").read_text()
-    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    names = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert len(names) > 20, "the review service's settings were not found -- the regex needs updating"
     readme = (REPO_ROOT / "review" / "README.md").read_text()
     for name in sorted(names):
@@ -697,7 +708,7 @@ def test_every_console_setting_is_documented(console_readme: str):
     from nl2sql_agent.console.settings import AGENT_SETTINGS
 
     source = (AGENT_DIR / "nl2sql_agent" / "console" / "settings.py").read_text()
-    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    names = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert names, "no environment variables found in console/settings.py -- the regex needs updating"
     for name in sorted(names | set(AGENT_SETTINGS)):
         assert _rows(console_readme, name), f"{name} is read by the console but has no row in console/README.md"
@@ -727,19 +738,29 @@ def test_the_documented_console_defaults_are_the_real_defaults(console_readme: s
         )
 
 
-def test_every_setting_the_console_proxy_reads_is_documented(console_readme: str):
-    sources = "".join(
-        (REPO_ROOT / "console" / name).read_text()
-        for name in ("nginx.conf.template", "10-nl2sql-console-config.envsh")
-    )
-    # Worked out by the start-up script rather than set by anyone.
-    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {
-        "CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF", "NGINX_AUTH_TLS_CONF", "NGINX_SERVER_TLS_CONF",
-        "CONSOLE_GUI_LISTEN_TLS",
-    }
-    for name in sorted(names):
-        assert _rows(console_readme, name), f"the console's proxy reads {name}, which console/README.md never lists"
+def test_every_setting_the_console_page_reads_is_documented(console_readme: str):
+    """What its compose service takes from `.env`: the page is the proxy
+    image's since 6.3 (V6-37), whose own settings proxy/README.md lists."""
+    _documented_with_defaults("consolegui", console_readme, "console/README.md")
     assert "`CONSOLE_BIND_ADDRESS`" in console_readme
+
+
+#: Worked out by the proxy's start-up script rather than set by anyone.
+PROXY_COMPUTED = {"PAGE_ROOT", "PROXY_LISTEN_TLS", "UPSTREAM_AUTH_HEADER"}
+
+
+def test_every_setting_the_proxy_image_reads_is_documented():
+    """One image serves every page and MLflow's front door (V6-37); what it
+    reads is its own README's to list, once, rather than each page's."""
+    proxy = REPO_ROOT / "proxy"
+    sources = "".join(path.read_text() for path in [
+        proxy / "10-nl2sql-proxy.envsh", *sorted(proxy.glob("**/*.template")),
+    ])
+    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - PROXY_COMPUTED
+    assert {"NL2SQL_PAGE", "UPSTREAM", "PROXY_PORT"} <= names, "the regex needs updating"
+    readme = (proxy / "README.md").read_text()
+    for name in sorted(names):
+        assert _rows(readme, name), f"the proxy reads {name}, which proxy/README.md never lists"
 
 
 def test_every_route_the_console_serves_is_documented(console_readme: str):

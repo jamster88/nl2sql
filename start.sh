@@ -102,11 +102,10 @@ Brings up the whole stack and opens the web interface in your browser.
                      builds its jar, copies the stack's CA certificate out
                      and runs it. Needs a Java runtime of 21 or later on this
                      machine
-      --review       Also bring up the feedback system -- the staging database
-                     that keeps verdicts, the service that turns them into
-                     golden questions, corrections and completions, the two
-                     stores for those fixes, and the review interface -- and
-                     open that in a browser window of its own
+      --review       Also bring up the feedback system -- the service that
+                     turns staged verdicts into golden questions,
+                     corrections and completions, and the review interface
+                     -- and open that in a browser window of its own
       --console      Also bring up the SQL console -- the retail database
                      queried as the agent's read-only role, through the
                      agent's own gates -- and open it in a browser window of
@@ -119,8 +118,8 @@ Brings up the whole stack and opens the web interface in your browser.
                      golden pairs, corrections and completions, written
                      directly and run against the retail database first --
                      and open it in a browser window of its own
-      --feedback     Keep verdicts without the review interface: starts the
-                     staging database only, so votes are staged for later
+      --feedback     Accepted for commands written before 6.3: verdicts are
+                     staged in the runtime stores whenever the API is up
       --load-golden  Load context_questions/translated_questions.md into the
                      stores the agent's worked examples come from, so they are
                      this checkout's golden set rather than the one the images
@@ -349,16 +348,12 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
     fi
     if [[ "$pinned" != "$shipped" && -z "$(chosen_agent_tag)" ]]; then
         printf 'this checkout ships %s, and .env pins %s' "$shipped" "$pinned"
-    elif [[ $WITH_DESKTOP -eq 0 && -z "$(env_file_value GUI_IMAGE_NAME)" ]]; then
-        printf 'the web interface is not pinned, so it would be built here from source'
+    elif [[ $WITH_DESKTOP -eq 0 && -z "$(env_file_value PROXY_IMAGE_NAME)" ]]; then
+        # Every page is one image since 6.3 (V6-37): a .env from before
+        # pinned each page's own, which nothing reads now.
+        printf 'the pages are not pinned, so their image would be built here from source'
     elif [[ $WITH_DESKTOP -eq 1 && -z "$(env_file_value DESKTOP_IMAGE_NAME)" ]]; then
         printf "the desktop client is not pinned, so its jar would be built here from source"
-    elif [[ $WITH_REVIEW -eq 1 && -z "$(env_file_value REVIEW_GUI_IMAGE_NAME)" ]]; then
-        printf 'the review interface is not pinned, so it would be built here from source'
-    elif [[ $WITH_CURATE -eq 1 && -z "$(env_file_value CURATE_GUI_IMAGE_NAME)" ]]; then
-        printf 'the curation interface is not pinned, so it would be built here from source'
-    elif [[ $WITH_CONSOLE -eq 1 && -z "$(env_file_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
-        printf "the SQL console's interface is not pinned, so it would be built here from source"
     elif [[ $WITH_MLFLOW -eq 1 && -z "$(env_file_value MLFLOW_IMAGE_NAME)" ]]; then
         printf "MLflow's images are not pinned, so they would be built here from source"
     elif [[ $WITH_RAG -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
@@ -451,7 +446,7 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         review_ready=1
     else
         warn "the review interface never answered at $review_url."
-        warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
+        warn "Check what it said: docker compose --profile review --profile reviewgui logs reviewgui"
         warn "The web interface is up; verdicts are staged and can be reviewed later."
     fi
 fi
@@ -465,7 +460,7 @@ if [[ $WITH_CURATE -eq 1 ]]; then
         curate_ready=1
     else
         warn "the curation interface never answered at $curate_url."
-        warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
+        warn "Check what it said: docker compose --profile review --profile curategui logs curategui"
         warn "Everything else is up; ./launch.sh --curate tries it again on its own."
     fi
 fi
@@ -792,7 +787,7 @@ fi
 if [[ $QUIET -eq 0 && $signin -eq 1 ]]; then
     cat <<EOF
 
-    Sign in as $(compose_env LDAP_ADMIN_USER admin), with the password in .env (grep LDAP_ADMIN_PASSWORD .env),
+    Sign in as $(compose_env LDAP_ADMIN_USER admin), with the password in secrets/ldap_admin_password,
     and add everyone else at $scheme://localhost:$(compose_env DIRECTORY_GUI_PORT 8084).
 EOF
 fi
@@ -853,8 +848,8 @@ elif [[ $QUIET -eq 0 ]]; then
     Correcting or completing a wrong answer writes to its own store instead,
     never to the golden set.
 
-    docker compose --profile api --profile gui --profile feedback \\
-      --profile review --profile reviewgui${signin_profiles} down          stop everything
+    docker compose --profile api --profile gui --profile review \\
+      --profile reviewgui${signin_profiles} down          stop everything
 
 EOF
     else
@@ -868,7 +863,7 @@ EOF
     if [[ $WITH_CURATE -eq 1 ]]; then
         cat <<EOF
     $curate_url                     write snippets, golden pairs and fixes, each run first
-    docker compose --profile feedback --profile review --profile curategui down    and the curation page
+    docker compose --profile review --profile curategui down    and the curation page
 
 EOF
     fi

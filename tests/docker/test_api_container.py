@@ -59,8 +59,10 @@ def client_image(docker_daemon_available: bool) -> str:
     return _build("docker/apitest/Dockerfile", CLIENT_IMAGE, docker_daemon_available)
 
 
-def _compose_healthcheck() -> str:
-    """The API healthcheck, exactly as compose resolves it."""
+def _compose_healthcheck() -> list[str]:
+    """The API healthcheck, exactly as compose resolves it: since 6.3 the
+    shared Python check, which verifies the certificate it is answered with
+    (V6-37)."""
     result = subprocess.run(
         ["docker", "compose", "--profile", "api", "config", "--format", "json"],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
@@ -68,8 +70,8 @@ def _compose_healthcheck() -> str:
     if result.returncode != 0:  # pragma: no cover - compose is a fixture dependency
         pytest.skip(f"`docker compose config` failed:\n{result.stderr}")
     test = json.loads(result.stdout)["services"]["api"]["healthcheck"]["test"]
-    assert test[0] == "CMD-SHELL", test
-    return test[1]
+    assert test[0] == "CMD", test
+    return test[1:]
 
 
 def free_port() -> int:
@@ -317,22 +319,24 @@ def test_the_healthcheck_compose_uses_actually_probes_the_server(run_api):
     and a healthcheck that cannot fail is worse than none: every container
     would report healthy, including an empty one.
 
-    Run here as compose resolves it, against the real container, both ways
-    round -- succeeding on the port it is serving and failing on one it is not.
+    Run here as compose resolves it, against the real container, every way
+    round -- succeeding on the port it is serving, failing on one it is not,
+    and failing against a CA that did not issue the certificate it is
+    answered with, which the `--no-check-certificate` it replaced never did.
     """
     probe = _compose_healthcheck()
     api = run_api()
-    good = subprocess.run(
-        ["docker", "exec", "-e", "API_PORT=8443", api.name, "sh", "-c", probe],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert good.returncode == 0, good.stderr
 
-    bad = subprocess.run(
-        ["docker", "exec", "-e", "API_PORT=9", api.name, "sh", "-c", probe],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert bad.returncode != 0, "the healthcheck passes against a port nothing serves"
+    def check(*env: str) -> subprocess.CompletedProcess:
+        flags = [flag for pair in env for flag in ("-e", pair)]
+        return subprocess.run(["docker", "exec", *flags, api.name, *probe], capture_output=True, text=True, timeout=60)
+
+    good = check("API_PORT=8443")
+    assert good.returncode == 0, good.stderr
+    assert check("API_PORT=9").returncode != 0, "the healthcheck passes against a port nothing serves"
+    stranger = check("API_PORT=8443", "API_TLS_CA_FILE=/etc/ssl/certs/ca-certificates.crt")
+    assert stranger.returncode != 0, "the healthcheck trusts a certificate nobody it trusts issued"
+    assert "CERTIFICATE_VERIFY_FAILED" in stranger.stderr
 
 
 def test_the_banner_tells_the_operator_what_they_are_running(run_api):

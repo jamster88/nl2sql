@@ -1,0 +1,21 @@
+# Sign-in: the auth service, for every page. Its session cookie comes back
+# through here, so it belongs to this page's host -- and, a cookie being
+# scoped by host rather than port, to every page of the stack served from it.
+location /auth/ {
+    # Resolved per request rather than once at start-up: a literal upstream
+    # is looked up while nginx parses its configuration and then kept for
+    # the life of the process, so the page could not start before the
+    # service, and would talk to its old address after a restart.
+    resolver ${PROXY_RESOLVER} valid=10s ipv6=off;
+    set $auth_upstream ${AUTH_UPSTREAM};
+    proxy_pass $auth_upstream$request_uri;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $nl2sql_forwarded_proto;
+    proxy_set_header X-Forwarded-Host $http_host;
+    proxy_set_header Connection "";
+    # Verified against the stack's CA: written at start-up from the upstream's
+    # own scheme, because the directives are wrong for a plain-HTTP one.
+    include /tmp/nginx/auth-tls.conf;
+}

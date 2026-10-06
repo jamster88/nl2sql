@@ -55,6 +55,13 @@ case "$1" in
         fi
         exit 0 ;;
     stop) exit 0 ;;
+    container)
+        # A runtime store's own container from before 6.3 --
+        # `<instance>-feedbackdb` -- is there when FAKE_LEGACY_STORES names it.
+        if [[ "$2" == "inspect" && "$*" =~ -(feedbackdb|correctionsdb|completionsdb|snippetsdb)$ ]]; then
+            [[ " ${FAKE_LEGACY_STORES:-} " == *" ${BASH_REMATCH[1]} "* ]] && exit 0
+        fi
+        exit 1 ;;
     ps)
         [[ -n "${FAKE_LEGACY_CONTAINER:-}" ]] && echo "c0ffee123456"
         exit 0 ;;

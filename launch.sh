@@ -259,6 +259,29 @@ if [[ "$generated" -gt 0 ]]; then
     step "Generated $generated password(s) into $SECRETS_DIR/, which only you can open"
 fi
 
+# --- The stores' containers from before 6.3 ---------------------------------
+# Until 6.3 the feedback, corrections, completions and snippet stores were
+# containers of their own, and a stack upgraded from then still has them
+# running: holding the port the runtime stores publish now (5435 was the
+# feedback store's), and with their data directories open, which the move
+# below copies. Each is stopped -- cleanly, so what it holds is whole -- and
+# removed; its volume is kept, for the move and until you remove it.
+retire_legacy_stores() {
+    local store container retired=()
+    for store in feedbackdb correctionsdb completionsdb snippetsdb; do
+        container=$(in_instance "nl2sql-$store")
+        docker container inspect "$container" >/dev/null 2>&1 || continue
+        docker stop -t 60 "$container" >/dev/null 2>&1 || true
+        docker rm "$container" >/dev/null 2>&1 || true
+        retired+=("$store")
+    done
+    if [[ ${#retired[@]} -gt 0 ]]; then
+        step "Retiring the stores' containers from before 6.3: ${retired[*]}"
+        info "stopped and removed; their volumes are kept, and what they hold is moved into the runtime stores"
+    fi
+}
+retire_legacy_stores
+
 # --- Start -----------------------------------------------------------------
 step "Starting ${#SERVICES[@]} service(s): ${SERVICES[*]}"
 if [[ $RESTART -eq 1 ]]; then

@@ -722,6 +722,22 @@ fi
 # secrets/ say over its own socket (V6-41): the agent's reader, sign-in's
 # roles and its pg_hba lines, the stores' databases and owners, every
 # password. Nothing here runs SQL itself.
+# A stack set up before 6.3 still runs the four stores' own containers, the
+# feedback store's on the port the runtime stores publish now. Each is stopped
+# cleanly and removed, its volume kept: launch.sh moves what it holds into the
+# runtime stores on its next start.
+retired=()
+for store in feedbackdb correctionsdb completionsdb snippetsdb; do
+    docker container inspect "$(instance)-$store" >/dev/null 2>&1 || continue
+    docker stop -t 60 "$(instance)-$store" >/dev/null 2>&1 || true
+    docker rm "$(instance)-$store" >/dev/null 2>&1 || true
+    retired+=("$store")
+done
+if [[ ${#retired[@]} -gt 0 ]]; then
+    step "Retiring the stores' containers from before 6.3: ${retired[*]}"
+    info "stopped and removed; their volumes are kept, and launch.sh moves what they hold into the runtime stores"
+fi
+
 db_services=(postgres stores)
 if [[ $WITH_RAG -eq 1 ]]; then db_services+=(vectordb chunkdb); fi
 step "Starting the databases: ${db_services[*]}"

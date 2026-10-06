@@ -1268,3 +1268,28 @@ def test_an_image_that_does_not_build_stops_setup_and_says_so(run_setup):
     result = run_setup("--build-all", env={"FAKE_BUILD_ALL_FAILS": "1"})
     assert result.returncode != 0
     assert "an image did not build from this checkout" in result.output
+
+
+# ---------------------------------------------------------------------------
+# A stack from before 6.3
+# ---------------------------------------------------------------------------
+
+
+def test_the_old_stores_containers_are_retired_before_the_databases_start(run_setup):
+    """The feedback store's own container holds the port the runtime stores
+    publish since 6.3: stopped cleanly and removed, its volume kept for
+    launch.sh to move."""
+    result = run_setup(env={"FAKE_LEGACY_STORES": "feedbackdb correctionsdb"})
+    assert result.returncode == 0, result.output
+    for store in ("feedbackdb", "correctionsdb"):
+        assert result.index_of(f"stop -t 60 nl2sql-{store}") < result.index_of(f"rm nl2sql-{store}")
+        assert result.index_of(f"rm nl2sql-{store}") < result.index_of("compose up -d postgres stores")
+    assert not result.called("stop -t 60 nl2sql-snippetsdb")
+    assert not result.calls_matching("volume rm")
+    assert "Retiring the stores' containers from before 6.3: feedbackdb correctionsdb" in result.output
+
+
+def test_a_fresh_stack_retires_nothing(run_setup):
+    result = run_setup()
+    assert not result.calls_matching("stop -t 60")
+    assert "Retiring" not in result.output

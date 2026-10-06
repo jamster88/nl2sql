@@ -599,7 +599,9 @@ def test_the_stores_the_review_service_writes_are_up_before_it(run_launch):
     have to be up first -- and since 6.3 they are, with the databases."""
     result = run_launch("--review")
     assert result.index_of("up -d postgres stores") < result.index_of("--profile review up -d review")
-    assert not result.called("correctionsdb") and not result.called("feedbackdb")
+    # Compose starts neither old store: they are asked about only to be
+    # retired, when a stack from before 6.3 still runs them.
+    assert not [call for call in result.calls if "compose" in call and ("correctionsdb" in call or "feedbackdb" in call)]
 
 
 def test_the_closing_lines_name_the_three_panes_and_where_each_goes(run_launch):
@@ -1657,6 +1659,34 @@ def test_a_move_that_fails_is_warned_about_and_the_rest_goes_on(run_launch):
 def test_another_instance_moves_its_own_old_stores(run_launch):
     result = run_launch(env={"FAKE_LEGACY_VOLUMES": "feedback", "NL2SQL_INSTANCE": "nl2sql-accept"})
     assert result.called("volume inspect nl2sql-accept_feedbackdata")
+
+
+def test_the_old_stores_containers_are_stopped_cleanly_and_removed_before_anything_starts(run_launch):
+    """A stack upgraded from 6.2 still runs them: the feedback store's holds
+    the port the runtime stores publish, and each has open the data
+    directory the move copies. Stopped with time to shut down, so that data
+    is whole; removed; the volume kept."""
+    result = run_launch(env={"FAKE_LEGACY_STORES": "feedbackdb snippetsdb", "FAKE_LEGACY_VOLUMES": "feedback"})
+    assert result.returncode == 0
+    for store in ("feedbackdb", "snippetsdb"):
+        assert result.index_of(f"stop -t 60 nl2sql-{store}") < result.index_of(f"rm nl2sql-{store}")
+        assert result.index_of(f"rm nl2sql-{store}") < result.index_of("compose up -d postgres stores")
+    assert not result.called("stop -t 60 nl2sql-correctionsdb")
+    assert not result.calls_matching("volume rm")
+    assert "Retiring the stores' containers from before 6.3: feedbackdb snippetsdb" in result.output
+    assert result.index_of("compose up -d postgres stores") < result.index_of("storesmigrate")
+
+
+def test_a_stack_without_them_retires_nothing(run_launch):
+    result = run_launch()
+    assert not result.calls_matching("stop -t 60")
+    assert "Retiring" not in result.output
+
+
+def test_another_instance_retires_its_own_old_stores(run_launch):
+    result = run_launch(env={"FAKE_LEGACY_STORES": "completionsdb", "NL2SQL_INSTANCE": "nl2sql-accept"})
+    assert result.called("stop -t 60 nl2sql-accept-completionsdb")
+    assert not result.called("stop -t 60 nl2sql-completionsdb")
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ their own and are listed under the release they shipped with. A version marked
 - Every password and token is a file in `secrets/`, mounted into only the services that read it; none is in any container's environment.
 - One image, `nl2sql-proxy`, serves every page and MLflow's front door; twelve tags where there were seventeen.
 - Every health check verifies the certificate it is answered with.
-- The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`; `launch.sh` moves a store from before into it.
+- The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`; the old stores' containers are stopped and removed, and `launch.sh` moves what they held into it.
 - A one-shot, `dbprep`, prepares every database in Python over its own socket; neither script runs SQL.
 - Every role a service connects as has a statement timeout, a memory ceiling and a connection limit.
 - Every base image and stock image is pinned by digest; `tools/pin_images.py` checks and moves them.
@@ -37,6 +37,10 @@ their own and are listed under the release they shipped with. A version marked
 
 **Fixed**
 - The retail database's health check could pass while its entrypoint's socket-only server was still setting passwords; it asks over TCP.
+- An upgrade from 6.2 left the old stores' containers running, one on the runtime stores' port; they are stopped and removed first, their volumes kept.
+
+**Published**
+- All twelve tags as `v6_3`, `nl2sql-proxy` among them for the first time; the dataset images are unchanged. The upgrade was rehearsed on a stack of its own first, then `start.sh` upgraded a running 6.2 stack -- its stores moved, its passwords into `secrets/` -- with 98 checks passing.
 
 ## v6_2 (6.2.0) -- 2026-10-04
 

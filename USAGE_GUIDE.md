@@ -1183,7 +1183,8 @@ Upgrading to `v6_3` moves three things, and the first start does each:
 
 - **The four runtime stores are one server**, `nl2sql-stores`, on port 5435:
   the snippets, the staged verdicts, the corrections and the completions, a
-  database each. `launch.sh` moves what the feedback, corrections and
+  database each. The four old containers are stopped and removed, their
+  volumes kept, and `launch.sh` moves what the feedback, corrections and
   completions stores from before hold into their databases, once, and
   leaves the old volumes for you to remove when you are satisfied -- it
   prints the command. The snippets are loaded again from their document.

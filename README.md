@@ -523,7 +523,9 @@ pull does all three:
 * **The runtime stores are one server.** The feedback, corrections,
   completions and snippet stores were four Postgres containers until 6.3;
   they are four databases in `nl2sql-stores` now, on one port (5435, where
-  feedback's was). The first `launch.sh` finds each old volume --
+  feedback's was). `setup.sh` and `launch.sh` stop the four old containers
+  -- cleanly, so what each holds is whole -- and remove them, keeping their
+  volumes; then the first `launch.sh` finds each old volume --
   `nl2sql_feedbackdata`, `nl2sql_correctionsdata`, `nl2sql_completionsdata`
   -- and moves what it holds into its database with the `storesmigrate`
   service ([`docker/migrate_store.sh`](docker/migrate_store.sh)): the old
@@ -1893,9 +1895,9 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 4824 tests, no Docker, npm, JDK or network needed
+pytest                                          # 4829 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 5631, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 5636, the whole stack included
 ```
 
 | Directory | Covers |
@@ -2200,7 +2202,7 @@ script, by a measurement of their own:
   `10-nl2sql-proxy.envsh` and `health.sh`, for every page, as the nginx
   entrypoint and Docker's health check run them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1714 of 1714**.
+  the traces mention -- **1734 of 1734**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

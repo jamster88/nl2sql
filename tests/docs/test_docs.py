@@ -1115,3 +1115,84 @@ def test_the_rag_readme_quotes_the_real_number_of_rag_tests():
 def test_a_nested_default_is_read_as_compose_resolves_it():
     text = "A: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}\nB: ${PLAIN:-x}\nC: $${NOT_ONE}\n"
     assert _compose_defaults(text) == {"GUI_AUTH_UPSTREAM": "https://nl2sql-auth:8446", "PLAIN": "x"}
+
+
+# ---------------------------------------------------------------------------
+# Narrative drift (V6-50)
+# ---------------------------------------------------------------------------
+
+#: Sentences the adversarial reviews found still being said after they had
+#: stopped being true, each in the words that outlived the fact. A document
+#: or a comment that says one again is describing a version that is gone.
+FORBIDDEN_PHRASES = (
+    "Designed, not built",               # arch5.2's routing, built in 5.2
+    "fourteen pipeline nodes",           # the pipeline has not had fourteen since v5
+    "connects as `nl2sql`, the owner",   # everything reads as nl2sql_reader since v4
+    "one person on one machine",         # the deployment tiers in SECURITY.md replaced it
+)
+
+#: Where the phrases are history rather than claims: the reviews that found
+#: them, the specs they were found in (never edited in place), the changelogs
+#: that record their retirement, and the tests that list them.
+NARRATIVE_HISTORY = ("adversary_reviews/", "multi-agent_arch_specs/", "docs/CHANGELOG", "tests/")
+
+
+def test_no_document_or_comment_says_what_stopped_being_true():
+    """The reviews found "fourteen pipeline nodes" in a comment twice, a
+    cycle apart; nothing read the comment, so nothing noticed. The phrases
+    are checked everywhere a person reads -- every tracked document, and the
+    comments in every source file -- outside the places that quote them as
+    history."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "*.md", "*.py", "*.ts", "*.tsx", "*.java", "*.sh", "*.yml", "*.conf", "*.template"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    paths = {path for path in tracked if path and not path.startswith(NARRATIVE_HISTORY)}
+    paths |= {f"docs/{name}" for name in TOPICS if not name.startswith("CHANGELOG")}
+    said = [
+        f"{path}: {phrase!r}"
+        for path in sorted(paths) if (REPO_ROOT / path).is_file()
+        for phrase in FORBIDDEN_PHRASES
+        if phrase.lower() in (REPO_ROOT / path).read_text(errors="replace").lower()
+    ]
+    assert said == [], "these say something that stopped being true: " + ", ".join(said)
+
+
+# ---------------------------------------------------------------------------
+# The newest specification's blueprint (V6-44, V6-50)
+# ---------------------------------------------------------------------------
+
+
+def _newest_spec() -> Path:
+    """A spec is never edited in place; a higher suffix overrides a lower one
+    (arch6_3 over arch6_2 over arch6), so the newest is the one whose rows
+    describe this tree."""
+    specs = {
+        tuple(int(part) for part in match.group(1).split("_")): path
+        for path in (REPO_ROOT / "multi-agent_arch_specs").glob("Multi-Agent_NL2SQL_arch*.md")
+        if (match := re.search(r"arch(\d+(?:_\d+)*)\.md$", path.name))
+    }
+    return specs[max(specs)]
+
+
+def test_the_newest_specs_blueprint_names_files_and_tests_that_exist():
+    """arch6 made the security blueprint a verified table: every row names
+    where a rule is enforced and the test that holds it. Nothing read the
+    table, so a renamed file or test leaves a row pointing at nothing -- as
+    happened to arch6's rows for `docker/auth_roles.sql` once 6.3 moved that
+    work into dbprep. Only the newest spec is held to the tree: an older one
+    is the record of its own release."""
+    spec = _newest_spec()
+    section = re.search(r"^## 8\..*?(?=^## )", spec.read_text(), re.MULTILINE | re.DOTALL)
+    assert section, f"{spec.name} has no section 8"
+    rows = [line for line in section.group(0).splitlines() if line.startswith("| ") and not line.startswith("| Layer")]
+    assert len(rows) >= 5, f"{spec.name}'s blueprint has {len(rows)} rows -- the table changed shape"
+    missing = []
+    for row in rows:
+        cells = [cell.strip() for cell in row.strip("|").split("|")]
+        for cell in cells[2:4]:  # Enforced in, Held by
+            for ref in re.findall(r"`([^`]+)`", cell):
+                path = ref.split(":")[0].split(" ")[0]
+                if "/" in path and not _is_tracked(REPO_ROOT / path):
+                    missing.append(f"{cells[0]}: {path}")
+    assert missing == [], f"{spec.name}'s blueprint names files this tree does not have: {missing}"

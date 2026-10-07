@@ -89,13 +89,13 @@ def test_coverage_is_complete(suite: subprocess.CompletedProcess):
     assert "All coverage checks have been met." in _output(suite)
 
 
-@pytest.mark.parametrize("doc", ["README.md", "desktop/README.md"])
+@pytest.mark.parametrize("doc", ["docs/tests.md", "desktop/README.md"])
 def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedProcess, doc: str):
     """The Python and TypeScript counts both went stale before a test pinned
     them. This one is quoted in two places, which is twice as many chances."""
     counted = _test_count(suite)
     text = (REPO_ROOT / doc).read_text()
-    # Anchored on phrasings that name this client, because the root README
+    # Anchored on phrasings that name this client, because docs/tests.md
     # quotes four other counts and the GUI's own test reads the same file
     # looking for "N-test suite". An interface-specific phrase is the only
     # thing that keeps two of these tests from failing each other.

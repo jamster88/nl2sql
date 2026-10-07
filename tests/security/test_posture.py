@@ -138,6 +138,15 @@ def test_the_cas_key_is_mounted_by_the_pki_service_alone():
     assert holders == ["pki"]
 
 
+def test_nothing_but_the_api_holds_the_apis_identity():
+    """Until 6.1 the review service, the console and the proxies mounted the
+    API's certificate and waited for the API to write it (A20, I-19; V6-65).
+    Each has an identity of its own now, and the API's key is in its own
+    container and the one-shot that issued it, nowhere else."""
+    holders = sorted(name for name, service in SERVICES.items() if any(m.startswith("apitls:") for m in service.get("volumes", [])))
+    assert holders == ["api", "pki"]
+
+
 def test_a_client_that_only_verifies_is_given_only_the_cas_certificate():
     assert _tls_volume(SERVICES["apitest"]) == "tlstrust"
 

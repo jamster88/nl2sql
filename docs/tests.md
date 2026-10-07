@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 4892 tests, no Docker, npm, JDK or network needed
+pytest                                          # 4895 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 5716, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 5720, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -32,7 +32,7 @@ nginx image carries; without it they skip, saying so.
 | [`tests/ops/`](../tests/ops) | The dbprep one-shot (6.3, `common/nl2sql_ops/`): against a fake connection that records each statement and answers what each question asks -- the retail database's extensions, the reader and its ceilings, the sign-in schema and role sync, the sign-in block of `pg_hba.conf` written through the server and checked before it is reloaded, put back when it does not parse; the runtime stores' databases, owners and pgvector; every login's password; the report and the snippets' state; each way a run fails, and what it says -- and behind `--run-docker` against a real Postgres over its socket, run twice to show nothing changes the second time -- and the service as compose declares it, both ways: every setting it is given read, every setting it reads settable but the six the stack fixes, each socket mounted where its settings look |
 | [`tests/proxy/`](../tests/proxy) | The proxy image (6.3, [`proxy/README.md`](../proxy/README.md)): its start-up script sourced the way the nginx entrypoint sources it, for every page -- the token header only with sign-in off, each upstream verified or plainly not, MLflow's sign-in, the page's own listener, each way it stops a page saying why -- and its health check, against a `curl` that says what it was asked -- and, once, what every page's template shares: the site rules, each page's read timeout its own setting, the token added where a page has one |
 | [`tests/web/`](../tests/web) | The shared web package (6.2, [`web/README.md`](../web/README.md)): every page taking it in the same way -- its Vite, Vitest and TypeScript configuration, its image -- and the desktop client unescaping the agent's text by the same rule. Its own tests run in every page's suite |
-| [`tests/docs/`](../tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together -- and the adversarial reviews' figures: each committed draw.io file held to the script that computes it, its SVG and PNG exports to the file, and the `_enhanced` review documents to the originals they add figures to |
+| [`tests/docs/`](../tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together -- the phrases the adversarial reviews retired, absent from every document and comment, and the newest specification's security blueprint naming files and tests that exist -- and the adversarial reviews' figures: each committed draw.io file held to the script that computes it, its SVG and PNG exports to the file, and the `_enhanced` review documents to the originals they add figures to |
 | [`tests/benchmarks/`](../tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](../tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
@@ -43,7 +43,7 @@ compose file, query the live databases -- found as compose finds them, with the 
 failure rather than a skip -- trace into a real MLflow server, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
 and skips rather than fails without it. Two more ask the chat host and
-ollama.com what the model catalog is built from. The 50 behind `--run-node`
+ollama.com what the model catalog is built from. The 51 behind `--run-node`
 need npm, and run the five GUIs' own suites. The 6 behind `--run-java` need
 Maven and a JDK of 21 or later, and run the desktop client's. Three flags
 rather than one because the three needs are different -- a clone with Docker

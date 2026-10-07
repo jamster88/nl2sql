@@ -75,7 +75,7 @@ def test_the_suite_is_not_empty(suite: subprocess.CompletedProcess):
     assert _test_count(suite) > 50
 
 
-@pytest.mark.parametrize("doc", ["README.md", "console/README.md"])
+@pytest.mark.parametrize("doc", ["docs/tests.md", "console/README.md"])
 def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedProcess, doc: str):
     counted = _test_count(suite)
     text = (REPO_ROOT / doc).read_text()

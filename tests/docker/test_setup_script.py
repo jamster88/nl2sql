@@ -987,8 +987,7 @@ def test_the_tag_pulled_names_the_machine_this_is(run_setup, system, machine, cl
 
 def test_the_agent_is_pointed_at_the_mlflow_service(run_setup):
     """Written whether or not MLflow is ever started: a run that finds no
-    server is answered untraced, as the feedback URL beside it is harmless
-    without the staging database."""
+    server is answered untraced."""
     assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
 
 

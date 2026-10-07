@@ -59,6 +59,11 @@ def _source(env: dict[str, str], then: str = "true") -> subprocess.CompletedProc
     if directory:
         with open(os.path.join(directory, "trace.log"), "a") as handle:
             handle.write(result.stderr)
+    if result.returncode != 0 and re.search(r"envsubst: (command )?not found", result.stderr):
+        # Only a test that reaches the templates needs it; one that stops the
+        # page first runs anywhere.
+        pytest.skip("needs gettext's envsubst, which the nginx image carries: "
+                    "brew install gettext, or apt install gettext-base")
     return result
 
 
@@ -125,7 +130,7 @@ def test_with_sign_in_off_the_page_says_so_and_sends_its_token(page, said, tmp_p
     result = _source(_env(tmp_path, page, AUTH_ENABLED="false", UPSTREAM_TOKEN_FILE=str(token)),
                      'printf "[%s]" "$UPSTREAM_AUTH_HEADER"')
     assert result.stdout == "[Bearer s3cret]"
-    assert f"sign-in is off (AUTH_ENABLED=false): " in result.stderr and said in result.stderr
+    assert "sign-in is off (AUTH_ENABLED=false): " in result.stderr and said in result.stderr
 
 
 @pytest.mark.parametrize("token", ["", None, "missing"])

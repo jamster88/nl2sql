@@ -238,7 +238,25 @@ who), imports a file and runs the role sync. It signs in like every other
 interface and admits `nl2sql_admins` only.
 
 Its start-up script refuses `LDAP_MODE=replica`: a replica's people are
-edited on its primary, so there is no page to serve.
+edited on its primary, so there is no page to serve. Since 6.3 it is the
+proxy image's `directory` page ([`proxy/README.md`](../proxy/README.md)),
+set in `.env` by the names on the left:
+
+| Variable | Sets | Default |
+|---|---|---|
+| `DIRECTORY_GUI_PORT` | `PROXY_PORT` | `8084` |
+| `DIRECTORY_GUI_BIND_ADDRESS` | compose alone | `127.0.0.1`: the page is this machine's unless this says otherwise |
+| `DIRECTORY_GUI_API_UPSTREAM` | `UPSTREAM` | `https://nl2sql-auth:8447`, the directory's API on its own port, which nothing outside the stack reaches |
+| `DIRECTORY_GUI_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where the sign-in form posts |
+| `DIRECTORY_GUI_SSL_NAME` | `UPSTREAM_SSL_NAME`, `AUTH_SSL_NAME` | `nl2sql-auth`: one certificate answers on both ports |
+| `DIRECTORY_GUI_CACERT` | `UPSTREAM_CACERT`, `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `DIRECTORY_GUI_READ_TIMEOUT` | `UPSTREAM_READ_TIMEOUT` | `120s` -- an import of many people waits for every one |
+| `DIRECTORY_GUI_RESOLVER` | `PROXY_RESOLVER` | `127.0.0.11`, Docker's DNS |
+| `AUTH_ENABLED` | `AUTH_ENABLED` | `true` |
+| `LDAP_MODE` | `LDAP_MODE` | `standalone`: read so it can refuse a `replica` |
+| `GUI_TLS_ENABLED` | `PROXY_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
+| `GUI_TLS_CERT_FILE` | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
 
 ```bash
 ./launch.sh --api        # standalone: starts the directory, this service and the page
@@ -272,6 +290,7 @@ The auth service's, read from the environment; compose passes each from
 | `AUTH_TLS_ENABLED` | `true` | presents its own certificate, from the pki service, on both ports |
 | `AUTH_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | |
 | `AUTH_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | |
+| `AUTH_TLS_HOSTNAMES` | `localhost,nl2sql-auth,auth,127.0.0.1,::1` | the names the pki service issues its certificate for; `TLS_EXTRA_HOSTNAMES` adds to every server's |
 | `AUTH_SIGNING_KEY_FILE` | `/var/lib/nl2sql-auth/session.key` | written on first start, 0600 |
 | `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | written beside it, for everyone else |
 | `AUTH_COOKIE_NAME` | `nl2sql_session` | the same on every service |

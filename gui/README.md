@@ -323,7 +323,7 @@ first column; compose hands it to the proxy image as the second.
 | `GUI_API_SSL_NAME` | `nl2sql-api` | `UPSTREAM_SSL_NAME` | The name the certificate is verified against. Must be one the API's certificate covers (`API_TLS_HOSTNAMES`) |
 | `GUI_API_CACERT` | `/etc/nl2sql/tls/ca.crt` | `UPSTREAM_CACERT` | What to verify against, the stack's CA, which the pki service puts beside this page's own certificate |
 | `secrets/api_token` | *(empty)* | `UPSTREAM_TOKEN_FILE` | The API's token, sent as a bearer token with sign-in off. Held here so the browser never has it; a file, so it is in no container's environment (6.3) |
-| `GUI_API_READ_TIMEOUT` | `600s` | `UPSTREAM_READ_TIMEOUT` | Must outlast a question, and `API_MAX_WAIT_SECONDS` |
+| `GUI_API_READ_TIMEOUT` | `600s` | `UPSTREAM_READ_TIMEOUT` | Must outlast the progress stream, which the API closes after `API_EVENT_STREAM_TIMEOUT_SECONDS` (300). The page sends no long `?wait=`; a client that does, through this proxy, is held to this rather than `API_MAX_WAIT_SECONDS` |
 | `GUI_RESOLVER` | `127.0.0.11` | `PROXY_RESOLVER` | Docker's embedded DNS, for the per-request lookup |
 | `AUTH_ENABLED` | `true` | `AUTH_ENABLED` | The page asks who you are, and admits `nl2sql_users`; the session cookie, not the token, is what reaches the API. Only `false`, set by name, turns it off, and the page then says it is open |
 | `GUI_AUTH_UPSTREAM` | `https://nl2sql-auth:8446` | `AUTH_UPSTREAM` | The auth service, which `/auth/` is proxied to |

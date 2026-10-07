@@ -21,7 +21,6 @@ from pathlib import Path
 
 from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
 from nl2sql_common.env import (
-    env as _env,
     env_str as _env_str,
     env_int as _env_int,
     env_float as _env_float,

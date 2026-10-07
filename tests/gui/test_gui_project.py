@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -50,12 +49,6 @@ def vitest_config() -> str:
 def nginx_template() -> str:
     """The page's server block in the one proxy image (V6-37)."""
     return (REPO_ROOT / "proxy" / "pages" / "gui.conf.template").read_text()
-
-
-@pytest.fixture(scope="module")
-def site_conf() -> str:
-    """What every page serves of its own: the bundle, cached, from any path."""
-    return (REPO_ROOT / "proxy" / "shared" / "site.conf").read_text()
 
 
 @pytest.fixture(scope="module")
@@ -217,34 +210,6 @@ def test_a_reconnecting_browser_can_resume_where_it_left_off(api_location: str):
     """`Last-Event-ID` is how the server knows to resume rather than replay,
     and a proxy that drops it turns every reconnect into a redraw."""
     assert "proxy_set_header Last-Event-ID $http_last_event_id;" in api_location
-
-
-def test_the_proxy_outlasts_a_question(api_location: str):
-    assert "proxy_read_timeout ${UPSTREAM_READ_TIMEOUT};" in api_location
-
-
-def test_the_upstream_is_resolved_per_request(api_location: str):
-    """A literal upstream is resolved once, while nginx parses its config.
-
-    That stops the GUI starting when the API is not up yet, and leaves it
-    talking to a stale address after the API is restarted onto a new one.
-    """
-    assert "resolver ${PROXY_RESOLVER}" in api_location
-    assert "set $upstream ${UPSTREAM};" in api_location
-    assert "proxy_pass $upstream$request_uri;" in api_location
-
-
-def test_the_certificate_block_is_written_at_start_up(api_location: str):
-    """It has to be, because it is wrong when the upstream is plain HTTP."""
-    assert "include /tmp/nginx/upstream-tls.conf;" in api_location
-    assert "proxy_ssl_verify" not in api_location
-
-
-def test_the_page_is_served_from_any_path_but_the_assets_are_immutable(nginx_template: str, site_conf: str):
-    assert "include /etc/nginx/nl2sql/shared/site.conf;" in nginx_template
-    assert "try_files $uri $uri/ /index.html;" in site_conf
-    assert 'add_header Cache-Control "public, immutable";' in site_conf
-    assert 'add_header Cache-Control "no-cache";' in site_conf
 
 
 # ---------------------------------------------------------------------------

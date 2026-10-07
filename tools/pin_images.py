@@ -142,5 +142,5 @@ def main(argv: list[str] | None = None, root: Path = ROOT, resolver: Callable[[s
     return 1 if found else 0
 
 
-if __name__ == "__main__":  # pragma: no cover - the script's own entry
+if __name__ == "__main__":
     sys.exit(main())

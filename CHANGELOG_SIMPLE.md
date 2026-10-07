@@ -42,6 +42,14 @@ their own and are listed under the release they shipped with. A version marked
 **Published**
 - All twelve tags as `v6_3`, `nl2sql-proxy` among them for the first time; the dataset images are unchanged. The upgrade was rehearsed on a stack of its own first, then `start.sh` upgraded a running 6.2 stack -- its stores moved, its passwords into `secrets/` -- with 98 checks passing.
 
+**After publishing** (not in the images)
+- The coverage exclusions are the one the README names again; tests run each module's entry point instead.
+- dbprep, MLflow's server and the store migration are checked both ways against what compose gives them.
+- Every page's settings are checked by their `.env` names, and the review and directory pages, the outside client and dbprep have settings tables.
+- The checks every page's template shares are made once, not four times; a handful of duplicate, dead or vacuous tests are gone.
+- The RAG integration test runs as a stack of its own rather than in the running one's project.
+- The proxy's start-up tests need gettext's `envsubst`, and skip without it.
+
 ## v6_2 (6.2.0) -- 2026-10-04
 
 **Added**

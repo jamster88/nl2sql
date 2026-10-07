@@ -117,10 +117,16 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 ```
 
 [`tests/proxy/test_proxy_startup.py`](../tests/proxy/test_proxy_startup.py)
-runs the start-up script and the health check for every page against fake
-files, `curl` and `envsubst`, through each decision above and each way one
-can stop the page, and is what the shell coverage measurement counts for
-both. Each page's own project tests check its template; with
+runs the start-up script and the health check for every page -- the script
+with this machine's own `envsubst` (gettext's: `brew install gettext`,
+`apt install gettext-base`; the tests that need it skip, saying so, without
+it), the health check against a `curl` that says what it was asked --
+through each decision above and each way one can stop the page, and is what
+the shell coverage measurement counts for both.
+[`tests/proxy/test_proxy_templates.py`](../tests/proxy/test_proxy_templates.py)
+holds what every page's template shares, once; each page's own project tests
+check only what is that page's -- the paths its dev server proxies, the web
+interface's event stream. With
 `--run-docker`,
 [`tests/docker/test_gui_container.py`](../tests/docker/test_gui_container.py)
 builds the image and serves the web interface from it -- read-only, with no

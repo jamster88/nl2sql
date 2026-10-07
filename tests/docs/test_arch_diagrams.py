@@ -100,33 +100,21 @@ def this_tree_is_v5() -> bool:
     return COMPLETENESS_PY.exists()
 
 
-def this_tree_is_v5_1() -> bool:
-    return CORRECTIONS_PY.exists()
-
-
-def this_tree_is_v5_2() -> bool:
-    return ROUTER_PY.exists()
-
-
 def this_tree_is_v5_6() -> bool:
     return SNIPPETS_PY.exists()
 
 
+#: Each diagram, newest first, beside the module whose arrival it records.
+DIAGRAMS_BY_TREE = [
+    (V5_6, SNIPPETS_PY), (V5_2, ROUTER_PY), (V5_1, CORRECTIONS_PY), (V5, COMPLETENESS_PY),
+    (V4, STATE_PY), (V3, EXAMPLES_PY), (V2, RETRIEVAL_PY), (V1, GRAPH_PY),
+]
+
+
 def diagram_for_this_tree() -> Path:
-    """The diagram that is supposed to describe the code actually checked out."""
-    if this_tree_is_v5_6():
-        return V5_6
-    if this_tree_is_v5_2():
-        return V5_2
-    if this_tree_is_v5_1():
-        return V5_1
-    if this_tree_is_v5():
-        return V5
-    if this_tree_is_v4():
-        return V4
-    if this_tree_is_v3():
-        return V3
-    return V2 if this_tree_is_v2() else V1
+    """The diagram that is supposed to describe the code actually checked
+    out: the newest whose module the tree has."""
+    return next(diagram for diagram, module in DIAGRAMS_BY_TREE if module.exists())
 
 
 # ---------------------------------------------------------------------------
@@ -259,12 +247,9 @@ def test_the_v4_agents_are_present_exactly_when_the_shared_state_module_is():
     or it has neither.
     """
     drawn = diagram_nodes(diagram_for_this_tree())
-    if this_tree_is_v4():
-        assert V4_ADDS <= drawn, f"state.py is here but {sorted(V4_ADDS - drawn)} is not drawn"
-    else:
-        assert V4_ADDS.isdisjoint(drawn), (
-            f"{sorted(V4_ADDS & drawn)} is drawn, but this tree has no state.py"
-        )
+    assert (V4_ADDS <= drawn) is this_tree_is_v4(), (
+        f"state.py is {'here' if this_tree_is_v4() else 'not here'}; drawn of the v4 agents: {sorted(V4_ADDS & drawn)}"
+    )
 
 
 @pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)

@@ -84,11 +84,6 @@ def reviewgui(config: dict) -> dict:
     return config["services"]["reviewgui"]
 
 
-@pytest.fixture(scope="module")
-def api(config: dict) -> dict:
-    return config["services"]["api"]
-
-
 # ---------------------------------------------------------------------------
 # None of it exists unless it is asked for
 # ---------------------------------------------------------------------------
@@ -199,6 +194,18 @@ def test_the_review_service_reaches_it_as_the_owner(review: dict):
     assert WRITER_ROLE not in url
     assert url == "postgresql://feedback@nl2sql-stores:5432/nl2sql_feedback"
     assert review["environment"]["FEEDBACK_DB_PASSWORD_FILE"] == "/run/secrets/feedback_db_password"
+
+
+@pytest.mark.parametrize(("override", "variable"), [
+    ("REVIEW_FEEDBACK_DB_URL", "FEEDBACK_DB_URL"), ("REVIEW_RETAIL_DB_URL", "RETAIL_DB_URL"),
+    ("REVIEW_CORRECTIONS_DB_URL", "CORRECTIONS_DB_URL"), ("REVIEW_COMPLETIONS_DB_URL", "COMPLETIONS_DB_URL"),
+    ("REVIEW_CHUNK_DB_URL", "CHUNK_DB_URL"), ("REVIEW_VECTOR_DB_URL", "VECTOR_DB_URL"),
+    ("REVIEW_SNIPPETS_DB_URL", "SNIPPETS_DB_URL"),
+])
+def test_each_database_can_be_pointed_elsewhere(tmp_path_factory, override: str, variable: str):
+    """review/README.md names an override for each; each reaches the service."""
+    config = _compose_config(tmp_path_factory.mktemp("override"), env={override: "postgresql://o@elsewhere:5432/d"})
+    assert config["services"]["review"]["environment"][variable] == "postgresql://o@elsewhere:5432/d"
 
 
 def test_the_review_service_waits_for_the_database(review: dict):

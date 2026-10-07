@@ -95,14 +95,6 @@ def test_the_stores_own_settings_reach_the_store_its_owner_and_its_reader(tmp_pa
     assert agent["environment"]["SNIPPET_DB_URL"] == "postgresql+psycopg://ro@nl2sql-stores:5432/snips"
 
 
-def test_the_review_service_can_be_pointed_at_another_store(tmp_path_factory):
-    config = _compose_config(
-        tmp_path_factory.mktemp("elsewhere"), *EVERY,
-        env={"REVIEW_SNIPPETS_DB_URL": "postgresql://o:p@elsewhere:5432/s"},
-    )
-    assert config["services"]["review"]["environment"]["SNIPPETS_DB_URL"] == "postgresql://o:p@elsewhere:5432/s"
-
-
 @pytest.mark.parametrize("service", ["agent", "api", "review"])
 def test_everything_that_reads_or_loads_it_waits_for_it(services: dict, service: str):
     """Up, and prepared: its database and owner made by dbprep."""
@@ -199,29 +191,14 @@ def _proxy_variables() -> set[str]:
     return proxy_names("curate")
 
 
-def test_each_setting_of_the_page_is_set_by_the_name_compose_documents(tmp_path_factory):
-    """The names in `.env` are not the names the proxy reads --
-    `CURATE_GUI_UPSTREAM` becomes `UPSTREAM` -- so each is set here, all at
-    once, and found where the page reads it."""
+def test_a_pinned_proxy_image_is_what_the_page_runs(tmp_path_factory):
+    """Its settings by the names `.env` gives them are tests/docker/
+    test_compose_config.py's, for every page at once."""
     config = _compose_config(
         tmp_path_factory.mktemp("page"), *EVERY,
-        env={
-            "CURATE_GUI_PORT": "9083", "CURATE_GUI_UPSTREAM": "https://elsewhere:9444",
-            "CURATE_GUI_SSL_NAME": "elsewhere", "CURATE_GUI_CACERT": "/certs/other.crt",
-            "CURATE_GUI_READ_TIMEOUT": "60s", "CURATE_GUI_RESOLVER": "10.0.0.2",
-            "PROXY_IMAGE_NAME": "example/proxy", "PROXY_IMAGE_TAG": "test",
-        },
+        env={"PROXY_IMAGE_NAME": "example/proxy", "PROXY_IMAGE_TAG": "test"},
     )
-    page = config["services"]["curategui"]
-    assert {k: page["environment"][k] for k in (
-        "PROXY_PORT", "UPSTREAM", "UPSTREAM_SSL_NAME", "UPSTREAM_CACERT", "UPSTREAM_READ_TIMEOUT", "PROXY_RESOLVER",
-    )} == {
-        "PROXY_PORT": "9083", "UPSTREAM": "https://elsewhere:9444",
-        "UPSTREAM_SSL_NAME": "elsewhere", "UPSTREAM_CACERT": "/certs/other.crt",
-        "UPSTREAM_READ_TIMEOUT": "60s", "PROXY_RESOLVER": "10.0.0.2",
-    }
-    assert [(p["published"], p["target"]) for p in page["ports"]] == [("9083", 9083)]
-    assert page["image"] == "example/proxy:test"
+    assert config["services"]["curategui"]["image"] == "example/proxy:test"
 
 
 def test_every_setting_the_proxy_reads_can_be_set_through_compose_and_nothing_else_is(curategui: dict):

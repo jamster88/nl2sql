@@ -318,10 +318,6 @@ def test_emitted_sql_ends_with_a_newline(emitted_load_sql: str):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_entrypoint_matches_the_cli_module(agent_dockerfile: str):
-    assert 'ENTRYPOINT ["python", "-m", "nl2sql_agent"]' in agent_dockerfile
-
-
 def test_agent_requirements_are_installed_before_source_is_copied(agent_dockerfile: str):
     lines = agent_dockerfile.splitlines()
     req_idx = next(i for i, l in enumerate(lines) if "COPY agent/requirements.lock" in l)

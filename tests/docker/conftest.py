@@ -76,14 +76,11 @@ case "$1" in
         [[ -n "${FAKE_VOLUME_EXISTS:-}" ]] && exit 0
         exit 1 ;;
     image)
-        # `docker image inspect <tag>` -- launch.sh asks whether the desktop
-        # client's image is already here before deciding what to say about
-        # where the jar is coming from.
-        if [[ "$2" == "inspect" ]]; then
-            [[ -n "${FAKE_DESKTOP_IMAGE_PRESENT:-}" ]] && exit 0
-            exit 1
-        fi
-        exit 0 ;;
+        # `docker image inspect <tag>`, the only `image` command the scripts
+        # run -- launch.sh asks whether the desktop client's image is already
+        # here before deciding what to say about where the jar is coming from.
+        [[ -n "${FAKE_DESKTOP_IMAGE_PRESENT:-}" ]] && exit 0
+        exit 1 ;;
     inspect)
         if [[ "$*" == *nl2sql-vectordb* ]]; then
             echo "${FAKE_VECTOR_HEALTH:-healthy}"

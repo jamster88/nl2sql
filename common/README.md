@@ -16,6 +16,38 @@ hash-checked lock (`requirements.lock`): an import a package does not have
 -- SQLAlchemy in the directory's image -- is left out of the families
 rather than required.
 
+## dbprep's settings
+
+`python -m nl2sql_ops` reads the stack's own names, as compose gives them to
+the `dbprep` service, so `.env` says each once. A password is read from the
+file `<NAME>_FILE` names -- compose mounts each from `secrets/` -- or, for a
+run by hand, from the variable itself.
+
+| Setting | Default | What |
+| --- | --- | --- |
+| `POSTGRES_DB` | `nl2sql_retail` | The retail database |
+| `POSTGRES_USER` | `nl2sql` | Its owner, who owns what the reader is granted |
+| `POSTGRES_READER_USER` | `nl2sql_reader` | The agent's reader, made here |
+| `POSTGRES_READER_PASSWORD` | -- | Its password, from `secrets/postgres_reader_password` |
+| `AUTH_ENABLED` | `true` | Sign-in: its schema, its role and its `pg_hba.conf` lines. Only `false`, by name, takes them out |
+| `AUTH_ROLESYNC_USER` | `nl2sql_rolesync` | The auth service's role in the retail database |
+| `AUTH_ROLESYNC_PASSWORD` | -- | Its password, from `secrets/auth_rolesync_password`; required with sign-in on |
+| `LDAP_BASE_DN` | `dc=nl2sql,dc=local` | Where the sign-in rule finds a person in the directory |
+| `NL2SQL_LDAP_HOST` | `nl2sql-ldap` | The directory, for the sign-in rule; the stack's own, so compose sets none of these three |
+| `NL2SQL_LDAP_PORT` | `389` | |
+| `NL2SQL_LDAP_TLS` | `starttls` | `starttls`, `ldaps` or `none` |
+| `FEEDBACK_DB_USER`, `FEEDBACK_DB_NAME` | `feedback`, `nl2sql_feedback` | The staging database in the runtime stores, and its owner |
+| `CORRECTIONS_DB_USER`, `CORRECTIONS_DB_NAME` | `corrections`, `nl2sql_corrections` | The corrections store |
+| `COMPLETIONS_DB_USER`, `COMPLETIONS_DB_NAME` | `completions`, `nl2sql_completions` | The completions store |
+| `SNIPPETS_DB_USER`, `SNIPPETS_DB_NAME` | `snippets`, `nl2sql_snippets` | The snippet store |
+| `FEEDBACK_DB_PASSWORD`, `CORRECTIONS_DB_PASSWORD`, `COMPLETIONS_DB_PASSWORD`, `SNIPPETS_DB_PASSWORD` | -- | Each owner's, from its file in `secrets/` |
+| `CONTEXT_DB_USER`, `CONTEXT_DB_NAME`, `CONTEXT_DB_PASSWORD` | `ragproc`, `nl2sql_chunks`, -- | The context store's login, whose password is set from its file |
+| `VECTOR_DB_USER`, `VECTOR_DB_NAME`, `VECTOR_DB_PASSWORD` | `ragproc`, `nl2sql_vectors`, -- | The vector store's |
+| `MLFLOW_DB_USER`, `MLFLOW_DB_NAME`, `MLFLOW_DB_PASSWORD` | `mlflow`, `mlflow`, -- | MLflow's store's, when it is running |
+| `NL2SQL_SOCKETS_DIR` | `/run/nl2sql/sockets` | Where each database's socket is mounted, one directory each: `retail`, `stores`, `context`, `vector`, `mlflow` |
+| `NL2SQL_GOLDEN_DOCUMENT` | `/app/context_questions/translated_questions.md` | For `report`, which says whether the stores hold the document's pairs |
+| `NL2SQL_SNIPPETS_DOCUMENT` | `/app/context_questions/sql_snippets.md` | For `snippets`, which says whether the store is behind its document |
+
 ## Since when
 
 - 6.0: `nl2sql_identity`, in `auth/`, copied into three images.

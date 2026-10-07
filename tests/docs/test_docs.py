@@ -673,8 +673,14 @@ def test_every_setting_the_runtime_stores_read_is_documented_with_their_default(
     _documented_with_defaults("stores", root_readme, "README.md")
 
 
-def test_every_setting_the_curation_page_reads_is_documented_with_its_default():
-    _documented_with_defaults("curategui", (REPO_ROOT / "curate" / "README.md").read_text(), "curate/README.md")
+@pytest.mark.parametrize(("service", "document"), [
+    ("gui", "gui/README.md"), ("reviewgui", "review/README.md"), ("curategui", "curate/README.md"),
+    ("directorygui", "auth/README.md"), ("apitest", "agent/API.md"),
+])
+def test_every_setting_a_page_reads_is_documented_with_its_default(service: str, document: str):
+    """The console's page has its own test, with the rest of the console's
+    surface; MLflow's front door is in the README's Tracing table."""
+    _documented_with_defaults(service, (REPO_ROOT / document).read_text(), document)
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +695,25 @@ def console_readme() -> str:
 
 def _rows(doc: str, name: str) -> list[str]:
     return [line for line in doc.splitlines() if line.startswith("|") and f"`{name}`" in line]
+
+
+@pytest.mark.parametrize(("sources", "document"), [
+    (("auth/nl2sql_auth/settings.py",), "auth/README.md"),
+    (("ldap/nl2sql_ldap/settings.py", "ldap/nl2sql_ldap/replica.py"), "ldap/README.md"),
+    (("common/nl2sql_ops/settings.py",), "common/README.md"),
+    (("rag/ragproc/config.py", "rag/07_load_snippets.py"), "rag/README.md"),
+])
+def test_every_setting_these_services_read_has_a_row_in_their_readme(sources: tuple, document: str):
+    """The rule the agent, the API, the console and the review service are
+    held to, for the four whose settings nothing read: two of the RAG
+    loaders' and all thirty-five of dbprep's had no row until it asked."""
+    from tests.settings_names import _CALL
+
+    names = {name for path in sources for _, name in _CALL.findall((REPO_ROOT / path).read_text())}
+    assert len(names) > 3, "no settings found -- the pattern needs updating"
+    readme = (REPO_ROOT / document).read_text()
+    missing = sorted(name for name in names if not _rows(readme, name))
+    assert missing == [], f"{document} has no row for {missing}"
 
 
 def test_every_review_setting_is_documented():

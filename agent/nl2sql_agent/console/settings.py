@@ -30,7 +30,6 @@ from dataclasses import dataclass, field, fields
 from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
 
 from ..api.settings import DEFAULT_CERT_FILE, DEFAULT_KEY_FILE, _env_tuple
-from nl2sql_common.env import env as _env
 from nl2sql_common.env import env_bool as _env_bool
 from nl2sql_common.env import env_int as _env_int
 from nl2sql_common.env import env_str as _env_str

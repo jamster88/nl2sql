@@ -264,12 +264,9 @@ def test_every_list_is_filled_in_rather_than_left_null(models_java: str, records
             # one writing these.
             continue
         body = re.search(rf"public record {name}\(.*?\n    \}}", models_java, re.DOTALL)
-        if body is None:
-            # A record with no compact constructor at all is only correct
-            # when it has no list to fill in.
-            body_text = ""
-        else:
-            body_text = body.group(0)
+        # A record with no compact constructor at all is only correct when it
+        # has no list to fill in.
+        body_text = body.group(0) if body else ""
         for field, info in model.model_fields.items():
             annotation = str(info.annotation)
             if not annotation.startswith(("list[", "dict[")):

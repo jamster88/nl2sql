@@ -690,9 +690,12 @@ which is also the group its TLS key is read through.
 | `COMPLETIONS_DB_URL` | `postgresql://completions:completions@localhost:5435/nl2sql_completions` | Where incomplete answers' fixes go, as the owner |
 | `REVIEW_EMBED_FIXES` | `true` | Embed each fix's question at save time, with `OLLAMA_URL` / `EMBED_MODEL` |
 
-Compose points all three URLs at the containers, and takes an override for
-each as `REVIEW_RETAIL_DB_URL`, `REVIEW_CORRECTIONS_DB_URL` and
-`REVIEW_COMPLETIONS_DB_URL`. `REVIEW_EMBED_FIXES=false` stores records
+Compose points every URL here at the stack's own databases -- the runtime
+stores at `nl2sql-stores`, with no password in the URL and the password from
+the secret file beside it -- and takes an override for each:
+`REVIEW_FEEDBACK_DB_URL`, `REVIEW_RETAIL_DB_URL`, `REVIEW_CORRECTIONS_DB_URL`,
+`REVIEW_COMPLETIONS_DB_URL`, `REVIEW_CHUNK_DB_URL`, `REVIEW_VECTOR_DB_URL` and
+`REVIEW_SNIPPETS_DB_URL`. `REVIEW_EMBED_FIXES=false` stores records
 without their vectors -- the start-up banner, `/readyz` and `/v1/meta` all
 warn that nothing will be retrievable from them until they are embedded.
 
@@ -732,6 +735,28 @@ rewrites the golden question set to anyone who could reach it. A second
 forgetting something. Since 6.3 the two bundles are in one image, and each
 container serves only the page `NL2SQL_PAGE` names, from that page's own
 root: the public GUI's container answers nothing with this page's files.
+
+The page's own settings, set in `.env` by the names on the left; compose
+hands each to the proxy image as the name in the middle.
+
+| Variable | Sets | Default |
+|---|---|---|
+| `REVIEW_GUI_PORT` | `PROXY_PORT` | `8081` |
+| `REVIEW_GUI_UPSTREAM` | `UPSTREAM` | `https://nl2sql-review:8444` |
+| `REVIEW_GUI_SSL_NAME` | `UPSTREAM_SSL_NAME` | `nl2sql-review` -- a name the service's certificate covers (`REVIEW_TLS_HOSTNAMES`) |
+| `REVIEW_GUI_CACERT` | `UPSTREAM_CACERT` | `/etc/nl2sql/tls/ca.crt`, the stack's CA, beside the page's own certificate |
+| `REVIEW_GUI_READ_TIMEOUT` | `UPSTREAM_READ_TIMEOUT` | `900s` -- longer than a promotion, which runs both loaders |
+| `REVIEW_GUI_RESOLVER` | `PROXY_RESOLVER` | `127.0.0.11`, Docker's DNS |
+| `secrets/review_token` | `UPSTREAM_TOKEN_FILE` | *(empty)*: sent only with sign-in off |
+| `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are and admits `nl2sql_reviewers` |
+| `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where the sign-in form posts |
+| `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
+| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `GUI_TLS_ENABLED` | `PROXY_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
+| `GUI_TLS_CERT_FILE` | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
+
+The `GUI_` ones are shared: one line in `.env` sets them for every page.
 
 Three tabs across the top, one per verdict, each with a count of what is
 still pending in it: **Correct → golden set**, **Wrong → corrections** and

@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-import pytest
-
 
 class Rows:
     def __init__(self, rows):
@@ -61,7 +59,3 @@ class FakeConn:
     def ran(self, needle: str) -> list[str]:
         return [statement for statement in self.statements if needle in statement]
 
-
-@pytest.fixture
-def fake_conn():
-    return FakeConn

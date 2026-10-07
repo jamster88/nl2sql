@@ -509,7 +509,8 @@ def test_the_feedback_stack_is_not_started_unless_it_is_asked_for(run_launch):
 
 
 def test_asking_for_feedback_asks_for_the_api_that_writes_to_it(run_launch):
-    """A staging database nothing writes to is a container burning memory."""
+    """Since 6.3 the staging database starts with the others, so `--feedback`
+    is `--api`, kept for the commands written before."""
     result = run_launch("--feedback")
     assert result.called("--profile api up -d api")
 
@@ -734,7 +735,7 @@ def test_asking_for_the_console_starts_the_api_first(run_launch):
 def test_the_console_needs_neither_the_gui_nor_the_feedback_system(run_launch):
     result = run_launch("--console")
     assert not result.called("up -d gui")
-    assert not result.called("up -d feedbackdb")
+    assert not result.called("up -d review")
 
 
 def test_the_console_scheme_follows_the_tls_setting(run_launch):
@@ -1102,6 +1103,16 @@ def test_mlflow_whose_front_door_does_not_come_up_is_still_tracing_and_says_so(r
     assert "MLflow is healthy at" not in output
 
 
+def test_a_front_door_that_stopped_is_reported_without_waiting_out_the_minute(run_launch):
+    """Its container exited -- a bad certificate, a page it was not told --
+    so there is nothing to wait for: said at once, as the other pages'."""
+    result = run_launch("--mlflow", env_file=TRACED_ENV_FILE,
+                        env={"FAKE_MLFLOW_PROXY_HEALTH": "starting", "FAKE_MLFLOW_PROXY_RUNNING": "false"})
+    assert result.returncode == 0
+    assert "MLflow is up, and tracing, but its front door did not become healthy" in " ".join(result.output.split())
+    assert len(result.calls_matching("inspect --format {{.State.Health.Status}} nl2sql-mlflow-proxy")) == 1
+
+
 def test_mlflow_comes_up_after_the_api_it_does_not_hold_up(run_launch):
     """The agent asks for the server on its first question, so nothing
     waits on it -- and the API is not held back while MLflow's image pulls."""
@@ -1168,16 +1179,6 @@ def test_mlflow_published_beyond_this_machine_is_warned_about(run_launch):
 LOAD = "--profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review"
 
 
-def _golden_document(tmp_path: Path, pairs: int) -> None:
-    """A question document holding `pairs` pairs, where launch.sh reads it."""
-    folder = tmp_path / "repo" / "context_questions"
-    folder.mkdir(parents=True, exist_ok=True)
-    (folder / "translated_questions.md").write_text(
-        "# Golden pairs\n\n## How to read a pair\n\n# Suite 1\n\n"
-        + "".join(f"## Q{number:02d} - pair {number}\n\nbody\n\n" for number in range(1, pairs + 1))
-    )
-
-
 def test_load_golden_runs_both_loaders_in_the_review_image_before_the_stores_are_counted(run_launch):
     result = run_launch("--load-golden")
 
@@ -1195,11 +1196,13 @@ def test_load_golden_runs_both_loaders_in_the_review_image_before_the_stores_are
 
 
 def test_load_golden_starts_nothing_of_the_review_system(run_launch):
-    """One container, run once and removed: --no-deps keeps the staging
-    database and the fix stores, which the review service depends on, down."""
+    """One container, run once and removed: --no-deps keeps everything the
+    review service depends on from being started for it, and the service
+    itself is not."""
     result = run_launch("--load-golden")
     assert not result.called("up -d review")
-    assert not result.called("up -d feedbackdb")
+    [load] = [call for call in result.calls if "compose" in call and "review" in call and " run " in call]
+    assert "run --rm --no-deps" in load
 
 
 def test_without_the_flag_nothing_is_loaded(run_launch):

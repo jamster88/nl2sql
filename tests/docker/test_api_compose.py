@@ -250,6 +250,17 @@ def test_the_test_client_can_read_the_certificate_it_has_to_trust(config: dict):
     assert apitest["environment"]["API_INSECURE"] == "false"
 
 
+def test_the_test_clients_settings_reach_it_by_the_names_agent_api_md_gives(tmp_path_factory):
+    env = {"APITEST_BASE_URL": "https://elsewhere:9443", "APITEST_CACERT": "/certs/other.crt",
+           "APITEST_INSECURE": "true", "APITEST_QUESTION": "how many?", "APITEST_WAIT_SECONDS": "9"}
+    apitest = _compose_config(tmp_path_factory.mktemp("apitest"), env=env)["services"]["apitest"]["environment"]
+    assert {key: apitest[key] for key in ("API_BASE_URL", "API_CACERT", "API_INSECURE", "APITEST_QUESTION",
+                                          "APITEST_WAIT_SECONDS")} == {
+        "API_BASE_URL": "https://elsewhere:9443", "API_CACERT": "/certs/other.crt", "API_INSECURE": "true",
+        "APITEST_QUESTION": "how many?", "APITEST_WAIT_SECONDS": "9",
+    }
+
+
 def test_the_test_client_is_given_the_same_token_as_the_server(config: dict):
     """The same secret file, which smoke.sh reads when API_TOKEN is unset."""
     apitest, api = config["services"]["apitest"], config["services"]["api"]

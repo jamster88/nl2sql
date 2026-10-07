@@ -9,10 +9,8 @@ from __future__ import annotations
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from nl2sql_agent.api.app import default_guard
 from nl2sql_agent.api.settings import ApiSettings
-from nl2sql_agent.config import Settings
-from nl2sql_identity import ADMINS, REVIEWERS, USERS, Guard, GuardSettings, Identity, sign
+from nl2sql_identity import ADMINS, USERS, Guard, GuardSettings, Identity, sign
 
 from .conftest import ANSWERED, make_runner
 

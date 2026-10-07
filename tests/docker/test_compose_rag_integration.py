@@ -12,6 +12,12 @@ half directly, so they neither need nor wait on a remote Ollama.
 Opt-in (`pytest --run-docker`). Skips if Docker, the images, or the embedding
 host are unavailable -- except for the degradation test, which stubs the
 embedder and so runs whether or not bge-m3 is up.
+
+It runs as a stack of its own -- `NL2SQL_INSTANCE` names its containers,
+volumes and compose project, every published port a free one -- and removes
+it afterwards. Until 6.3 it ran in the checkout's own project, beside the
+stack someone had started there: with 6.3's compose file that would have
+recreated their stores and run dbprep over their databases.
 """
 
 from __future__ import annotations
@@ -19,7 +25,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import subprocess
+import uuid
 from pathlib import Path
 
 import pytest
@@ -117,13 +125,25 @@ print("RESULT " + json.dumps({
 #: the image that was pulled. The environment outranks `.env`, so both the
 #: build and the probe use a name nothing else does.
 PROBE_IMAGE = {"AGENT_IMAGE_NAME": "nl2sql-agent", "AGENT_IMAGE_TAG": "pytest-compose"}
+INSTANCE = f"nl2sql-ragprobe-{uuid.uuid4().hex[:6]}"
+
+
+def _free_port() -> str:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return str(sock.getsockname()[1])
+
+
+#: A stack of its own: its name, and a free port for every database it starts.
+PROBE_STACK = {"NL2SQL_INSTANCE": INSTANCE,
+               **{key: _free_port() for key in ("POSTGRES_PORT", "CONTEXT_DB_PORT", "VECTOR_DB_PORT", "STORES_DB_PORT")}}
 
 
 def _compose(*args: str, timeout: int = 300) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["docker", "compose", *args],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=timeout,
-        env={**os.environ, **PROBE_IMAGE},
+        env={**os.environ, **PROBE_IMAGE, **PROBE_STACK},
     )
 
 
@@ -151,7 +171,13 @@ def _run_probe(script: str, timeout: int = 300) -> dict:
 def running_stack(docker_daemon_available: bool):
     if not docker_daemon_available:
         pytest.skip("no working docker daemon")
+    try:
+        yield _start_stack()
+    finally:
+        _compose("down", "--volumes", "--remove-orphans", timeout=300)
 
+
+def _start_stack() -> bool:
     # Build from current source first. Without this the probe would run against
     # whatever `nl2sql-agent:latest` happens to be lying around locally -- which
     # can predate the retrieval module entirely, turning a real failure into a
@@ -160,11 +186,12 @@ def running_stack(docker_daemon_available: bool):
     if build.returncode != 0:
         pytest.skip(f"could not build the agent image:\n{build.stderr[-1500:]}")
 
-    up = _compose("up", "-d", "vectordb", "chunkdb")
+    # Waited for: a stack of its own starts from nothing.
+    up = _compose("up", "-d", "--wait", "--wait-timeout", "180", "vectordb", "chunkdb")
     if up.returncode != 0:
         pytest.skip(f"could not start the retrieval services:\n{up.stderr[-1500:]}")
 
-    for container in ("nl2sql-vectordb", "nl2sql-chunkdb"):
+    for container in (f"{INSTANCE}-vectordb", f"{INSTANCE}-chunkdb"):
         health = subprocess.run(
             ["docker", "inspect", "--format", "{{.State.Health.Status}}", container],
             capture_output=True, text=True,

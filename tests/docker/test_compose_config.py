@@ -667,15 +667,17 @@ def test_the_pki_issues_an_identity_into_each_servers_own_volume(default_config:
         assert "localhost" in hosts and "127.0.0.1" in hosts
 
 
-def test_names_given_to_the_stack_reach_every_identity(tmp_path_factory):
+@pytest.mark.parametrize("identity", ["api", "review", "console", "auth"])
+def test_names_given_to_the_stack_reach_every_identity(tmp_path_factory, identity: str):
     """TLS_EXTRA_HOSTNAMES is this machine's name on the network, for a
-    browser elsewhere; the API's own list is API_TLS_HOSTNAMES, as before."""
+    browser elsewhere; each service's own list is `<SERVICE>_TLS_HOSTNAMES`."""
+    names = f"localhost,nl2sql-{identity},{identity}.example"
     config = _compose_config(
         tmp_path_factory.mktemp("names"),
-        env={"TLS_EXTRA_HOSTNAMES": "nl2sql.lan", "API_TLS_HOSTNAMES": "localhost,nl2sql-api,api.example"},
+        env={"TLS_EXTRA_HOSTNAMES": "nl2sql.lan", f"{identity.upper()}_TLS_HOSTNAMES": names},
     )
     assert "--also=nl2sql.lan" in config["services"]["pki"]["command"]
-    assert _identities(config)["api"][1] == ["localhost", "nl2sql-api", "api.example"]
+    assert _identities(config)[identity][1] == names.split(",")
 
 
 # ---------------------------------------------------------------------------
@@ -712,6 +714,64 @@ def test_a_moved_port_is_followed_by_what_proxies_to_it(moved: dict, service: st
     target = {"API_PORT": "9443", "REVIEW_PORT": "9444", "CONSOLE_PORT": "9445", "AUTH_PORT": "9446",
               "AUTH_DIRECTORY_PORT": "9447"}[port]
     assert moved[service]["environment"][variable].endswith(f":{target}")
+
+
+#: Each page's settings, by the name `.env` gives them and the name the proxy
+#: image reads (V6-37): a page whose `.env` name went nowhere would keep its
+#: default whatever the README told someone to set. Shared by every page:
+#: GUI_TLS_* and, but for the directory's, GUI_AUTH_*.
+PAGE_SETTINGS = {
+    "gui": {"GUI_PORT": "PROXY_PORT", "GUI_API_UPSTREAM": "UPSTREAM", "GUI_API_SSL_NAME": "UPSTREAM_SSL_NAME",
+            "GUI_API_CACERT": "UPSTREAM_CACERT", "GUI_API_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT",
+            "GUI_RESOLVER": "PROXY_RESOLVER"},
+    "reviewgui": {"REVIEW_GUI_PORT": "PROXY_PORT", "REVIEW_GUI_UPSTREAM": "UPSTREAM",
+                  "REVIEW_GUI_SSL_NAME": "UPSTREAM_SSL_NAME", "REVIEW_GUI_CACERT": "UPSTREAM_CACERT",
+                  "REVIEW_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "REVIEW_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "curategui": {"CURATE_GUI_PORT": "PROXY_PORT", "CURATE_GUI_UPSTREAM": "UPSTREAM",
+                  "CURATE_GUI_SSL_NAME": "UPSTREAM_SSL_NAME", "CURATE_GUI_CACERT": "UPSTREAM_CACERT",
+                  "CURATE_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "CURATE_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "consolegui": {"CONSOLE_GUI_PORT": "PROXY_PORT", "CONSOLE_GUI_UPSTREAM": "UPSTREAM",
+                   "CONSOLE_GUI_SSL_NAME": "UPSTREAM_SSL_NAME", "CONSOLE_GUI_CACERT": "UPSTREAM_CACERT",
+                   "CONSOLE_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "CONSOLE_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "directorygui": {"DIRECTORY_GUI_PORT": "PROXY_PORT", "DIRECTORY_GUI_API_UPSTREAM": "UPSTREAM",
+                     "DIRECTORY_GUI_UPSTREAM": "AUTH_UPSTREAM", "DIRECTORY_GUI_SSL_NAME": "UPSTREAM_SSL_NAME",
+                     "DIRECTORY_GUI_CACERT": "UPSTREAM_CACERT", "DIRECTORY_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT",
+                     "DIRECTORY_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "mlflowproxy": {"MLFLOW_PROXY_PORT": "PROXY_PORT", "MLFLOW_PROXY_UPSTREAM": "UPSTREAM",
+                    "MLFLOW_PROXY_SSL_NAME": "UPSTREAM_SSL_NAME", "MLFLOW_PROXY_CACERT": "UPSTREAM_CACERT",
+                    "MLFLOW_PROXY_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "MLFLOW_PROXY_RESOLVER": "PROXY_RESOLVER"},
+}
+SHARED_PAGE_SETTINGS = {"GUI_TLS_ENABLED": "PROXY_TLS_ENABLED", "GUI_TLS_CERT_FILE": "PROXY_TLS_CERT_FILE",
+                        "GUI_TLS_KEY_FILE": "PROXY_TLS_KEY_FILE"}
+SIGN_IN_SETTINGS = {"GUI_AUTH_UPSTREAM": "AUTH_UPSTREAM", "GUI_AUTH_SSL_NAME": "AUTH_SSL_NAME",
+                    "GUI_AUTH_CACERT": "AUTH_CACERT"}
+
+
+@pytest.fixture(scope="module")
+def pages_set(tmp_path_factory) -> dict:
+    """Every page's every setting, each given a value of its own."""
+    names = {name for mapping in PAGE_SETTINGS.values() for name in mapping} | set(SHARED_PAGE_SETTINGS) | set(SIGN_IN_SETTINGS)
+    env = {name: f"set-{name.lower()}" for name in names}
+    env |= {name: str(9000 + index) for index, name in enumerate(sorted(n for n in names if n.endswith("_PORT")))}
+    env["GUI_TLS_ENABLED"] = "false"
+    services = _compose_config(tmp_path_factory.mktemp("pages"), profile=EVERY_PAGE, env=env)["services"]
+    return {"env": env, "services": services}
+
+
+@pytest.mark.parametrize("page", sorted(PAGE_SETTINGS))
+def test_each_page_setting_reaches_the_proxy_by_the_name_compose_documents(pages_set: dict, page: str):
+    env, service = pages_set["env"], pages_set["services"][page]
+    mapping = {**PAGE_SETTINGS[page], **SHARED_PAGE_SETTINGS}
+    if page != "directorygui":
+        mapping |= SIGN_IN_SETTINGS
+    for name, proxy in mapping.items():
+        assert service["environment"][proxy] == env[name], f"{page}: {name} does not reach {proxy}"
+    if page == "directorygui":
+        # One certificate answers on both of the auth service's ports.
+        assert service["environment"]["AUTH_SSL_NAME"] == env["DIRECTORY_GUI_SSL_NAME"]
+        assert service["environment"]["AUTH_CACERT"] == env["DIRECTORY_GUI_CACERT"]
+    port = next(name for name in PAGE_SETTINGS[page] if name.endswith("_PORT"))
+    assert [p["target"] for p in service["ports"]] == [int(env[port])]
 
 
 def test_no_upstream_names_a_port_of_its_own():
@@ -760,8 +820,6 @@ def test_every_container_is_reached_by_its_usual_name_in_either(instances):
     legacy = ["nl2sql-feedbackdb", "nl2sql-correctionsdb", "nl2sql-completionsdb", "nl2sql-snippetsdb"]
     for config in instances:
         for name, service in config["services"].items():
-            if "container_name" not in service:
-                continue
             usual = service["container_name"].replace(config["name"], "nl2sql", 1)
             expected = [usual, *legacy] if name == "stores" else [usual]
             assert service["networks"]["default"]["aliases"] == expected, name

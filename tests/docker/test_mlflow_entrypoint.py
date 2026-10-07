@@ -113,3 +113,20 @@ def test_compose_gives_the_server_no_url_with_a_password_in_it():
     server = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]["mlflow"]
     assert not any("backend-store-uri" in part for part in server["command"])
     assert server["environment"]["MLFLOW_DB_PASSWORD_FILE"] == "/run/secrets/mlflow_db_password"
+
+
+def test_every_variable_compose_sets_on_the_server_is_read_and_what_it_reads_is_set():
+    """Both ways, as for every other service: the store's four, read by this
+    entrypoint, and HOME -- MLflow writes there, and the root is read-only.
+    The two it reads beyond them are for a server started another way: a
+    store URL given outright, and the artifact directory, which compose
+    mounts at the default."""
+    import re
+
+    import yaml
+
+    server = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())["services"]["mlflow"]
+    read = set(re.findall(r"\$\{(MLFLOW_[A-Z_]+)", SCRIPT.read_text()))
+    assert set(server["environment"]) - {"HOME"} <= read
+    assert read - {"MLFLOW_BACKEND_STORE_URI", "MLFLOW_ARTIFACTS_DIR"} <= set(server["environment"])
+    assert server["environment"]["HOME"] == "/tmp" and "/tmp" in server["tmpfs"]

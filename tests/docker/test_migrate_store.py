@@ -149,6 +149,32 @@ def test_a_restore_that_fails_fails_the_move_and_still_stops_the_old_server(run)
     assert "-m fast -w -s stop" in log and list(run.work.iterdir()) == []
 
 
+def test_an_old_server_that_will_not_start_moves_nothing_and_leaves_no_copy(run):
+    """A volume Postgres cannot open -- another major version, a damaged
+    cluster -- fails the move before anything is read or written, and the
+    copy is removed with it; launch.sh warns and the volume stays as it was."""
+    result = run(FAKE_START_FAILS="1")
+    assert result.returncode != 0
+    log = run.log.read_text()
+    assert "pg_dump" not in log and "pg_restore" not in log and "COMMENT ON DATABASE" not in log
+    assert list(run.work.iterdir()) == []
+
+
+def test_launch_sh_hands_it_what_it_requires_and_nothing_it_does_not_read():
+    """The service has no environment of its own in compose: launch.sh passes
+    each move's with `-e`. What the script requires (`:?`) is passed; what it
+    defaults is the service's own mounts."""
+    import re
+
+    launch = (REPO_ROOT / "launch.sh").read_text()
+    passed = set(re.findall(r"-e (NL2SQL_[A-Z_]+)=", launch))
+    script = SCRIPT.read_text()
+    required = set(re.findall(r"\$\{(NL2SQL_[A-Z_]+):\?", script))
+    read = set(re.findall(r"\$\{(NL2SQL_[A-Z_]+)", script))
+    assert required == {"NL2SQL_DB", "NL2SQL_OWNER", "NL2SQL_VOLUME"} == passed
+    assert passed <= read
+
+
 @pytest.mark.parametrize("missing", ["NL2SQL_DB", "NL2SQL_OWNER", "NL2SQL_VOLUME"])
 def test_it_is_told_what_to_move(run, missing):
     result = run(**{missing: ""})

@@ -740,11 +740,11 @@ It is configured entirely from the environment, which is what compose sets:
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `API_BASE_URL` | `https://nl2sql-api:8443` | The API to drive |
+| `API_BASE_URL` | `https://nl2sql-api:8443` | The API to drive; `APITEST_BASE_URL` in `.env` |
 | `API_TOKEN` | *(none)* | Presented as a bearer token when set |
 | `API_TOKEN_FILE` | *(none)*; `/run/secrets/api_token` in compose | Read for the token when `API_TOKEN` is not set (6.3). The token itself is never printed: the log says only `bearer token` |
-| `API_CACERT` | *(none)*; the stack's CA in compose | A CA file to verify against; tried first |
-| `API_INSECURE` | `false` | Allow `--insecure` as a last resort. With this false and nothing to verify against, it refuses to run |
+| `API_CACERT` | *(none)*; the stack's CA in compose | A CA file to verify against; tried first. `APITEST_CACERT` in `.env`, `/etc/nl2sql/tls/ca.crt` by default |
+| `API_INSECURE` | `false` | Allow `--insecure` as a last resort. With this false and nothing to verify against, it refuses to run. `APITEST_INSECURE` in `.env` |
 | `APITEST_QUESTION` | `How many stores are there?` | The question to ask, unless one is given as an argument |
 | `APITEST_WAIT_SECONDS` | `240` | How long to wait for the answer |
 

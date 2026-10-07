@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -29,12 +28,6 @@ def package_json() -> dict:
 def nginx_template() -> str:
     """The page's server block in the one proxy image (V6-37)."""
     return (REPO_ROOT / "proxy" / "pages" / "service.conf.template").read_text()
-
-
-@pytest.fixture(scope="module")
-def site_conf() -> str:
-    """What every page serves of its own: the bundle, cached, from any path."""
-    return (REPO_ROOT / "proxy" / "shared" / "site.conf").read_text()
 
 
 @pytest.fixture(scope="module")
@@ -99,33 +92,3 @@ def test_the_dev_proxy_adds_the_review_token_and_skips_the_development_certifica
     assert re.search(r"NL2SQL_REVIEW_TLS_VERIFY.*?\"false\"", vite_config, re.S)
 
 
-@pytest.fixture(scope="module")
-def api_location(nginx_template: str) -> str:
-    match = re.search(r"location ~ \^/\([^)]*\) \{(.*?)\n    \}", nginx_template, re.S)
-    assert match, "the proxied location block is not where it was"
-    return match.group(1)
-
-
-def test_the_proxy_adds_the_token_verifies_the_service_and_resolves_it_per_request(api_location: str):
-    assert 'proxy_set_header Authorization "${UPSTREAM_AUTH_HEADER}"' in api_location
-    assert "include /tmp/nginx/upstream-tls.conf;" in api_location
-    assert "resolver ${PROXY_RESOLVER}" in api_location
-    assert "set $upstream ${UPSTREAM};" in api_location
-    assert "proxy_pass $upstream$request_uri;" in api_location
-
-
-def test_the_proxy_outlasts_a_save(api_location: str):
-    """A save runs the loaders; a proxy that gives up first cuts off a write
-    that is still happening."""
-    assert "proxy_read_timeout ${UPSTREAM_READ_TIMEOUT};" in api_location
-    default = re.search(r"\${CURATE_GUI_READ_TIMEOUT:-(\d+)s\}", (REPO_ROOT / "docker-compose.yml").read_text())
-    from nl2sql_review.settings import ReviewSettings
-
-    assert default and int(default.group(1)) >= ReviewSettings().reload_timeout_seconds
-
-
-def test_the_page_is_served_from_any_path_but_the_assets_are_immutable(nginx_template: str, site_conf: str):
-    assert "include /etc/nginx/nl2sql/shared/site.conf;" in nginx_template
-    assert "try_files $uri $uri/ /index.html;" in site_conf
-    assert re.search(r"location /assets/ \{[^}]*immutable", site_conf, re.S)
-    assert re.search(r"location = /index\.html \{[^}]*no-cache", site_conf, re.S)

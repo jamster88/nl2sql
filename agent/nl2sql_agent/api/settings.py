@@ -18,7 +18,6 @@ from dataclasses import dataclass, field, fields
 
 from nl2sql_identity import DEFAULT_PUBLIC_KEY_FILE, SESSION_COOKIE, USERS
 
-from nl2sql_common.env import env as _env
 from nl2sql_common.env import env_bool as _env_bool
 from nl2sql_common.env import env_float as _env_float
 from nl2sql_common.env import env_int as _env_int

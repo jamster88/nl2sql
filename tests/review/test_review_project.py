@@ -16,9 +16,7 @@ most of the file is about:
 from __future__ import annotations
 
 import json
-import os
 import re
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -52,12 +50,6 @@ def vite_config() -> str:
 def nginx_template() -> str:
     """The page's server block in the one proxy image (V6-37)."""
     return (REPO_ROOT / "proxy" / "pages" / "service.conf.template").read_text()
-
-
-@pytest.fixture(scope="module")
-def site_conf() -> str:
-    """What every page serves of its own: the bundle, cached, from any path."""
-    return (REPO_ROOT / "proxy" / "shared" / "site.conf").read_text()
 
 
 @pytest.fixture(scope="module")
@@ -167,49 +159,3 @@ def test_the_dev_proxy_does_not_verify_the_development_certificate(vite_config: 
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def api_location(nginx_template: str) -> str:
-    match = re.search(r"location ~ \^/\([^)]*\) \{(.*?)\n    \}", nginx_template, re.S)
-    assert match, "the proxied location block is not where it was"
-    return match.group(1)
-
-
-def test_the_token_is_added_by_the_proxy_not_by_the_browser(api_location: str):
-    assert 'proxy_set_header Authorization "${UPSTREAM_AUTH_HEADER}"' in api_location
-
-
-def test_the_upstream_certificate_is_verified(api_location: str):
-    """This hop crosses a container network, and a proxy that trusts anything
-    at the far end is a proxy that will one day trust something else."""
-    assert "include /tmp/nginx/upstream-tls.conf;" in api_location
-
-
-def test_the_upstream_is_resolved_per_request(api_location: str):
-    """nginx resolves a literal upstream while parsing its config and caches
-    it for the life of the process: it refuses to start before the service is
-    up, and keeps talking to a stale address after it restarts."""
-    assert "resolver ${PROXY_RESOLVER}" in api_location
-    assert "set $upstream ${UPSTREAM};" in api_location
-    assert "proxy_pass $upstream$request_uri;" in api_location
-
-
-def test_the_proxy_outlasts_a_promotion(api_location: str):
-    """Promotion runs both RAG loaders and re-embeds. A proxy that gives up
-    first cuts off a write that is still happening."""
-    assert "proxy_read_timeout ${UPSTREAM_READ_TIMEOUT};" in api_location
-    assert "proxy_send_timeout ${UPSTREAM_READ_TIMEOUT};" in api_location
-
-
-def test_the_default_timeout_outlasts_the_services_own_cap():
-    default = re.search(r"\${REVIEW_GUI_READ_TIMEOUT:-(\d+)s\}", (REPO_ROOT / "docker-compose.yml").read_text())
-    assert default, "compose does not give the page a default read timeout"
-    from nl2sql_review.settings import ReviewSettings
-
-    assert int(default.group(1)) >= ReviewSettings().reload_timeout_seconds
-
-
-def test_the_page_is_served_from_any_path_but_the_assets_are_immutable(nginx_template: str, site_conf: str):
-    assert "include /etc/nginx/nl2sql/shared/site.conf;" in nginx_template
-    assert "try_files $uri $uri/ /index.html;" in site_conf
-    assert re.search(r"location /assets/ \{[^}]*immutable", site_conf, re.S)
-    assert re.search(r"location = /index\.html \{[^}]*no-cache", site_conf, re.S)

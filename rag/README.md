@@ -418,6 +418,8 @@ Every setting is an environment variable with a CLI override:
 | `VECTOR_DB_URL` | `postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors` |
 | `OLLAMA_URL` | `http://localhost:11434` |
 | `EMBED_MODEL` | `bge-m3` |
+| `EMBED_DIM` | `1024`, the width of every vector column; it must be the model's |
+| `EMBED_BATCH_SIZE` | `16` texts to an embedding request |
 | `EMBED_BACKEND` | `ollama` |
 | `MAX_CHUNK_TOKENS` | 500 |
 | `MIN_CHUNK_TOKENS` | 40 |

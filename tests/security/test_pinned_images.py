@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import runpy
 import sys
 from pathlib import Path
 
@@ -112,3 +113,13 @@ def test_the_registry_is_asked_for_the_index_digest(monkeypatch):
 def test_the_reference_pattern_wants_a_whole_digest():
     assert re.fullmatch(pins.REF, f"alpine:3.22@{DIGEST}")
     assert not re.fullmatch(pins.REF, "alpine:3.22@sha256:abc")
+
+
+def test_run_as_a_script_it_finds_this_checkout_pinned(monkeypatch, capsys):
+    """`python tools/pin_images.py`, as the README tells someone to run it --
+    against this checkout, where it has nothing to report."""
+    monkeypatch.setattr(sys, "argv", ["pin_images.py"])
+    with pytest.raises(SystemExit) as finished:
+        runpy.run_path(str(ROOT / "tools" / "pin_images.py"), run_name="__main__")
+    assert finished.value.code == 0
+    assert capsys.readouterr().err == ""

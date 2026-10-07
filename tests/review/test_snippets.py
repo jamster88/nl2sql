@@ -16,7 +16,6 @@ import pytest
 
 from nl2sql_review import promote as promotion_module
 from nl2sql_review import snippets as sn
-from nl2sql_review.promote import StepResult
 from nl2sql_review.snippets import SnippetDraft, SnippetError, SnippetMissing
 
 from .conftest import REAL_SNIPPETS

@@ -714,8 +714,10 @@ services:
       UPSTREAM: ${GUI_API_UPSTREAM:-https://nl2sql-api:${API_PORT:-8443}}
       UPSTREAM_SSL_NAME: ${GUI_API_SSL_NAME:-nl2sql-api}
       UPSTREAM_CACERT: ${GUI_API_CACERT:-/etc/nl2sql/tls/ca.crt}
-      # Longer than a question takes, and longer than API_MAX_WAIT_SECONDS
-      # can hold a connection, or the proxy cuts the answer off.
+      # Longer than the API holds a progress stream open
+      # (API_EVENT_STREAM_TIMEOUT_SECONDS), or the proxy cuts the stream off
+      # mid-question. The page itself sends no long `?wait=`; a client that
+      # does through this proxy is held to this, not API_MAX_WAIT_SECONDS.
       UPSTREAM_READ_TIMEOUT: ${GUI_API_READ_TIMEOUT:-600s}
       # Docker's embedded DNS. The proxy resolves its upstream per request so
       # it follows the API across a restart onto a new address.

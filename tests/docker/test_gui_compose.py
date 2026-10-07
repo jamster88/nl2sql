@@ -208,6 +208,16 @@ def test_a_plain_http_api_can_be_configured_without_a_rebuild(tmp_path_factory):
     assert config["services"]["gui"]["environment"]["UPSTREAM"] == "http://nl2sql-api:8443"
 
 
+def test_the_proxy_outlasts_the_progress_stream(gui: dict):
+    """The page follows a question on its event stream, which the API closes
+    after API_EVENT_STREAM_TIMEOUT_SECONDS, or polls every two seconds; a
+    proxy that gave up first would cut the stream off mid-question."""
+    from nl2sql_agent.api.settings import ApiSettings
+
+    timeout = gui["environment"]["UPSTREAM_READ_TIMEOUT"]
+    assert timeout.endswith("s") and int(timeout.rstrip("s")) > ApiSettings().event_stream_timeout_seconds
+
+
 def test_it_can_be_built_here_as_well_as_pulled(gui: dict):
     """Both, like the agent service: the image name is what `setup.sh --gui`
     pins to the published tag, and the build context is the fallback for a

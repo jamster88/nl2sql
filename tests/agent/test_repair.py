@@ -321,7 +321,7 @@ def test_an_unclassified_issue_with_no_model_falls_back_instead_of_raising():
 def test_a_model_that_fails_does_not_take_the_run_with_it():
     class BrokenLLM:
         def invoke(self, messages):
-            raise RuntimeError("ollama is not reachable")
+            raise ConnectionError("ollama is not reachable")
 
     issues, calls = repair_hint([Issue(RUNTIME, "deadlock detected")], llm=BrokenLLM())
     assert calls == 1  # it was spent, and the trace should say so

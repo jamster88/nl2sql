@@ -19,55 +19,47 @@
  */
 
 import react from "@vitejs/plugin-react";
-import { defineConfig, type ProxyOptions } from "vite";
+import { defineConfig } from "vite";
+
+import { sharedPackage } from "../web/src/config.ts";
+import { devProxies } from "../web/src/vite.ts";
+
+const shared = sharedPackage(import.meta.url);
 
 /** Paths the API owns. Everything else is this application's own asset. */
 const API_PATHS = ["/v1", "/healthz", "/readyz", "/openapi.json"];
 
 const env = process.env;
 
-/** Where the API is. The compose default, overridable for a local process. */
-const target = env.NL2SQL_API_URL ?? "https://localhost:8443";
-
 /**
- * Whether to check the API's certificate. False by default because the
- * default certificate is the one the server wrote for itself, and this hop
- * is a developer's own machine. In the production image the equivalent
- * setting is nginx's `proxy_ssl_verify`, which is *on*, because there the
- * hop crosses a container network.
+ * The API, the compose default or a local process -- and its certificate is
+ * not checked by default, because the default certificate is the one the
+ * stack's development CA issued and this hop is a developer's own machine.
+ * In the production image the equivalent setting is nginx's
+ * `proxy_ssl_verify`, which is *on*, because there the hop crosses a
+ * container network. API_TOKEN is sent as the bearer, and nothing holds back
+ * the event stream. Sign-in goes to the auth service.
  */
-const secure = (env.NL2SQL_API_TLS_VERIFY ?? "false").toLowerCase() === "true";
-
-const token = env.API_TOKEN ?? "";
-
-const proxy: ProxyOptions = {
-  target,
-  changeOrigin: true,
-  secure,
-  // Server-Sent Events are a response that never ends. Both of these stop
-  // the proxy from waiting for one to finish before passing anything on.
-  ws: false,
-  timeout: 0,
-  proxyTimeout: 0,
-  configure(server) {
-    server.on("proxyReq", (request) => {
-      if (token) request.setHeader("Authorization", `Bearer ${token}`);
-      // Asking for an identity encoding keeps a compressing proxy from
-      // buffering the event stream to find something worth compressing.
-      request.setHeader("Accept-Encoding", "identity");
-    });
-  },
-};
+const proxies = devProxies({
+  paths: API_PATHS,
+  target: env.NL2SQL_API_URL ?? "https://localhost:8443",
+  auth: env.NL2SQL_AUTH_URL ?? "https://localhost:8446",
+  secure: (env.NL2SQL_API_TLS_VERIFY ?? "false").toLowerCase() === "true",
+  token: env.API_TOKEN ?? "",
+  stream: true,
+});
 
 export default defineConfig({
   plugins: [react()],
+  resolve: shared.resolve,
   server: {
+    fs: shared.server.fs,
     port: Number(env.GUI_PORT ?? 5173),
-    proxy: Object.fromEntries(API_PATHS.map((path) => [path, proxy])),
+    proxy: proxies,
   },
   preview: {
     port: Number(env.GUI_PORT ?? 5173),
-    proxy: Object.fromEntries(API_PATHS.map((path) => [path, proxy])),
+    proxy: proxies,
   },
   build: {
     outDir: "dist",

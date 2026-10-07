@@ -61,15 +61,44 @@ HOST_DEFAULTS = {
     "database_url": ("DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"),
     "vector_db_url": ("VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
     "context_db_url": ("CONTEXT_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
+    # The runtime stores' port since 6.3, all four databases on one server.
     "snippet_db_url": (
-        "SNIPPET_DB_URL", "postgresql+psycopg://snippets_reader:snippets_reader@localhost:5438/nl2sql_snippets",
+        "SNIPPET_DB_URL", "postgresql+psycopg://snippets_reader:snippets_reader@localhost:5435/nl2sql_snippets",
     ),
     "embed_base_url": ("EMBED_BASE_URL", "http://localhost:11434"),
-    # The `mlflow` service's published port. Not up, and the benchmark runs
+    # MLflow's front door, the proxy's published port: HTTPS, and behind
+    # sign-in when the stack has it -- MLFLOW_TRACKING_USERNAME and _PASSWORD
+    # (a reviewer's) or MLFLOW_TRACKING_TOKEN. Not up, and the benchmark runs
     # untraced after one refused connection; MLFLOW_TRACKING_URI= (empty)
     # turns tracing off even when it is up.
-    "mlflow_tracking_uri": ("MLFLOW_TRACKING_URI", "http://localhost:5001"),
+    "mlflow_tracking_uri": ("MLFLOW_TRACKING_URI", "https://localhost:5001"),
 }
+
+
+#: Each database's password as the stack keeps it since 6.3 (V6-38): a file
+#: in `secrets/`, which setup.sh generates. Put into the host default when the
+#: file is there; without it the default's own password stands.
+SECRETS = REPO_ROOT / "secrets"
+HOST_PASSWORDS = {
+    "database_url": "postgres_reader_password",
+    "vector_db_url": "vector_db_password",
+    "context_db_url": "context_db_password",
+    "snippet_db_url": "snippets_reader_password",
+}
+
+
+def host_default(field: str, url: str) -> str:
+    """`url`, with the password the stack generated for it, if it has one."""
+    from nl2sql_common.urls import with_password
+
+    name = HOST_PASSWORDS.get(field)
+    if name is None:
+        return url
+    try:
+        password = (SECRETS / name).read_text().strip()
+    except OSError:
+        return url
+    return with_password(url, password) if password else url
 
 
 # The four configurations --compare measures. Each is the one before it plus a
@@ -129,13 +158,27 @@ def select(args: argparse.Namespace) -> list[BenchmarkQuestion]:
     return questions
 
 
+#: The stack's development CA, as launch.sh copies it out of the API's
+#: volume: every server's certificate, MLflow's front door's among them, is
+#: issued by it (since 6.1). MLflow's client trusts it when told to, and is
+#: told to here unless the environment already says what to trust.
+CERTIFICATE = Path(__file__).resolve().parent.parent / "nl2sql-ca.crt"
+
+
+def trust_the_stack(environ=os.environ, certificate: Path = CERTIFICATE) -> None:
+    if certificate.is_file() and not environ.get("MLFLOW_TRACKING_SERVER_CERT_PATH"):
+        environ["MLFLOW_TRACKING_SERVER_CERT_PATH"] = str(certificate)
+
+
 def build_settings(args: argparse.Namespace, configuration: str):
     from nl2sql_agent.config import Settings
 
+    trust_the_stack()
+
     settings = Settings.from_env()
-    for field, (variable, host_default) in HOST_DEFAULTS.items():
+    for field, (variable, default) in HOST_DEFAULTS.items():
         if variable not in os.environ:
-            setattr(settings, field, host_default)
+            setattr(settings, field, host_default(field, default))
     for field, value in CONFIGURATIONS[configuration].items():
         setattr(settings, field, value)
     if args.database_url:
@@ -175,7 +218,7 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
     started = time.perf_counter()
     try:
         state = agent.run(question.question)
-    except Exception as exc:  # a crash is a benchmark result, not a benchmark failure
+    except Exception as exc:  # noqa: BLE001 - a crash is a benchmark result, not a benchmark failure
         return QuestionResult(
             question_id=question.id, category=question.category, question=question.question,
             outcome=FAILED, wall_seconds=time.perf_counter() - started, timing=timer.timing,

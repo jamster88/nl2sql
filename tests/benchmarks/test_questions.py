@@ -11,7 +11,6 @@ container (`pytest --run-docker`).
 
 from __future__ import annotations
 
-import os
 import re
 import sys
 from pathlib import Path
@@ -30,11 +29,10 @@ from benchmarks.questions import (  # noqa: E402
     by_category,
     by_id,
 )
+from tests import live_stores
 
 EXPECTED_COUNT = 15
-DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+DATABASE_URL = live_stores.url("retail", variable="TEST_DATABASE_URL")
 
 
 # ---------------------------------------------------------------------------
@@ -84,15 +82,44 @@ def test_no_question_leaks_its_own_sql():
         assert not re.search(r"\b(fact_|dim_)\w+", lowered), f"{q.id} names a table outright"
 
 
-def test_no_benchmark_question_is_a_golden_pair_verbatim():
-    """The agent retrieves from those 45. Reusing one measures lookup, not
-    generalisation.
-    """
+#: Benchmark questions that became golden pairs, word for word, when the
+#: feedback a user gave on their answers was promoted (5.4). The owner
+#: decided they stay in the benchmark (the first review's V6-05): it keeps
+#: its fifteen, and the agent can now retrieve these two answers, so their
+#: scores measure lookup rather than generalisation -- `benchmarks/README.md`
+#: says so. Named here, each with the pair it became, so that a third
+#: overlap is a failure to look at and these two are a decision, not a test
+#: that fails on every run (V6-59).
+PROMOTED = {"B03": "Q46", "B14": "Q47"}
+
+
+def _golden_questions() -> dict[str, str]:
+    """Each golden pair's id and question, read from the document."""
     document = (REPO_ROOT / "context_questions" / "translated_questions.md").read_text()
-    golden = set(re.findall(r'\*\*Question:\*\* "(.*?)"', document))
-    assert golden, "could not read the golden pairs to compare against"
-    for q in QUESTIONS:
-        assert q.question not in golden, f"{q.id} is golden pair text verbatim"
+    found: dict[str, str] = {}
+    for section in re.split(r"^## ", document, flags=re.MULTILINE)[1:]:
+        pair = re.match(r"(Q\d{2,}) ", section)
+        question = re.search(r'\*\*Question:\*\* "(.*?)"', section)
+        if pair and question:
+            found[pair.group(1)] = question.group(1)
+    return found
+
+
+def test_a_benchmark_question_is_golden_pair_text_only_where_that_was_decided():
+    """The agent retrieves from the golden pairs, so a benchmark question
+    that is one measures lookup, not generalisation. The ones that are,
+    are the ones the owner kept, as the pairs they became."""
+    golden = _golden_questions()
+    assert len(golden) >= 45, "could not read the golden pairs to compare against"
+    overlaps = {q.id: pair for q in QUESTIONS for pair, text in golden.items() if q.question == text}
+    assert overlaps == PROMOTED
+
+
+def test_every_promoted_question_is_named_against_a_pair_that_exists():
+    golden = _golden_questions()
+    by_id = {q.id: q for q in QUESTIONS}
+    for benchmark, pair in PROMOTED.items():
+        assert golden[pair] == by_id[benchmark].question, f"{benchmark} is not {pair} any more"
 
 
 def test_every_question_carries_reference_sql_that_reads_like_a_query():
@@ -150,7 +177,7 @@ def database():
     try:
         db.run_select("SELECT 1")
     except Exception as exc:
-        pytest.skip(f"no reachable retail database at {DATABASE_URL}: {exc}")
+        live_stores.unreachable("retail database", DATABASE_URL, exc)
     return db
 
 

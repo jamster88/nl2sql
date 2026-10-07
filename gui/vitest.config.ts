@@ -10,16 +10,25 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+import { sharedPackage } from "../web/src/config.ts";
+
+const shared = sharedPackage(import.meta.url);
+
 export default defineConfig({
   plugins: [react()],
+  resolve: shared.resolve,
+  server: shared.server,
   test: {
     globals: true,
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["test/**/*.test.{ts,tsx}"],
+    // The shared package's own tests run here too, against this page's React
+    // (V6-25): one copy of the code, held to every page's dependencies.
+    include: ["test/**/*.test.{ts,tsx}", ...shared.tests],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.{ts,tsx}"],
+      include: ["src/**/*.{ts,tsx}", ...shared.sources],
+      allowExternal: true,
       // The entry point mounts React onto a DOM element that only exists in
       // a browser; it is covered by the container test that loads the built
       // page, not by jsdom.

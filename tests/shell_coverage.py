@@ -50,27 +50,32 @@ DRIVEN_BY: dict[str, tuple[str, ...]] = {
     # how it runs but not what is worth knowing about it.
     "docker/apitest/smoke.sh": ("tests/api/test_smoke_script.py",),
     # Sourced by the nginx image's entrypoint rather than executed, and by
-    # `sh` rather than bash, so it is traced the same way it runs.
-    "gui/10-nl2sql-config.envsh": ("tests/gui/test_gui_project.py",),
-    # The review interface's equivalent, sourced and traced the same way.
-    # The token it turns into a header is the one that can rewrite the
-    # golden question set, so its empty case matters more than most.
-    "review/gui/10-nl2sql-review-config.envsh": ("tests/review/test_review_project.py",),
-    # And the SQL console interface's: a page that runs SQL, so the same
-    # empty-token case matters as much.
-    "console/10-nl2sql-console-config.envsh": ("tests/console/test_console_project.py",),
-    # And the curation interface's: the review token again, for the page
-    # that writes the snippets and the golden set.
-    "curate/10-nl2sql-curate-config.envsh": ("tests/curate/test_curate_project.py",),
+    # `sh` rather than bash, so it is traced the same way it runs. Every
+    # page's start-up since 6.3 (V6-37): six copies of it until then.
+    "proxy/10-nl2sql-proxy.envsh": ("tests/proxy/test_proxy_startup.py",),
+    # The pages' health check, which verifies what the page serves.
+    "proxy/health.sh": ("tests/proxy/test_proxy_startup.py",),
     # Runs once, inside `docker build`, against fake initdb/pg_ctl/psql --
     # running it for real would mean building the dataset image.
     "docker/init_db.sh": ("tests/docker/test_init_db_script.py",),
+    # A runtime store from before 6.3 moved into its database in the one
+    # server (V6-40); against fake psql, pg_ctl, pg_dump and pg_restore.
+    "docker/migrate_store.sh": ("tests/docker/test_migrate_store.py",),
+    # The retail image's entrypoint (v1_2), against a fake stock entrypoint,
+    # openssl, psql and gosu.
+    "docker/entrypoint.sh": ("tests/docker/test_retail_entrypoint.py",),
+    # MLflow's own start (6.2): gives the account the artifact volume, then
+    # drops to it; against fake id, find, chown and setpriv.
+    "docker/mlflow/entrypoint.sh": ("tests/docker/test_mlflow_entrypoint.py",),
+    # The desktop image's one command (6.2): the jar copied out as the owner
+    # of where it lands; against fake id, stat, su-exec and cp.
+    "desktop/copy-out.sh": ("tests/docker/test_desktop_copy_out.py",),
 }
 
 #: Lines bash never attributes a line number to, so counting them as missed
 #: would mean a ceiling below 100% that no test could ever lift.
 _BLOCK_KEYWORDS = re.compile(
-    r"^(fi|done|esac|\}|\{|else|;;|\)\s*;;|do|then)\s*(;;)?$|^\}\s*[<>|]"
+    r"^(fi|done|esac|\}|\{|else|;;|\)\s*;;|do|then)\s*(;;)?$|^(\}|done)\s*[<>|]"
 )
 _FUNCTION_HEADER = re.compile(r"^(local\s+)?[\w_]+\(\)\s*\{")
 _BARE_CASE_LABEL = re.compile(r"^[^(]*\)\s*$")
@@ -203,8 +208,10 @@ def logical_commands(source: str) -> list[tuple[int, set[int], str]]:
         continued = bool(_CONTINUES.search(raw))
         # An unclosed `$(` continues a command however the lines inside it
         # end -- `events=$(curl ... | while read; do ... done)` is one
-        # command, and bash reports it at the `done)`.
-        depth = max(0, depth + literal.count("$(") - literal.count(")"))
+        # command, and bash reports it at the `done)`. So does an array
+        # assignment, `KEYS=(A B` on one line and `C)` on the next, which
+        # bash reports at one line of the several.
+        depth = max(0, depth + literal.count("$(") + literal.count("=(") - literal.count(")"))
 
         if not (continued or open_quote or open_single or depth) and start is not None:
             commands.append((start, set(span), lines[start - 1].strip()))

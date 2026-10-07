@@ -132,21 +132,22 @@ def test_the_banner_says_what_it_reads_and_under_which_limits():
     assert "secret" not in text
     assert "timeout 30000 ms, 50 rows, plan cost 1,000,000" in text
     assert "up to 1000 per query" in text
-    assert "auth           bearer token" in text
+    assert "auth           sign-in, or the console token" in text
     assert "!" not in text, "a careful configuration has nothing to warn about"
+    assert "auth           bearer token" in server.banner(ConsoleSettings(auth_enabled=False, token="t"), agent, None)
 
 
 def test_the_banner_warns_about_an_open_port():
-    text = server.banner(ConsoleSettings(), Settings(), None)
+    text = server.banner(ConsoleSettings(auth_enabled=False), Settings(), None)
     assert "auth           NONE" in text
-    assert "! No CONSOLE_TOKEN is set" in text
+    assert "! This console is OPEN" in text
 
 
 def test_the_banner_names_the_certificate(tmp_path):
     flags = _certificate(tmp_path, "localhost", "nl2sql-console")
     info = server.load_certificate(ConsoleSettings(tls_cert_file=flags[1], tls_key_file=flags[3]))
     text = server.banner(ConsoleSettings(token="t"), Settings(), info)
-    assert "self-signed, written by the agent API, for localhost, nl2sql-console" in text
+    assert "self-signed, the console's own, for localhost, nl2sql-console" in text
     # Trusting a self-signed certificate is the API's clients' business, and
     # said in the API's own banner; here it would only be noise.
     assert "!" not in text
@@ -157,7 +158,7 @@ def test_the_banner_says_what_to_do_about_a_missing_name(tmp_path):
     info = server.load_certificate(ConsoleSettings(tls_cert_file=flags[1], tls_key_file=flags[3]))
     text = " ".join(server.banner(ConsoleSettings(token="t"), Settings(), info).split())
     assert "does not cover nl2sql-console" in text
-    assert "Add it to API_TLS_HOSTNAMES and restart the API" in text
+    assert "Add it to CONSOLE_TLS_HOSTNAMES and start again" in text
 
 
 def test_the_banner_passes_on_a_certificate_about_to_expire(tmp_path):
@@ -169,8 +170,23 @@ def test_the_banner_passes_on_a_certificate_about_to_expire(tmp_path):
 def test_a_certificate_the_ca_issued_is_named_as_such(tmp_path):
     flags = _certificate(tmp_path, "nl2sql-console")
     info = server.load_certificate(ConsoleSettings(tls_cert_file=flags[1], tls_key_file=flags[3]))
-    info.self_signed = False
-    assert "CA-issued, written by the agent API" in server.banner(ConsoleSettings(token="t"), Settings(), info)
+    info.self_signed = info.development = False
+    assert "CA-issued, the console's own" in server.banner(ConsoleSettings(token="t"), Settings(), info)
+
+
+def test_a_certificate_from_the_development_ca_is_named_as_such(tmp_path):
+    from nl2sql_identity import pki
+
+    certificate, key, _ = pki.ensure_ca(tmp_path / "ca")
+    pki.ensure_identity(pki.parse_identity(f"console={tmp_path / 'console'}=nl2sql-console"), certificate, key)
+    settings = ConsoleSettings(
+        token="t",
+        tls_cert_file=str(tmp_path / "console" / "server.crt"),
+        tls_key_file=str(tmp_path / "console" / "server.key"),
+    )
+    text = server.banner(settings, Settings(), server.load_certificate(settings))
+    assert "issued by the development CA, the console's own" in text
+    assert "!" not in text, "trusting the CA is its clients' business, not the console's"
 
 
 def test_a_certificate_with_no_names_says_so(tmp_path):
@@ -196,8 +212,8 @@ def test_with_tls_on_and_no_certificate_it_refuses_to_start(tmp_path, capsys):
     code = server.main(["--cert", str(tmp_path / "none.crt"), "--key", str(tmp_path / "none.key")])
     assert code == 2
     said = " ".join(capsys.readouterr().err.split())
-    assert "presents the certificate the agent API generates" in said
-    assert "API_TLS_HOSTNAMES covers nl2sql-console" in said
+    assert "the pki service issues the console its own certificate" in said
+    assert "names that include nl2sql-console" in said
 
 
 def test_the_openapi_document_can_be_printed_without_serving_anything(capsys):

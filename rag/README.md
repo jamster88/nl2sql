@@ -26,7 +26,8 @@ python 07_load_snippets.py         # the SQL snippets -> their own store, with t
 
 The databases stay off port 5432 so they never collide with the retail
 testing database: the chunk store is on **5433**, the vector store on
-**5434**, and the snippet store on **5438**.
+**5434**, and the snippet store -- a database in the stack's runtime stores
+since 6.3 -- on **5435**.
 
 ## The seven steps
 
@@ -150,8 +151,9 @@ A snippet is one piece of SQL -- a join, a filter, a measure or a
 dimension -- with the phrases a question says it with, what it means, and
 the `FROM` clause it is written over. Like the golden pairs, each is a
 record with fixed fields, so it gets a table rather than chunks; unlike them,
-it lives in a store of its own, `nl2sql_snippets` on 5438, which is stock
-`pgvector/pgvector:pg18` rather than a published image. It is built from the
+it lives in a store of its own, `nl2sql_snippets` in the runtime stores'
+server on 5435 (`nl2sql-stores`), which is stock `pgvector/pgvector:pg18`
+rather than a published image. It is built from the
 document on start, so there is nothing to publish.
 
 One script rather than two, because it is one store:
@@ -323,7 +325,7 @@ docker run -d --name v32-chunkdb  --network v32 mcfaddja/nl2sql-rag-chunkdb:v3_1
 docker run -d --name v32-vectordb --network v32 mcfaddja/nl2sql-rag-vectordb:v3_1
 docker run --rm --network v32 --add-host host.docker.internal:host-gateway \
   -v "$PWD/../context_questions:/app/context_questions:ro" --entrypoint sh \
-  mcfaddja/nl2sql-review:v5_6_1 -c 'cd /app/rag &&
+  mcfaddja/nl2sql-review:v6_3 -c 'cd /app/rag &&
     python 05_load_golden_pairs.py /app/context_questions/translated_questions.md \
       --db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks &&
     python 06_embed_golden_pairs.py --model bge-m3 --ollama-url http://host.docker.internal:11434 \
@@ -416,13 +418,15 @@ Every setting is an environment variable with a CLI override:
 | `VECTOR_DB_URL` | `postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors` |
 | `OLLAMA_URL` | `http://localhost:11434` |
 | `EMBED_MODEL` | `bge-m3` |
+| `EMBED_DIM` | `1024`, the width of every vector column; it must be the model's |
+| `EMBED_BATCH_SIZE` | `16` texts to an embedding request |
 | `EMBED_BACKEND` | `ollama` |
 | `MAX_CHUNK_TOKENS` | 500 |
 | `MIN_CHUNK_TOKENS` | 40 |
 | `CHUNK_THRESHOLD_PERCENTILE` | 60 |
 | `CHUNK_DB_PORT` / `VECTOR_DB_PORT` | 5433 / 5434 |
-| `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5438/nl2sql_snippets`, for `07_load_snippets.py` |
-| `SNIPPETS_READER_USER` / `SNIPPETS_READER_PASSWORD` | `snippets_reader` / `snippets_reader`, the role it creates |
+| `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5435/nl2sql_snippets`, for `07_load_snippets.py`; its password from `SNIPPETS_DB_PASSWORD_FILE` when that is set (6.3) |
+| `SNIPPETS_READER_USER` / `SNIPPETS_READER_PASSWORD` | `snippets_reader` / `snippets_reader`, the role it creates; the password from `SNIPPETS_READER_PASSWORD_FILE` when that is set |
 
 ## Setup
 
@@ -437,7 +441,7 @@ pip install -r rag/requirements.txt
 pytest tests/rag --run-docker
 ```
 
-322 tests: the parser against the real document, the BM25 ranking compared
+337 tests: the parser against the real document, the BM25 ranking compared
 score for score against an independent Okapi implementation, the pgvector
 storage layer, all three loader scripts as command line programs, the snippet
 document's parser and the snippet store -- the phrase matcher's ranking, the

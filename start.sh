@@ -23,8 +23,8 @@
 #
 # With --desktop the last step is a window instead of a page: the same stack
 # comes up, the client's jar is fetched (or built, if there is no published
-# one for this machine), the API's certificate is copied out for it to verify
-# against, and it is started. The web interface is not started at all -- one
+# one for this machine), the stack's CA certificate is copied out for it to
+# verify the API against, and it is started. The web interface is not started at all -- one
 # interface is what was asked for, and it is this one.
 #
 #     ./start.sh --desktop
@@ -99,13 +99,13 @@ Usage: ./start.sh [options]
 Brings up the whole stack and opens the web interface in your browser.
 
       --desktop      Use the Java desktop client instead of the web interface:
-                     builds its jar, copies the API's certificate out and runs
-                     it. Needs a Java runtime of 21 or later on this machine
-      --review       Also bring up the feedback system -- the staging database
-                     that keeps verdicts, the service that turns them into
-                     golden questions, corrections and completions, the two
-                     stores for those fixes, and the review interface -- and
-                     open that in a browser window of its own
+                     builds its jar, copies the stack's CA certificate out
+                     and runs it. Needs a Java runtime of 21 or later on this
+                     machine
+      --review       Also bring up the feedback system -- the service that
+                     turns staged verdicts into golden questions,
+                     corrections and completions, and the review interface
+                     -- and open that in a browser window of its own
       --console      Also bring up the SQL console -- the retail database
                      queried as the agent's read-only role, through the
                      agent's own gates -- and open it in a browser window of
@@ -118,8 +118,8 @@ Brings up the whole stack and opens the web interface in your browser.
                      golden pairs, corrections and completions, written
                      directly and run against the retail database first --
                      and open it in a browser window of its own
-      --feedback     Keep verdicts without the review interface: starts the
-                     staging database only, so votes are staged for later
+      --feedback     Accepted for commands written before 6.3: verdicts are
+                     staged in the runtime stores whenever the API is up
       --load-golden  Load context_questions/translated_questions.md into the
                      stores the agent's worked examples come from, so they are
                      this checkout's golden set rather than the one the images
@@ -128,6 +128,8 @@ Brings up the whole stack and opens the web interface in your browser.
       --no-browser   Start everything, but print the URLs instead of opening them
       --no-rag       Start only the retail database; the agent answers from the
                      schema alone, with neither knowledge nor worked examples
+      --no-auth      Start without sign-in, this once: every page open to
+                     whoever can reach it. ./setup.sh --no-auth makes it stick
       --restart      Recreate the containers instead of reusing what is running
   -q, --quiet        Only print problems
   -h, --help         Show this message
@@ -175,6 +177,9 @@ while [[ $# -gt 0 ]]; do
         --desktop) WITH_DESKTOP=1; shift ;;
         --no-browser) OPEN_BROWSER=0; shift ;;
         --no-rag) WITH_RAG=0; LAUNCH_ARGS+=(--no-rag); SETUP_ARGS+=(--no-rag); shift ;;
+        # This run only: setup.sh's own --no-auth is the one that sticks, and
+        # a first run handed it would turn sign-in off for good unasked.
+        --no-auth) LAUNCH_ARGS+=(--no-auth); export AUTH_ENABLED=false; shift ;;
         --restart) LAUNCH_ARGS+=(--restart); shift ;;
         -q|--quiet) QUIET=1; LAUNCH_ARGS+=(--quiet); shift ;;
         -h|--help) usage; exit 0 ;;
@@ -343,16 +348,12 @@ stale_pins() {  # stale_pins -- why .env is not what this checkout runs, if it i
     fi
     if [[ "$pinned" != "$shipped" && -z "$(chosen_agent_tag)" ]]; then
         printf 'this checkout ships %s, and .env pins %s' "$shipped" "$pinned"
-    elif [[ $WITH_DESKTOP -eq 0 && -z "$(env_file_value GUI_IMAGE_NAME)" ]]; then
-        printf 'the web interface is not pinned, so it would be built here from source'
+    elif [[ $WITH_DESKTOP -eq 0 && -z "$(env_file_value PROXY_IMAGE_NAME)" ]]; then
+        # Every page is one image since 6.3 (V6-37): a .env from before
+        # pinned each page's own, which nothing reads now.
+        printf 'the pages are not pinned, so their image would be built here from source'
     elif [[ $WITH_DESKTOP -eq 1 && -z "$(env_file_value DESKTOP_IMAGE_NAME)" ]]; then
         printf "the desktop client is not pinned, so its jar would be built here from source"
-    elif [[ $WITH_REVIEW -eq 1 && -z "$(env_file_value REVIEW_GUI_IMAGE_NAME)" ]]; then
-        printf 'the review interface is not pinned, so it would be built here from source'
-    elif [[ $WITH_CURATE -eq 1 && -z "$(env_file_value CURATE_GUI_IMAGE_NAME)" ]]; then
-        printf 'the curation interface is not pinned, so it would be built here from source'
-    elif [[ $WITH_CONSOLE -eq 1 && -z "$(env_file_value CONSOLE_GUI_IMAGE_NAME)" ]]; then
-        printf "the SQL console's interface is not pinned, so it would be built here from source"
     elif [[ $WITH_MLFLOW -eq 1 && -z "$(env_file_value MLFLOW_IMAGE_NAME)" ]]; then
         printf "MLflow's images are not pinned, so they would be built here from source"
     elif [[ $WITH_RAG -eq 1 && -z "$(env_file_value REVIEW_IMAGE_NAME)" ]]; then
@@ -384,14 +385,31 @@ fi
 ./launch.sh "${LAUNCH_ARGS[@]}"
 
 # --- The page --------------------------------------------------------------
+# HTTPS, with a certificate of its own, unless GUI_TLS_ENABLED says otherwise.
+case "$(compose_env GUI_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) scheme=http ;;
+    *) scheme=https ;;
+esac
 gui_port=$(compose_env GUI_PORT 8080)
-url="http://localhost:${gui_port}"
+url="$scheme://localhost:${gui_port}"
 review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
-review_url="http://localhost:${review_gui_port}"
+review_url="$scheme://localhost:${review_gui_port}"
 console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
-console_url="http://localhost:${console_gui_port}"
-curate_url="http://localhost:$(compose_env CURATE_GUI_PORT 8083)"
-mlflow_url="http://localhost:$(compose_env MLFLOW_PORT 5001)"
+console_url="$scheme://localhost:${console_gui_port}"
+curate_url="$scheme://localhost:$(compose_env CURATE_GUI_PORT 8083)"
+mlflow_url="$scheme://localhost:$(compose_env MLFLOW_PORT 5001)"
+
+# Sign-in, as launch.sh decided it: on unless AUTH_ENABLED says otherwise.
+# Its services are behind profiles of their own, so stopping everything
+# names them too.
+signin=1
+case "$(compose_env AUTH_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) signin=0 ;;
+esac
+signin_profiles=""
+if [[ $signin -eq 1 ]]; then
+    signin_profiles=" --profile auth --profile directorygui"
+fi
 
 # Healthy is not the same as answering. The container reports healthy as soon
 # as nginx is up, and nginx is up a moment before it has read its generated
@@ -400,7 +418,9 @@ mlflow_url="http://localhost:$(compose_env MLFLOW_PORT 5001)"
 wait_for_page() {  # wait_for_page URL
     local _
     for _ in $(seq 1 60); do
-        curl -s -f -o /dev/null --max-time 3 "$1" && return 0
+        # -k: whether the page answers, not whether this machine trusts the
+        # development certificate yet -- the browser asks that itself.
+        curl -s -f -k -o /dev/null --max-time 3 "$1" && return 0
         sleep 1
     done
     return 1
@@ -426,7 +446,7 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
         review_ready=1
     else
         warn "the review interface never answered at $review_url."
-        warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
+        warn "Check what it said: docker compose --profile review --profile reviewgui logs reviewgui"
         warn "The web interface is up; verdicts are staged and can be reviewed later."
     fi
 fi
@@ -440,7 +460,7 @@ if [[ $WITH_CURATE -eq 1 ]]; then
         curate_ready=1
     else
         warn "the curation interface never answered at $curate_url."
-        warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
+        warn "Check what it said: docker compose --profile review --profile curategui logs curategui"
         warn "Everything else is up; ./launch.sh --curate tries it again on its own."
     fi
 fi
@@ -508,7 +528,7 @@ start_desktop() {
         warn "the desktop client needs a Java runtime of 21 or later, and this"
         warn "machine reports Java ${major} (nothing on PATH reports 0)."
         warn "The jar is built; point a newer runtime at it yourself:"
-        warn "  <path-to-java> -jar $DESKTOP_JAR --cacert ./nl2sql-api.crt"
+        warn "  <path-to-java> -jar $DESKTOP_JAR --cacert ./nl2sql-ca.crt"
         return 1
     fi
     if [[ ! -f "$DESKTOP_JAR" ]]; then
@@ -516,14 +536,19 @@ start_desktop() {
         return 1
     fi
 
-    local api_port
+    # Both addresses, as .env sets them: the client's default sign-in
+    # address is the API's host on 8446, which with AUTH_PORT moved is
+    # nothing -- or another stack's auth service on this machine.
+    local api_port auth_port
     api_port=$(compose_env API_PORT 8443)
+    auth_port=$(compose_env AUTH_PORT 8446)
     local trust=(--insecure)
-    if [[ -f nl2sql-api.crt ]]; then
-        # Verifying beats not verifying, and the certificate is right there.
-        trust=(--cacert ./nl2sql-api.crt)
+    if [[ -f nl2sql-ca.crt ]]; then
+        # Verifying beats not verifying, and the stack's CA -- which every
+        # server's certificate is issued by -- is right there.
+        trust=(--cacert ./nl2sql-ca.crt)
     else
-        warn "./nl2sql-api.crt is missing, so the client will not verify the API's"
+        warn "./nl2sql-ca.crt is missing, so the client will not verify the API's"
         warn "certificate. It says so in its own status bar for as long as that is true."
     fi
 
@@ -534,7 +559,7 @@ start_desktop() {
     # a subshell it is reparented away and outlives both.
     mkdir -p "$(dirname "$DESKTOP_PID")"
     ( nohup "$java_bin" -jar "$DESKTOP_JAR" "${trust[@]}" \
-          --url "https://localhost:$api_port" >"$DESKTOP_LOG" 2>&1 &
+          --url "https://localhost:$api_port" --auth-url "https://localhost:$auth_port" >"$DESKTOP_LOG" 2>&1 &
       printf '%s' "$!" > "$DESKTOP_PID" )
     local pid
     pid=$(cat "$DESKTOP_PID")
@@ -757,7 +782,15 @@ fi
 
 # Deliberately short. launch.sh has just printed what the stack is and how
 # to look at it; saying it again is how a front door starts feeling like a
-# wall of text rather than one command.
+# wall of text rather than one command. The one thing repeated is how to get
+# in, because the page that has just opened asks for it.
+if [[ $QUIET -eq 0 && $signin -eq 1 ]]; then
+    cat <<EOF
+
+    Sign in as $(compose_env LDAP_ADMIN_USER admin), with the password in secrets/ldap_admin_password,
+    and add everyone else at $scheme://localhost:$(compose_env DIRECTORY_GUI_PORT 8084).
+EOF
+fi
 if [[ $QUIET -eq 0 && $WITH_DESKTOP -eq 1 ]]; then
     cat <<EOF
 
@@ -770,7 +803,7 @@ EOF
         cat <<EOF
     It could not be started here. The jar is built:
 
-    java -jar $DESKTOP_JAR --cacert ./nl2sql-api.crt
+    java -jar $DESKTOP_JAR --cacert ./nl2sql-ca.crt
 
 EOF
     fi
@@ -799,7 +832,7 @@ EOF
 EOF
     fi
     cat <<EOF
-    docker compose --profile api down          stop the API behind it
+    docker compose --profile api${signin_profiles} down          stop the API behind it
     $DESKTOP_LOG        what the window said, if it did not open
 
 EOF
@@ -815,22 +848,22 @@ elif [[ $QUIET -eq 0 ]]; then
     Correcting or completing a wrong answer writes to its own store instead,
     never to the golden set.
 
-    docker compose --profile api --profile gui --profile feedback \\
-      --profile review --profile reviewgui down          stop everything
+    docker compose --profile api --profile gui --profile review \\
+      --profile reviewgui${signin_profiles} down          stop everything
 
 EOF
     else
         cat <<EOF
 
     $url
-    docker compose --profile api --profile gui down    stop everything
+    docker compose --profile api --profile gui${signin_profiles} down    stop everything
 
 EOF
     fi
     if [[ $WITH_CURATE -eq 1 ]]; then
         cat <<EOF
     $curate_url                     write snippets, golden pairs and fixes, each run first
-    docker compose --profile feedback --profile review --profile curategui down    and the curation page
+    docker compose --profile review --profile curategui down    and the curation page
 
 EOF
     fi

@@ -114,6 +114,22 @@ def test_a_closing_brace_carrying_a_redirect_is_not_a_command():
     assert commands_of(source) == ['echo "A=1"']
 
 
+def test_a_loop_whose_done_carries_its_redirects_is_its_body():
+    """`while read ...; do ...; done < in > out` -- the redirects belong to
+    the whole loop, and bash numbers only the commands inside it."""
+    source = 'while read -r line; do\n    printf "%s" "$line"\ndone < .env.bak > "$work"\n'
+    assert commands_of(source) == ["while read -r line; do", 'printf "%s" "$line"']
+
+
+def test_an_array_spread_over_lines_is_one_command():
+    """bash reports `KEYS=(A B` / `C D)` at one of its lines; counting each
+    line as a command left the others missed for ever."""
+    source = "KEYS=(A B\n    C D)\necho done\n"
+    assert commands_of(source) == ["KEYS=(A B", "echo done"]
+    [(first, lines, _), _] = logical_commands(source)
+    assert (first, lines) == (1, {1, 2})
+
+
 def test_comments_and_blank_lines_are_not_commands():
     assert commands_of("# a comment\n\n   \ninfo 'x'\n") == ["info 'x'"]
 

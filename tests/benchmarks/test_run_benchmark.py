@@ -9,7 +9,6 @@ fake and still mean anything.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -24,10 +23,9 @@ from benchmarks import run_benchmark  # noqa: E402
 from benchmarks.questions import by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
 from tests.benchmarks.test_runner import result  # noqa: E402
+from tests import live_stores
 
-DATABASE_URL = os.environ.get(
-    "TEST_DATABASE_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+DATABASE_URL = live_stores.url("retail", variable="TEST_DATABASE_URL")
 
 
 # ---------------------------------------------------------------------------
@@ -102,10 +100,11 @@ def test_building_settings_applies_the_configuration_and_the_overrides():
     assert settings.ollama_base_url == "http://h:1"
 
 
-def test_a_host_default_gives_way_to_the_environment(monkeypatch):
+def test_a_host_default_gives_way_to_the_environment(monkeypatch, tmp_path):
     """The defaults are for running from the host against the compose ports;
     inside a container, or against another stack, the environment says where
     the database is and is believed."""
+    monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://r:r@elsewhere:5432/retail")
     monkeypatch.delenv("VECTOR_DB_URL", raising=False)
     settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "schema-only")
@@ -113,15 +112,34 @@ def test_a_host_default_gives_way_to_the_environment(monkeypatch):
     assert settings.vector_db_url == run_benchmark.HOST_DEFAULTS["vector_db_url"][1]
 
 
+def test_a_host_default_takes_the_password_the_stack_generated(monkeypatch, tmp_path):
+    """Since 6.1 every password is generated, and since 6.3 each is a file in
+    secrets/: the default's own password reaches nothing on such a stack."""
+    monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
+    (tmp_path / "postgres_reader_password").write_text("g/en@rated\n")
+    (tmp_path / "vector_db_password").write_text("")
+    for variable in ("DATABASE_URL", "VECTOR_DB_URL", "EMBED_BASE_URL"):
+        monkeypatch.delenv(variable, raising=False)
+    settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "schema-only")
+    assert settings.database_url == "postgresql+psycopg://nl2sql_reader:g%2Fen%40rated@localhost:5432/nl2sql_retail"
+    # An empty file, or none, leaves the default as it is; a setting with no
+    # password is never touched.
+    assert settings.vector_db_url == run_benchmark.HOST_DEFAULTS["vector_db_url"][1]
+    assert settings.context_db_url == run_benchmark.HOST_DEFAULTS["context_db_url"][1]
+    assert settings.embed_base_url == "http://localhost:11434"
+
+
 def test_the_default_configuration_is_the_full_agent():
     assert run_benchmark.parse_args([]).config == "snippets"
     assert all(run_benchmark.CONFIGURATIONS["snippets"].values())
 
 
-def test_the_snippet_store_is_found_on_its_published_port(monkeypatch):
+def test_the_snippet_store_is_found_on_its_published_port(monkeypatch, tmp_path):
+    """The runtime stores' port since 6.3, where all four databases are."""
+    monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
     monkeypatch.delenv("SNIPPET_DB_URL", raising=False)
     settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "snippets")
-    assert settings.snippet_db_url.endswith("@localhost:5438/nl2sql_snippets")
+    assert settings.snippet_db_url.endswith("@localhost:5435/nl2sql_snippets")
     assert settings.snippets_enabled is True
 
 
@@ -153,7 +171,7 @@ def database():
     try:
         db.run_select("SELECT 1")
     except Exception as exc:
-        pytest.skip(f"no reachable retail database at {DATABASE_URL}: {exc}")
+        live_stores.unreachable("retail database", DATABASE_URL, exc)
     return db
 
 

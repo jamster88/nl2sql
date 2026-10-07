@@ -1,4 +1,4 @@
-ARG PGVECTOR_IMAGE=pgvector/pgvector:pg18
+ARG PGVECTOR_IMAGE=pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
 FROM ${PGVECTOR_IMAGE}
 
 # Same reasoning as the chunk store: keep PGDATA out of the base image's

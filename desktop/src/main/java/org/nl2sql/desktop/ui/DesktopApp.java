@@ -7,6 +7,9 @@ import javafx.stage.Stage;
 import org.nl2sql.desktop.Settings;
 import org.nl2sql.desktop.api.ApiClient;
 import org.nl2sql.desktop.api.HttpApiClient;
+import org.nl2sql.desktop.api.HttpSignIn;
+import org.nl2sql.desktop.api.Session;
+import org.nl2sql.desktop.api.SignIn;
 import org.nl2sql.desktop.feedback.ApiSender;
 import org.nl2sql.desktop.feedback.FeedbackStore;
 
@@ -63,7 +66,11 @@ public final class DesktopApp extends Application {
     void show(Stage stage, String... arguments) {
         Settings settings = Settings.from(System.getenv(), arguments);
         background = pool();
-        window = assemble(new HttpApiClient(settings), settings, background, Platform::runLater);
+        // One session, read by the API client at every call and written by
+        // signing in, so the question asked after signing in carries it.
+        Session session = new Session(settings.token());
+        window = assemble(new HttpApiClient(settings, session), new HttpSignIn(settings, session),
+                settings, background, Platform::runLater);
 
         stage.setTitle("NL2SQL — ask the retail database");
         stage.setScene(Styles.apply(new Scene(window.root(), 1100, 760)));
@@ -105,7 +112,7 @@ public final class DesktopApp extends Application {
      * <p>Static and public so a test gets the same assembly the application
      * does, rather than a second one written to be convenient.
      */
-    public static MainWindow assemble(ApiClient client, Settings settings,
+    public static MainWindow assemble(ApiClient client, SignIn signIn, Settings settings,
                                       java.util.concurrent.Executor background,
                                       java.util.function.Consumer<Runnable> foreground) {
         AtomicBoolean accepted = new AtomicBoolean();
@@ -125,7 +132,8 @@ public final class DesktopApp extends Application {
                         window.warn("feedback: " + cause.getMessage());
                     }
                 }));
-        MainWindow window = new MainWindow(client, store, settings, background, foreground, accepted);
+        MainWindow window = new MainWindow(client, signIn, store, settings, background, foreground,
+                accepted);
         built.set(window);
         return window;
     }

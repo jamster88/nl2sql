@@ -153,11 +153,11 @@ def test_an_unreachable_model_degrades_to_proceed_and_records_why():
     proceeds into an AST validator, a read-only role and a READ ONLY
     transaction.
     """
-    llm = FakeScreeningLLM(error=RuntimeError("connection refused"))
+    llm = FakeScreeningLLM(error=ConnectionRefusedError("connection refused"))
     state = screen(llm, "sales by department")
     assert state["verdict"] == "proceed"
     assert state["intent"] == "aggregate"
-    assert "connection refused" in state["retrieval_errors"]["supervisor"]
+    assert "connection refused" in state["node_errors"]["supervisor"]
 
 
 def test_a_malformed_response_still_yields_a_usable_verdict_and_intent():
@@ -296,5 +296,5 @@ def test_malformed_contract_fields_make_a_smaller_contract_not_a_crash():
 
 
 def test_an_unreachable_supervisor_leaves_the_contract_empty():
-    state = screen(FakeScreeningLLM(error=RuntimeError("down")), "top 10 SKUs")
+    state = screen(FakeScreeningLLM(error=ConnectionError("down")), "top 10 SKUs")
     assert (state["entities"], state["measure"], state["period"]) == ([], "", "")

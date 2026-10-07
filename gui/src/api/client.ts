@@ -20,30 +20,16 @@ import type {
   Verdict,
 } from "./types";
 
+import { ApiError } from "@nl2sql/web/api/errors";
+import { notifyUnauthorized } from "@nl2sql/web/auth/session";
+
 /**
- * A failure the server described.
- *
- * `code` is the stable, machine-readable half of the envelope and is what to
- * branch on; `message` is written for a person and may be reworded.
+ * A failure the server described -- the error every page throws for one
+ * (`web/src/api/errors.ts`). `code` is the stable, machine-readable half of
+ * the envelope and is what to branch on; `message` is written for a person
+ * and may be reworded.
  */
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
-  readonly detail: Record<string, unknown> | undefined;
-
-  constructor(status: number, code: string, message: string, detail?: Record<string, unknown>) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-    this.detail = detail;
-  }
-
-  /** True when retrying the same request might work. */
-  get retryable(): boolean {
-    return this.status === 503 || this.status === 0;
-  }
-}
+export { ApiError };
 
 export interface ClientOptions {
   /**
@@ -132,6 +118,9 @@ export function createClient(options: ClientOptions = {}): Client {
 
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
+      // A session that ended while the page was open: the sign-in gate
+      // listens for this and asks for a sign-in again.
+      if (response.status === 401) notifyUnauthorized();
       if (isErrorBody(body)) {
         throw new ApiError(response.status, body.error.code, body.error.message, body.error.detail);
       }

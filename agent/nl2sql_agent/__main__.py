@@ -143,6 +143,7 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
                         "snippet_hits": state.get("snippet_hits", []),
                         "literal_map": state.get("literal_map", []),
                         "retrieval_errors": state.get("retrieval_errors", {}),
+                        "node_errors": state.get("node_errors", {}),
                         "selected_tables": state.get("selected_tables", []),
                         "sql": state.get("sql"),
                         "attempts": state.get("attempts"),

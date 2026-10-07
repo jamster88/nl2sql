@@ -12,6 +12,7 @@ import org.nl2sql.desktop.api.ApiClient;
 import org.nl2sql.desktop.api.ApiException;
 import org.nl2sql.desktop.api.JobWatcher;
 import org.nl2sql.desktop.api.Models;
+import org.nl2sql.desktop.api.SignIn;
 import org.nl2sql.desktop.api.Tls;
 import org.nl2sql.desktop.feedback.FeedbackStore;
 
@@ -44,6 +45,7 @@ import java.util.function.Consumer;
 public final class MainWindow {
 
     private final ApiClient client;
+    private final SignIn signIn;
     private final FeedbackStore store;
     private final Settings settings;
     private final Executor background;
@@ -57,6 +59,7 @@ public final class MainWindow {
     private final AtomicBoolean feedbackAccepted;
 
     private final AskBox askBox = new AskBox();
+    private final SignInView signInView;
     private final ProgressView progress = new ProgressView();
     private final HistoryView history;
     private final StatusBar statusBar;
@@ -75,13 +78,19 @@ public final class MainWindow {
     private int attempt;
     private Models.Pipeline pipeline;
     private final List<String> warnings = new ArrayList<>();
+    /** Who is signed in, or null for nobody -- which a static token also is. */
+    private Models.Token signedIn;
+    /** What a refused question becomes once somebody has signed in. */
+    private Runnable afterSignIn;
 
     /** As wide as the session list gets, and a third of the window at most. */
     private static final double HISTORY_WIDTH = 260;
 
-    public MainWindow(ApiClient client, FeedbackStore store, Settings settings, Executor background,
-                      Consumer<Runnable> foreground, AtomicBoolean feedbackAccepted) {
+    public MainWindow(ApiClient client, SignIn signIn, FeedbackStore store, Settings settings,
+                      Executor background, Consumer<Runnable> foreground,
+                      AtomicBoolean feedbackAccepted) {
         this.client = client;
+        this.signIn = signIn;
         this.store = store;
         this.settings = settings;
         this.background = background;
@@ -89,7 +98,9 @@ public final class MainWindow {
         this.feedbackAccepted = feedbackAccepted;
         this.history = new HistoryView(store, settings.historyLimit());
         this.statusBar = new StatusBar(Tls.describe(settings));
+        this.signInView = new SignInView(settings.authUrl(), settings.user());
 
+        signInView.setOnSignIn(this::signIn);
         askBox.setOnAsk(this::ask);
         askBox.setOnCancel(this::cancel);
         history.setOnSelect(this::select);
@@ -101,13 +112,15 @@ public final class MainWindow {
         hide(error);
         hide(notice);
         hide(progress.node());
+        hide(signInView.node());
 
         column.getStyleClass().add("main");
         column.setSpacing(12);
         // Same rule as the status bar below: whatever is in the column, the
         // column is never the reason the window has to be wider.
         column.setMinWidth(0);
-        column.getChildren().addAll(askBox.node(), error, notice, progress.node(), answerSlot);
+        column.getChildren().addAll(signInView.node(), askBox.node(), error, notice, progress.node(),
+                answerSlot);
         answerSlot.setSpacing(12);
 
         ScrollPane scroll = new ScrollPane(column);
@@ -147,14 +160,7 @@ public final class MainWindow {
 
     /** Ask the server what it is, and whether it is ready. */
     public void start() {
-        background.execute(() -> {
-            try {
-                Models.Meta meta = client.meta();
-                foreground.accept(() -> describe(meta));
-            } catch (ApiException cause) {
-                foreground.accept(() -> statusBar.showError(cause.getMessage()));
-            }
-        });
+        describeServer();
         background.execute(() -> {
             try {
                 Models.Readiness readiness = client.readiness();
@@ -166,6 +172,33 @@ public final class MainWindow {
                 // Readiness is a courtesy. Its failure is not shown as a
                 // connection failure -- `meta` above is what decides that, and
                 // reporting both would say the same thing twice.
+            }
+        });
+    }
+
+    /**
+     * Ask the server what it is.
+     *
+     * <p>A server with sign-in on answers only someone signed in, so a 401
+     * here is the server asking who this is -- not a server that cannot be
+     * reached -- and the answer is the sign-in panel, then the same question
+     * again. Reported as "Not connected" it would be a window that never
+     * offers the one thing that would fix it.
+     */
+    private void describeServer() {
+        background.execute(() -> {
+            try {
+                Models.Meta meta = client.meta();
+                foreground.accept(() -> describe(meta));
+            } catch (ApiException cause) {
+                foreground.accept(() -> {
+                    if (cause.status() == 401) {
+                        needsSignIn("This server asks who you are before it answers. Your questions run "
+                                + "as your own database account.", this::describeServer);
+                    } else {
+                        statusBar.showError(cause.getMessage());
+                    }
+                });
             }
         });
     }
@@ -200,7 +233,7 @@ public final class MainWindow {
             try {
                 accepted = client.ask(asked, settings.waitSeconds());
             } catch (ApiException cause) {
-                onlyIfCurrent(mine, () -> failed(cause));
+                onlyIfCurrent(mine, () -> failed(asked, cause));
                 return;
             }
             // Superseded while the POST was in flight. The watch could not
@@ -238,6 +271,21 @@ public final class MainWindow {
         });
     }
 
+    /**
+     * Forget the session, and say so by asking again.
+     *
+     * <p>The auth service is told too, and strikes the token from then on
+     * ({@link SignIn#signOut}); it is still never written anywhere this
+     * window does not control, so a service that cannot be reached leaves
+     * nothing behind but a token nobody holds.
+     */
+    public void signOut() {
+        signIn.signOut();
+        signedIn = null;
+        statusBar.setSignedIn(null, null);
+        needsSignIn("Signed out. Sign in to ask another question.", null);
+    }
+
     /** Let go of the watch and the store subscription. */
     public void close() {
         stopWatching();
@@ -260,6 +308,10 @@ public final class MainWindow {
 
     public ProgressView progressView() {
         return progress;
+    }
+
+    public SignInView signInView() {
+        return signInView;
     }
 
     /** The answer on screen, or null when there is none. */
@@ -307,7 +359,17 @@ public final class MainWindow {
 
             @Override
             public void onError(Exception cause) {
-                onlyIfCurrent(mine, () -> say(cause.getMessage()));
+                // A session that expired mid-question. The watcher keeps
+                // polling, and the first poll after signing in again carries
+                // the new session -- so the answer still arrives, and there
+                // is nothing to retry.
+                onlyIfCurrent(mine, () -> {
+                    if (cause instanceof ApiException failure && failure.status() == 401) {
+                        needsSignIn(failure.getMessage(), null);
+                    } else {
+                        say(cause.getMessage());
+                    }
+                });
             }
 
             @Override
@@ -328,9 +390,13 @@ public final class MainWindow {
         history.setCurrent(finished.id());
     }
 
-    private void failed(ApiException cause) {
+    private void failed(String asked, ApiException cause) {
         askBox.setBusy(false);
         hide(progress.node());
+        if (cause.status() == 401) {
+            needsSignIn(cause.getMessage(), () -> ask(asked));
+            return;
+        }
         error.setText("That question could not be sent. " + cause.getMessage());
         show(error, true);
     }
@@ -359,6 +425,48 @@ public final class MainWindow {
         show(job);
     }
 
+    // --- signing in ---------------------------------------------------------
+
+    /**
+     * Show the sign-in panel, and remember what to do once it has worked.
+     *
+     * <p>Only the latest refusal is remembered. Two questions refused in a
+     * row are one person who has not signed in yet, and asking both once
+     * they have would answer a question they had already replaced.
+     */
+    private void needsSignIn(String why, Runnable then) {
+        afterSignIn = then;
+        signInView.setReason(why);
+        show(signInView.node(), true);
+    }
+
+    private void signIn(String name, String password) {
+        signInView.setBusy(true);
+        background.execute(() -> {
+            try {
+                Models.Token token = signIn.signIn(name, password);
+                foreground.accept(() -> signedIn(token));
+            } catch (ApiException cause) {
+                foreground.accept(() -> {
+                    signInView.setBusy(false);
+                    signInView.showProblem(cause.getMessage());
+                });
+            }
+        });
+    }
+
+    private void signedIn(Models.Token token) {
+        signedIn = token;
+        signInView.setBusy(false);
+        hide(signInView.node());
+        statusBar.setSignedIn(token.who(), this::signOut);
+        Runnable then = afterSignIn;
+        afterSignIn = null;
+        if (then != null) {
+            then.run();
+        }
+    }
+
     private void describe(Models.Meta meta) {
         pipeline = meta.pipeline();
         feedbackAccepted.set(meta.feedback());
@@ -366,6 +474,13 @@ public final class MainWindow {
         progress.setNodes(meta.pipeline().nodes());
         if (meta.limits() != null && meta.limits().max_question_length() > 0) {
             askBox.setMaxQuestionLength(meta.limits().max_question_length());
+        }
+        // Asked before the first question rather than after it is refused.
+        // A static token is somebody already; a server with sign-in off says
+        // "none" or "bearer" and is never asked who.
+        if (meta.authentication().equals("session") && !settings.authenticated() && signedIn == null) {
+            needsSignIn("This server asks who you are before it answers. Your questions run "
+                    + "as your own database account.", null);
         }
         feedbackChanged();
     }

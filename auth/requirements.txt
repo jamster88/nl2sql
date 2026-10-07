@@ -1,0 +1,14 @@
+# The auth service: sign-in against the retail database, the session it
+# signs, the directory's web interface and the role sync that makes the
+# directory's groups Postgres roles. It talks to Postgres and to LDAP and
+# answers HTTP; nothing of the agent's pipeline is here.
+fastapi==0.141.1
+uvicorn==0.53.0
+pydantic>=2,<3
+psycopg[binary]==3.3.5
+# Signs the session (Ed25519) and writes the signing key; the same pin as
+# the agent image, which verifies what this signs.
+cryptography==50.0.1
+# Pure Python, so the image needs no compiler and the tests need no libldap.
+# The version the directory image installs from Alpine (py3-ldap3).
+ldap3==2.9.1

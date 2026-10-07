@@ -84,8 +84,8 @@ def test_it_opens_a_browser_at_the_interface(run_start):
     result = run_start()
     opened = [call for call in result.calls if call.startswith("browser ")]
     assert opened, "no browser was opened:\n" + "\n".join(result.calls)
-    assert opened[0].endswith("http://localhost:8080")
-    assert "Opening http://localhost:8080" in result.output
+    assert opened[0].endswith("https://localhost:8080")
+    assert "Opening https://localhost:8080" in result.output
 
 
 def test_it_opens_the_page_only_once(run_start):
@@ -102,7 +102,7 @@ def test_it_waits_for_the_page_before_opening_it(run_start):
     nginx is up, which is a moment before it has read its configuration.
     """
     result = run_start()
-    probe = result.index_of("curl http://localhost:8080")
+    probe = result.index_of("curl https://localhost:8080")
     browser = next(i for i, call in enumerate(result.calls) if call.startswith("browser "))
     assert probe < browser
     assert "Waiting for the interface" in result.output
@@ -114,10 +114,29 @@ def test_the_closing_lines_say_where_it_is_and_how_to_stop_it(run_start):
     rather than one command.
     """
     output = run_start().output
-    assert "http://localhost:8080" in output
-    assert "docker compose --profile api --profile gui down" in output
+    assert "https://localhost:8080" in output
+    # Sign-in's services are behind profiles of their own, so they are named too.
+    assert "docker compose --profile api --profile gui --profile auth --profile directorygui down" in output
     # The paragraph launch.sh already printed is not printed twice.
     assert output.count("Ask a question and watch the pipeline") <= 1
+
+
+def test_the_closing_lines_say_how_to_get_in(run_start):
+    output = " ".join(run_start().output.split())
+    assert "Sign in as admin, with the password in secrets/ldap_admin_password," in output
+    assert "and add everyone else at https://localhost:8084." in output
+
+
+def test_no_auth_starts_without_sign_in_this_once(run_start):
+    """Handed to launch.sh, which leaves the directory and the auth service
+    down; not to setup.sh, whose own --no-auth is the one that sticks."""
+    result = run_start("--no-auth")
+    assert result.returncode == 0
+    assert not result.calls_matching("--profile auth")
+    assert "==> Sign-in is off (AUTH_ENABLED=false)" in result.output
+    assert "Sign in as" not in result.output
+    assert "docker compose --profile api --profile gui down    stop everything" in result.output
+    assert "AUTH_ENABLED" not in result.env_file()
 
 
 # ---------------------------------------------------------------------------
@@ -133,14 +152,14 @@ def test_the_first_run_fetches_the_images_including_the_interface(run_start):
     result = run_start(env_file=None)
     assert result.returncode == 0
     assert result.called("pull mcfaddja/nl2sql-agent")
-    assert result.called("pull mcfaddja/nl2sql-gui")
+    assert result.called("pull mcfaddja/nl2sql-proxy")
     assert "First run on this machine" in result.output
-    assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
+    assert result.env_file()["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
 
 
 def test_a_second_run_fetches_nothing(run_start):
     result = run_start()
-    assert not result.called("pull mcfaddja/nl2sql-gui")
+    assert not result.called("pull mcfaddja/nl2sql-proxy")
     assert "First run on this machine" not in result.output
 
 
@@ -165,7 +184,7 @@ def test_no_browser_starts_everything_and_only_prints_the_url(run_start):
     assert result.returncode == 0
     assert result.called("--profile api --profile gui up -d gui")
     assert not any(call.startswith("browser ") for call in result.calls)
-    assert "Ready at http://localhost:8080" in result.output
+    assert "Ready at https://localhost:8080" in result.output
 
 
 def test_a_machine_where_nothing_can_open_a_page_is_not_a_failure(run_start):
@@ -176,7 +195,7 @@ def test_a_machine_where_nothing_can_open_a_page_is_not_a_failure(run_start):
     result = run_start(env={"FAKE_BROWSER_EXIT": "3"})
     assert result.returncode == 0
     assert "could not open a browser" in result.output
-    assert "http://localhost:8080" in result.output
+    assert "https://localhost:8080" in result.output
 
 
 def test_a_named_browser_that_is_not_installed_falls_through_to_the_next(run_start):
@@ -187,7 +206,7 @@ def test_a_named_browser_that_is_not_installed_falls_through_to_the_next(run_sta
     opened = [call for call in result.calls if call.startswith("browser ")]
     assert len(opened) == 1
     assert "definitely-not-installed" not in opened[0]
-    assert opened[0].endswith("http://localhost:8080")
+    assert opened[0].endswith("https://localhost:8080")
 
 
 def test_the_browser_variable_chooses_what_opens_the_page(run_start):
@@ -195,7 +214,7 @@ def test_the_browser_variable_chooses_what_opens_the_page(run_start):
     script has."""
     result = run_start(env={"BROWSER": "x-www-browser"})
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened == ["browser x-www-browser http://localhost:8080"]
+    assert opened == ["browser x-www-browser https://localhost:8080"]
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +229,7 @@ def test_a_page_that_never_answers_is_reported_rather_than_opened(run_start):
     """
     result = run_start(env={"FAKE_GUI_DOWN": "1"})
     assert result.returncode != 0
-    assert "never answered at http://localhost:8080" in result.output
+    assert "never answered at https://localhost:8080" in result.output
     assert "logs gui" in result.output
     assert not any(call.startswith("browser ") for call in result.calls)
 
@@ -241,13 +260,13 @@ def test_the_port_follows_what_compose_will_publish(run_start):
         env={"FAKE_GUI_PORT": "9090"},
     )
     assert result.returncode == 0
-    assert result.called("curl http://localhost:9090")
-    assert any(call.endswith("http://localhost:9090") for call in result.calls)
+    assert result.called("curl https://localhost:9090")
+    assert any(call.endswith("https://localhost:9090") for call in result.calls)
 
 
 def test_the_shell_wins_over_the_env_file(run_start):
     result = run_start(env={"GUI_PORT": "9191", "FAKE_GUI_PORT": "9191"})
-    assert any(call.endswith("http://localhost:9191") for call in result.calls)
+    assert any(call.endswith("https://localhost:9191") for call in result.calls)
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +364,7 @@ def test_each_platform_reaches_for_its_own_opener(run_start, uname, expected):
     """
     result = run_start(env={"FAKE_UNAME_S": uname})
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened == [f"browser {expected} http://localhost:8080"]
+    assert opened == [f"browser {expected} https://localhost:8080"]
 
 
 def test_an_unknown_platform_still_starts_everything(run_start):
@@ -365,7 +384,7 @@ def test_gio_is_invoked_the_way_gio_wants(run_start):
     """
     result = run_start(env={"FAKE_UNAME_S": "Linux", "BROWSER": "gio"})
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened == ["browser gio open http://localhost:8080"]
+    assert opened == ["browser gio open https://localhost:8080"]
 
 
 def test_wsl_reaches_for_the_windows_side_opener(run_start):
@@ -376,13 +395,13 @@ def test_wsl_reaches_for_the_windows_side_opener(run_start):
     """
     result = run_start(env={"FAKE_UNAME_S": "Linux", "FAKE_WSL": "1"})
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened == ["browser wslview http://localhost:8080"]
+    assert opened == ["browser wslview https://localhost:8080"]
 
 
 def test_plain_linux_is_not_mistaken_for_wsl(run_start):
     result = run_start(env={"FAKE_UNAME_S": "Linux"})
     opened = [call for call in result.calls if call.startswith("browser ")]
-    assert opened == ["browser xdg-open http://localhost:8080"]
+    assert opened == ["browser xdg-open https://localhost:8080"]
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +416,8 @@ def test_review_brings_up_the_whole_feedback_stack(run_start):
     result = run_start("--review")
 
     assert result.returncode == 0
-    assert result.called("--profile feedback up -d feedbackdb")
-    assert result.called("--profile feedback --profile review up -d review")
+    assert result.called("up -d postgres stores")
+    assert result.called("--profile review up -d review")
     assert result.called("--profile reviewgui up -d reviewgui")
     assert result.called("--profile api --profile gui up -d gui")
 
@@ -407,10 +426,10 @@ def test_review_opens_both_pages_the_review_one_second(run_start):
     """So the interface people actually ask questions in is left in front."""
     result = run_start("--review")
 
-    assert pages(result) == ["http://localhost:8080", "http://localhost:8081"], (
+    assert pages(result) == ["https://localhost:8080", "https://localhost:8081"], (
         "expected two pages:\n" + "\n".join(result.calls))
     order = [line for line in result.output.splitlines() if "Opening http" in line]
-    assert order == ["==> Opening http://localhost:8080", "==> Opening http://localhost:8081"]
+    assert order == ["==> Opening https://localhost:8080", "==> Opening https://localhost:8081"]
 
 
 def test_review_waits_for_the_second_page_too(run_start):
@@ -418,7 +437,7 @@ def test_review_waits_for_the_second_page_too(run_start):
     before it has read its configuration."""
     result = run_start("--review")
     assert "Waiting for the review interface" in result.output
-    assert result.called("curl http://localhost:8081")
+    assert result.called("curl https://localhost:8081")
 
 
 def test_a_review_page_that_never_answers_does_not_take_the_stack_down(run_start):
@@ -432,7 +451,7 @@ def test_a_review_page_that_never_answers_does_not_take_the_stack_down(run_start
     # The web interface still opened.
     opened = [call for call in result.calls if call.startswith("browser ")]
     assert len(opened) == 1
-    assert opened[0].endswith("http://localhost:8080")
+    assert opened[0].endswith("https://localhost:8080")
 
 
 def test_feedback_stages_verdicts_without_the_review_interface(run_start):
@@ -441,7 +460,7 @@ def test_feedback_stages_verdicts_without_the_review_interface(run_start):
     are voting."""
     result = run_start("--feedback")
 
-    assert result.called("--profile feedback up -d feedbackdb")
+    assert result.called("up -d postgres stores"), "the runtime stores keep a verdict"
     assert not result.called("up -d reviewgui")
     assert len([c for c in result.calls if c.startswith("browser ")]) == 1
 
@@ -450,13 +469,13 @@ def test_no_browser_prints_both_urls_rather_than_opening_them(run_start):
     result = run_start("--review", "--no-browser")
 
     assert not [call for call in result.calls if call.startswith("browser ")]
-    assert "http://localhost:8080" in result.output
-    assert "http://localhost:8081" in result.output
+    assert "https://localhost:8080" in result.output
+    assert "https://localhost:8081" in result.output
 
 
 def test_the_review_ports_follow_what_compose_will_publish(run_start):
     result = run_start("--review", env_file="IMAGE_NAME=x\nGUI_PORT=9080\nREVIEW_GUI_PORT=9081\n")
-    assert pages(result) == ["http://localhost:9080", "http://localhost:9081"]
+    assert pages(result) == ["https://localhost:9080", "https://localhost:9081"]
 
 
 def test_the_closing_lines_say_what_each_page_is_for(run_start):
@@ -485,8 +504,8 @@ def test_the_closing_lines_say_how_to_stop_the_whole_thing(run_start):
     # with the wrapping, leaving the command someone would paste.
     output = " ".join(run_start("--review").output.replace("\\", " ").split())
     assert (
-        "docker compose --profile api --profile gui --profile feedback "
-        "--profile review --profile reviewgui down" in output
+        "docker compose --profile api --profile gui --profile review "
+        "--profile reviewgui --profile auth --profile directorygui down" in output
     )
 
 
@@ -495,7 +514,7 @@ def test_a_first_run_pulls_the_review_images_too(run_start):
     pip install and an npm ci inside two containers."""
     result = run_start("--review", env_file=None)
     assert result.called("pull mcfaddja/nl2sql-review:")
-    assert result.called("pull mcfaddja/nl2sql-review-gui:")
+    assert result.called("pull mcfaddja/nl2sql-proxy:")
 
 
 def test_a_machine_that_cannot_open_the_review_page_still_says_where_it_is(run_start):
@@ -509,7 +528,7 @@ def test_a_machine_that_cannot_open_the_review_page_still_says_where_it_is(run_s
 
     assert result.returncode == 0
     assert "could not open the review interface" in result.output
-    assert "http://localhost:8081" in result.output
+    assert "https://localhost:8081" in result.output
     # And the first page's failure is still reported separately.
     assert "could not open a browser" in result.output
 
@@ -533,32 +552,32 @@ def test_console_brings_up_the_console_beside_the_web_interface(run_start):
 def test_console_opens_its_page_second_in_a_window_of_its_own(run_start):
     result = run_start("--console")
 
-    assert pages(result) == ["http://localhost:8080", "http://localhost:8082"]
+    assert pages(result) == ["https://localhost:8080", "https://localhost:8082"]
     assert [call for call in result.calls if call.startswith("window ")], (
         "the console was opened in a tab rather than asked for a window"
     )
-    assert "==> Opening http://localhost:8082" in result.output
+    assert "==> Opening https://localhost:8082" in result.output
 
 
 def test_review_and_console_open_three_pages_in_order(run_start):
     result = run_start("--review", "--console")
-    assert pages(result) == ["http://localhost:8080", "http://localhost:8081", "http://localhost:8082"]
+    assert pages(result) == ["https://localhost:8080", "https://localhost:8081", "https://localhost:8082"]
 
 
 def test_console_waits_for_its_page_too(run_start):
     result = run_start("--console")
     assert "Waiting for the SQL console" in result.output
-    assert result.called("curl http://localhost:8082")
+    assert result.called("curl https://localhost:8082")
 
 
 def test_a_console_page_that_never_answers_does_not_take_the_stack_down(run_start):
     result = run_start("--console", env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "8082"})
 
     assert result.returncode == 0
-    assert "the SQL console never answered at http://localhost:8082." in result.output
+    assert "the SQL console never answered at https://localhost:8082." in result.output
     assert "docker compose --profile console --profile consolegui logs" in result.output
     assert "Everything else is up; ./launch.sh --console tries it again on its own." in result.output
-    assert pages(result) == ["http://localhost:8080"]
+    assert pages(result) == ["https://localhost:8080"]
 
 
 def test_a_machine_that_cannot_open_the_console_still_says_where_it_is(run_start):
@@ -567,23 +586,23 @@ def test_a_machine_that_cannot_open_the_console_still_says_where_it_is(run_start
 
     assert result.returncode == 0
     assert "could not open the SQL console. Open it yourself:" in result.output
-    assert "http://localhost:8082" in result.output
+    assert "https://localhost:8082" in result.output
 
 
 def test_no_browser_prints_the_console_url_rather_than_opening_it(run_start):
     result = run_start("--console", "--no-browser")
     assert pages(result) == []
-    assert "SQL console at http://localhost:8082" in result.output
+    assert "SQL console at https://localhost:8082" in result.output
 
 
 def test_the_console_port_follows_what_compose_will_publish(run_start):
     result = run_start("--console", env_file="IMAGE_NAME=x\nCONSOLE_GUI_PORT=9082\n")
-    assert pages(result)[-1] == "http://localhost:9082"
+    assert pages(result)[-1] == "https://localhost:9082"
 
 
 def test_the_closing_lines_say_what_the_console_is_for_and_how_to_stop_it(run_start):
     output = " ".join(run_start("--console").output.split())
-    assert "http://localhost:8082 query the retail database as the agent sees it" in output
+    assert "https://localhost:8082 query the retail database as the agent sees it" in output
     assert "docker compose --profile console --profile consolegui down and the console" in output
 
 
@@ -592,7 +611,7 @@ def test_desktop_and_console_still_opens_the_console_page(run_start):
     result = run_start("--desktop", "--console", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
 
     assert result.calls_matching("java -jar")
-    assert pages(result) == ["http://localhost:8082"]
+    assert pages(result) == ["https://localhost:8082"]
     assert "query the retail database as the agent sees it" in result.output
 
 
@@ -600,26 +619,15 @@ def test_desktop_console_and_no_browser_prints_the_console_url(run_start):
     result = run_start(
         "--desktop", "--console", "--no-browser", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"}
     )
-    assert "SQL console at http://localhost:8082" in result.output
-
-
-def test_a_console_that_was_never_pinned_is_pulled_rather_than_built(run_start):
-    """Its interface would otherwise be an npm build inside a container on
-    first start, when the published image is a pull away."""
-    result = run_start("--console")
-
-    assert "the SQL console's interface is not pinned" in result.output
-    assert result.called(f"pull mcfaddja/nl2sql-console-gui:{SHIPPED}")
-    assert result.env_file()["CONSOLE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-console-gui"
+    assert "SQL console at https://localhost:8082" in result.output
 
 
 def test_a_pinned_console_is_not_fetched_again(run_start):
     env_file = (
         f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
-        f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+        f"PROXY_IMAGE_NAME=mcfaddja/nl2sql-proxy\nPROXY_IMAGE_TAG={SHIPPED}\n"
         f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
-        f"CONSOLE_GUI_IMAGE_NAME=mcfaddja/nl2sql-console-gui\nCONSOLE_GUI_IMAGE_TAG={SHIPPED}\n"
-    )
+        )
     result = run_start("--console", env_file=env_file)
     assert "Fetching the images" not in result.output
 
@@ -634,8 +642,17 @@ def test_desktop_runs_the_jar_against_the_api(run_start):
 
     assert result.returncode == 0
     assert result.calls_matching("java -jar desktop/target/nl2sql-desktop.jar")
-    assert result.calls_matching("--cacert ./nl2sql-api.crt")
+    assert result.calls_matching("--cacert ./nl2sql-ca.crt")
     assert result.calls_matching("--url https://localhost:8443")
+    assert result.calls_matching("--auth-url https://localhost:8446")
+
+
+def test_the_desktop_client_signs_in_where_this_stack_signs_people_in(run_start):
+    """The client's own default is the API's host on 8446. With AUTH_PORT
+    moved, that is nothing -- or another stack's auth service on this
+    machine, which is how the acceptance tier found it."""
+    result = run_start("--desktop", env={"AUTH_PORT": "18446", "API_PORT": "18443"})
+    assert result.calls_matching("--url https://localhost:18443 --auth-url https://localhost:18446")
 
 
 def test_desktop_is_an_interface_rather_than_an_addition_to_one(run_start):
@@ -645,7 +662,7 @@ def test_desktop_is_an_interface_rather_than_an_addition_to_one(run_start):
     result = run_start("--desktop", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
 
     assert not result.calls_matching("compose --profile api --profile gui up -d gui")
-    assert "==> Opening http://localhost:8080" not in result.output
+    assert "==> Opening https://localhost:8080" not in result.output
 
 
 def test_desktop_and_review_still_opens_the_review_page(run_start):
@@ -655,7 +672,7 @@ def test_desktop_and_review_still_opens_the_review_page(run_start):
                        env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
 
     assert result.calls_matching("java -jar")
-    assert pages(result) == ["http://localhost:8081"]
+    assert pages(result) == ["https://localhost:8081"]
 
 
 def test_a_java_too_old_to_run_it_says_which_it_found(run_start):
@@ -801,10 +818,10 @@ def test_on_a_mac_that_never_chose_a_browser_safari_is_asked_for_a_window(run_st
     windows = result.calls_matching("window osascript")
     assert len(windows) == 1
     assert 'tell application "Safari" to make new document' in windows[0]
-    assert '{URL:"http://localhost:8081"}' in windows[0]
+    assert '{URL:"https://localhost:8081"}' in windows[0]
     # The page people ask questions in is still the ordinary kind.
-    assert result.calls_matching("browser open http://localhost:8080")
-    assert not result.calls_matching("browser open http://localhost:8081")
+    assert result.calls_matching("browser open https://localhost:8080")
+    assert not result.calls_matching("browser open https://localhost:8081")
 
 
 def test_a_terminal_safari_will_not_take_orders_from_still_opens_the_page(run_start):
@@ -813,7 +830,7 @@ def test_a_terminal_safari_will_not_take_orders_from_still_opens_the_page(run_st
     result = run_start("--review", env={"FAKE_UNAME_S": "Darwin", "FAKE_OSASCRIPT_EXIT": "1"})
 
     assert result.calls_matching("window osascript")
-    assert result.calls_matching("browser open http://localhost:8081")
+    assert result.calls_matching("browser open https://localhost:8081")
 
 
 @pytest.mark.parametrize("bundle, flag", [
@@ -830,7 +847,7 @@ def test_a_mac_whose_browser_takes_flags_is_asked_by_bundle(run_start, bundle, f
     result = run_start("--review", env={"FAKE_UNAME_S": "Darwin", "FAKE_MAC_BROWSER": bundle})
 
     assert result.calls_matching(
-        f"window open -n -b {bundle.lower()} --args {flag} http://localhost:8081")
+        f"window open -n -b {bundle.lower()} --args {flag} https://localhost:8081")
     assert not result.calls_matching("window osascript")
 
 
@@ -839,7 +856,7 @@ def test_a_browser_that_will_not_open_a_window_falls_back_to_a_page(run_start):
         "FAKE_UNAME_S": "Darwin", "FAKE_MAC_BROWSER": "com.google.Chrome", "FAKE_WINDOW_EXIT": "1"})
 
     assert result.calls_matching("window open -n -b com.google.chrome")
-    assert result.calls_matching("browser open http://localhost:8081")
+    assert result.calls_matching("browser open https://localhost:8081")
 
 
 def test_a_mac_browser_this_script_does_not_know_gets_the_generic_opener(run_start):
@@ -847,7 +864,7 @@ def test_a_mac_browser_this_script_does_not_know_gets_the_generic_opener(run_sta
     result = run_start("--review", env={
         "FAKE_UNAME_S": "Darwin", "FAKE_MAC_BROWSER": "com.kagi.kagimacOS"})
 
-    assert result.calls_matching("browser open http://localhost:8081")
+    assert result.calls_matching("browser open https://localhost:8081")
     assert not result.calls_matching("window ")
 
 
@@ -861,9 +878,9 @@ def test_a_linux_desktop_asks_the_default_browser_itself(run_start, desktop, com
     takes --new-window, which xdg-open has no way to say."""
     result = run_start("--review", env={"FAKE_UNAME_S": "Linux", "FAKE_LINUX_BROWSER": desktop})
 
-    assert eventually(result, f"window {command} --new-window http://localhost:8081")
-    assert result.calls_matching("browser xdg-open http://localhost:8080")
-    assert not result.calls_matching("browser xdg-open http://localhost:8081")
+    assert eventually(result, f"window {command} --new-window https://localhost:8081")
+    assert result.calls_matching("browser xdg-open https://localhost:8080")
+    assert not result.calls_matching("browser xdg-open https://localhost:8081")
 
 
 @pytest.mark.parametrize("desktop", [
@@ -877,7 +894,7 @@ def test_a_linux_browser_whose_command_is_not_here_gets_the_generic_opener(run_s
     result = run_start("--review", without=("chromium", "chromium-browser"),
                        env={"FAKE_UNAME_S": "Linux", "FAKE_LINUX_BROWSER": desktop})
 
-    assert result.calls_matching("browser xdg-open http://localhost:8081")
+    assert result.calls_matching("browser xdg-open https://localhost:8081")
     assert not result.calls_matching("window ")
 
 
@@ -887,7 +904,7 @@ def test_wsl_does_not_ask_a_linux_browser_for_a_window(run_start):
     result = run_start("--review", env={
         "FAKE_UNAME_S": "Linux", "FAKE_WSL": "1", "FAKE_LINUX_BROWSER": "firefox.desktop"})
 
-    assert result.calls_matching("browser wslview http://localhost:8081")
+    assert result.calls_matching("browser wslview https://localhost:8081")
     assert not eventually(result, "window firefox", seconds=0.5)
 
 
@@ -895,7 +912,7 @@ def test_a_browser_named_in_browser_opens_both_pages_itself(run_start):
     """BROWSER names a command, and this script cannot know its flags."""
     result = run_start("--review", env={"FAKE_UNAME_S": "Darwin", "BROWSER": "x-www-browser"})
 
-    assert result.calls_matching("browser x-www-browser http://localhost:8081")
+    assert result.calls_matching("browser x-www-browser https://localhost:8081")
     assert not result.calls_matching("window ")
 
 
@@ -1072,8 +1089,8 @@ def _older_env(**extra: str) -> str:
     lines = {
         "AGENT_IMAGE_NAME": "mcfaddja/nl2sql-agent",
         "AGENT_IMAGE_TAG": "v5_1_2",
-        "GUI_IMAGE_NAME": "mcfaddja/nl2sql-gui",
-        "GUI_IMAGE_TAG": "v5_1_2",
+        "PROXY_IMAGE_NAME": "mcfaddja/nl2sql-proxy",
+        "PROXY_IMAGE_TAG": "v5_1_2",
         "REVIEW_IMAGE_NAME": "mcfaddja/nl2sql-review",
         "REVIEW_IMAGE_TAG": "v5_1_2",
         "RAG_ENABLED": "true",
@@ -1092,8 +1109,28 @@ def test_an_older_pin_is_brought_up_to_what_this_checkout_ships(run_start):
     assert f"this checkout ships {SHIPPED}, and .env pins v5_1_2" in result.output
     assert result.called(f"pull mcfaddja/nl2sql-agent:{SHIPPED}")
     assert result.env_file()["AGENT_IMAGE_TAG"] == SHIPPED
-    assert result.env_file()["GUI_IMAGE_TAG"] == SHIPPED
+    assert result.env_file()["PROXY_IMAGE_TAG"] == SHIPPED
     assert "You are running the older agent" not in result.output
+
+
+def test_a_env_from_before_one_pages_image_is_brought_onto_it(run_start):
+    """6.2 pinned each page's image; 6.3 has one (V6-37). The old pins go,
+    the new one is made, and the passwords leave .env for secrets/."""
+    older = _older_env(AGENT_IMAGE_TAG="v6_2", GUI_IMAGE_NAME="mcfaddja/nl2sql-gui", GUI_IMAGE_TAG="v6_2",
+                       REVIEW_GUI_IMAGE_NAME="mcfaddja/nl2sql-review-gui", REVIEW_GUI_IMAGE_TAG="v6_2",
+                       POSTGRES_READER_PASSWORD="reader-from-6-2",
+                       API_FEEDBACK_DB_URL="postgresql://w:${FEEDBACK_WRITER_PASSWORD}@nl2sql-feedbackdb:5432/x")
+    del_keys = ("PROXY_IMAGE_NAME", "PROXY_IMAGE_TAG")
+    older = "".join(line + "\n" for line in older.splitlines() if line.split("=")[0] not in del_keys)
+    result = run_start(env_file=older)
+
+    assert result.returncode == 0, result.output
+    written = result.env_file()
+    assert written["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy" and written["PROXY_IMAGE_TAG"] == SHIPPED
+    for retired in ("GUI_IMAGE_NAME", "REVIEW_GUI_IMAGE_TAG", "POSTGRES_READER_PASSWORD", "API_FEEDBACK_DB_URL"):
+        assert retired not in written, retired
+    assert (result.workdir / "secrets" / "postgres_reader_password").read_text() == "reader-from-6-2"
+    assert "reader-from-6-2" not in (result.workdir / ".env.bak").read_text()
 
 
 def test_re_pinning_keeps_what_was_set_by_hand(run_start):
@@ -1105,9 +1142,11 @@ def test_re_pinning_keeps_what_was_set_by_hand(run_start):
 
     written = result.env_file()
     assert written["OLLAMA_BASE_URL"] == "http://elsewhere:11434"
-    assert written["API_TOKEN"] == "s3cret"
+    # A token is a secret since 6.3 (V6-38): moved into secrets/, out of .env.
+    assert (result.workdir / "secrets" / "api_token").read_text() == "s3cret"
+    assert "API_TOKEN" not in written
     assert written["GUI_PORT"] == "9080"
-    assert pages(result) == ["http://localhost:9080"]
+    assert pages(result) == ["https://localhost:9080"]
 
 
 def test_a_tag_exported_for_this_run_is_not_re_pinned_under_it(run_start):
@@ -1119,7 +1158,7 @@ def test_a_tag_exported_for_this_run_is_not_re_pinned_under_it(run_start):
 
 def _chosen_env(**extra: str) -> str:
     """What `./setup.sh --agent-tag v5_3` on this checkout writes."""
-    return _older_env(AGENT_IMAGE_TAG="v5_3", GUI_IMAGE_TAG=SHIPPED, SETUP_RELEASE=SHIPPED, **extra)
+    return _older_env(AGENT_IMAGE_TAG="v5_3", PROXY_IMAGE_TAG=SHIPPED, SETUP_RELEASE=SHIPPED, **extra)
 
 
 def test_an_agent_tag_chosen_for_this_checkout_is_kept(run_start):
@@ -1136,9 +1175,9 @@ def test_an_agent_tag_chosen_for_this_checkout_is_kept(run_start):
 
 
 def test_a_chosen_agent_tag_survives_a_re_run_for_another_reason(run_start):
-    result = run_start("--review", env_file=_chosen_env())
+    result = run_start("--mlflow", env_file=_chosen_env())
 
-    assert "the review interface is not pinned" in result.output
+    assert "MLflow's images are not pinned" in result.output
     assert "The agent stays at v5_3, as chosen; ./setup.sh on its own goes back." in result.output
     assert result.called("pull mcfaddja/nl2sql-agent:v5_3")
     written = result.env_file()
@@ -1175,9 +1214,9 @@ def test_an_interface_that_was_never_pinned_is_pulled_rather_than_built(run_star
     env_file = f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\nRAG_ENABLED=true\n"
     result = run_start(env_file=env_file)
 
-    assert "the web interface is not pinned" in result.output
-    assert result.called("pull mcfaddja/nl2sql-gui")
-    assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
+    assert "the pages are not pinned" in result.output
+    assert result.called("pull mcfaddja/nl2sql-proxy")
+    assert result.env_file()["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
 
 
 def test_a_desktop_client_that_was_never_pinned_is_pulled_rather_than_built(run_start):
@@ -1188,21 +1227,12 @@ def test_a_desktop_client_that_was_never_pinned_is_pulled_rather_than_built(run_
     assert result.env_file()["DESKTOP_IMAGE_NAME"] == "mcfaddja/nl2sql-desktop-build"
 
 
-def test_review_images_that_were_never_pinned_are_pulled_rather_than_built(run_start):
-    result = run_start("--review")
-
-    assert "the review interface is not pinned" in result.output
-    assert result.called(f"pull mcfaddja/nl2sql-review-gui:{SHIPPED}")
-    assert result.env_file()["REVIEW_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-review-gui"
-
-
 def test_a_env_that_is_up_to_date_is_not_rewritten(run_start):
     env_file = (
         f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
-        f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+        f"PROXY_IMAGE_NAME=mcfaddja/nl2sql-proxy\nPROXY_IMAGE_TAG={SHIPPED}\n"
         f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
-        f"REVIEW_GUI_IMAGE_NAME=mcfaddja/nl2sql-review-gui\nREVIEW_GUI_IMAGE_TAG={SHIPPED}\n"
-    )
+        )
     result = run_start("--review", env_file=env_file)
 
     assert "Fetching the images" not in result.output
@@ -1226,11 +1256,11 @@ def test_mlflow_brings_up_mlflow_beside_the_web_interface(run_start):
 def test_mlflow_opens_its_page_last_in_a_window_of_its_own(run_start):
     result = run_start("--mlflow")
 
-    assert pages(result) == ["http://localhost:8080", "http://localhost:5001"]
+    assert pages(result) == ["https://localhost:8080", "https://localhost:5001"]
     assert any(call.startswith("window ") and "5001" in call for call in result.calls), (
         "MLflow was opened in a tab rather than asked for a window"
     )
-    assert "==> Opening http://localhost:5001" in result.output
+    assert "==> Opening https://localhost:5001" in result.output
 
 
 def test_every_page_opens_in_order(run_start):
@@ -1238,25 +1268,25 @@ def test_every_page_opens_in_order(run_start):
     assert "./start.sh --review --curate --console --mlflow brings up" in run_start("--help").output
     result = run_start("--review", "--curate", "--console", "--mlflow")
     assert pages(result) == [
-        "http://localhost:8080", "http://localhost:8081", "http://localhost:8083", "http://localhost:8082",
-        "http://localhost:5001",
+        "https://localhost:8080", "https://localhost:8081", "https://localhost:8083", "https://localhost:8082",
+        "https://localhost:5001",
     ]
 
 
 def test_mlflow_waits_for_its_page_too(run_start):
     result = run_start("--mlflow")
     assert "Waiting for MLflow" in result.output
-    assert result.called("curl http://localhost:5001")
+    assert result.called("curl https://localhost:5001")
 
 
 def test_an_mlflow_page_that_never_answers_does_not_take_the_stack_down(run_start):
     result = run_start("--mlflow", env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "5001"})
 
     assert result.returncode == 0
-    assert "MLflow never answered at http://localhost:5001." in result.output
+    assert "MLflow never answered at https://localhost:5001." in result.output
     assert "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb" in result.output
     assert "Everything else is up, and answers questions untraced until it is." in result.output
-    assert pages(result) == ["http://localhost:8080"]
+    assert pages(result) == ["https://localhost:8080"]
 
 
 def test_a_machine_that_cannot_open_mlflow_still_says_where_it_is(run_start):
@@ -1265,23 +1295,23 @@ def test_a_machine_that_cannot_open_mlflow_still_says_where_it_is(run_start):
 
     assert result.returncode == 0
     assert "could not open MLflow. Open it yourself:" in result.output
-    assert "http://localhost:5001" in result.output
+    assert "https://localhost:5001" in result.output
 
 
 def test_no_browser_prints_the_mlflow_url_rather_than_opening_it(run_start):
     result = run_start("--mlflow", "--no-browser")
     assert pages(result) == []
-    assert "MLflow at http://localhost:5001" in result.output
+    assert "MLflow at https://localhost:5001" in result.output
 
 
 def test_the_mlflow_port_follows_what_compose_will_publish(run_start):
     result = run_start("--mlflow", env_file="IMAGE_NAME=x\nMLFLOW_PORT=6001\n")
-    assert pages(result)[-1] == "http://localhost:6001"
+    assert pages(result)[-1] == "https://localhost:6001"
 
 
 def test_the_closing_lines_say_what_mlflow_is_for_and_how_to_stop_it(run_start):
     output = " ".join(run_start("--mlflow").output.split())
-    assert "http://localhost:5001 every question traced, agent by agent" in output
+    assert "https://localhost:5001 every question traced, agent by agent" in output
     assert "docker compose --profile mlflow down and MLflow" in output
 
 
@@ -1290,7 +1320,7 @@ def test_desktop_and_mlflow_still_opens_the_mlflow_page(run_start):
     result = run_start("--desktop", "--mlflow", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"})
 
     assert result.calls_matching("java -jar")
-    assert pages(result) == ["http://localhost:5001"]
+    assert pages(result) == ["https://localhost:5001"]
     assert "every question traced, agent by agent" in result.output
 
 
@@ -1298,7 +1328,7 @@ def test_desktop_mlflow_and_no_browser_prints_the_mlflow_url(run_start):
     result = run_start(
         "--desktop", "--mlflow", "--no-browser", env={"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"}
     )
-    assert "MLflow at http://localhost:5001" in result.output
+    assert "MLflow at https://localhost:5001" in result.output
 
 
 def test_a_first_run_with_mlflow_pulls_its_images_and_writes_where_traces_go(run_start):
@@ -1330,7 +1360,7 @@ def test_mlflow_that_was_never_pinned_is_pulled_rather_than_built(run_start):
 
 _PINNED_FOR_REVIEW = (
     f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
-    f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+    f"PROXY_IMAGE_NAME=mcfaddja/nl2sql-proxy\nPROXY_IMAGE_TAG={SHIPPED}\n"
     f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
 )
 
@@ -1339,17 +1369,17 @@ def test_load_golden_is_handed_to_launch_sh(run_start):
     result = run_start("--load-golden", env_file=_PINNED_FOR_REVIEW)
 
     assert result.returncode == 0
-    assert result.called("--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review")
+    assert result.called("--profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review")
     assert "Loading the golden pairs" in result.output
     assert "Fetching the images" not in result.output
-    assert pages(result) == ["http://localhost:8080"], "the review page is --review's, not this flag's"
+    assert pages(result) == ["https://localhost:8080"], "the review page is --review's, not this flag's"
 
 
 def test_the_review_image_is_pulled_rather_than_built_whenever_retrieval_is_on(run_start):
     """The loaders are in the review service's image -- the snippets' on
     every start, the golden pairs' with --load-golden -- and an unpinned one
     would be built here from source on first use."""
-    env_file = f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\nGUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
+    env_file = f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\nPROXY_IMAGE_NAME=mcfaddja/nl2sql-proxy\n"
     result = run_start(env_file=env_file)
 
     assert (
@@ -1366,9 +1396,8 @@ def test_the_review_image_is_pulled_rather_than_built_whenever_retrieval_is_on(r
 
 _PINNED_FOR_CURATION = (
     f"AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\nAGENT_IMAGE_TAG={SHIPPED}\n"
-    f"GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\nGUI_IMAGE_TAG={SHIPPED}\n"
+    f"PROXY_IMAGE_NAME=mcfaddja/nl2sql-proxy\nPROXY_IMAGE_TAG={SHIPPED}\n"
     f"REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\nREVIEW_IMAGE_TAG={SHIPPED}\n"
-    f"CURATE_GUI_IMAGE_NAME=mcfaddja/nl2sql-curate-gui\nCURATE_GUI_IMAGE_TAG={SHIPPED}\n"
 )
 
 
@@ -1377,28 +1406,21 @@ def test_curate_is_handed_to_both_scripts_and_opens_its_page_in_a_window(run_sta
 
     assert result.returncode == 0
     assert "Fetching the images" not in result.output
-    assert result.called("--profile feedback --profile review --profile curategui up -d curategui")
+    assert result.called("--profile review --profile curategui up -d curategui")
     assert "Waiting for the curation interface" in result.output
-    assert pages(result) == ["http://localhost:8080", "http://localhost:8083"]
+    assert pages(result) == ["https://localhost:8080", "https://localhost:8083"]
     assert [call for call in result.calls if call.startswith("window ")]
-    assert "==> Opening http://localhost:8083" in result.output
-
-
-def test_a_curation_page_that_was_never_pinned_is_pulled_rather_than_built(run_start):
-    result = run_start("--curate")
-    assert "the curation interface is not pinned, so it would be built here from source" in result.output
-    assert result.called(f"pull mcfaddja/nl2sql-curate-gui:{SHIPPED}")
-    assert result.env_file()["CURATE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-curate-gui"
+    assert "==> Opening https://localhost:8083" in result.output
 
 
 def test_a_curation_page_that_never_answers_does_not_take_the_stack_down(run_start):
     result = run_start("--curate", env_file=_PINNED_FOR_CURATION, env={"FAKE_GUI_DOWN": "1", "FAKE_GUI_PORT": "8083"})
 
     assert result.returncode == 0
-    assert "the curation interface never answered at http://localhost:8083." in result.output
-    assert "--profile feedback --profile review --profile curategui logs curategui" in result.output
+    assert "the curation interface never answered at https://localhost:8083." in result.output
+    assert "--profile review --profile curategui logs curategui" in result.output
     assert "Everything else is up; ./launch.sh --curate tries it again on its own." in result.output
-    assert pages(result) == ["http://localhost:8080"]
+    assert pages(result) == ["https://localhost:8080"]
 
 
 def test_a_machine_that_cannot_open_the_curation_page_still_says_where_it_is(run_start):
@@ -1410,19 +1432,28 @@ def test_a_machine_that_cannot_open_the_curation_page_still_says_where_it_is(run
 def test_no_browser_prints_the_curation_url(run_start):
     result = run_start("--curate", "--no-browser", env_file=_PINNED_FOR_CURATION)
     assert pages(result) == []
-    assert "Curation interface at http://localhost:8083" in result.output
+    assert "Curation interface at https://localhost:8083" in result.output
 
 
 def test_the_closing_lines_say_what_curation_is_for_and_how_to_stop_it(run_start):
     output = " ".join(run_start("--curate", env_file=_PINNED_FOR_CURATION).output.split())
-    assert "http://localhost:8083 write snippets, golden pairs and fixes, each run first" in output
-    assert "docker compose --profile feedback --profile review --profile curategui down and the curation page" in output
+    assert "https://localhost:8083 write snippets, golden pairs and fixes, each run first" in output
+    assert "docker compose --profile review --profile curategui down and the curation page" in output
 
 
 def test_desktop_and_curate_still_opens_the_curation_page(run_start):
     env = {"FAKE_UNAME_S": "Darwin", "FAKE_UNAME_M": "arm64"}
     result = run_start("--desktop", "--curate", env_file=_PINNED_FOR_CURATION, env=env)
-    assert pages(result) == ["http://localhost:8083"]
+    assert pages(result) == ["https://localhost:8083"]
     assert "write snippets, golden pairs and fixes, each run first" in result.output
     quiet = run_start("--desktop", "--curate", "--no-browser", env_file=_PINNED_FOR_CURATION, env=env)
-    assert "Curation interface at http://localhost:8083" in quiet.output
+    assert "Curation interface at https://localhost:8083" in quiet.output
+
+
+def test_plain_pages_are_waited_on_and_opened_over_http(run_start):
+    """GUI_TLS_ENABLED=false is for behind something that terminates TLS:
+    the pages are plain, and the addresses say so."""
+    result = run_start(env_file="IMAGE_NAME=x\nGUI_TLS_ENABLED=false\n")
+    assert result.returncode == 0
+    assert result.called("curl http://localhost:8080")
+    assert "Opening http://localhost:8080" in result.output

@@ -6,6 +6,13 @@ __pycache__
 *.pyc
 .DS_Store
 
+# The stack's passwords and tokens. No Dockerfile copies them, and none should
+# be sent to the daemon in a build context either: a context is uploaded
+# whole, and kept in its cache.
+.env
+.env.bak
+secrets
+
 # The GUIs' build inputs and outputs. node_modules alone is over four
 # thousand files and a hundred megabytes *each*, and every image installs
 # its own from the lockfile -- so sending them is a hundred megabytes
@@ -22,7 +29,19 @@ console/coverage
 curate/node_modules
 curate/dist
 curate/coverage
+auth/gui/node_modules
+auth/gui/dist
+auth/gui/coverage
+# The shared web package (6.2) installs nothing; should anyone run npm in it,
+# what that brings is not for the daemon either.
+web/node_modules
+web/dist
+web/coverage
 
 # The desktop client's build output: a jar of about ten megabytes, built from
 # the sources beside it.
 desktop/target/
+
+# The directory's seed files, which can hold passwords. Mounted into the
+# directory at run time; never part of any image.
+ldap/seed

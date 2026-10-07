@@ -114,3 +114,16 @@ describe("failures", () => {
     expect((failure as Error).message).toBe("cannot reach the review service: TypeError: Failed to fetch");
   });
 });
+
+describe("a session that ends", () => {
+  it("raises the unauthorized event on a 401, so the sign-in gate asks again", async () => {
+    const heard = vi.fn();
+    globalThis.addEventListener("nl2sql:unauthorized", heard);
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: "expired", message: "the session has expired" } }), { status: 401 }),
+    );
+    await expect(createClient({ fetch }).meta()).rejects.toMatchObject({ status: 401, code: "expired" });
+    globalThis.removeEventListener("nl2sql:unauthorized", heard);
+    expect(heard).toHaveBeenCalledOnce();
+  });
+});

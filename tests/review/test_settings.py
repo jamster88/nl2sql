@@ -8,13 +8,20 @@ overrides its own default with nothing.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
+from nl2sql_identity import pki
 
 from nl2sql_review import server
 from nl2sql_review.settings import SERVICE_HOSTNAME, SETTING_FIELDS, ReviewSettings
 from nl2sql_review.store import WRITER_ROLE
+from tests.route_table import flattened
 
 ENVIRONMENT = {
     "REVIEW_HOST": "127.0.0.1",
@@ -24,6 +31,8 @@ ENVIRONMENT = {
     "REVIEW_TLS_CERT_FILE": "/tls/c.crt",
     "REVIEW_TLS_KEY_FILE": "/tls/c.key",
     "REVIEW_TOKEN": "s3cret",
+    "REVIEW_TOKEN_NAME": "nightly-import",
+    "REVIEW_TOKEN_ROLES": "nl2sql_curators",
     "REVIEW_CORS_ORIGINS": "https://a.example, https://b.example",
     "FEEDBACK_DB_URL": "postgresql://u:p@host/db",
     "FEEDBACK_WRITER_PASSWORD": "wpw",
@@ -50,6 +59,11 @@ ENVIRONMENT = {
     "REVIEW_RELOAD_SNIPPETS": "false",
     "REVIEW_DOCS_ENABLED": "false",
     "REVIEW_LOG_LEVEL": "debug",
+    "AUTH_ENABLED": "false",
+    "AUTH_PUBLIC_KEY_FILE": "/keys/session.pub",
+    "AUTH_COOKIE_NAME": "sid",
+    "REVIEW_REVIEWER_ROLES": "nl2sql_admins",
+    "REVIEW_CURATOR_ROLES": "nl2sql_admins,nl2sql_curators",
 }
 
 
@@ -121,8 +135,9 @@ def test_a_certificate_needs_both_halves(tmp_path):
 
 
 def test_an_open_service_is_the_loudest_warning():
-    notes = ReviewSettings(tls_enabled=False).warnings()
-    assert any("REVIEW_TOKEN" in note and "golden questions" in note for note in notes)
+    notes = ReviewSettings(auth_enabled=False, tls_enabled=False).warnings()
+    assert any("OPEN" in note and "golden questions" in note for note in notes)
+    assert not any("OPEN" in note for note in ReviewSettings().warnings()), "sign-in is on by default"
 
 
 def test_a_claimed_certificate_that_is_not_there_is_reported():
@@ -167,7 +182,7 @@ def test_writing_snippets_without_loading_them_is_reported():
 def test_the_snippet_document_and_store_default_to_the_compose_layout():
     settings = ReviewSettings()
     assert str(settings.snippets_document_path) == "/app/context_questions/sql_snippets.md"
-    assert settings.snippets_db_url.endswith(":5438/nl2sql_snippets")
+    assert settings.snippets_db_url.endswith(":5435/nl2sql_snippets")
     assert (settings.snippets_reader_user, settings.snippets_reader_password) == ("snippets_reader",) * 2
 
 
@@ -236,11 +251,11 @@ def test_every_flag_reaches_its_setting(flags, field, expected):
 def test_build_returns_an_app_without_binding_a_socket():
     app, settings = server.build(["--no-tls", "--port", "9999"])
     assert settings.port == 9999
-    assert any(getattr(r, "path", None) == "/v1/meta" for r in app.routes)
+    assert any(getattr(r, "path", None) == "/v1/meta" for r in flattened(app.routes))
 
 
 def test_the_banner_says_what_is_on_and_what_is_open():
-    text = server.banner(ReviewSettings(tls_enabled=False))
+    text = server.banner(ReviewSettings(tls_enabled=False, auth_enabled=False))
     assert "auth           NONE" in text
     assert WRITER_ROLE in text
     assert "INSERT only" in text
@@ -275,9 +290,57 @@ def test_the_banner_redacts_every_url_shape(url, expected):
     assert expected in server.banner(ReviewSettings(feedback_db_url=url))
 
 
-def test_the_banner_names_the_certificate_it_will_present(tmp_path):
-    text = server.banner(ReviewSettings(tls_cert_file="/tls/server.crt"))
-    assert "/tls/server.crt (written by the agent API)" in text
+@pytest.mark.parametrize(
+    "auth_enabled,token,said",
+    [
+        (True, "", "sign-in"),
+        (True, "t", "sign-in, or the review token"),
+        (False, "t", "bearer token"),
+        (False, "", "NONE"),
+    ],
+)
+def test_the_banner_says_who_may_call(auth_enabled, token, said):
+    """Sign-in has been the default since 6.0; until 6.1 the banner said
+    NONE over a service that refused everyone not signed in."""
+    text = server.banner(ReviewSettings(tls_enabled=False, auth_enabled=auth_enabled, token=token))
+    assert f"  auth           {said}\n" in text + "\n"
+
+
+def _certificate(issuer: x509.Name, subject: x509.Name, key, signer, names=()):
+    builder = (
+        x509.CertificateBuilder().subject_name(subject).issuer_name(issuer).public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1))
+        .not_valid_after(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1))
+    )
+    if names:
+        builder = builder.add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
+    return builder.sign(signer, hashes.SHA256())
+
+
+def test_the_banner_names_the_certificate_the_pki_service_issued_it(tmp_path):
+    ca_cert, ca_key, _ = pki.ensure_ca(tmp_path / "ca")
+    identity = pki.parse_identity(f"review={tmp_path / 'review'}=localhost,nl2sql-review")
+    pki.ensure_identity(identity, ca_cert, ca_key)
+    text = server.banner(ReviewSettings(tls_cert_file=str(tmp_path / "review" / "server.crt")))
+    assert "  certificate    issued by the development CA, the review service's own, for localhost, nl2sql-review" in text
+
+
+def test_the_banner_tells_a_self_signed_certificate_from_another_cas(tmp_path):
+    key = ec.generate_private_key(ec.SECP256R1())
+    me = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "review.example.com")])
+    elsewhere = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Example CA")])
+    (tmp_path / "self.crt").write_bytes(_certificate(me, me, key, key).public_bytes(serialization.Encoding.PEM))
+    other = _certificate(elsewhere, me, key, ec.generate_private_key(ec.SECP256R1()), ["review.example.com"])
+    (tmp_path / "other.crt").write_bytes(other.public_bytes(serialization.Encoding.PEM))
+    assert server.describe_certificate(str(tmp_path / "self.crt")) == "self-signed, the review service's own, for no names"
+    assert server.describe_certificate(str(tmp_path / "other.crt")) == "CA-issued, the review service's own, for review.example.com"
+
+
+def test_the_banner_says_when_the_certificate_cannot_be_read(tmp_path):
+    (tmp_path / "garbage.crt").write_text("not a certificate")
+    assert server.describe_certificate("/tls/server.crt") == "/tls/server.crt (not readable)"
+    assert server.describe_certificate(str(tmp_path / "garbage.crt")).endswith("(not readable)")
 
 
 def test_print_settings_prints_and_stops(capsys):
@@ -397,6 +460,22 @@ def test_main_starts_the_server(monkeypatch, capsys):
     assert started["port"] == 9001
     assert started["ssl_certfile"] is None
     assert "schema: ready" in capsys.readouterr().out
+
+
+def test_main_runs_as_whoever_owns_the_documents_it_writes(monkeypatch, capsys):
+    """V6-28: started as root, it becomes the checkout's owner before it
+    reads or writes anything -- and says so."""
+    monkeypatch.setitem(__import__("sys").modules, "uvicorn", type("U", (), {"run": staticmethod(lambda app, **k: None)}))
+    monkeypatch.setattr(server, "prepare", lambda settings: [])
+    asked = []
+
+    def become(directory, *, fallback):
+        asked.append((directory, fallback))
+        return True
+
+    assert server.main(["--no-tls"], become=become) == 0
+    assert asked == [(str(ReviewSettings().document_path.parent), "nl2sql")]
+    assert "running as uid" in capsys.readouterr().out
 
 
 def test_main_hands_uvicorn_the_certificate_when_tls_is_on(monkeypatch, tmp_path):

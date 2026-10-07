@@ -106,10 +106,12 @@ from .state import (
     QueryResult,
     Shot,
     TraceEntry,
+    attempt_reset,
     new_state,
 )
 from .tools import TableSelection, build_tools
 from .validate import validate as validate_sql_statically
+from nl2sql_common.errors import DATABASE_ERRORS, Invalid, MODEL_ERRORS
 
 ProgressFn = Callable[[str, str], None]
 
@@ -140,6 +142,16 @@ MAX_NARRATION_RETRIES = 1
 _DETAIL = "_detail"
 _MODEL_CALLS = "_model_calls"
 _ROUTE = "_route"
+
+
+def _skipped(error: str) -> str:
+    """What a retriever's progress line says when it brought nothing back:
+    that it is switched off, or that its store did not answer -- never the
+    driver's own words, which name hosts and ports and stream to whoever
+    asked. Those go to `retrieval_errors`, which the API shows an operator
+    (V6-32)."""
+    return "skipped: disabled" if error.endswith("disabled") else "skipped: unavailable"
+
 
 #: A short human label per node, for anything that shows progress to a
 #: person: the CLI's stderr lines and the REST server's event stream both
@@ -389,9 +401,35 @@ class Nl2SqlAgent:
                         min_score=self.settings.literal_min_score,
                         database=self.db,
                     )
-                except Exception:
+                except DATABASE_ERRORS:
                     self._literal_matcher = None
             return self._literal_matcher
+
+    def reload(self) -> list[str]:
+        """Forget what was read once and kept, so it is read again (V6-33).
+
+        Four things are read on first use and held for the process: the
+        literal catalog, the label map and fiscal calendar, the foreign keys,
+        and the list of knowledge collections. Each describes the retail
+        database or the knowledge store, which change when an operator
+        changes them -- not when a reviewer promotes a pair or a fix, which
+        are read from their stores on every question. Says which were held.
+        """
+        dropped = []
+        with self._literal_lock:
+            if self._literal_catalog_built:
+                dropped.append("literals")
+            self._literal_catalog_built = False
+            self._literal_matcher = None
+        with self._contract_lock:
+            if self._contract is not None:
+                dropped.append("contract")
+            self._contract = None
+        for name, part in (("schema_edges", self.schema_retriever), ("knowledge_collections", self.knowledge_base)):
+            forget = getattr(part, "forget", None)
+            if forget is not None and forget():
+                dropped.append(name)
+        return dropped
 
     def _contract_resources(self) -> ContractResources:
         """The label map and the fiscal calendar, read once on first use.
@@ -588,7 +626,7 @@ class Nl2SqlAgent:
             period=update.pop("period", ""),
         )
         update["answer_contract"] = contract
-        update[_MODEL_CALLS] = 0 if update.get("retrieval_errors") else 1
+        update[_MODEL_CALLS] = 0 if update.get("node_errors") else 1
         update[_DETAIL] = (
             f"{update['verdict']} / {update['intent']}; "
             f"contract: {answer_contract.describe(contract)}"
@@ -658,7 +696,7 @@ class Nl2SqlAgent:
                 selection = self.llm.with_structured_output(TableSelection).invoke(messages)
                 tracing.finish_model_span(span, selection)
             tables = [t for t in selection.tables if t in known]
-        except Exception as exc:
+        except MODEL_ERRORS as exc:
             return {"schema_tables": [], "retrieval_errors": {"schema": str(exc)}}
         return {
             "schema_tables": tables,
@@ -673,7 +711,7 @@ class Nl2SqlAgent:
             return {"literal_map": [], _DETAIL: "disabled"}
         try:
             matches = matcher.match(state["question"])
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             return {"literal_map": [], "retrieval_errors": {"literals": str(exc)}}
         return {
             "literal_map": matches,
@@ -688,7 +726,7 @@ class Nl2SqlAgent:
                 "knowledge_tables": [],
                 "knowledge_chunks": [],
                 "retrieval_errors": {"knowledge": retrieved["error"]},
-                _DETAIL: f"skipped: {retrieved['error']}",
+                _DETAIL: _skipped(retrieved["error"]),
             }
         chunks = retrieved["chunks"]
         summary = ", ".join(
@@ -709,7 +747,7 @@ class Nl2SqlAgent:
                 "example_tables": [],
                 "example_pairs": [],
                 "retrieval_errors": {"examples": retrieved["error"]},
-                _DETAIL: f"skipped: {retrieved['error']}",
+                _DETAIL: _skipped(retrieved["error"]),
             }
         pairs = retrieved["pairs"]
         return {
@@ -727,7 +765,7 @@ class Nl2SqlAgent:
                 "snippets": [],
                 "snippet_hits": [],
                 "retrieval_errors": {"snippets": retrieved["error"]},
-                _DETAIL: f"skipped: {retrieved['error']}",
+                _DETAIL: _skipped(retrieved["error"]),
             }
         update: dict[str, Any] = {
             "snippets": retrieved["snippets"],
@@ -870,7 +908,7 @@ class Nl2SqlAgent:
         aggregate outside GROUP BY; the planner sees all three, in
         milliseconds, and its message goes to the Repair Agent verbatim.
         """
-        cost, error = self.db.explain_plan(state.get("sql", ""))
+        cost, error = self.db.explain_plan(state.get("sql", ""), principal=state.get("principal"))
         if error:
             return {
                 "issues": [Issue(source=PLANNER, message=error)],
@@ -892,7 +930,9 @@ class Nl2SqlAgent:
         """Run it: reader role, READ ONLY, statement timeout, row cap."""
         try:
             raw = self.db.run_select(state["sql"], principal=state.get("principal"))
-        except Exception as exc:
+        # What the database refused, and what the executor's own guard did
+        # (`UnsafeQueryError`): both are feedback for the Repair Agent.
+        except DATABASE_ERRORS + (Invalid,) as exc:
             message = str(getattr(exc, "orig", exc)).strip()
             return {
                 "issues": [Issue(source=RUNTIME, message=message)],
@@ -1015,6 +1055,11 @@ class Nl2SqlAgent:
         # do about it.
         history[-1] = Attempt(sql=history[-1].sql, issues=hinted)
         update = {
+            # The attempt that failed is over: its rows, its narration, its
+            # audit and the narrator's one rewrite describe a query that is
+            # about to be replaced (state.LIFETIMES). Without this the next
+            # narration read the last audit and spent its rewrite on it.
+            **attempt_reset(),
             "issues": hinted,
             "attempt_history": history,
             "generation_rung": next_rung,
@@ -1084,8 +1129,10 @@ class Nl2SqlAgent:
                 rejected=rejected,
                 assumptions=state.get("assumptions", []),
             )
-        except Exception as exc:
-            failed = {"claims": [], "retrieval_errors": {"narrator": str(exc)}, _DETAIL: str(exc)}
+        # The rows are already in hand; whatever the narrator does wrong costs
+        # the narrative and is said in node_errors, never the answer.
+        except Exception as exc:  # noqa: BLE001 - a narrator failure costs the narrative, not the rows
+            failed = {"claims": [], "node_errors": {"narrator": str(exc)}, _DETAIL: f"failed: {type(exc).__name__}"}
             _note_route(failed, routed)
             return failed
         update: dict[str, Any] = {"claims": claims, _MODEL_CALLS: 1}

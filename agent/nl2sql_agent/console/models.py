@@ -5,6 +5,8 @@ do, and the agent's vocabulary is kept -- `static`, `planner` and `runtime`
 are the names the pipeline gives its gates, and a person reading a verdict
 here and a trace from the agent should not have to translate between them.
 
+Every model is the API's `Wire`, which forbids a field it does not declare.
+
 `Health`, `Check`, `Readiness` and the error envelope are the API's own,
 re-exported rather than redefined: a client that already handles the agent's
 errors handles these.
@@ -14,24 +16,20 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
-from ..api.models import ApiError, Check, Health, Readiness
+from nl2sql_common.envelope import Wire
 from .settings import MAX_SQL_LENGTH
 
 __all__ = [
     "AgentVerdict",
-    "ApiError",
-    "Check",
     "ColumnModel",
     "ConsoleLimits",
     "ConsoleMeta",
-    "Health",
     "IssueModel",
     "PromptModel",
     "QueryRequest",
     "QueryResult",
-    "Readiness",
     "ResultColumn",
     "SchemaModel",
     "TableModel",
@@ -41,7 +39,7 @@ Mode = Literal["run", "plan", "analyze"]
 Stage = Literal["static", "planner", "runtime"]
 
 
-class ConsoleLimits(BaseModel):
+class ConsoleLimits(Wire):
     """The agent's limits, which every query here runs under, and the console's own."""
 
     statement_timeout_ms: int
@@ -55,7 +53,7 @@ class ConsoleLimits(BaseModel):
     max_sql_length: int
 
 
-class ConsoleMeta(BaseModel):
+class ConsoleMeta(Wire):
     service: str = "nl2sql-console"
     version: str
     database: str
@@ -67,19 +65,21 @@ class ConsoleMeta(BaseModel):
     db_schema: str
     tables: int
     limits: ConsoleLimits
-    authentication: Literal["bearer", "none"]
+    authentication: Literal["bearer", "none", "session"]
+    #: The role a query runs as: a signed-in person's own, or `role` above.
+    runs_as: str
     tls: dict[str, Any]
     warnings: list[str] = Field(default_factory=list)
 
 
-class ColumnModel(BaseModel):
+class ColumnModel(Wire):
     name: str
     data_type: str
     not_null: bool
     comment: str | None
 
 
-class TableModel(BaseModel):
+class TableModel(Wire):
     """A table as the agent's introspection reads it."""
 
     name: str
@@ -89,12 +89,12 @@ class TableModel(BaseModel):
     constraints: list[str]
 
 
-class SchemaModel(BaseModel):
+class SchemaModel(Wire):
     db_schema: str
     tables: list[TableModel]
 
 
-class PromptModel(BaseModel):
+class PromptModel(Wire):
     """The block of the agent's prompt that describes one table."""
 
     table: str
@@ -102,7 +102,7 @@ class PromptModel(BaseModel):
     text: str
 
 
-class QueryRequest(BaseModel):
+class QueryRequest(Wire):
     model_config = ConfigDict(
         extra="forbid",
         json_schema_extra={
@@ -116,12 +116,12 @@ class QueryRequest(BaseModel):
     mode: Mode = "run"
 
 
-class IssueModel(BaseModel):
+class IssueModel(Wire):
     stage: Stage
     message: str
 
 
-class AgentVerdict(BaseModel):
+class AgentVerdict(Wire):
     """What the agent would have done with this query."""
 
     accepted: bool
@@ -131,12 +131,12 @@ class AgentVerdict(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-class ResultColumn(BaseModel):
+class ResultColumn(Wire):
     name: str
     data_type: str
 
 
-class QueryResult(BaseModel):
+class QueryResult(Wire):
     sql: str
     mode: Mode
     #: False when a gate refused it, or when the mode was `plan`.

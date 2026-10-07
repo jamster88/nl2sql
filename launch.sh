@@ -8,7 +8,7 @@
 # Or, in a browser:
 #
 #     ./launch.sh --gui
-#     open http://localhost:8080
+#     open https://localhost:8080
 #
 # Or, for something else to talk to -- another GUI, a service, curl:
 #
@@ -19,20 +19,25 @@
 # database queried as the agent sees it:
 #
 #     ./launch.sh --console
-#     open http://localhost:8082
+#     open https://localhost:8082
 #
 # Or, to see what the agent did with a question -- every agent and every
 # model call it made, traced in MLflow:
 #
 #     ./launch.sh --mlflow
-#     open http://localhost:5001
+#     open https://localhost:5001
 #
 # Or, to write what the agent learns from directly -- SQL snippets, golden
 # pairs, corrections and completions, each run against the retail database
 # before it is saved:
 #
 #     ./launch.sh --curate
-#     open http://localhost:8083
+#     open https://localhost:8083
+#
+# Every page and port asks who you are: a person signs in with the password
+# the directory holds, and the groups they are in decide what they may open.
+# The directory and the auth service start with the API; --no-auth leaves
+# them down and every page open, as before sign-in.
 #
 # This is the every-time script. setup.sh is the first-time one: it pulls the
 # images and writes the .env that pins them. launch.sh assumes that has already
@@ -64,6 +69,7 @@ WITH_MLFLOW=0
 WITH_CURATE=0
 WITH_DESKTOP=0
 WITH_LOAD_GOLDEN=0
+NO_AUTH=0
 RESTART=0
 QUIET=0
 
@@ -81,30 +87,34 @@ Usage: ./launch.sh [options]
       --api        Also start the REST API, so a GUI (or curl, or anything
                    that speaks HTTPS) can ask questions instead of a terminal
       --gui        Also start the web interface, and the API it talks to
-      --feedback   Also start the staging database, so verdicts given in the
-                   web interface are kept instead of staying in the browser
+      --feedback   The same as --api since 6.3: the runtime stores start with
+                   the databases, so a verdict given in the web interface is
+                   kept whenever the API is up
       --review     Also start the review interface, where staged feedback is
-                   turned into golden questions, corrections and completions,
-                   and the two stores those fixes are kept in (implies
-                   --feedback)
+                   turned into golden questions, corrections and completions
+                   (implies --feedback)
       --console    Also start the SQL console, where the retail database is
                    queried as the agent's read-only role and through its
                    gates, to work out why an answer was wrong (implies --api)
       --mlflow     Also start MLflow, where every question the agent answers
                    is traced -- a span per agent and per model call -- and
-                   verdicts are recorded on the traces they judge
+                   verdicts are recorded on the traces they judge (implies
+                   --api, which brings up the sign-in its front door asks)
       --curate     Also start the curation interface, where SQL snippets,
                    golden pairs, corrections and completions are written
                    directly -- each run against the retail database before
                    it is saved -- and the review service behind it (implies
                    --feedback)
-      --desktop    Also build the desktop client and copy the API's
+      --desktop    Also build the desktop client and copy the stack's CA
                    certificate out, so the client can run on this machine
       --load-golden
                    Load context_questions/translated_questions.md into the
                    context store and its vectors before anything is asked, so
                    the worked examples are this checkout's golden set rather
                    than the one the images were published with
+      --no-auth    Start without sign-in, for this run: no directory, no auth
+                   service, and every page and port open to whoever can
+                   reach it. AUTH_ENABLED=false in .env makes it the default
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -120,20 +130,21 @@ while [[ $# -gt 0 ]]; do
         # The GUI is nothing without the API behind it, so asking for one
         # asks for both rather than starting a page that cannot load.
         --gui) WITH_GUI=1; WITH_API=1; shift ;;
-        # Capture needs somewhere to put a verdict, so this is the staging
-        # database plus the API that writes to it.
+        # Capture needs somewhere to put a verdict -- the runtime stores, which
+        # always start -- and the API that writes to it.
         --feedback) WITH_FEEDBACK=1; WITH_API=1; shift ;;
         # The review interface is nothing without the service behind it, and
-        # the service is nothing without the database in front of it.
+        # the service is nothing without the verdicts in front of it.
         --review) WITH_REVIEW=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
-        # The console presents the certificate the API writes, so the API is
-        # what it cannot start without -- and what it is troubleshooting.
+        # The console checks sign-ins with the auth service, which starts with
+        # the API -- and the API is what it is troubleshooting.
         --console) WITH_CONSOLE=1; WITH_API=1; shift ;;
-        # Not --api: a question asked from a terminal is traced as well.
-        --mlflow) WITH_MLFLOW=1; shift ;;
-        # The review service is its backend, and that needs the staging
-        # database and the certificate the API writes -- what --review needs,
-        # without the review interface itself.
+        # A question asked from a terminal is traced as well, so MLflow does
+        # not need the API to be useful -- but its front door checks sign-ins
+        # with the auth service, which starts with the API.
+        --mlflow) WITH_MLFLOW=1; WITH_API=1; shift ;;
+        # The review service is its backend, and that needs the verdicts and
+        # sign-in -- what --review needs, without the review interface itself.
         --curate) WITH_CURATE=1; WITH_FEEDBACK=1; WITH_API=1; shift ;;
         # The desktop client talks to the API directly rather than through a
         # proxy of its own, so that is the one thing it cannot do without.
@@ -141,12 +152,20 @@ while [[ $# -gt 0 ]]; do
         # Nothing else started for it: the loaders run once, in a container
         # of their own, against the stores started below.
         --load-golden) WITH_LOAD_GOLDEN=1; shift ;;
+        --no-auth) NO_AUTH=1; shift ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) usage >&2; die "unknown option: $1" ;;
     esac
 done
+
+# Exported, because compose reads the shell before .env: every service and
+# interface started below is told sign-in is off, not only the ones this
+# script asks about.
+if [[ $NO_AUTH -eq 1 ]]; then
+    export AUTH_ENABLED=false
+fi
 
 # --- Prerequisites ---------------------------------------------------------
 command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
@@ -160,8 +179,108 @@ if [[ ! -f .env ]]; then
     exit $?
 fi
 
-SERVICES=(postgres)
-[[ $WITH_RAG -eq 1 ]] && SERVICES+=(vectordb chunkdb snippetsdb)
+# The retail database and the runtime stores always: the agent's snippets
+# and every verdict are in the stores. The knowledge stores with retrieval.
+SERVICES=(postgres stores)
+[[ $WITH_RAG -eq 1 ]] && SERVICES+=(vectordb chunkdb)
+
+compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
+    local value="${!1:-}"
+    if [[ -z "$value" && -f .env ]]; then
+        value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
+    fi
+    printf '%s' "${value:-$2}"
+}
+
+# A container of this stack by the name it usually has, `nl2sql-api`, which
+# is its name here unless NL2SQL_INSTANCE gives the stack another -- the
+# acceptance tier's, which runs beside this one as `<instance>-api`.
+in_instance() {  # in_instance nl2sql-NAME -- that container's name in this stack
+    printf '%s-%s' "$(compose_env NL2SQL_INSTANCE nl2sql)" "${1#nl2sql-}"
+}
+
+# --- Passwords and tokens --------------------------------------------------------
+# Every one a file in secrets/ (6.3, V6-38), mounted by compose into the
+# services that need it -- never an environment variable, which `docker
+# inspect` shows to anyone who can run it. setup.sh writes them; these are
+# the ones it would, for a checkout set up before it did. Generated once and
+# never replaced: a store keeps the password it was given. A .env from before
+# 6.3 held them, and each is moved from there once and its line taken out.
+# Hex, so each sits in a URL as it is; 24 bytes from /dev/urandom.
+SECRETS_DIR="secrets"
+SECRET_NAMES=(ldap_admin_password ldap_service_password auth_rolesync_password
+    postgres_password postgres_reader_password context_db_password vector_db_password
+    stores_db_password snippets_db_password snippets_reader_password feedback_db_password
+    feedback_writer_password corrections_db_password completions_db_password mlflow_db_password)
+# Empty unless made or given: the service tokens (setup.sh --tokens), and a
+# replica's bind password.
+OPTIONAL_NAMES=(api_token review_token console_token ldap_upstream_bind_password)
+
+new_secret() {
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+secret_value() {  # secret_value NAME -- what secrets/NAME holds, or nothing
+    cat "$SECRETS_DIR/$1" 2>/dev/null || true
+}
+
+# The directory is its owner's alone; the files in it are readable, because
+# the account each container runs as is not the person who owns this
+# checkout, and on Linux a bind-mounted file keeps the mode it has here.
+ensure_secret_files() {  # ensure_secret_files -- print how many were made new
+    local name key value made=0
+    mkdir -p "$SECRETS_DIR"
+    chmod 700 "$SECRETS_DIR"
+    for name in "${SECRET_NAMES[@]}" "${OPTIONAL_NAMES[@]}"; do
+        if [[ ! -s "$SECRETS_DIR/$name" ]]; then
+            key=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')
+            value="$(compose_env "$key" "")"
+            if [[ -z "$value" ]]; then
+                case " ${SECRET_NAMES[*]} " in
+                    *" $name "*) value="$(new_secret)"; made=$((made + 1)) ;;
+                esac
+            fi
+            (umask 022 && printf '%s' "$value" > "$SECRETS_DIR/$name")
+        fi
+    done
+    # Out of .env, where a password was until 6.3: the file is the one copy.
+    if grep -qE '^[A-Z_]*(PASSWORD|_TOKEN)=' .env 2>/dev/null; then
+        grep -vE '^(LDAP_ADMIN|LDAP_SERVICE|AUTH_ROLESYNC|POSTGRES|POSTGRES_READER|CONTEXT_DB|VECTOR_DB|STORES_DB|SNIPPETS_DB|SNIPPETS_READER|FEEDBACK_DB|FEEDBACK_WRITER|CORRECTIONS_DB|COMPLETIONS_DB|MLFLOW_DB|LDAP_UPSTREAM_BIND)_PASSWORD=|^(API|REVIEW|CONSOLE)_TOKEN=' \
+            .env > .env.moving || true
+        cat .env.moving > .env
+        rm -f .env.moving
+    fi
+    chmod 600 .env
+    printf '%s' "$made"
+}
+
+generated=$(ensure_secret_files)
+if [[ "$generated" -gt 0 ]]; then
+    step "Generated $generated password(s) into $SECRETS_DIR/, which only you can open"
+fi
+
+# --- The stores' containers from before 6.3 ---------------------------------
+# Until 6.3 the feedback, corrections, completions and snippet stores were
+# containers of their own, and a stack upgraded from then still has them
+# running: holding the port the runtime stores publish now (5435 was the
+# feedback store's), and with their data directories open, which the move
+# below copies. Each is stopped -- cleanly, so what it holds is whole -- and
+# removed; its volume is kept, for the move and until you remove it.
+retire_legacy_stores() {
+    local store container retired=()
+    for store in feedbackdb correctionsdb completionsdb snippetsdb; do
+        container=$(in_instance "nl2sql-$store")
+        docker container inspect "$container" >/dev/null 2>&1 || continue
+        docker stop -t 60 "$container" >/dev/null 2>&1 || true
+        docker rm "$container" >/dev/null 2>&1 || true
+        retired+=("$store")
+    done
+    if [[ ${#retired[@]} -gt 0 ]]; then
+        step "Retiring the stores' containers from before 6.3: ${retired[*]}"
+        info "stopped and removed; their volumes are kept, and what they hold is moved into the runtime stores"
+    fi
+}
+retire_legacy_stores
 
 # --- Start -----------------------------------------------------------------
 step "Starting ${#SERVICES[@]} service(s): ${SERVICES[*]}"
@@ -172,45 +291,14 @@ else
 fi
 
 wait_healthy() {
-    local container="$1" status=""
+    local container status=""
+    container=$(in_instance "$1")
     for _ in $(seq 1 60); do
         status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
         sleep 2
     done
-    die "$container did not become healthy (last status: ${status:-unknown}). Check: docker compose logs ${container#nl2sql-}"
-}
-
-# --- Read-only role --------------------------------------------------------
-# The agent connects as a role that can SELECT and nothing else, not as the
-# owner that loaded the data. A volume created from an image that predates
-# that role keeps whatever roles it had, so the role is (re)created on every
-# start; docker/reader_role.sql is idempotent. Local connections inside the
-# container are trusted, which is why no superuser password is needed here.
-compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shell, then .env
-    local value="${!1:-}"
-    if [[ -z "$value" && -f .env ]]; then
-        value=$(grep -E "^$1=" .env | tail -1 | cut -d= -f2-)
-    fi
-    printf '%s' "${value:-$2}"
-}
-
-ensure_extensions() {
-    docker compose exec -T postgres psql -U postgres -q \
-        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
-        -v ON_ERROR_STOP=1 \
-        -c "SET client_min_messages = warning" \
-        -c "CREATE EXTENSION IF NOT EXISTS pg_trgm" >/dev/null 2>&1
-}
-
-ensure_reader_role() {
-    docker compose exec -T postgres psql -U postgres -q \
-        -d "$(compose_env POSTGRES_DB nl2sql_retail)" \
-        -v ON_ERROR_STOP=1 \
-        -v reader="$(compose_env POSTGRES_READER_USER nl2sql_reader)" \
-        -v reader_password="$(compose_env POSTGRES_READER_PASSWORD nl2sql_reader)" \
-        -v owner="$(compose_env POSTGRES_USER nl2sql)" \
-        -f - < docker/reader_role.sql >/dev/null
+    die "$1 did not become healthy (last status: ${status:-unknown}). Check: docker compose logs ${1#nl2sql-}"
 }
 
 step "Waiting for health checks"
@@ -221,17 +309,113 @@ if [[ $WITH_RAG -eq 1 ]]; then
     info "nl2sql-vectordb is healthy"
     wait_healthy nl2sql-chunkdb
     info "nl2sql-chunkdb is healthy"
-    wait_healthy nl2sql-snippetsdb
-    info "nl2sql-snippetsdb is healthy"
+fi
+wait_healthy nl2sql-stores
+info "nl2sql-stores is healthy"
+
+# Published beyond this machine is a choice (DB_BIND_ADDRESS), and one worth
+# saying out loud: every store's port is then the network's, and a password
+# left at the value every copy of this repository shares is no password.
+db_bind=$(compose_env DB_BIND_ADDRESS 127.0.0.1)
+if [[ ! "$db_bind" =~ ^(127\.0\.0\.1|localhost|::1)$ ]]; then
+    warn "the databases are published on $db_bind (DB_BIND_ADDRESS), not only on this machine."
+    for default_pair in postgres_password=nl2sql postgres_reader_password=nl2sql_reader \
+        context_db_password=ragproc vector_db_password=ragproc snippets_db_password=snippets \
+        feedback_db_password=feedback corrections_db_password=corrections \
+        completions_db_password=completions; do
+        if [[ "$(secret_value "${default_pair%%=*}")" == "${default_pair#*=}" ]]; then
+            warn "$SECRETS_DIR/${default_pair%%=*} is still the default every copy of this repository knows."
+        fi
+    done
 fi
 
-step "Making sure the agent's read-only role exists"
-ensure_extensions || warn "could not create pg_trgm; literal matching falls back to difflib."
-if ensure_reader_role; then
-    info "role $(compose_env POSTGRES_READER_USER nl2sql_reader) can read every table and write none"
+# --- The databases, prepared --------------------------------------------------
+# The dbprep service makes each database what .env and secrets/ say, over the
+# database's own socket (V6-41): the agent's read-only role and its limits,
+# pg_trgm, the roles sign-in hangs from and its lines in pg_hba.conf -- or,
+# with sign-in off, their removal, which is all turning it off takes -- the
+# runtime stores' databases and owners, and every store's password. Every
+# service that connects to a database waits for it anyway; this runs it
+# first so that what it says, and why it failed if it did, is said here.
+# Nothing in this script runs SQL itself.
+#
+# Sign-in is on unless AUTH_ENABLED says otherwise, in the shell or .env.
+# The directory and the auth service start with the API: a start for the
+# terminal alone has nobody to sign in.
+signin_on() {  # signin_on -- unless AUTH_ENABLED says otherwise, in the shell or .env
+    case "$(compose_env AUTH_ENABLED true)" in
+        0|false|no|off|FALSE|NO|OFF) return 1 ;;
+    esac
+}
+
+WITH_SIGNIN=0
+if [[ $WITH_API -eq 1 ]] && signin_on; then
+    WITH_SIGNIN=1
+fi
+
+# The one-shot's lines, as it said them: STEP, INFO and WARN are this
+# script's step, info and warn; STATE is for the script to read.
+relay() {  # relay < LINES
+    local kind text
+    while IFS=' ' read -r kind text; do
+        case "$kind" in
+            STEP) step "$text" ;;
+            INFO) info "$text" ;;
+            WARN) warn "$text" ;;
+        esac
+    done
+}
+
+dbprep() {  # dbprep [ARGS...] -- the one-shot, with these arguments for its command
+    docker compose run --rm --no-deps -T dbprep "$@" 2>&1 | tr -d '\r'
+}
+
+step "Preparing the databases"
+if prepared=$(dbprep); then
+    printf '%s\n' "$prepared" | relay
 else
-    warn "could not create the agent's read-only role in the retail database."
-    warn "The agent will fail to connect. Check: docker compose logs postgres"
+    warn "the databases could not be prepared, so what connects to them will not start. It said:"
+    while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$prepared" | tail -3)
+fi
+
+# Sign-in off is said out loud: every page and port is then open.
+if ! signin_on; then
+    step "Sign-in is off (AUTH_ENABLED=false)"
+    info "every page and port is open to whoever can reach it"
+fi
+
+# --- The runtime stores, from before 6.3 -------------------------------------
+# Until 6.3 the feedback, corrections and completions stores were servers of
+# their own, each on a volume of its own. What people typed into them is
+# moved into its database in the one server now, once, by the stores' own
+# image with the old volume mounted read-only (docker/migrate_store.sh). A
+# database already in use is not merged into; the old volume is kept either
+# way, and said so. The snippets' old volume needs nothing moving: its store
+# is loaded from its document below.
+legacy_volume() {  # legacy_volume STORE -- that store's volume before 6.3
+    printf '%s_%sdata' "$(compose_env NL2SQL_INSTANCE nl2sql)" "$1"
+}
+
+legacy=()
+for store in feedback corrections completions snippets; do
+    docker volume inspect "$(legacy_volume "$store")" >/dev/null 2>&1 && legacy+=("$(legacy_volume "$store")")
+done
+for store in feedback corrections completions; do
+    volume=$(legacy_volume "$store")
+    docker volume inspect "$volume" >/dev/null 2>&1 || continue
+    key=$(printf '%s' "$store" | tr '[:lower:]' '[:upper:]')
+    if moved=$(docker compose --profile migrate run --rm --no-deps -T -v "$volume:/legacy:ro" \
+        -e NL2SQL_DB="$(compose_env "${key}_DB_NAME" "nl2sql_$store")" \
+        -e NL2SQL_OWNER="$(compose_env "${key}_DB_USER" "$store")" \
+        -e NL2SQL_VOLUME="$volume" storesmigrate 2>&1); then
+        while IFS= read -r line; do info "${line#migrate_store: }"; done < <(printf '%s\n' "$moved" | grep 'migrate_store: moved' || true)
+    else
+        warn "the $store store from before 6.3 was not moved into the runtime stores. It said:"
+        while IFS= read -r said; do warn "  ${said#migrate_store: }"; done < <(printf '%s\n' "$moved" | tail -3)
+    fi
+done
+if [[ ${#legacy[@]} -gt 0 ]]; then
+    info "the stores' volumes from before 6.3 are kept; once you have looked, docker volume rm ${legacy[*]}"
 fi
 
 # --- The golden pairs ------------------------------------------------------
@@ -247,11 +431,14 @@ fi
 GOLDEN_DOCUMENT="context_questions/translated_questions.md"
 
 load_golden() {  # load_golden -- what the loaders said; fails when either did
-    docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+    # As the image's account, the stores' URLs from the environment the
+    # loaders read them from (CHUNK_DB_URL, VECTOR_DB_URL), never a command
+    # line (V6-31, V6-27).
+    docker compose --profile review run --rm --no-deps -T --user 10001:10001 \
+        --entrypoint sh review -c '
         cd "$REVIEW_RAG_DIR" &&
-        python 05_load_golden_pairs.py "$REVIEW_DOCUMENT" --db-url "$CHUNK_DB_URL" &&
-        python 06_embed_golden_pairs.py --chunk-db-url "$CHUNK_DB_URL" \
-            --vector-db-url "$VECTOR_DB_URL" --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
+        python 05_load_golden_pairs.py "$REVIEW_DOCUMENT" &&
+        python 06_embed_golden_pairs.py --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
 }
 
 if [[ $WITH_LOAD_GOLDEN -eq 1 && $WITH_RAG -eq 0 ]]; then
@@ -269,32 +456,29 @@ fi
 
 # --- The SQL snippets ------------------------------------------------------
 # The one store this script fills. The golden pairs ship inside published
-# images; the snippets do not -- the store is a stock pgvector, built from
+# images; the snippets do not -- their database is built from
 # context_questions/sql_snippets.md by rag/07_load_snippets.py -- so a fresh
-# volume would hold none, and a document edited since the last load would be
+# one would hold none, and a document edited since the last load would be
 # answered from what the store held then. Every start compares the two: the
-# hash the last complete load recorded, against the document's own, both
-# taken inside the store's container so this needs nothing on the host. They
-# differ, and the loader runs, in the review service's image -- the one that
-# carries it -- and embeds only what changed.
+# hash the last complete load recorded, against the document's own, which
+# the dbprep service reads from this checkout. They differ, and the loader
+# runs, in the review service's image -- the one that carries it -- and
+# embeds only what changed.
 SNIPPETS_DOCUMENT="context_questions/sql_snippets.md"
 
-snippets_query() {  # snippets_query SQL -- one value out of the snippet store, or nothing
-    docker compose exec -T snippetsdb psql -U "$(compose_env SNIPPETS_DB_USER snippets)" \
-        -d "$(compose_env SNIPPETS_DB_NAME nl2sql_snippets)" -tAc "$1" 2>/dev/null | tr -d '[:space:]' || true
-}
-
 load_snippets() {  # load_snippets -- what the loader said; fails when it did
-    docker compose --profile feedback --profile review run --rm --no-deps -T --entrypoint sh review -c '
+    # As the image's account, not root (V6-31); the store's URL, password and
+    # all, from the environment the loader reads it from, never its command
+    # line, which `ps` shows to anyone on the host.
+    docker compose --profile review run --rm --no-deps -T --user 10001:10001 \
+        --entrypoint sh review -c '
         cd "$REVIEW_RAG_DIR" &&
-        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" --db-url "$SNIPPETS_DB_URL" \
+        python 07_load_snippets.py "$REVIEW_SNIPPETS_DOCUMENT" \
             --ollama-url "$OLLAMA_URL" --model "$EMBED_MODEL"' 2>&1
 }
 
 if [[ $WITH_RAG -eq 1 && -f "$SNIPPETS_DOCUMENT" ]]; then
-    in_document=$(docker compose exec -T snippetsdb sha256sum < "$SNIPPETS_DOCUMENT" 2>/dev/null | cut -d' ' -f1 || true)
-    in_store=$(snippets_query "SELECT document_hash FROM sql_snippet_source")
-    if [[ -n "$in_document" && "$in_document" != "$in_store" ]]; then
+    if [[ "$(dbprep python -m nl2sql_ops snippets | tail -1)" == behind ]]; then
         step "Loading the SQL snippets from $SNIPPETS_DOCUMENT"
         info "the snippet store is behind the document; the agent is shown what the store holds"
         if loaded=$(load_snippets); then
@@ -309,112 +493,15 @@ if [[ $WITH_RAG -eq 1 && -f "$SNIPPETS_DOCUMENT" ]]; then
     fi
 fi
 
-# --- Contents --------------------------------------------------------------
+# --- Contents ---------------------------------------------------------------
 # A healthy container is not the same as a populated one. A volume created
 # before the image shipped its data comes up healthy and empty, and the only
-# symptom is the agent quietly answering without retrieval.
-query() {  # query <service> <db-var> <default-db> <sql>
-    docker compose exec -T "$1" psql -U "${RAG_DB_USER:-ragproc}" -d "$3" -tAc "$4" 2>/dev/null |
-        tr -d '[:space:]' || true
-}
-
-step "Checking what is actually in each database"
-
-rows=$(docker compose exec -T postgres psql -U "${POSTGRES_USER:-nl2sql}" \
-    -d "${POSTGRES_DB:-nl2sql_retail}" -tAc \
-    "SELECT count(*) FROM fact_pos_retail_sales" 2>/dev/null | tr -d '[:space:]' || true)
-if [[ -n "$rows" && "$rows" != "0" ]]; then
-    info "retail dataset: $rows sales rows"
-else
-    warn "the retail database is up but has no sales rows in it."
-    warn "The agent will connect and then answer nothing. Try: ./setup.sh --reset"
-fi
-
-if [[ $WITH_RAG -eq 1 ]]; then
-    chunks=$(query vectordb VECTOR_DB_NAME "${VECTOR_DB_NAME:-nl2sql_vectors}" "
-        SELECT sum(n) FROM (
-            SELECT (xpath('/row/c/text()',
-                    query_to_xml('SELECT count(*) AS c FROM ' || quote_ident(tablename),
-                                 false, true, '')))[1]::text::bigint AS n
-            FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '%\_embeddings'
-        ) t")
-    if [[ -n "$chunks" && "$chunks" != "0" ]]; then
-        info "knowledge base: $chunks embedded chunks"
-    else
-        warn "the vector store is up but holds no embedded chunks."
-        warn "Retrieval will be skipped; the agent falls back to schema-only."
-    fi
-
-    vectors=$(query vectordb VECTOR_DB_NAME "${VECTOR_DB_NAME:-nl2sql_vectors}" \
-        "SELECT count(*) FROM golden_pair_question_vectors")
-    pairs=$(query chunkdb CONTEXT_DB_NAME "${CONTEXT_DB_NAME:-nl2sql_chunks}" \
-        "SELECT count(*) FROM golden_pairs")
-    if [[ -n "$pairs" && "$pairs" != "0" && -n "$vectors" && "$vectors" != "0" ]]; then
-        info "worked examples: $pairs golden pairs, $vectors embedded questions"
-    else
-        warn "the context store holds ${pairs:-0} golden pairs and the vector store"
-        warn "${vectors:-0} of their embeddings. Multi-shot needs both; it will be skipped."
-    fi
-
-    # The store against the document it was loaded from: the images ship the
-    # set as it was when they were published, and only a load catches up.
-    in_document=$(grep -cE '^## Q[0-9]{2,} - ' "$GOLDEN_DOCUMENT" 2>/dev/null || true)
-    if [[ -n "$in_document" && -n "$pairs" && "$pairs" != "$in_document" ]]; then
-        warn "the context store holds ${pairs} golden pairs, and $GOLDEN_DOCUMENT $in_document."
-        warn "The agent's worked examples are the store's until it is loaded: ./start.sh --load-golden"
-    fi
-
-    # The v5.6 Snippet Retriever's store, after the load above had its chance.
-    snippet_rows=$(snippets_query "SELECT count(*) FROM sql_snippets")
-    snippet_vectors=$(snippets_query "SELECT count(*) FROM sql_snippet_vectors")
-    if [[ -n "$snippet_rows" && "$snippet_rows" != "0" ]]; then
-        info "SQL snippets: $snippet_rows snippets, ${snippet_vectors:-0} embedded meanings"
-    else
-        warn "the snippet store holds no SQL snippets, so the generator is shown none."
-        warn "It is loaded from $SNIPPETS_DOCUMENT on start; check the review image can run."
-    fi
-
-    # The v4 Schema Retriever selects tables from this one collection instead
-    # of asking the model. Without it there is no vector ranking and the
-    # pipeline falls back to whatever the other retrievers named.
-    ddl=$(query vectordb VECTOR_DB_NAME "${VECTOR_DB_NAME:-nl2sql_vectors}" \
-        "SELECT count(*) FROM ddl_index_embeddings")
-    if [[ -n "$ddl" && "$ddl" != "0" ]]; then
-        info "schema index: $ddl DDL chunks (table selection needs no model call)"
-    else
-        warn "the vector store has no ddl_index_embeddings collection."
-        warn "Table selection falls back to the knowledge and example hints."
-    fi
-fi
-
-# --- The v4 pipeline's own prerequisites -----------------------------------
-# Two things the multi-agent pipeline needs that the stores above do not
-# cover: a trigram index for matching literals, and low-cardinality text
-# columns to build the literal catalog from. Neither is fatal -- the matcher
-# falls back to difflib, and without a catalog the generator spells literals
-# from the question as v3 did -- so both warn rather than stop.
-step "Checking the multi-agent pipeline"
-
-trgm=$(docker compose exec -T postgres psql -U postgres \
-    -d "$(compose_env POSTGRES_DB nl2sql_retail)" -tAc \
-    "SELECT count(*) FROM pg_extension WHERE extname = 'pg_trgm'" 2>/dev/null |
-    tr -d '[:space:]' || true)
-if [[ "$trgm" == "1" ]]; then
-    info "literal matching: pg_trgm installed (trigram search)"
-else
-    warn "pg_trgm is not installed; literal matching falls back to difflib."
-fi
-
-reader_ok=$(docker compose exec -T postgres psql -U postgres \
-    -d "$(compose_env POSTGRES_DB nl2sql_retail)" -tAc \
-    "SELECT count(*) FROM information_schema.role_table_grants
-      WHERE grantee = '$(compose_env POSTGRES_READER_USER nl2sql_reader)'
-        AND privilege_type <> 'SELECT'" 2>/dev/null | tr -d '[:space:]' || true)
-if [[ "$reader_ok" == "0" ]]; then
-    info "least privilege: the agent's role holds SELECT and nothing else"
-else
-    warn "the agent's role holds ${reader_ok:-?} non-SELECT grants; it should hold none."
-fi
+# symptom is the agent quietly answering without retrieval. The dbprep
+# service reads each database and says what it holds -- and the two things
+# the multi-agent pipeline needs that the stores do not cover: the trigram
+# index the literal matcher uses, and a reader that holds SELECT and nothing
+# else (nl2sql_ops.report).
+dbprep python -m nl2sql_ops report | relay
 
 # --- Models ----------------------------------------------------------------
 # Read back what compose will really hand the agent, rather than what the
@@ -552,7 +639,7 @@ fi
 # that nobody asked to be opened should not be.
 api_port=$(compose_env API_PORT 8443)
 api_scheme=https
-api_token=$(compose_env API_TOKEN "")
+api_token=$(secret_value api_token)
 case "$(compose_env API_TLS_ENABLED true)" in
     0|false|no|off|FALSE|False) api_scheme=http ;;
 esac
@@ -561,11 +648,11 @@ start_api() {
     docker compose --profile api up -d api >/dev/null 2>&1 || return 1
     local status=""
     for _ in $(seq 1 60); do
-        status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-api 2>/dev/null || echo starting)
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$(in_instance nl2sql-api)" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
         # A container that has already exited will never become healthy, and
         # waiting two more minutes to find that out hides the reason.
-        [[ "$(docker inspect --format '{{.State.Running}}' nl2sql-api 2>/dev/null || echo true)" == "false" ]] && return 1
+        [[ "$(docker inspect --format '{{.State.Running}}' "$(in_instance nl2sql-api)" 2>/dev/null || echo true)" == "false" ]] && return 1
         sleep 2
     done
     return 1
@@ -590,9 +677,24 @@ if [[ $WITH_API -eq 1 ]]; then
         warn "API_TLS_ENABLED is off, so the API serves plain HTTP: questions, SQL"
         warn "and rows all cross the network in clear text."
     fi
-    if [[ -z "$api_token" ]]; then
-        warn "no API_TOKEN is set, so anything that can reach port $api_port may ask"
-        warn "questions. Set API_TOKEN in .env before exposing this off this machine."
+    if [[ -z "$api_token" ]] && ! signin_on; then
+        warn "no API token is set, so anything that can reach port $api_port may ask"
+        warn "questions. ./setup.sh --tokens makes one, before exposing this off this machine."
+    fi
+
+    # The stack's CA, where a client of this machine was told to trust it.
+    # A CA made again since -- its volume removed, Docker's data reset -- signs
+    # nothing the copy checks, so a copy here that differs is replaced, and
+    # said so: whatever trusted it has to be told again.
+    if [[ -f nl2sql-ca.crt ]] &&
+        docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt.new >/dev/null 2>&1; then
+        if cmp -s nl2sql-ca.crt nl2sql-ca.crt.new; then
+            rm -f nl2sql-ca.crt.new
+        else
+            mv nl2sql-ca.crt.new nl2sql-ca.crt
+            warn "the stack's CA is a new one, so ./nl2sql-ca.crt was replaced with it."
+            warn "Trust it again wherever you trusted the old one: a browser, the Keychain."
+        fi
     fi
 fi
 
@@ -601,7 +703,8 @@ fi
 # whole point of these three is to warn and carry on. A missing review
 # interface should not stop a working agent from being reported as working.
 await_health() {  # await_health CONTAINER
-    local container="$1" status=""
+    local container status=""
+    container=$(in_instance "$1")
     for _ in $(seq 1 60); do
         status=$(docker inspect --format '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
@@ -611,20 +714,31 @@ await_health() {  # await_health CONTAINER
     return 1
 }
 
+# Every page is HTTPS with its own certificate unless GUI_TLS_ENABLED says
+# otherwise -- which is for behind something that terminates TLS itself.
+case "$(compose_env GUI_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) gui_scheme=http ;;
+    *) gui_scheme=https ;;
+esac
+
 # --- The proxies, and the certificate they loaded at start ---------------
 # nginx reads `proxy_ssl_trusted_certificate` once, while it parses its
-# config. A certificate reissued after that -- which the API does when
-# API_TLS_HOSTNAMES grows to cover a service that did not exist before -- is
-# one the proxy has never seen, and every request through it then fails with
-# an upstream verification error while the page itself still loads fine.
+# config. Each proxy trusts the stack's CA (the pki service), so a service's
+# certificate reissued since is one it still verifies -- but a CA replaced
+# since, or a proxy from before 6.1 still trusting the API's old
+# certificate, is not, and every request through it then fails with an
+# upstream verification error while the page itself still loads fine.
 #
 # The container's own health check cannot see this: it asks for index.html,
 # which is served from disk. So the check is a request for a route the API
 # owns, through the proxy, and the cure is a restart.
 proxy_reaches_api() {  # proxy_reaches_api PORT
     local code
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-        "http://localhost:$1/readyz" 2>/dev/null || echo 000)
+    # -k: this asks whether nginx reaches what is behind it, not whether this
+    # machine trusts nginx's certificate -- which, for the development one,
+    # it does not until someone tells it to.
+    code=$(curl -s -k -o /dev/null -w '%{http_code}' --max-time 10 \
+        "$gui_scheme://localhost:$1/readyz" 2>/dev/null || echo 000)
     # 503 is the API answering that it is not ready, which still means the
     # proxy reached it. Only a failure to reach it at all is the problem here.
     [[ "$code" == "200" || "$code" == "503" ]]
@@ -635,18 +749,64 @@ repair_proxy() {  # repair_proxy SERVICE CONTAINER PORT PROFILES...
     shift 3
     proxy_reaches_api "$port" && return 0
     info "$name cannot reach the API through its proxy -- restarting it to pick up"
-    info "the current certificate (the API reissues one when a service name is added)"
+    info "the stack's current CA certificate"
     docker compose "$@" restart "$name" >/dev/null 2>&1 || return 1
     await_health "$container" || return 1
     proxy_reaches_api "$port"
 }
+
+# --- Sign-in: the directory and the auth service ---------------------------
+# Compose starts the directory first and waits for it; the auth service's
+# certificate is its own, from the pki service. A standalone
+# directory also gets its page, where nl2sql_admins add and edit people; a
+# replica's people are edited on its primary, so it has none.
+auth_port=$(compose_env AUTH_PORT 8446)
+ldap_mode=$(compose_env LDAP_MODE standalone)
+directory_gui_port=$(compose_env DIRECTORY_GUI_PORT 8084)
+WITH_DIRECTORY_GUI=0
+
+start_signin() {
+    docker compose --profile api --profile auth up -d auth >/dev/null 2>&1 || return 1
+    await_health nl2sql-ldap || return 1
+    await_health nl2sql-auth
+}
+
+start_directorygui() {
+    docker compose --profile api --profile auth --profile directorygui \
+        up -d directorygui >/dev/null 2>&1 || return 1
+    await_health nl2sql-directory-gui
+}
+
+case "$(compose_env AUTH_TLS_ENABLED true)" in
+    0|false|no|off|FALSE|NO|OFF) auth_scheme=http ;;
+    *) auth_scheme=https ;;
+esac
+
+if [[ $WITH_SIGNIN -eq 1 ]]; then
+    step "Starting the directory and the auth service"
+    if start_signin; then
+        info "Auth service is healthy at $auth_scheme://localhost:$auth_port, with a $ldap_mode directory"
+        if [[ "$ldap_mode" == "replica" ]]; then
+            info "The directory copies $(compose_env LDAP_UPSTREAM_URI "its primary"): people are added and changed there."
+        elif start_directorygui; then
+            WITH_DIRECTORY_GUI=1
+            info "Directory page is healthy at $gui_scheme://localhost:$directory_gui_port"
+        else
+            warn "the directory page did not become healthy."
+            warn "Check what it said: docker compose --profile api --profile auth --profile directorygui logs directorygui"
+        fi
+    else
+        warn "the directory or the auth service did not become healthy, so nobody can sign in."
+        warn "Check what they said: docker compose --profile api --profile auth logs ldap auth"
+    fi
+fi
 
 # --- The desktop client ----------------------------------------------------
 # A jar, not a container. The desktop client draws a window on this machine,
 # so what Docker does for it is build it -- which keeps the promise the rest
 # of this script makes, that Docker is the only thing anyone has to install.
 DESKTOP_JAR="desktop/target/nl2sql-desktop.jar"
-DESKTOP_CERT="nl2sql-api.crt"
+DESKTOP_CERT="nl2sql-ca.crt"
 
 javafx_platform() {
     # OpenJFX publishes its native code under one of five classifiers, and
@@ -714,13 +874,13 @@ if [[ $WITH_DESKTOP -eq 1 ]]; then
 fi
 
 if [[ $WITH_DESKTOP -eq 1 ]]; then
-    # The client verifies the API's certificate rather than skipping the
-    # check, so it needs the certificate. It is the same file the API writes
-    # itself on first start, copied out of the volume it lives in.
-    if docker compose --profile api cp api:/etc/nl2sql/tls/server.crt "./$DESKTOP_CERT" >/dev/null 2>&1; then
-        info "Copied the API certificate to ./$DESKTOP_CERT"
+    # The client verifies the API and the auth service rather than skipping
+    # the check, so it needs what they are verified against: the stack's CA,
+    # which the pki service puts beside every server's own certificate.
+    if docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt "./$DESKTOP_CERT" >/dev/null 2>&1; then
+        info "Copied the stack's CA certificate to ./$DESKTOP_CERT"
     else
-        warn "could not copy the API's certificate out of the container."
+        warn "could not copy the stack's CA certificate out of the API's container."
         warn "Without it the client has nothing to verify against; --insecure is"
         warn "the fallback, and it says so in the status bar for as long as it is on."
     fi
@@ -736,9 +896,9 @@ start_gui() {
     docker compose --profile api --profile gui up -d gui >/dev/null 2>&1 || return 1
     local status=""
     for _ in $(seq 1 60); do
-        status=$(docker inspect --format '{{.State.Health.Status}}' nl2sql-gui 2>/dev/null || echo starting)
+        status=$(docker inspect --format '{{.State.Health.Status}}' "$(in_instance nl2sql-gui)" 2>/dev/null || echo starting)
         [[ "$status" == "healthy" ]] && return 0
-        [[ "$(docker inspect --format '{{.State.Running}}' nl2sql-gui 2>/dev/null || echo true)" == "false" ]] && return 1
+        [[ "$(docker inspect --format '{{.State.Running}}' "$(in_instance nl2sql-gui)" 2>/dev/null || echo true)" == "false" ]] && return 1
         sleep 2
     done
     return 1
@@ -748,7 +908,7 @@ if [[ $WITH_GUI -eq 1 ]]; then
     step "Starting the web interface"
     if start_gui; then
         if repair_proxy gui nl2sql-gui "$gui_port" --profile api --profile gui; then
-            info "GUI is healthy at http://localhost:$gui_port"
+            info "GUI is healthy at $gui_scheme://localhost:$gui_port"
         else
             warn "the GUI is up but cannot reach the API through its proxy."
             warn "Check what it said: docker compose --profile api --profile gui logs gui"
@@ -760,74 +920,28 @@ if [[ $WITH_GUI -eq 1 ]]; then
 fi
 
 # --- Feedback --------------------------------------------------------------
-# The staging database a verdict is written to, and the service that reviews
-# what lands there.
-#
-# Two things are worth knowing about the order here. The API is told where
-# the staging database is through API_FEEDBACK_DB_URL, which compose reads
-# from the environment -- so the database has to exist before the API is
-# started, which is why --feedback is handled before the API above would
-# have been enough on its own. And the review service creates the schema and
-# the API's INSERT-only role on its own start, so the API can be pointed at
-# a database whose tables do not exist yet and will simply report feedback as
-# unavailable until they do.
+# The service that reviews the verdicts the API stages. Where they are staged
+# -- the feedback database, in the runtime stores -- started with the
+# databases above. The review service creates its schema and the API's
+# INSERT-only role on its own start, so until it has run once the API reports
+# feedback as unavailable rather than failing.
 review_port=$(compose_env REVIEW_PORT 8444)
 review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
 
-start_feedbackdb() {
-    docker compose --profile feedback up -d feedbackdb >/dev/null 2>&1 || return 1
-    await_health nl2sql-feedbackdb
-}
-
-# The two stores a reviewer's fixes go into: corrections of wrong answers
-# and completions of incomplete ones. Started, and waited on, before the
-# review service so its start-up can create their schemas -- the same order
-# the staging database gets for the same reason.
-start_fixstores() {
-    docker compose --profile feedback --profile review up -d correctionsdb completionsdb \
-        >/dev/null 2>&1 || return 1
-    await_health nl2sql-correctionsdb || return 1
-    await_health nl2sql-completionsdb
-}
-
 start_review() {
-    docker compose --profile feedback --profile review up -d review >/dev/null 2>&1 || return 1
+    docker compose --profile review up -d review >/dev/null 2>&1 || return 1
     await_health nl2sql-review
 }
 
 start_reviewgui() {
-    docker compose --profile feedback --profile review --profile reviewgui \
-        up -d reviewgui >/dev/null 2>&1 || return 1
+    docker compose --profile review --profile reviewgui up -d reviewgui >/dev/null 2>&1 || return 1
     await_health nl2sql-review-gui
 }
 
-if [[ $WITH_FEEDBACK -eq 1 ]]; then
-    step "Starting the feedback staging database"
-    if start_feedbackdb; then
-        info "Staging database is healthy on port $(compose_env FEEDBACK_DB_PORT 5435)"
-        if [[ -z "$(compose_env API_FEEDBACK_DB_URL "")" ]]; then
-            warn "API_FEEDBACK_DB_URL is not set, so the API will not write verdicts to it."
-            warn "setup.sh writes one into .env; add it there or export it before starting."
-        fi
-    else
-        warn "the staging database did not become healthy."
-        warn "Check what it said: docker compose --profile feedback logs feedbackdb"
-    fi
-fi
-
 # The review service is the curation interface's backend as well, so either
-# page brings it up -- and the two stores it writes fixes into.
+# page brings it up. Every store it writes is in the runtime stores, which
+# started with the databases above.
 if [[ $WITH_REVIEW -eq 1 || $WITH_CURATE -eq 1 ]]; then
-    step "Starting the corrections and completions stores"
-    if start_fixstores; then
-        info "Corrections store is healthy on port $(compose_env CORRECTIONS_DB_PORT 5436)"
-        info "Completions store is healthy on port $(compose_env COMPLETIONS_DB_PORT 5437)"
-    else
-        warn "the corrections and completions stores did not both become healthy."
-        warn "Fixes cannot be saved until they are; golden-set promotion still works."
-        warn "Check what they said: docker compose --profile feedback --profile review logs correctionsdb completionsdb"
-    fi
-
     step "Starting the review service"
     if start_review; then
         case "$(compose_env REVIEW_TLS_ENABLED true)" in
@@ -837,7 +951,7 @@ if [[ $WITH_REVIEW -eq 1 || $WITH_CURATE -eq 1 ]]; then
         info "Review service is healthy at $review_scheme://localhost:$review_port"
     else
         warn "the review service did not become healthy."
-        warn "Check what it said: docker compose --profile feedback --profile review logs review"
+        warn "Check what it said: docker compose --profile review logs review"
     fi
 fi
 
@@ -845,15 +959,15 @@ if [[ $WITH_REVIEW -eq 1 ]]; then
     step "Starting the review interface"
     if start_reviewgui; then
         if repair_proxy reviewgui nl2sql-review-gui "$review_gui_port" \
-            --profile feedback --profile review --profile reviewgui; then
-            info "Review interface is healthy at http://localhost:$review_gui_port"
+            --profile review --profile reviewgui; then
+            info "Review interface is healthy at $gui_scheme://localhost:$review_gui_port"
         else
             warn "the review interface is up but cannot reach the review service."
-            warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
+            warn "Check what it said: docker compose --profile review --profile reviewgui logs reviewgui"
         fi
     else
         warn "the review interface did not become healthy."
-        warn "Check what it said: docker compose --profile feedback --profile review --profile reviewgui logs reviewgui"
+        warn "Check what it said: docker compose --profile review --profile reviewgui logs reviewgui"
     fi
 fi
 
@@ -864,8 +978,7 @@ fi
 curate_gui_port=$(compose_env CURATE_GUI_PORT 8083)
 
 start_curategui() {
-    docker compose --profile feedback --profile review --profile curategui \
-        up -d curategui >/dev/null 2>&1 || return 1
+    docker compose --profile review --profile curategui up -d curategui >/dev/null 2>&1 || return 1
     await_health nl2sql-curate-gui
 }
 
@@ -873,23 +986,21 @@ if [[ $WITH_CURATE -eq 1 ]]; then
     step "Starting the curation interface"
     if start_curategui; then
         if repair_proxy curategui nl2sql-curate-gui "$curate_gui_port" \
-            --profile feedback --profile review --profile curategui; then
-            info "Curation interface is healthy at http://localhost:$curate_gui_port"
+            --profile review --profile curategui; then
+            info "Curation interface is healthy at $gui_scheme://localhost:$curate_gui_port"
         else
             warn "the curation interface is up but cannot reach the review service."
-            warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
+            warn "Check what it said: docker compose --profile review --profile curategui logs curategui"
         fi
     else
         warn "the curation interface did not become healthy."
-        warn "Check what it said: docker compose --profile feedback --profile review --profile curategui logs curategui"
+        warn "Check what it said: docker compose --profile review --profile curategui logs curategui"
     fi
 fi
 
 # --- The SQL console -------------------------------------------------------
-# The agent's own image started a third way, and a page in front of it. After
-# the API, because it presents the certificate the API writes -- and on the
-# first start after an upgrade that is a certificate the API has just
-# reissued, because API_TLS_HOSTNAMES has grown to name the console.
+# The agent's own image started a third way, and a page in front of it, with
+# a certificate of its own from the pki service.
 console_port=$(compose_env CONSOLE_PORT 8445)
 console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
 console_bind=$(compose_env CONSOLE_BIND_ADDRESS 127.0.0.1)
@@ -926,7 +1037,7 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
     if start_consolegui; then
         if repair_proxy consolegui nl2sql-console-gui "$console_gui_port" \
             --profile console --profile consolegui; then
-            info "SQL console interface is healthy at http://localhost:$console_gui_port"
+            info "SQL console interface is healthy at $gui_scheme://localhost:$console_gui_port"
         else
             warn "the SQL console's interface is up but cannot reach the console."
             warn "Check what it said: docker compose --profile console --profile consolegui logs consolegui"
@@ -942,8 +1053,8 @@ if [[ $WITH_CONSOLE -eq 1 ]]; then
         127.0.0.1|localhost|::1) console_exposed=0 ;;
         *) console_exposed=1 ;;
     esac
-    if [[ $console_exposed -eq 1 && -z "$(compose_env CONSOLE_TOKEN "")" ]]; then
-        warn "the SQL console is published on $console_bind with no CONSOLE_TOKEN, so"
+    if [[ $console_exposed -eq 1 && -z "$(secret_value console_token)" ]] && ! signin_on; then
+        warn "the SQL console is published on $console_bind with no token, so"
         warn "anything that can reach it may run SQL as the agent's database role."
     fi
 fi
@@ -956,32 +1067,51 @@ fi
 mlflow_port=$(compose_env MLFLOW_PORT 5001)
 mlflow_bind=$(compose_env MLFLOW_BIND_ADDRESS 127.0.0.1)
 
+# Its store first, then the server, which waits for the dbprep service to
+# give the store the password in secrets/: a volume made before 6.1 still
+# has the old one.
 start_mlflow() {
+    docker compose --profile mlflow up -d mlflowdb >/dev/null 2>&1 || return 1
+    await_health nl2sql-mlflowdb || return 1
     docker compose --profile mlflow up -d mlflow >/dev/null 2>&1 || return 1
     await_health nl2sql-mlflow
+}
+
+# MLflow itself publishes nothing: a browser and the benchmark reach it
+# through this, which is HTTPS and asks the auth service about every request.
+start_mlflowproxy() {
+    docker compose --profile mlflow up -d mlflowproxy >/dev/null 2>&1 || return 1
+    await_health nl2sql-mlflow-proxy
 }
 
 if [[ $WITH_MLFLOW -eq 1 ]]; then
     step "Starting MLflow"
     info "The first start fetches MLflow's image, about 370 MB."
     if start_mlflow; then
-        info "MLflow is healthy at http://localhost:$mlflow_port"
         if [[ -z "$(compose_env MLFLOW_TRACKING_URI "")" ]]; then
             warn "MLFLOW_TRACKING_URI is not set, so the agent will not trace to it."
             warn "setup.sh writes one into .env; add it there or export it before starting."
+        fi
+        if start_mlflowproxy; then
+            info "MLflow is healthy at $gui_scheme://localhost:$mlflow_port"
+        else
+            warn "MLflow is up, and tracing, but its front door did not become healthy,"
+            warn "so its interface cannot be reached from this machine."
+            warn "Check what it said: docker compose --profile mlflow logs mlflowproxy"
         fi
     else
         warn "MLflow did not become healthy, so questions are answered untraced."
         warn "Check what it said: docker compose --profile mlflow logs mlflow mlflowdb"
     fi
-    # Its interface has no login, and what it shows includes every row every
-    # question returned -- so, like the console, it is this machine's unless
-    # someone says otherwise, and saying otherwise is worth a warning.
+    # What it shows includes every row every question returned. With sign-in
+    # its front door lets in nl2sql_reviewers and nl2sql_admins only; without
+    # it, nobody is asked -- so, like the console, it is this machine's
+    # unless someone says otherwise, and saying otherwise is worth a warning.
     case "$mlflow_bind" in
         127.0.0.1|localhost|::1) mlflow_exposed=0 ;;
         *) mlflow_exposed=1 ;;
     esac
-    if [[ $mlflow_exposed -eq 1 ]]; then
+    if [[ $mlflow_exposed -eq 1 ]] && ! signin_on; then
         warn "MLflow is published on $mlflow_bind with no login: anything that can"
         warn "reach it can read every question, query and result, and delete them."
     fi
@@ -1006,21 +1136,68 @@ if [[ $QUIET -eq 0 ]]; then
     ./launch.sh --help     other options
     docker compose down    stop the databases
 EOF
+    if [[ $WITH_SIGNIN -eq 1 ]]; then
+        cat <<EOF
+
+==> Sign-in is on. Every page asks who you are. The first person is
+    $(compose_env LDAP_ADMIN_USER admin), whose password was generated into secrets/:
+
+    cat secrets/ldap_admin_password
+
+    The groups a person is in decide what they may open: nl2sql-users ask
+    questions, nl2sql-reviewers review and read MLflow, nl2sql-curators
+    curate, reviewers and curators use the SQL console, and nl2sql-admins
+    manage the directory. What a person asks runs as their own database role.
+EOF
+        if [[ $WITH_DIRECTORY_GUI -eq 1 ]]; then
+            cat <<EOF
+
+    Add people, and put them in groups, at:
+
+    open $gui_scheme://localhost:$directory_gui_port
+
+    Or load them from a file on the directory's first start: LDAP_SEED_FILE
+    in .env, with ldap/seed/people.example.csv as the shape (ldap/README.md).
+EOF
+        fi
+    fi
     if [[ $WITH_API -eq 1 ]]; then
         cat <<EOF
 
 ==> The REST API is up. Point a GUI at it, or try it from here:
 
-    # the development certificate is self-signed, so copy it out and trust it
-    docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+    # every server's certificate is issued by the stack's development CA:
+    # copy the CA's out once and trust it, for the API and every page
+    docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
 
-    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/meta"
-    curl --cacert ./nl2sql-api.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
+    curl --cacert ./nl2sql-ca.crt "$api_scheme://localhost:$api_port/v1/meta"
+EOF
+        if [[ $WITH_SIGNIN -eq 1 ]]; then
+            cat <<EOF
+
+    # sign in: the "token" in the answer is a session, sent as a bearer token
+    curl --cacert ./nl2sql-ca.crt "$auth_scheme://localhost:$auth_port/auth/token" \\
+         -H 'Content-Type: application/json' \\
+         -d '{"username": "$(compose_env LDAP_ADMIN_USER admin)", "password": "..."}'
+    curl --cacert ./nl2sql-ca.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
+         -H "Authorization: Bearer \$TOKEN" -H 'Content-Type: application/json' \\
+         -d '{"question": "How many stores are there?"}'
+
+    # the outside-container smoke test presents the API's service token:
+    # ./setup.sh --tokens makes one, then
+    docker compose --profile api run --rm apitest
+EOF
+        else
+            cat <<EOF
+    curl --cacert ./nl2sql-ca.crt "$api_scheme://localhost:$api_port/v1/questions?wait=180" \\
          -H 'Content-Type: application/json' \\
          -d '{"question": "How many stores are there?"}'
 
     # or drive the whole API from an outside container, with nothing but curl
     docker compose --profile api run --rm apitest
+EOF
+        fi
+        cat <<EOF
 
     Browse it at $api_scheme://localhost:$api_port/docs
     agent/API.md is the contract a GUI is written against.
@@ -1031,7 +1208,7 @@ EOF
 
 ==> The review interface is up:
 
-    open http://localhost:$review_gui_port
+    open $gui_scheme://localhost:$review_gui_port
 
     Verdicts given in the web and desktop interfaces land in the staging
     database and wait here, one pane per verdict:
@@ -1048,13 +1225,13 @@ EOF
     checkout, so it shows up in \`git diff\` like any other edit and is
     committed the same way. The previous version is kept beside it as
     translated_questions.md.bak. Fixes go to their own databases instead --
-    ports $(compose_env CORRECTIONS_DB_PORT 5436) and $(compose_env COMPLETIONS_DB_PORT 5437) -- never into the golden set.
+    in the runtime stores, port $(compose_env STORES_DB_PORT 5435) -- never into the golden set.
 
     A judgement can be taken back. Under a reviewed submission, Back to
     pending returns it to the queue and Delete removes it -- each taking
     its pair out of the golden set, or its fix out of its store, first.
 
-    docker compose --profile feedback --profile review --profile reviewgui logs -f review
+    docker compose --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
 EOF
     fi
@@ -1063,7 +1240,7 @@ EOF
 
 ==> The curation interface is up:
 
-    open http://localhost:$curate_gui_port
+    open $gui_scheme://localhost:$curate_gui_port
 
     Three tabs, each written directly rather than out of the review queue,
     and each run against the live retail database before it can be saved:
@@ -1081,7 +1258,7 @@ EOF
     pairs into translated_questions.md in this checkout -- both show up in
     \`git diff\` -- and the stores built from them are reloaded on save.
 
-    docker compose --profile feedback --profile review --profile curategui logs -f review
+    docker compose --profile review --profile curategui logs -f review
     curate/README.md explains how it is put together.
 EOF
     fi
@@ -1090,7 +1267,7 @@ EOF
 
 ==> The SQL console is up:
 
-    open http://localhost:$console_gui_port
+    open $gui_scheme://localhost:$console_gui_port
 
     Paste the SQL an answer was built from, or pick a table, and run it one
     of three ways: Run returns the rows, Plan stops at the planner's
@@ -1108,7 +1285,7 @@ EOF
 
 ==> MLflow is up:
 
-    open http://localhost:$mlflow_port
+    open $gui_scheme://localhost:$mlflow_port
 
     Every question the agent answers -- from a terminal, the API or the
     benchmark -- is a trace in the experiment $(compose_env MLFLOW_EXPERIMENT_NAME nl2sql-agent): one span per
@@ -1143,11 +1320,12 @@ EOF
 
 ==> The web interface is up:
 
-    open http://localhost:$gui_port
+    open $gui_scheme://localhost:$gui_port
 
     Ask a question and watch the pipeline work through it, then say whether
-    the answer was right. nginx in that container holds the API token and
-    verifies the API's certificate, so the browser sees neither.
+    the answer was right. nginx in that container verifies the API's
+    certificate; with sign-in on, the session you sign in with is what
+    reaches the API, and your questions run as your own database role.
 
     docker compose --profile api --profile gui logs -f gui
     gui/README.md explains how it is put together.

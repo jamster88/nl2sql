@@ -24,6 +24,7 @@ from nl2sql_agent.tracing import Tracer
 from pydantic import BaseModel
 
 from tests.fake_mlflow import FakeMlflow
+from mlflow.exceptions import MlflowException
 
 URI = "http://mlflow.test:5000"
 
@@ -118,7 +119,7 @@ def test_a_server_that_does_not_answer_costs_the_trace_and_is_asked_again_later(
 def test_an_experiment_the_server_will_not_set_is_a_server_that_did_not_answer():
     class DeletedExperiment(FakeMlflow):
         def set_experiment(self, name):
-            raise RuntimeError("Cannot set a deleted experiment 'nl2sql-agent' as the active experiment.")
+            raise MlflowException("Cannot set a deleted experiment 'nl2sql-agent' as the active experiment.")
 
     tracer = make_tracer(client=DeletedExperiment())
     assert not tracer.ready()
@@ -192,6 +193,26 @@ def test_the_probe_raises_for_a_port_nothing_listens_on():
 
 def test_the_probe_leaves_a_uri_it_cannot_ask_to_mlflow():
     tracing.probe("databricks")
+
+
+def test_the_probe_trusts_what_mlflows_client_is_told_to(monkeypatch, tmp_path):
+    import ssl
+
+    monkeypatch.delenv("MLFLOW_TRACKING_INSECURE_TLS", raising=False)
+    monkeypatch.delenv("MLFLOW_TRACKING_SERVER_CERT_PATH", raising=False)
+    assert tracing.tls_context() is None, "the system's trust, as MLflow's client"
+    monkeypatch.setenv("MLFLOW_TRACKING_INSECURE_TLS", "TRUE")
+    assert tracing.tls_context().verify_mode == ssl.CERT_NONE
+    monkeypatch.delenv("MLFLOW_TRACKING_INSECURE_TLS")
+    import datetime as dt
+
+    from nl2sql_ldap.tls import generate
+
+    pem, _ = generate(("localhost",), days=1, now=dt.datetime.now(dt.timezone.utc))
+    (tmp_path / "ca.pem").write_bytes(pem)
+    monkeypatch.setenv("MLFLOW_TRACKING_SERVER_CERT_PATH", str(tmp_path / "ca.pem"))
+    context = tracing.tls_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.cert_store_stats()["x509_ca"] >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -488,7 +509,7 @@ def test_a_trace_the_server_does_not_have_is_logged_not_raised(caplog):
 def test_a_verdict_the_server_refuses_is_logged_not_raised(caplog):
     class Refuses(FakeMlflow):
         def log_feedback(self, **kwargs):
-            raise RuntimeError("503 Service Unavailable")
+            raise MlflowException("503 Service Unavailable")
 
     client = Refuses()
     tracer = make_tracer(client=client)
@@ -518,7 +539,7 @@ def test_a_job_id_that_is_not_one_is_never_quoted_into_a_filter():
 def test_a_search_the_server_refuses_is_logged_not_raised(caplog):
     class Refuses(FakeMlflow):
         def search_traces(self, **kwargs):
-            raise RuntimeError("bad filter")
+            raise MlflowException("bad filter")
 
     tracer = make_tracer(client=Refuses())
     with caplog.at_level(logging.WARNING, logger="nl2sql_agent.tracing"):

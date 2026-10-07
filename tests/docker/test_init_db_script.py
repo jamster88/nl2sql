@@ -68,14 +68,16 @@ def test_the_cluster_is_initialised_with_scram_and_utf8(run_init_db):
     assert "--username=postgres" in init
 
 
-def test_the_host_rule_the_runtime_entrypoint_would_have_added_is_written(run_init_db):
-    """The stock entrypoint writes this when it initialises the cluster
-    itself. This image initialises it at build time instead, so without this
-    line nothing can connect over TCP to the published image.
+def test_the_host_rule_the_runtime_entrypoint_would_have_added_is_written_for_tls_only(run_init_db):
+    """The stock entrypoint writes a host rule when it initialises the
+    cluster itself. This image initialises it at build time instead, so
+    without one nothing could connect over TCP -- and since v1_2 it is
+    `hostssl`, so a password is accepted over TLS or not at all.
     """
     result = run_init_db()
     hba = (result.workdir.parent / "pgdata" / "pg_hba.conf").read_text()
-    assert "host all all all scram-sha-256" in hba
+    assert "hostssl all all all scram-sha-256" in hba
+    assert "\nhost all all all" not in "\n" + hba
 
 
 def test_durability_is_relaxed_only_as_command_line_overrides(run_init_db):
@@ -108,14 +110,17 @@ def test_the_cluster_is_stopped_with_fast_mode_so_the_layer_is_clean(run_init_db
 # ---------------------------------------------------------------------------
 
 
-def test_the_superuser_password_is_set_from_the_build_argument(run_init_db):
+def test_no_password_is_baked_into_the_image(run_init_db):
+    """V6-07. Every copy of v1_1 carried the superuser's and the owner's
+    password; v1_2 carries none. The entrypoint sets them on start."""
     joined = "\n".join(calls_to(run_init_db(), "psql"))
-    assert "ALTER ROLE postgres PASSWORD 'owner-secret'" in joined
+    assert "PASSWORD" not in joined
+    assert "ALTER ROLE postgres" not in joined
 
 
 def test_the_owner_role_and_its_database_are_created(run_init_db):
     joined = "\n".join(calls_to(run_init_db(), "psql"))
-    assert "CREATE ROLE nl2sql LOGIN PASSWORD 'owner-secret'" in joined
+    assert "CREATE ROLE nl2sql LOGIN" in joined
     assert "CREATE DATABASE nl2sql_retail OWNER nl2sql" in joined
     assert "ALTER SCHEMA public OWNER TO nl2sql" in joined
 
@@ -171,7 +176,7 @@ def test_the_reader_role_is_created_last_and_told_who_it_reads_for(run_init_db):
     assert load < reader_index
     reader = calls[reader_index]
     assert "-v reader=nl2sql_reader" in reader
-    assert "-v reader_password=reader-secret" in reader
+    assert "reader_password" not in reader, "no reader password at build time"
     assert "-v owner=nl2sql" in reader
 
 
@@ -209,15 +214,14 @@ def test_a_failing_statement_aborts_the_build_rather_than_shipping_the_image(run
 
 
 @pytest.mark.parametrize(
-    "variable", ["DB_PASSWORD", "DB_USER", "DB_NAME", "DB_READER", "DB_READER_PASSWORD"]
+    "variable", ["DB_USER", "DB_NAME", "DB_READER"]
 )
 def test_a_build_argument_the_dockerfile_forgot_to_pass_stops_the_build(
     run_init_db, variable: str
 ):
     """`set -u`, proved by running it. Every one of these is interpolated into
-    SQL. Unset under `set -u` is a hard error; without it the role would be
-    created with an empty name or a blank password and the image would ship
-    that way.
+    SQL. Unset under `set -u` is a hard error; without it a role would be
+    created with an empty name and the image would ship that way.
     """
     result = run_init_db(env={variable: None})
     assert result.returncode != 0, f"{variable} unset did not stop the script"

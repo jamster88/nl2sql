@@ -38,6 +38,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from .state import AUDIT, COMPLETENESS, PLANNER, STATIC, Attempt, Issue
+from nl2sql_common.errors import MODEL_ERRORS
 
 #: How much SQL to quote around a syntax error, per side. The spec asks for
 #: "the 40 characters around n"; two of these is that.
@@ -557,6 +558,6 @@ def _diagnose(llm: SupportsInvoke, issues: Sequence[Issue], schema: str, sql: st
     try:
         response = llm.invoke([("system", _DIAGNOSIS_SYSTEM), ("human", human)])
         diagnosis = str(getattr(response, "content", response)).strip()
-    except Exception:
+    except MODEL_ERRORS:
         return GENERIC_HINT
     return diagnosis or GENERIC_HINT

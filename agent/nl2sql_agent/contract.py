@@ -36,6 +36,7 @@ from datetime import date
 from typing import Any
 
 from .state import AnswerContract, EntityRef
+from nl2sql_common.errors import DATABASE_ERRORS
 
 #: Where the fiscal calendar lives. A default period is a filter on its
 #: `fiscal_year`, so a contract with one needs this table in the query's scope.
@@ -302,11 +303,11 @@ def load_resources(database: Any) -> ContractResources:
     resources = ContractResources()
     try:
         resources.label_map = build_label_map(database.catalog())
-    except Exception as exc:
+    except DATABASE_ERRORS as exc:
         resources.errors["label_map"] = str(exc)
     try:
         latest = database.latest_complete_fiscal_year()
-    except Exception as exc:
+    except DATABASE_ERRORS as exc:
         resources.errors["fiscal_calendar"] = str(exc)
     else:
         if latest is not None:

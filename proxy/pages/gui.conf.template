@@ -1,0 +1,53 @@
+# The web interface: its bundle, and the API behind it.
+#
+# The hop that makes a browser's life simple. Three problems stand between
+# a browser and the API, none of them about the application: a certificate
+# the browser has not been told to trust, a token it should not hold, and a
+# second origin that turns every request into a CORS negotiation. The
+# browser talks same-origin to this server, and this server talks TLS to the
+# API with a certificate it verifies. With sign-in on it holds no token: the
+# browser's session cookie is what reaches the API, and the API reads the
+# person from it. `vite.config.ts` is the same rules for `npm run dev`.
+server {
+    listen ${PROXY_PORT}${PROXY_LISTEN_TLS};
+    server_name _;
+    include /tmp/nginx/server-tls.conf;
+    root ${PAGE_ROOT};
+
+    include /etc/nginx/nl2sql/shared/site.conf;
+    include /etc/nginx/nl2sql/shared/health.conf;
+    include /tmp/nginx/auth.conf;
+
+    location ~ ^/(v1|healthz|readyz|openapi\.json) {
+        resolver ${PROXY_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $nl2sql_forwarded_proto;
+        # Host and port, which the API's cross-site check compares a
+        # cookie-carrying write's Origin with: another port is another site.
+        proxy_set_header X-Forwarded-Host $http_host;
+        # Empty unless sign-in is off and a token is held, and nginx omits a
+        # header whose value is empty -- so no token sends no header at all.
+        proxy_set_header Authorization "${UPSTREAM_AUTH_HEADER}";
+        # Browsers send this when an EventSource reconnects; it is how the
+        # server knows to resume rather than replay.
+        proxy_set_header Last-Event-ID $http_last_event_id;
+        proxy_set_header Connection "";
+        include /tmp/nginx/upstream-tls.conf;
+
+        # Server-Sent Events. Without these the progress stream is buffered
+        # until the answer is finished, which is the one thing it exists to
+        # avoid -- and it fails silently, as a spinner that never moves.
+        proxy_buffering off;
+        proxy_cache off;
+        gzip off;
+
+        # A question takes about a minute, and `?wait=` can hold a connection
+        # for API_MAX_WAIT_SECONDS: the timeout has to outlast both.
+        proxy_read_timeout ${UPSTREAM_READ_TIMEOUT};
+        proxy_send_timeout ${UPSTREAM_READ_TIMEOUT};
+    }
+}

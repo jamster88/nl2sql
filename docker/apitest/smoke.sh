@@ -55,6 +55,11 @@ fi
 # have shown it, and the header earns its place by naming this client in the
 # API's access log.
 AUTH=(-H "X-Client: nl2sql-apitest")
+# The token: the secret file compose mounts (API_TOKEN_FILE, V6-38), or the
+# variable for a run by hand. An empty file is no token.
+if [[ -z "${API_TOKEN:-}" && -n "${API_TOKEN_FILE:-}" && -r "${API_TOKEN_FILE}" ]]; then
+    API_TOKEN="$(tr -d '\r\n' < "$API_TOKEN_FILE")"
+fi
 [[ -n "${API_TOKEN:-}" ]] && AUTH+=(-H "Authorization: Bearer ${API_TOKEN}")
 
 api() {  # api METHOD PATH [curl args...]
@@ -72,7 +77,11 @@ status_of() {  # status_of METHOD PATH [curl args...]
 printf 'NL2SQL API smoke test\n'
 printf '  target  %s\n' "$BASE_URL"
 printf '  trust   %s\n' "$TRUST"
-printf '  auth    %s\n' "${API_TOKEN:+bearer token}${API_TOKEN:-none}"
+# Whether there is a token, never the token: until 6.3 this line printed it
+# after the words "bearer token".
+auth_kind=none
+[[ -n "${API_TOKEN:-}" ]] && auth_kind="bearer token"
+printf '  auth    %s\n' "$auth_kind"
 
 # --- 1. Is it there, and is TLS actually in use? ---------------------------
 step "Reaching the service"

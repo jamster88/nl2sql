@@ -182,7 +182,7 @@ def test_a_failure_is_scored_with_its_reason():
 def test_on_the_host_the_tracking_server_is_the_published_port(monkeypatch):
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "multi-shot")
-    assert settings.mlflow_tracking_uri == "http://localhost:5001"
+    assert settings.mlflow_tracking_uri == "https://localhost:5001", "the proxy, HTTPS and behind sign-in"
 
 
 def test_an_empty_tracking_uri_turns_the_benchmarks_tracing_off(monkeypatch):
@@ -194,3 +194,19 @@ def test_an_empty_tracking_uri_turns_the_benchmarks_tracing_off(monkeypatch):
 def test_the_json_report_names_each_questions_trace():
     report = BenchmarkReport(label="multi-shot", results=[result("B01", CORRECT, trace_id="tr-7")])
     assert run_benchmark.as_json([report])["configurations"][0]["results"][0]["trace_id"] == "tr-7"
+
+
+def test_the_stacks_certificate_is_trusted_when_it_has_been_copied_out(tmp_path):
+    from benchmarks.run_benchmark import trust_the_stack
+
+    certificate = tmp_path / "nl2sql-api.crt"
+    environ: dict[str, str] = {}
+    trust_the_stack(environ, certificate)
+    assert environ == {}, "nothing to trust yet"
+    certificate.write_text("pem")
+    trust_the_stack(environ, certificate)
+    assert environ == {"MLFLOW_TRACKING_SERVER_CERT_PATH": str(certificate)}
+    environ["MLFLOW_TRACKING_SERVER_CERT_PATH"] = "/mine.pem"
+    trust_the_stack(environ, certificate)
+    assert environ["MLFLOW_TRACKING_SERVER_CERT_PATH"] == "/mine.pem", "the environment's own choice wins"
+

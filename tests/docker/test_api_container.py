@@ -59,8 +59,10 @@ def client_image(docker_daemon_available: bool) -> str:
     return _build("docker/apitest/Dockerfile", CLIENT_IMAGE, docker_daemon_available)
 
 
-def _compose_healthcheck() -> str:
-    """The API healthcheck, exactly as compose resolves it."""
+def _compose_healthcheck() -> list[str]:
+    """The API healthcheck, exactly as compose resolves it: since 6.3 the
+    shared Python check, which verifies the certificate it is answered with
+    (V6-37)."""
     result = subprocess.run(
         ["docker", "compose", "--profile", "api", "config", "--format", "json"],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
@@ -68,8 +70,8 @@ def _compose_healthcheck() -> str:
     if result.returncode != 0:  # pragma: no cover - compose is a fixture dependency
         pytest.skip(f"`docker compose config` failed:\n{result.stderr}")
     test = json.loads(result.stdout)["services"]["api"]["healthcheck"]["test"]
-    assert test[0] == "CMD-SHELL", test
-    return test[1]
+    assert test[0] == "CMD", test
+    return test[1:]
 
 
 def free_port() -> int:
@@ -211,6 +213,10 @@ def run_api(api_image: str):
     started: list[str] = []
 
     def _run(*, env: dict | None = None, network: str | None = None, wait_healthy: bool = True) -> Container:
+        """The API on its own, as `docker run` starts it. Open by name unless
+        a test says otherwise: what most of these exercise is the HTTP
+        surface, and sign-in -- on unless switched off (6.1) -- has a test of
+        its own below and an end-to-end one in tests/auth."""
         name = f"nl2sql-api-test-{uuid.uuid4().hex[:8]}"
         port = free_port()
         cmd = [
@@ -224,8 +230,9 @@ def run_api(api_image: str):
             "-e", "OLLAMA_BASE_URL=http://127.0.0.1:1",
             "-e", "API_TLS_HOSTNAMES=localhost,nl2sql-api,127.0.0.1",
         ]
-        for key, value in (env or {}).items():
-            cmd += ["-e", f"{key}={value}"]
+        for key, value in {"AUTH_ENABLED": "false", **(env or {})}.items():
+            if value is not None:
+                cmd += ["-e", f"{key}={value}"]
         if network:
             cmd += ["--network", network, "--network-alias", "nl2sql-api"]
         cmd += ["--entrypoint", "python", api_image, "-m", "nl2sql_agent.api"]
@@ -312,22 +319,24 @@ def test_the_healthcheck_compose_uses_actually_probes_the_server(run_api):
     and a healthcheck that cannot fail is worse than none: every container
     would report healthy, including an empty one.
 
-    Run here as compose resolves it, against the real container, both ways
-    round -- succeeding on the port it is serving and failing on one it is not.
+    Run here as compose resolves it, against the real container, every way
+    round -- succeeding on the port it is serving, failing on one it is not,
+    and failing against a CA that did not issue the certificate it is
+    answered with, which the `--no-check-certificate` it replaced never did.
     """
     probe = _compose_healthcheck()
     api = run_api()
-    good = subprocess.run(
-        ["docker", "exec", "-e", "API_PORT=8443", api.name, "sh", "-c", probe],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert good.returncode == 0, good.stderr
 
-    bad = subprocess.run(
-        ["docker", "exec", "-e", "API_PORT=9", api.name, "sh", "-c", probe],
-        capture_output=True, text=True, timeout=60,
-    )
-    assert bad.returncode != 0, "the healthcheck passes against a port nothing serves"
+    def check(*env: str) -> subprocess.CompletedProcess:
+        flags = [flag for pair in env for flag in ("-e", pair)]
+        return subprocess.run(["docker", "exec", *flags, api.name, *probe], capture_output=True, text=True, timeout=60)
+
+    good = check("API_PORT=8443")
+    assert good.returncode == 0, good.stderr
+    assert check("API_PORT=9").returncode != 0, "the healthcheck passes against a port nothing serves"
+    stranger = check("API_PORT=8443", "API_TLS_CA_FILE=/etc/ssl/certs/ca-certificates.crt")
+    assert stranger.returncode != 0, "the healthcheck trusts a certificate nobody it trusts issued"
+    assert "CERTIFICATE_VERIFY_FAILED" in stranger.stderr
 
 
 def test_the_banner_tells_the_operator_what_they_are_running(run_api):
@@ -336,7 +345,21 @@ def test_the_banner_tells_the_operator_what_they_are_running(run_api):
     assert "REST API" in logs
     assert "fingerprint sha256:" in logs
     assert "self-signed" in logs
-    assert "No API_TOKEN" in logs
+    assert "This server is OPEN" in logs
+
+
+def test_started_with_nothing_said_it_asks_who_is_calling(run_api, tmp_path):
+    """V6-54 where it matters: the image run with no AUTH_ENABLED at all --
+    not compose, which has always set it -- refuses a caller who is not
+    signed in, and says so in its banner."""
+    api = run_api(env={"AUTH_ENABLED": None})
+    cert = api.certificate(tmp_path / "c.crt")
+    with pytest.raises(urllib.error.HTTPError) as raised:
+        api.get("/v1/meta", cert)
+    assert raised.value.code == 401
+    logs = api.logs()
+    assert "sign-in (a session from the auth service)" in logs
+    assert "OPEN" not in logs
 
 
 def test_refusing_the_development_certificate_stops_the_container(run_api):

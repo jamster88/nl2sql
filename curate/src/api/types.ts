@@ -37,7 +37,7 @@ export interface ReviewMeta {
   reload_context: boolean;
   reload_vectors: boolean;
   limits: ReviewLimits;
-  authentication: "none" | "bearer";
+  authentication: "none" | "bearer" | "session";
   warnings: string[];
 }
 

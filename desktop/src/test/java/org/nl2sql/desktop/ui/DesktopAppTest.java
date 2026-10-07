@@ -25,7 +25,7 @@ class DesktopAppTest {
     void the_assembled_window_sends_verdicts_to_the_client_it_was_given() {
         FxToolkit.onFx(() -> {
             Fakes.FakeClient client = new Fakes.FakeClient();
-            MainWindow window = DesktopApp.assemble(client,
+            MainWindow window = DesktopApp.assemble(client, new Fakes.FakeSignIn(),
                     Settings.from(Map.of("NL2SQL_FEEDBACK_FILE", Settings.NO_FILE)),
                     Runnable::run, Runnable::run);
             window.start();
@@ -45,7 +45,7 @@ class DesktopAppTest {
         FxToolkit.onFx(() -> {
             Fakes.FakeClient client = new Fakes.FakeClient();
             client.meta = Fakes.meta(false);
-            MainWindow window = DesktopApp.assemble(client,
+            MainWindow window = DesktopApp.assemble(client, new Fakes.FakeSignIn(),
                     Settings.from(Map.of("NL2SQL_FEEDBACK_FILE", Settings.NO_FILE)),
                     Runnable::run, Runnable::run);
             window.start();
@@ -64,7 +64,7 @@ class DesktopAppTest {
         FxToolkit.onFx(() -> {
             Fakes.FakeClient client = new Fakes.FakeClient();
             client.failFeedback = new ApiException(0, "unreachable", "no route to host");
-            MainWindow window = DesktopApp.assemble(client,
+            MainWindow window = DesktopApp.assemble(client, new Fakes.FakeSignIn(),
                     Settings.from(Map.of("NL2SQL_FEEDBACK_FILE", Settings.NO_FILE)),
                     Runnable::run, Runnable::run);
             window.start();
@@ -172,7 +172,7 @@ class DesktopAppTest {
         java.nio.file.Files.writeString(file, "{ this is not json");
 
         FxToolkit.onFx(() -> {
-            MainWindow window = DesktopApp.assemble(new Fakes.FakeClient(),
+            MainWindow window = DesktopApp.assemble(new Fakes.FakeClient(), new Fakes.FakeSignIn(),
                     Settings.from(Map.of("NL2SQL_FEEDBACK_FILE", file.toString())),
                     Runnable::run, Runnable::run);
 

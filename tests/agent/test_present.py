@@ -43,13 +43,11 @@ from nl2sql_agent.present import (
     evaluate_formula,
     missing_assumptions,
     narrate,
-    redact,
     render_answer,
     render_table,
     states_assumption,
     strip_cell_citations,
     surviving_claims,
-    tagged_sensitive_columns,
     written_cells,
 )
 from nl2sql_agent.state import AUDIT, AuditReport, Claim, CompletenessReport, MissingColumn, QueryResult
@@ -613,67 +611,6 @@ def test_a_sentence_with_no_number_at_all_needs_no_cell():
 def test_a_sentence_with_no_value_may_still_not_invent_a_number():
     claim = Claim(text="Roughly 400 stores improved.")
     assert audit([claim], margins()).unsupported_claims
-
-
-# ---------------------------------------------------------------------------
-# 7.3 Audit Checker: the sensitive-column policy
-# ---------------------------------------------------------------------------
-
-
-def salaries() -> QueryResult:
-    """This schema has no sensitive column, so the mechanism is tested on one."""
-    return QueryResult(
-        columns=["employee_name", "salary", "avg_salary"],
-        rows=[["Ann Roberts", 90000, 72000], ["Ben Shah", 61000, 72000]],
-    )
-
-
-def test_tagged_sensitive_columns_reads_the_tag_out_of_the_catalog_comment():
-    schema = (
-        "=== dim_employee ===\n"
-        "columns:\n"
-        "  employee_name (text, NOT NULL)  -- display name\n"
-        "  salary (numeric, NULL)  -- [sensitive] annual base pay\n"
-        "  avg_salary (numeric, NULL)  -- department average\n"
-    )
-    assert tagged_sensitive_columns(schema) == ("salary",)
-
-
-def test_tagged_sensitive_columns_finds_nothing_in_the_retail_catalog():
-    schema = "=== dim_store ===\ncolumns:\n  store_name (text, NOT NULL)  -- store banner\n"
-    assert tagged_sensitive_columns(schema) == ()
-
-
-def test_a_claim_quoting_a_sensitive_column_is_dropped():
-    claim = Claim(text="Ann Roberts earns 90000.", value=90000.0, cells=[(0, "salary")])
-    report = audit([claim], salaries(), sensitive_columns=["salary"])
-    assert surviving_claims([claim], report) == []
-    assert "sensitive" in check_claim(claim, salaries(), sensitive_columns=["salary"])
-
-
-def test_an_aggregate_of_a_sensitive_column_still_gets_through():
-    # The tag is on the catalog column; an aggregate arrives under its own
-    # alias, which is not a catalog column, so it is not withheld.
-    claim = Claim(
-        text="The department average is 72000.", value=72000.0, cells=[(0, "avg_salary")]
-    )
-    report = audit([claim], salaries(), sensitive_columns=["salary"])
-    assert report.unsupported_claims == []
-
-
-def test_a_sensitive_column_is_dropped_from_the_table_too():
-    report = audit([], salaries(), sensitive_columns=["salary"])
-    assert report.redactions == ["salary"]
-    answer = render_answer("who earns what?", salaries(), [], None, report)
-    assert "90000" not in answer
-    assert "72000" in answer  # the aggregate stays
-    assert "Withheld as sensitive" in answer
-
-
-def test_redact_removes_the_column_and_leaves_the_rest_of_the_row():
-    trimmed = redact(salaries(), ["salary"])
-    assert trimmed.columns == ["employee_name", "avg_salary"]
-    assert trimmed.rows[0] == ["Ann Roberts", 72000]
 
 
 # ---------------------------------------------------------------------------

@@ -42,10 +42,12 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Protocol
+
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+from nl2sql_common.vectors import QueryEmbedder as Embedder
+from nl2sql_common.errors import DATABASE_ERRORS, MODEL_ERRORS, Unavailable
 
 TABLE = "sql_snippets"
 VECTOR_TABLE = "sql_snippet_vectors"
@@ -76,12 +78,8 @@ DEFAULT_MIN_SCORE = 0.35
 DEFAULT_MIN_SIMILARITY = 0.62
 
 
-class SnippetsUnavailableError(RuntimeError):
+class SnippetsUnavailableError(Unavailable, RuntimeError):
     """The snippet store could not be read."""
-
-
-class Embedder(Protocol):
-    def embed_query(self, text: str) -> list[float]: ...
 
 
 @dataclass
@@ -211,7 +209,7 @@ class SnippetLibrary:
         try:
             with self._engine.connect() as conn:
                 return int(conn.exec_driver_sql(f"SELECT count(*) FROM {TABLE}").scalar())
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise SnippetsUnavailableError(f"Could not read {TABLE} from the snippet store: {exc}") from exc
 
     def search(self, question: str, top_k: int | None = None) -> list[Snippet]:
@@ -228,7 +226,8 @@ class SnippetLibrary:
             return Found()
         try:
             with self._engine.connect() as conn:
-                conn.exec_driver_sql(f"SET statement_timeout = {int(self._statement_timeout_ms)}")
+                # LOCAL: it ends with this block's transaction (V6-22).
+                conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
                 keywords = {
                     row[0]: (float(row[1]), row[2] or "")
                     for row in conn.exec_driver_sql(
@@ -240,7 +239,7 @@ class SnippetLibrary:
                 similarities, warning = self._similarities(conn, question, list(keywords))
                 chosen = self._choose(keywords, similarities, k)
                 return Found(self._hydrate(conn, chosen), warning)
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise SnippetsUnavailableError(f"Could not search the snippet store: {exc}") from exc
 
     def _similarities(
@@ -256,7 +255,7 @@ class SnippetLibrary:
             return {}, None
         try:
             vector = self._embedder.embed_query(question)
-        except Exception as exc:  # the keyword half still answers
+        except MODEL_ERRORS as exc:  # the keyword half still answers
             return {}, f"meaning skipped: could not embed the question: {exc}"
         literal = "[" + ",".join(repr(float(v)) for v in vector) + "]"
         present = conn.exec_driver_sql("SELECT to_regclass(%s) IS NOT NULL", (VECTOR_TABLE,)).scalar()

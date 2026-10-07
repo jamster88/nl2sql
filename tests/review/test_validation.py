@@ -17,12 +17,12 @@ another session, or onto the server's filesystem.
 
 from __future__ import annotations
 
-import os
 import uuid
 from datetime import date, datetime, time
 from decimal import Decimal
 from types import SimpleNamespace
 
+import psycopg
 import pytest
 
 from nl2sql_review.validation import (
@@ -34,6 +34,16 @@ from nl2sql_review.validation import (
     static_problems,
     validate,
 )
+from tests import live_stores
+
+
+class Refusal(psycopg.Error):
+    """A database refusing a statement, as the driver raises it. `diag` is a
+    plain attribute here so a test can say what the server said."""
+
+    diag = None
+
+
 
 
 class FakeCursor:
@@ -206,7 +216,7 @@ def test_a_plan_with_no_cost_reads_as_none():
 def test_the_databases_refusal_is_reported_in_its_own_words():
     diag = SimpleNamespace(message_primary='column "store_nam" does not exist',
                            message_hint='Perhaps you meant to reference the column "dim_store.store_name".')
-    error = Exception("LINE 1: EXPLAIN (FORMAT JSON) SELECT store_nam ...")
+    error = Refusal("LINE 1: EXPLAIN (FORMAT JSON) SELECT store_nam ...")
     error.diag = diag
     result, conn, _ = run(conn=FakeConnection(fail=error))
     assert result.valid is False
@@ -218,18 +228,18 @@ def test_the_databases_refusal_is_reported_in_its_own_words():
 
 
 def test_a_refusal_without_a_hint_or_a_diagnosis_still_says_what_happened():
-    bare = Exception("canceling statement\n  due to statement timeout")
+    bare = Refusal("canceling statement\n  due to statement timeout")
     bare.diag = SimpleNamespace(message_primary=None)
     result, _, _ = run(conn=FakeConnection(fail=bare))
     assert result.problems == ["the database refused it: canceling statement due to statement timeout"]
 
-    primary_only = Exception("x")
+    primary_only = Refusal("x")
     primary_only.diag = SimpleNamespace(message_primary="permission denied for table dim_store", message_hint=None)
     result, _, _ = run(conn=FakeConnection(fail=primary_only))
     assert result.problems == ["the database refused it: permission denied for table dim_store"]
 
-    result, _, _ = run(conn=FakeConnection(fail=RuntimeError()))
-    assert result.problems == ["the database refused it: RuntimeError"]
+    result, _, _ = run(conn=FakeConnection(fail=psycopg.OperationalError()))
+    assert result.problems == ["the database refused it: OperationalError"]
 
 
 def test_a_database_that_cannot_be_reached_is_a_problem_not_a_crash():
@@ -249,9 +259,7 @@ def test_a_validation_serialises_whole():
 # Against the real retail database
 # ---------------------------------------------------------------------------
 
-RETAIL_URL = os.environ.get(
-    "RETAIL_DB_URL", "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+RETAIL_URL = live_stores.url("retail", variable="RETAIL_DB_URL", driver="postgresql")
 
 
 @pytest.fixture(scope="module")
@@ -261,7 +269,7 @@ def live():
     try:
         psycopg.connect(RETAIL_URL, connect_timeout=3).close()
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"no retail database at {RETAIL_URL}: {exc}")
+        live_stores.unreachable("retail database", RETAIL_URL, exc)
     return RETAIL_URL
 
 

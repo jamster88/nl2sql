@@ -78,6 +78,7 @@ from nl2sql_agent.config import Settings  # noqa: E402
 from nl2sql_agent.contract import load_resources  # noqa: E402
 from nl2sql_agent.router import window_for  # noqa: E402
 from nl2sql_agent.state import PLANNER, Attempt, Issue  # noqa: E402
+from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
 
 TASKS = build_catalog.TASKS
 PROBES = HERE / "probes"
@@ -162,14 +163,14 @@ class HostControl:
             self._call("/api/generate", {"model": model, "keep_alive": 0})
             started = time.perf_counter()
             self._call("/api/generate", {"model": model, "keep_alive": "30m", "options": {"num_ctx": num_ctx}})
-        except Exception:
+        except NETWORK_ERRORS + PARSE_ERRORS:
             return None
         return round(time.perf_counter() - started, 2)
 
     def resident_bytes(self, model: str) -> int | None:
         try:
             loaded = self._call("/api/ps").get("models", [])
-        except Exception:
+        except NETWORK_ERRORS + PARSE_ERRORS + (AttributeError,):  # down, or a reply in another shape
             return None
         for entry in loaded:
             if entry.get("name") == model or entry.get("model") == model:
@@ -291,9 +292,10 @@ class Calibrator:
             screened = supervisor.screen(client, case["question"], clarify_enabled=False, tables=tables)
             seconds = self.clock() - started
             # A failed call degrades to "proceed", which must not score as a
-            # right answer to a question that should proceed.
+            # right answer to a question that should proceed. Since 6.1 the
+            # failure is in node_errors, not among the retrievers'.
             correct = screened["verdict"] == case["verdict"] and "supervisor" not in screened.get(
-                "retrieval_errors", {}
+                "node_errors", {}
             )
             samples.append(Sample((complexity.supervisor_rung(case["question"])[0],), correct, seconds))
         return samples
@@ -315,7 +317,7 @@ class Calibrator:
                     max_rows=self.settings.max_rows,
                     assumptions=assumptions,
                 )
-            except Exception:
+            except MODEL_ERRORS:  # a narrator that could not answer scores as one that said nothing
                 claims = []
             seconds = self.clock() - started
             report = present.audit(claims, result, question=run.question.question, assumptions=assumptions)

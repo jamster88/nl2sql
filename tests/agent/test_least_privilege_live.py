@@ -9,14 +9,14 @@ several image versions.
 
 Opt-in (`pytest --run-docker`). Connects as the reader at POSTGRES_URL and,
 for the one test that needs to create a table, as the owner at
-POSTGRES_OWNER_URL (defaults: the compose postgres on localhost:5432 with the
-credentials from docker/Dockerfile). Skips rather than fails when nothing is
-listening.
+POSTGRES_OWNER_URL (defaults: the compose postgres on its published port, with
+the passwords `.env` gives the stack -- tests/live_stores.py). Skips rather
+than fails when nothing is listening; fails when something is and refuses the
+login.
 """
 
 from __future__ import annotations
 
-import os
 import uuid
 
 import pytest
@@ -24,15 +24,12 @@ import sqlalchemy
 from nl2sql_agent.database import Database
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
-POSTGRES_OWNER_URL = os.environ.get(
-    "POSTGRES_OWNER_URL", "postgresql+psycopg://nl2sql:nl2sql@localhost:5432/nl2sql_retail"
-)
+POSTGRES_URL = live_stores.url("retail", variable="POSTGRES_URL")
+POSTGRES_OWNER_URL = live_stores.url("retail_owner", variable="POSTGRES_OWNER_URL")
 
 READER = make_url(POSTGRES_URL).username
 OWNER = make_url(POSTGRES_OWNER_URL).username
@@ -47,7 +44,7 @@ def _engine_or_skip(url: str) -> sqlalchemy.Engine:
         with engine.connect() as conn:
             conn.exec_driver_sql("SELECT 1")
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {url}: {exc}")
+        live_stores.unreachable("Postgres", url, exc)
     return engine
 
 
@@ -89,20 +86,32 @@ def test_the_reader_is_a_plain_login_role_with_no_special_attributes(reader):
     assert not any([row.rolsuper, row.rolcreatedb, row.rolcreaterole, row.rolreplication, row.rolbypassrls])
 
 
-def test_the_reader_is_a_member_of_no_other_role(reader):
+def test_the_reader_inherits_from_no_role_and_may_become_only_people(reader):
     """Membership is how a "read-only" role quietly inherits the owner's
-    rights. It has none, so its own grants are the whole story.
+    rights. It inherits from nothing, so its own grants are the whole story.
+
+    Since 6.0 it is a member of something: with sign-in on, it is granted
+    each signed-in person's role so a question can run as them (`SET LOCAL
+    ROLE`) -- WITH INHERIT FALSE, so it gains none of what they hold, and
+    only people's roles, never a group's or the owner's. Off, or with nobody
+    in the directory yet, it is a member of nothing at all.
     """
     with reader.connect() as conn:
         memberships = conn.execute(
             text(
-                "SELECT r.rolname FROM pg_auth_members m "
+                # pg_has_role is strict: with no nl2sql_ldap -- sign-in never
+                # prepared -- it is null, and nothing counts as a person.
+                "SELECT r.rolname, m.inherit_option, m.admin_option, "
+                "COALESCE(pg_has_role(r.oid, to_regrole('nl2sql_ldap'), 'MEMBER'), false) AS person "
+                "FROM pg_auth_members m "
                 "JOIN pg_roles r ON r.oid = m.roleid "
                 "JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = :name"
             ),
             {"name": READER},
-        ).scalars().all()
-    assert memberships == []
+        ).all()
+    assert [row.rolname for row in memberships if row.inherit_option] == [], "it inherits from nothing"
+    assert [row.rolname for row in memberships if row.admin_option] == [], "and can grant nothing"
+    assert [row.rolname for row in memberships if not row.person] == [], "and may become only people"
 
 
 def test_the_reader_owns_nothing(reader):
@@ -299,8 +308,10 @@ def test_the_reader_may_connect_to_the_retail_database_and_no_other(reader):
 
 
 @pytest.mark.parametrize("database", ["postgres", "template1"])
-def test_the_readers_password_opens_no_other_database(database):
-    """The catalog says no; this is the server saying it at the door."""
+def test_the_readers_password_opens_no_other_database(reader, database):
+    """The catalog says no; this is the server saying it at the door. (With
+    `reader`, so a stack that is down is a skip here as everywhere else in
+    this file, not a refusal it never got.)"""
     other = sqlalchemy.create_engine(make_url(POSTGRES_URL).set(database=database))
     try:
         with pytest.raises(sqlalchemy.exc.OperationalError, match="CONNECT privilege"):
@@ -489,6 +500,18 @@ def test_the_executor_sets_the_role_when_a_principal_is_supplied(reader):
     assert result.rows[0][0] == READER
 
 
+def test_the_planner_gate_plans_as_the_principal_too(reader):
+    """Signed in, a question is planned as well as run as the person who asked
+    it, so a table they may not read is refused by the gate, in Postgres's
+    words, before the executor is reached.
+    """
+    db = Database(POSTGRES_URL)
+    cost, error = db.explain_plan("SELECT 1", principal=READER)
+    assert error is None and cost is not None
+    cost, error = db.explain_plan("SELECT 1", principal=OWNER)
+    assert cost is None and "permission denied to set role" in error
+
+
 def test_a_principal_the_reader_may_not_become_is_refused_by_the_server(reader):
     """`SET ROLE` to a role you are not a member of is an error, and the
     agent must surface it rather than quietly running as itself with more
@@ -497,3 +520,14 @@ def test_a_principal_the_reader_may_not_become_is_refused_by_the_server(reader):
     db = Database(POSTGRES_URL)
     with pytest.raises(sqlalchemy.exc.DatabaseError):
         db.run_select("SELECT 1", principal=OWNER)
+
+
+def test_postgres_is_told_whose_statement_it_is_for_that_transaction_only(reader):
+    """V6-64: inside the transaction `current_user` is the person; the
+    application name puts them in pg_stat_activity and the log as well, and
+    is gone from the pooled connection once the transaction is."""
+    db = Database(POSTGRES_URL)
+    named = db.run_select("SELECT current_setting('application_name'), current_user", principal=READER)
+    assert tuple(named.rows[0]) == (f"nl2sql:agent:{READER}", READER)
+    after = db.run_select("SELECT current_setting('application_name')")
+    assert after.rows[0][0] != f"nl2sql:agent:{READER}"

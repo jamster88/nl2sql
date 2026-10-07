@@ -51,23 +51,13 @@ RAG_SCRIPTS = (
 #: helpers every script above dies through.
 RAG_LIB = "rag/lib.sh"
 
-#: Sourced by the nginx image's entrypoint. No flags, but it decides two
-#: things and refuses to start over one of them.
-GUI_ENVSH = "gui/10-nl2sql-config.envsh"
+#: Sourced by the nginx image's entrypoint, for every page and MLflow's
+#: front door (V6-37). No flags, but it decides what a page is and refuses to
+#: start over several things. Driven in tests/proxy/test_proxy_startup.py.
+PROXY_ENVSH = "proxy/10-nl2sql-proxy.envsh"
 
-#: The review interface's equivalent. The same two decisions, and the token
-#: it turns into a header is the one that can rewrite the golden question
-#: set. Driven in tests/review/test_review_project.py.
-REVIEW_GUI_ENVSH = "review/gui/10-nl2sql-review-config.envsh"
-
-#: The SQL console interface's equivalent: the same two decisions, for a page
-#: that runs SQL. Driven in tests/console/test_console_project.py.
-CONSOLE_GUI_ENVSH = "console/10-nl2sql-console-config.envsh"
-
-#: The curation interface's equivalent (5.6): the review interface's two
-#: decisions, for the page that writes SQL snippets and golden pairs. Driven
-#: in tests/curate/test_curate_project.py.
-CURATE_GUI_ENVSH = "curate/10-nl2sql-curate-config.envsh"
+#: The pages' health check, which verifies the certificate a page serves.
+PROXY_HEALTH = "proxy/health.sh"
 
 SMOKE = "docker/apitest/smoke.sh"
 
@@ -77,11 +67,32 @@ SMOKE = "docker/apitest/smoke.sh"
 #: tests/docker/test_init_db_script.py.
 INIT_DB = "docker/init_db.sh"
 
+#: A runtime store from before 6.3, moved into its database in the one
+#: server (V6-40). No flags -- it is handed its store as environment -- and
+#: driven against fake `psql`, `pg_ctl`, `pg_dump` and `pg_restore` in
+#: tests/docker/test_migrate_store.py.
+MIGRATE_STORE = "docker/migrate_store.sh"
+
+#: The retail image's entrypoint since v1_2: its certificate, its transport
+#: rules and its passwords, then Postgres. Driven against a fake stock
+#: entrypoint and fake `openssl`, `psql` and `gosu` in
+#: tests/docker/test_retail_entrypoint.py.
+RETAIL_ENTRYPOINT = "docker/entrypoint.sh"
+
+#: MLflow's start (6.2): root only long enough to give the account the
+#: artifact volume. Driven against fake `id`, `find` and `setpriv` in
+#: tests/docker/test_mlflow_entrypoint.py.
+MLFLOW_ENTRYPOINT = "docker/mlflow/entrypoint.sh"
+
+#: The desktop image's one command (6.2): the jar copied out as the owner of
+#: where it lands. Driven in tests/docker/test_desktop_copy_out.py.
+DESKTOP_COPY_OUT = "desktop/copy-out.sh"
+
 #: Everything that parses a flag or prints a message a user reads.
 COMMANDS = SCRIPTS + RAG_SCRIPTS
 
 #: Everything written in shell, whatever its shape.
-ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, GUI_ENVSH, REVIEW_GUI_ENVSH, CONSOLE_GUI_ENVSH, CURATE_GUI_ENVSH, INIT_DB)
+ALL_SHELL = COMMANDS + (RAG_LIB, SMOKE, PROXY_ENVSH, PROXY_HEALTH, INIT_DB, MIGRATE_STORE, RETAIL_ENTRYPOINT, MLFLOW_ENTRYPOINT, DESKTOP_COPY_OUT)
 
 #: The API's smoke script is driven from tests/api/, against a real server
 #: rather than a fake Docker, so its assertions live there; the RAG scripts'
@@ -374,15 +385,18 @@ def test_setup_ends_by_showing_the_command_the_user_runs_next():
     assert 'docker compose run --rm agent "' in _source("setup.sh")
 
 
-def test_both_scripts_create_what_the_v4_agent_needs_that_the_image_may_not_have():
+def test_both_scripts_have_the_databases_made_what_the_v4_agent_needs():
     """An existing volume outlives the image that made it, so neither the
-    reader role nor the trigram extension can be assumed. Both scripts
-    create both, every start -- start.sh inherits it by running them.
+    reader role nor the trigram extension can be assumed. Both scripts run
+    the dbprep service on every start, which makes both -- start.sh inherits
+    it by running them -- and neither runs SQL itself (V6-41).
     """
+    retail = (REPO_ROOT / "common" / "nl2sql_ops" / "__main__.py").read_text()
+    assert "ensure_reader(" in retail and "ensure_extensions(" in retail
     for script in WORKERS:
         source = _source(script)
-        assert "reader_role.sql" in source, f"{script} never creates the agent's role"
-        assert "pg_trgm" in source, f"{script} never creates the trigram extension"
+        assert "run --rm --no-deps -T dbprep" in source, f"{script} never prepares the databases"
+        assert "psql" not in source, f"{script} runs SQL itself"
 
 
 def test_a_help_text_never_prints_the_script_itself(script=None):
@@ -402,28 +416,31 @@ def test_a_help_text_never_prints_the_script_itself(script=None):
 
 
 # ---------------------------------------------------------------------------
-# The GUI's start-up script
+# The pages' start-up script
 # ---------------------------------------------------------------------------
 
 
-def test_the_gui_start_up_script_refuses_rather_than_warning():
+def test_the_proxy_start_up_script_refuses_rather_than_warning():
     """It runs before nginx and decides whether there is a certificate to
     verify. Carrying on without one would mean proxying to an upstream
     nobody checked, so the only outcome it has is to stop.
     """
-    source = _source(GUI_ENVSH)
+    source = _source(PROXY_ENVSH)
     assert "exit 1" in source
     assert "warn" not in source
 
 
-def test_every_message_the_gui_script_prints_is_asserted_by_a_test():
+def test_every_message_the_proxy_script_prints_is_asserted_by_a_test():
     """Its messages go straight to stderr rather than through a `die`
     helper, so they need their own sweep -- same rule, different shape.
     """
-    printed = re.findall(r'^\s*echo "([^"$]{12,})" >&2', _source(GUI_ENVSH), re.MULTILINE)
-    assert printed, "no messages found in the GUI start-up script -- has it moved?"
-    unasserted = [message for message in printed if not _asserted(message, GUI_ENVSH)]
-    assert unasserted == [], f"{GUI_ENVSH} messages no test checks: {unasserted}"
+    printed = re.findall(r'^\s*echo "([^"]{12,})" >&2', _source(PROXY_ENVSH), re.MULTILINE)
+    assert printed, "no messages found in the proxy start-up script -- has it moved?"
+    # The variable parts of a message are what a test fills in; what is
+    # checked is the words around them.
+    fixed = [re.sub(r"\$\{?\w+\}?(:-\})?", " ", message).strip() for message in printed]
+    unasserted = [message for message in fixed if not _asserted(message, PROXY_ENVSH)]
+    assert unasserted == [], f"{PROXY_ENVSH} messages no test checks: {unasserted}"
 
 
 # ---------------------------------------------------------------------------
@@ -508,12 +525,14 @@ def test_the_helper_that_reads_compose_values_is_shared_by_both_scripts():
 
 
 def _tracked(*patterns: str) -> set[str]:
-    """Repository files git tracks matching these pathspecs, at any depth."""
+    """Repository files matching these pathspecs, at any depth, that git
+    tracks or would: added since the last commit included, deleted since
+    left out, so an inventory is held to the working tree."""
     result = subprocess.run(
-        ["git", "ls-files", "-z", *patterns],
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", *patterns],
         cwd=REPO_ROOT, capture_output=True, text=True, check=True,
     )
-    return {path for path in result.stdout.split("\0") if path}
+    return {path for path in result.stdout.split("\0") if path and (REPO_ROOT / path).is_file()}
 
 
 #: Dockerfile -> the test files that assert on its contents. A Dockerfile is
@@ -523,21 +542,27 @@ DOCKERFILES = {
     "docker/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "agent/Dockerfile": ("tests/docker/test_dockerfiles.py",),
     "docker/apitest/Dockerfile": ("tests/docker/test_dockerfiles.py",),
-    "gui/Dockerfile": ("tests/gui/test_gui_project.py",),
+    # Every page and MLflow's front door, one image since 6.3 (V6-37).
+    "proxy/Dockerfile": (
+        "tests/proxy/test_proxy_startup.py",
+        "tests/docker/test_gui_container.py",
+        "tests/security/test_unprivileged.py",
+        "tests/web/test_web_package.py",
+    ),
     # The only one whose output leaves the image rather than becoming it.
     "desktop/Dockerfile": (
         "tests/java/test_desktop_project.py",
         "tests/docker/test_desktop_image.py",
     ),
     "review/Dockerfile": ("tests/review/test_review_image.py",),
-    "review/gui/Dockerfile": ("tests/review/test_review_project.py",),
-    "console/Dockerfile": ("tests/console/test_console_project.py",),
-    "curate/Dockerfile": ("tests/curate/test_curate_project.py",),
     "docker/mlflow/Dockerfile": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
     "docker/mlflowdb/Dockerfile": ("tests/docker/test_mlflow_compose.py",),
     "rag/docker/chunkdb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/vectordb.Dockerfile": ("tests/rag/test_rag_images.py",),
     "rag/docker/restore.Dockerfile": ("tests/rag/test_rag_images.py",),
+    # Sign-in: the directory, and the service that signs people in against it.
+    "ldap/Dockerfile": ("tests/ldap/test_ldap_image.py",),
+    "auth/Dockerfile": ("tests/auth/test_auth_image.py", "tests/auth/test_auth_live.py"),
 }
 
 #: Compose file -> the test files that resolve and assert on it.
@@ -565,11 +590,14 @@ COMPOSE_SERVICES = {
         "postgres": ("tests/docker/test_compose_config.py",),
         "vectordb": ("tests/docker/test_compose_config.py",),
         "chunkdb": ("tests/docker/test_compose_config.py",),
-        "snippetsdb": ("tests/curate/test_curate_compose.py",),
-        "feedbackdb": ("tests/review/test_review_compose.py",),
-        "correctionsdb": ("tests/review/test_review_compose.py",),
-        "completionsdb": ("tests/review/test_review_compose.py",),
+        # The four runtime stores, one server since 6.3 (V6-40), and what
+        # moves a store from before into it.
+        "stores": ("tests/review/test_review_compose.py", "tests/security/test_posture.py"),
+        "storesmigrate": ("tests/docker/test_launch_script.py", "tests/security/test_posture.py"),
+        # The databases prepared (V6-41).
+        "dbprep": ("tests/docker/test_launch_script.py", "tests/security/test_posture.py"),
         "agent": ("tests/docker/test_compose_config.py",),
+        "pki": ("tests/security/test_posture.py", "tests/docker/test_compose_config.py"),
         "api": ("tests/docker/test_api_compose.py",),
         "gui": ("tests/docker/test_gui_compose.py",),
         "review": ("tests/review/test_review_compose.py",),
@@ -580,6 +608,10 @@ COMPOSE_SERVICES = {
         "consolegui": ("tests/console/test_console_compose.py",),
         "mlflowdb": ("tests/docker/test_mlflow_compose.py",),
         "mlflow": ("tests/docker/test_mlflow_compose.py", "tests/docker/test_mlflow_live.py"),
+        "mlflowproxy": ("tests/docker/test_mlflow_compose.py",),
+        "ldap": ("tests/auth/test_auth_compose.py",),
+        "auth": ("tests/auth/test_auth_compose.py",),
+        "directorygui": ("tests/auth/test_auth_compose.py",),
         "desktop": (
             "tests/java/test_desktop_project.py",
             "tests/docker/test_desktop_image.py",
@@ -597,10 +629,11 @@ def _compose_services(compose_file: str) -> set[str]:
 
     `docker compose config` would need a daemon and every profile named at
     once; the keys under `services:` are what is being inventoried and they
-    are one indent level in, which the volumes below are not.
+    are one indent level in, which the volumes below are not -- and nor are
+    the anchors above (`x-proxy`'s `build:` is one level in too).
     """
     text = (REPO_ROOT / compose_file).read_text()
-    body = text[: text.index("\nvolumes:")]
+    body = text[text.index("\nservices:") : text.index("\nvolumes:")]
     return set(re.findall(r"^  ([a-z][a-z0-9_-]*):$", body, re.MULTILINE))
 
 
@@ -666,7 +699,7 @@ def test_the_readme_counts_what_these_inventories_hold():
     readme = " ".join((REPO_ROOT / "README.md").read_text().split())
     word = "(" + "|".join(_COUNT_WORDS) + ")"
     match = re.search(
-        rf"{word} shell scripts, {word} nginx entrypoint fragments, {word} compose files, "
+        rf"{word} shell scripts, {word} nginx entrypoint fragments?, {word} compose files, "
         rf"{word} Dockerfiles and {word} nginx templates",
         readme, re.IGNORECASE,
     )
@@ -742,13 +775,24 @@ def test_there_are_nginx_templates_to_check():
     assert _tracked("*.template")
 
 
-@pytest.mark.parametrize("path", sorted(_tracked("*.template")))
-def test_every_nginx_template_verifies_its_upstream(path: str):
+#: The proxy's page templates: each a server with an upstream of its own.
+PAGE_TEMPLATES = sorted(path for path in _tracked("*.template") if path.startswith("proxy/pages/"))
+
+
+@pytest.mark.parametrize("path", PAGE_TEMPLATES)
+def test_every_page_template_verifies_its_upstream(path: str):
     """A proxy that trusts anything at the far end is a proxy that will one
     day trust something else. The directives live in an included file, which
     the start-up script writes from the upstream's own scheme."""
     template = (REPO_ROOT / path).read_text()
-    assert "-upstream-tls.conf;" in template, f"{path} includes no TLS block"
+    assert "include /tmp/nginx/upstream-tls.conf;" in template, f"{path} includes no TLS block"
+    assert "include /tmp/nginx/auth.conf;" in template, f"{path} has no sign-in"
+    assert "proxy_ssl_verify off" not in template
+
+
+def test_the_sign_in_location_verifies_the_auth_service():
+    template = (REPO_ROOT / "proxy" / "shared" / "auth.conf.template").read_text()
+    assert "include /tmp/nginx/auth-tls.conf;" in template
     assert "proxy_ssl_verify off" not in template
 
 
@@ -760,7 +804,8 @@ def test_no_nginx_template_carries_a_token(path: str):
     assert not re.search(r'Authorization\s+"Bearer\s+\S', template), (
         f"{path} appears to hard-code a token rather than substituting one"
     )
-    assert "AUTH_HEADER}" in template, f"{path} does not take its token from a variable"
+    for header in re.findall(r'proxy_set_header Authorization "([^"]*)";', template):
+        assert header in ("", "${UPSTREAM_AUTH_HEADER}"), f"{path}: Authorization {header!r}"
 
 
 @pytest.mark.parametrize("path", sorted(_tracked("*.template")))
@@ -769,5 +814,7 @@ def test_every_nginx_template_resolves_its_upstream_per_request(path: str):
     then caches it for the life of the process: it refuses to start before
     the service is up, and talks to a stale address after it restarts."""
     template = (REPO_ROOT / path).read_text()
-    assert "resolver " in template
-    assert "proxy_pass $upstream$request_uri;" in template
+    passes = re.findall(r"proxy_pass (\S+);", template)
+    assert passes, path
+    assert all(target.startswith(("$upstream", "$auth_upstream")) for target in passes), passes
+    assert template.count("resolver ${PROXY_RESOLVER}") >= len(passes)

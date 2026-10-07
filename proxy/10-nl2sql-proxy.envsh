@@ -1,0 +1,159 @@
+#!/bin/sh
+# The proxy image's start-up: one page's configuration, decided and written
+# before nginx reads it (V6-37).
+#
+# Sourced by the nginx image's entrypoint rather than executed -- hence
+# `.envsh` -- because what it decides is exported for what runs after it.
+# Six images each did this with a copy of their own until 6.3; the page is
+# now a setting, NL2SQL_PAGE:
+#
+#   gui        the web interface, in front of the API
+#   review     the review page, in front of the review service
+#   curate     the curation page, in front of the review service
+#   console    the SQL console's page, in front of the console
+#   directory  the directory page, in front of the auth service's two ports
+#   mlflow     MLflow's front door, which asks the auth service about everything
+#
+# Everything it writes goes under $NL2SQL_PROXY_OUT (/tmp/nginx): the root
+# is read-only (V6-34). The decisions, in order:
+#
+#   1. Which page, and whether it may be served: the directory page refuses
+#      beside a replica, whose people are edited on its primary.
+#   2. The Authorization header added to the upstream: none with sign-in on,
+#      where the browser's own session is what reaches the service and a
+#      token here would make every visitor the same somebody; the service
+#      token, read from its secret file, with sign-in off.
+#   3. Whether each upstream is verified: HTTPS is, against the stack's CA,
+#      and a CA that is not there stops the page with a message saying why
+#      rather than nginx's BIO error; plain HTTP has nothing to verify.
+#   4. MLflow's auth_request, with sign-in on.
+#   5. The page's own listener: HTTPS with its own certificate, unless
+#      PROXY_TLS_ENABLED says otherwise behind something that terminates TLS.
+#   6. The templates, rendered with these settings and nothing else, so
+#      nginx's own $variables are left alone.
+#
+# For the tests: NL2SQL_PROXY_TEMPLATES is where the templates are.
+set -eu
+
+page="${NL2SQL_PAGE:-}"
+out="${NL2SQL_PROXY_OUT:-/tmp/nginx}"
+templates="${NL2SQL_PROXY_TEMPLATES:-/etc/nginx/nl2sql}"
+me="nl2sql-proxy ($page)"
+
+off() {  # off VALUE -- whether a switch says off; anything else, or unset, is on
+    case "$1" in false|0|no|off) return 0 ;; esac
+    return 1
+}
+
+# --- 1. the page -------------------------------------------------------------
+case "$page" in
+    gui) template=gui ;;
+    review|curate|console) template=service ;;
+    directory) template=directory ;;
+    mlflow) template=mlflow ;;
+    *)
+        echo "nl2sql-proxy: NL2SQL_PAGE must be gui, review, curate, console, directory or mlflow, not '$page'." >&2
+        exit 1
+        ;;
+esac
+if [ "$page" = directory ] && [ "${LDAP_MODE:-standalone}" = replica ]; then
+    echo "$me: LDAP_MODE=replica. A replica's people are edited on its primary" >&2
+    echo "  directory and copied here, so this page is not served beside one." >&2
+    exit 1
+fi
+mkdir -p "$out/conf.d"
+export PAGE_ROOT="/usr/share/nginx/html/$page"
+
+# --- 2. the upstream's Authorization header ----------------------------------
+export UPSTREAM_AUTH_HEADER=""
+if off "${AUTH_ENABLED:-true}"; then
+    case "$page" in
+        gui) echo "$me: sign-in is off (AUTH_ENABLED=false): every visitor to this page can ask questions." >&2 ;;
+        review) echo "$me: sign-in is off (AUTH_ENABLED=false): every visitor to this page can review and promote." >&2 ;;
+        curate) echo "$me: sign-in is off (AUTH_ENABLED=false): every visitor to this page can rewrite what the agent learns from." >&2 ;;
+        console) echo "$me: sign-in is off (AUTH_ENABLED=false): every visitor to this page can run SQL." >&2 ;;
+        mlflow) echo "$me: sign-in is off (AUTH_ENABLED=false): anyone who can reach this port reaches MLflow." >&2 ;;
+    esac
+    # The service's token, from the secret compose mounts (V6-38), for the
+    # pages whose service takes one. Empty is none, and nginx drops a header
+    # whose value is empty -- so no token sends no header at all.
+    if [ -n "${UPSTREAM_TOKEN_FILE:-}" ] && [ -r "$UPSTREAM_TOKEN_FILE" ]; then
+        token="$(tr -d '\r\n' < "$UPSTREAM_TOKEN_FILE")"
+        if [ -n "$token" ]; then
+            export UPSTREAM_AUTH_HEADER="Bearer $token"
+        fi
+    fi
+fi
+
+# --- 3. verifying the upstreams ------------------------------------------------
+#   upstream_tls NAME URL CACERT SSL_NAME FILE
+upstream_tls() {
+    case "$2" in
+        https://*)
+            if [ ! -r "$3" ]; then
+                echo "$me: $1 is $2 but there is no readable certificate at $3 to verify it." >&2
+                echo "  It is the stack's CA certificate, which the pki service writes beside this" >&2
+                echo "  page's own certificate -- so this usually means that volume is not mounted here." >&2
+                exit 1
+            fi
+            cat > "$5" <<TLSEOF
+# Written by the proxy's start-up because $1 is HTTPS.
+proxy_ssl_verify on;
+proxy_ssl_verify_depth 3;
+proxy_ssl_trusted_certificate $3;
+proxy_ssl_server_name on;
+proxy_ssl_name $4;
+TLSEOF
+            ;;
+        *)
+            cat > "$5" <<TLSEOF
+# Written by the proxy's start-up. $1 is $2 -- plain HTTP, so there is
+# nothing to verify, and what crosses this hop is in clear text.
+TLSEOF
+            ;;
+    esac
+}
+: "${UPSTREAM:?UPSTREAM is not set: where page $page sends its requests}"
+upstream_tls UPSTREAM "$UPSTREAM" "${UPSTREAM_CACERT:-}" "${UPSTREAM_SSL_NAME:-}" "$out/upstream-tls.conf"
+upstream_tls AUTH_UPSTREAM "${AUTH_UPSTREAM:?AUTH_UPSTREAM is not set}" "${AUTH_CACERT:-}" "${AUTH_SSL_NAME:-}" \
+    "$out/auth-tls.conf"
+
+# --- 4. MLflow's sign-in --------------------------------------------------------
+if off "${AUTH_ENABLED:-true}"; then
+    : > "$out/mlflow-signin.conf"
+else
+    cat > "$out/mlflow-signin.conf" <<TLSEOF
+auth_request /_nl2sql_verify;
+error_page 401 = @signin;
+error_page 403 = @forbidden;
+TLSEOF
+fi
+
+# --- 5. the page's own listener ---------------------------------------------------
+if off "${PROXY_TLS_ENABLED:-true}"; then
+    export PROXY_LISTEN_TLS=""
+    cat > "$out/server-tls.conf" <<TLSEOF
+# PROXY_TLS_ENABLED=false: this page is plain HTTP, and so is every password typed into it.
+TLSEOF
+else
+    if [ ! -r "${PROXY_TLS_CERT_FILE:-}" ] || [ ! -r "${PROXY_TLS_KEY_FILE:-}" ]; then
+        echo "$me: PROXY_TLS_ENABLED is on but ${PROXY_TLS_CERT_FILE:-} or ${PROXY_TLS_KEY_FILE:-}" >&2
+        echo "  is not readable. They are this page's own, from the pki service (its TLS" >&2
+        echo "  volume, mounted here); mount it, or turn TLS off behind something that terminates it." >&2
+        exit 1
+    fi
+    export PROXY_LISTEN_TLS=" ssl"
+    cat > "$out/server-tls.conf" <<TLSEOF
+ssl_certificate ${PROXY_TLS_CERT_FILE};
+ssl_certificate_key ${PROXY_TLS_KEY_FILE};
+ssl_protocols TLSv1.2 TLSv1.3;
+TLSEOF
+fi
+
+# --- 6. the templates -------------------------------------------------------------
+: "${PROXY_PORT:?PROXY_PORT is not set}"
+export PROXY_RESOLVER="${PROXY_RESOLVER:-127.0.0.11}"
+export UPSTREAM_READ_TIMEOUT="${UPSTREAM_READ_TIMEOUT:-120s}"
+names='${PROXY_PORT} ${PROXY_LISTEN_TLS} ${PROXY_RESOLVER} ${PAGE_ROOT} ${UPSTREAM} ${UPSTREAM_READ_TIMEOUT} ${UPSTREAM_AUTH_HEADER} ${AUTH_UPSTREAM}'
+envsubst "$names" < "$templates/shared/auth.conf.template" > "$out/auth.conf"
+envsubst "$names" < "$templates/pages/$template.conf.template" > "$out/conf.d/nl2sql.conf"

@@ -49,10 +49,18 @@ as each node finishes, so the gaps between those callbacks are stage durations.
 
 ## The questions
 
-Fifteen, spread across five categories. They are deliberately **not** the 45
+Fifteen, spread across five categories. They were written apart from the
 golden pairs the agent retrieves from -- a benchmark drawn from those would
 measure how well it can look something up, which is not the thing worth knowing.
-A test asserts none of them is golden-pair text verbatim.
+
+Two of them have since become golden pairs. The golden set grows from reviewed
+feedback (since 4.4), and when users' verdicts on **B03** and **B14** were
+promoted (5.4) their questions became **Q46** and **Q47**, word for word. They
+stay in the benchmark by the owner's decision, so the fifteen stay comparable
+across releases; read their scores as lookup, not generalisation. A test
+(`tests/benchmarks/test_questions.py`) holds the overlap to exactly those two,
+each named with the pair it became, so a third is a failure to look at rather
+than a quiet change in what the benchmark measures.
 
 | Category | n | What it tests |
 |---|---|---|
@@ -227,8 +235,10 @@ attributable to that stage and nothing else:
 | `multi-shot` | on | on | off | v3 to v5.5 |
 | `snippets` | on | on | on | v5.6, the agent as it ships, and the default |
 
-The snippet store is found on its published port, `localhost:5438`, unless
-`SNIPPET_DB_URL` says otherwise. The measurements below predate the
+The snippet store is found on the runtime stores' published port,
+`localhost:5435` (6.3), unless `SNIPPET_DB_URL` says otherwise; each
+database's password is the one the stack generated, read from `secrets/`
+when the URL's variable is unset. The measurements below predate the
 `snippets` configuration.
 
 ## Options
@@ -251,7 +261,7 @@ the same names are service names. Set `DATABASE_URL`, `VECTOR_DB_URL`,
 ## MLflow
 
 ```bash
-./launch.sh --mlflow                      # MLflow up, at http://localhost:5001
+./launch.sh --mlflow                      # MLflow up, at https://localhost:5001
 python benchmarks/run_benchmark.py --compare
 ```
 
@@ -271,9 +281,17 @@ read what, which model wrote the SQL, what the repair said -- and two runs
 can be compared in MLflow's own run view. A run cut short, by Ctrl-C or a
 database that went away, keeps what it measured and ends as `KILLED`.
 
-It runs on the host, so MLflow is `http://localhost:5001` -- the port compose
-publishes -- unless `MLFLOW_TRACKING_URI` says otherwise; set it empty to run
-untraced with MLflow up. With nothing answering there, the benchmark runs as
+It runs on the host, so MLflow is `https://localhost:5001` -- its front door,
+the port compose publishes -- unless `MLFLOW_TRACKING_URI` says otherwise;
+set it empty to run untraced with MLflow up. The front door presents a
+certificate issued by the stack's development CA, which the benchmark
+trusts when `./nl2sql-ca.crt` is there (`./launch.sh --desktop` copies it
+out, or `docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt
+./nl2sql-ca.crt`) and `MLFLOW_TRACKING_SERVER_CERT_PATH` does not name
+another. With sign-in on it
+also asks who is logging runs: set `MLFLOW_TRACKING_USERNAME` and
+`MLFLOW_TRACKING_PASSWORD` to someone in `nl2sql-reviewers` or
+`nl2sql-admins`, which MLflow's client sends as Basic credentials. With nothing answering there, the benchmark runs as
 before. The runs need MLflow's `mlflow-skinny`, which
 `pip install -r tests/requirements.txt` installs; with only the agent's
 tracing client, the traces are still written, ungrouped, and the benchmark

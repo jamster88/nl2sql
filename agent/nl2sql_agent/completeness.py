@@ -84,6 +84,7 @@ from .state import (
     MissingColumn,
     QueryResult,
 )
+from nl2sql_common.errors import MODEL_ERRORS, PARSE_ERRORS
 
 R1, R2, R3, R4, REFLECTION = "R1", "R2", "R3", "R4", "reflection"
 
@@ -178,7 +179,7 @@ def _column_name(ref: ast.ColumnRef) -> str | None:
 def _deparse(node: ast.Node) -> str:
     try:
         return RawStream()(node)
-    except Exception:  # pglast prints anything it parsed; this is for one that does not
+    except PARSE_ERRORS + (NotImplementedError,):  # pglast prints anything it parsed; this is for one that does not
         return ""
 
 
@@ -192,14 +193,14 @@ def read_query(sql: str, label_map: LabelMap | None = None) -> _Query:
     query = _Query(text=sql or "")
     try:
         statements = parse_sql(sql or "")
-    except Exception:
+    except PARSE_ERRORS:
         return query
     if len(statements) != 1:
         return query
     statement = statements[0].stmt
     try:
         query.relations = {name.split(".")[-1].strip('"').lower() for name in referenced_relations(sql)}
-    except Exception:  # a statement that parsed has relations; this is for one that has none
+    except PARSE_ERRORS:  # a statement that parsed has relations; this is for one that has none
         query.relations = set()
     query.functions = {
         node.funcname[-1].sval.lower()
@@ -585,7 +586,7 @@ def reflect(
                 schema_columns=", ".join(pairs) or "(none)",
             )
         )
-    except Exception as exc:
+    except MODEL_ERRORS as exc:
         return [], f"reflection unavailable: {exc}", 0
     if verdict is None:
         return [], "", 1

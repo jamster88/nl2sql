@@ -85,9 +85,9 @@ class SentenceTransformerEmbedder:
         return None
 
 
-def build_embedder(backend: str, model: str, ollama_url: str) -> Embedder:
+def build_embedder(backend: str, model: str, ollama_url: str, *, timeout: int = 300) -> Embedder:
     if backend == "ollama":
-        return OllamaEmbedder(model, ollama_url)
+        return OllamaEmbedder(model, ollama_url, timeout=timeout)
     if backend in {"sentence-transformers", "st"}:
         return SentenceTransformerEmbedder(model)
     raise ValueError(f"Unknown embedding backend {backend!r}")

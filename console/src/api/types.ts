@@ -40,7 +40,9 @@ export interface ConsoleMeta {
   db_schema: string;
   tables: number;
   limits: ConsoleLimits;
-  authentication: "bearer" | "none";
+  authentication: "bearer" | "none" | "session";
+  /** The role a query runs as: a signed-in person's own, or `role`. */
+  runs_as: string;
   tls: Record<string, unknown>;
   warnings: string[];
 }

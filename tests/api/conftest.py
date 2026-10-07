@@ -73,6 +73,7 @@ def make_runner(
 def api_settings() -> ApiSettings:
     """Fast timings, so a stream test is not a five-minute test."""
     return ApiSettings(
+        auth_enabled=False,
         token=None,
         tls_enabled=False,
         max_concurrency=2,
@@ -95,6 +96,7 @@ def make_client(api_settings: ApiSettings):
         agent_factory: Callable | None = None,
         feedback=None,
         tracer=None,
+        guard=None,
         **store_kwargs,
     ) -> TestClient:
         api = api or api_settings
@@ -113,6 +115,7 @@ def make_client(api_settings: ApiSettings):
             agent_factory=agent_factory,
             feedback=feedback,
             tracer=tracer,
+            guard=guard,
         )
         return TestClient(app)
 

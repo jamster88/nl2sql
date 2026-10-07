@@ -6,9 +6,10 @@ Behind `--run-docker` for the same reason as the other compose tests:
 
 The properties that carry weight here are the ones no single file shows:
 
-* **The review service presents the API's certificate.** That is two settings
-  in two services -- `API_TLS_HOSTNAMES` has to cover `nl2sql-review`, and
-  the review GUI's `proxy_ssl_name` has to be a name that certificate covers.
+* **The review service presents a certificate of its own.** That is two
+  settings in two services -- the pki service's `REVIEW_TLS_HOSTNAMES` has to
+  cover `nl2sql-review`, and the review GUI's `proxy_ssl_name` has to be a
+  name that certificate covers.
   Nothing but a test connects them.
 * **The golden question document is bind-mounted writable from the checkout.**
   If it were not, a promotion would write a copy inside a container and the
@@ -16,6 +17,10 @@ The properties that carry weight here are the ones no single file shows:
 * **The API and the review service reach the staging database as different
   roles.** The whole security story is that one of them is INSERT-only, and
   it is one compose line away from not being.
+
+Since 6.3 the staging database and the two fix stores are databases in one
+server, `stores`, beside the snippets (V6-40), and the review page is the
+proxy image's `review` page (V6-37).
 """
 
 from __future__ import annotations
@@ -28,11 +33,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.settings_names import proxy_names, read_names, settable_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
-PROFILES = ("api", "gui", "feedback", "review", "reviewgui")
+PROFILES = ("api", "gui", "review", "reviewgui")
 
 
 def _compose_config(tmp_path: Path, *profiles: str, env: dict | None = None) -> dict:
@@ -63,8 +70,8 @@ def config(tmp_path_factory) -> dict:
 
 
 @pytest.fixture(scope="module")
-def feedbackdb(config: dict) -> dict:
-    return config["services"]["feedbackdb"]
+def stores(config: dict) -> dict:
+    return config["services"]["stores"]
 
 
 @pytest.fixture(scope="module")
@@ -77,17 +84,12 @@ def reviewgui(config: dict) -> dict:
     return config["services"]["reviewgui"]
 
 
-@pytest.fixture(scope="module")
-def api(config: dict) -> dict:
-    return config["services"]["api"]
-
-
 # ---------------------------------------------------------------------------
 # None of it exists unless it is asked for
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("service", ["feedbackdb", "correctionsdb", "completionsdb", "review", "reviewgui"])
+@pytest.mark.parametrize("service", ["review", "reviewgui"])
 def test_nothing_is_started_unless_it_is_asked_for(tmp_path_factory, service: str):
     """Most people ask questions from a terminal and never review anything.
 
@@ -104,67 +106,59 @@ def test_nothing_is_started_unless_it_is_asked_for(tmp_path_factory, service: st
     assert service not in result.stdout.split()
 
 
-@pytest.mark.parametrize(
-    "service,profile",
-    [
-        ("feedbackdb", "feedback"),
-        ("correctionsdb", "review"),
-        ("completionsdb", "review"),
-        ("review", "review"),
-        ("reviewgui", "reviewgui"),
-    ],
-)
+@pytest.mark.parametrize("service,profile", [("review", "review"), ("reviewgui", "reviewgui")])
 def test_each_service_is_in_the_profile_it_is_named_for(config: dict, service: str, profile: str):
     assert config["services"][service]["profiles"] == [profile]
 
 
 # ---------------------------------------------------------------------------
-# The staging database
+# The staging database: one of the runtime stores (6.3)
 # ---------------------------------------------------------------------------
 
 
-def test_the_staging_database_keeps_its_data_in_its_own_volume(feedbackdb: dict, config: dict):
-    """The one volume here holding data a person typed rather than data a
+def test_the_runtime_stores_start_with_the_databases(stores: dict):
+    """No profile: since 6.3 they are one server, and a verdict is staged
+    whenever the API is up rather than only when --feedback was asked for."""
+    assert "profiles" not in stores
+
+
+def test_the_staging_database_keeps_its_data_in_the_stores_volume(stores: dict, config: dict):
+    """The one volume here holding data people typed rather than data a
     build produced, which is what makes it the one worth backing up."""
-    targets = {mount["target"]: mount for mount in feedbackdb["volumes"]}
-    assert "/var/lib/postgresql/data" in targets
-    assert targets["/var/lib/postgresql/data"]["source"] == "feedbackdata"
-    assert "feedbackdata" in config["volumes"]
+    targets = {mount["target"]: mount for mount in stores["volumes"]}
+    assert targets["/var/lib/postgresql/data"]["source"] == "storesdata"
+    assert "storesdata" in config["volumes"]
 
 
-def test_the_staging_database_is_not_one_of_the_shipped_images(feedbackdb: dict):
-    """A stock Postgres on purpose: the schema and the writer role are
-    created by the review service on every start, so there is nothing to
-    bake into an image."""
-    assert feedbackdb["image"].startswith("postgres:")
+def test_the_stores_are_not_one_of_the_shipped_images(stores: dict):
+    """A stock pgvector on purpose, pinned by digest (V6-35): the schemas and
+    the roles are made by dbprep and the review service on every start, so
+    there is nothing to bake into an image."""
+    assert stores["image"].startswith("pgvector/pgvector:pg18@sha256:")
 
 
-def test_the_staging_database_is_health_checked(feedbackdb: dict):
-    assert "pg_isready" in " ".join(feedbackdb["healthcheck"]["test"])
+def test_the_stores_are_health_checked(stores: dict):
+    assert "pg_isready" in " ".join(stores["healthcheck"]["test"])
 
 
-def test_the_staging_database_is_not_the_retail_one(feedbackdb: dict, config: dict):
+def test_the_staging_database_is_not_the_retail_one(stores: dict, config: dict):
     """Writing curation data into the database under test would pollute the
     thing being measured."""
-    # The retail service takes its database name from a build ARG rather
-    # than the environment, so the comparison is against the built-in
-    # default rather than a key that is not there.
     retail = config["services"]["postgres"]
-    assert feedbackdb["environment"]["POSTGRES_DB"] != retail["build"]["args"]["DB_NAME"]
-    assert feedbackdb["container_name"] != retail["container_name"]
-    assert feedbackdb["image"] != retail["image"]
+    assert stores["container_name"] != retail["container_name"]
+    assert stores["image"] != retail["image"]
 
 
-def test_the_staging_database_is_on_its_own_port(config: dict):
+def test_the_stores_are_on_a_port_of_their_own(config: dict):
     ports = {
         service: {p["published"] for p in spec.get("ports", [])}
         for service, spec in config["services"].items()
         if spec.get("ports")
     }
-    feedback_ports = ports["feedbackdb"]
+    assert ports["stores"] == {"5435"}
     for service, published in ports.items():
-        if service != "feedbackdb":
-            assert not (feedback_ports & published), f"feedbackdb collides with {service}"
+        if service != "stores":
+            assert not (ports["stores"] & published), f"the stores collide with {service}"
 
 
 # ---------------------------------------------------------------------------
@@ -175,21 +169,20 @@ def test_the_staging_database_is_on_its_own_port(config: dict):
 def test_the_api_reaches_the_staging_database_as_the_insert_only_role(tmp_path_factory):
     """The whole security story is that the public process holds a role that
     cannot read a submission back. It is one compose line away from not."""
-    config = _compose_config(
-        tmp_path_factory.mktemp("apifeedback"),
-        env={"API_FEEDBACK_DB_URL": "postgresql://nl2sql_feedback_writer:pw@nl2sql-feedbackdb:5432/nl2sql_feedback"},
-    )
-    url = config["services"]["api"]["environment"]["API_FEEDBACK_DB_URL"]
-
     from nl2sql_review.store import WRITER_ROLE
 
-    assert url.startswith(f"postgresql://{WRITER_ROLE}:")
+    config = _compose_config(tmp_path_factory.mktemp("apifeedback"))
+    env = config["services"]["api"]["environment"]
+    assert env["API_FEEDBACK_DB_URL"] == f"postgresql://{WRITER_ROLE}@nl2sql-stores:5432/nl2sql_feedback"
+    assert env["API_FEEDBACK_DB_PASSWORD_FILE"] == "/run/secrets/feedback_writer_password"
 
 
-def test_the_api_works_without_a_staging_database(api: dict):
-    """Unset is the default, and it has to stay a working configuration:
-    the feedback routes answer 503 with a reason and everything else runs."""
-    assert api["environment"].get("API_FEEDBACK_DB_URL", "") == ""
+def test_the_api_works_without_a_staging_database(tmp_path_factory):
+    """Set empty, it has to stay a working configuration: the feedback routes
+    answer 503 with a reason and everything else runs. Empty is kept as
+    empty (`${API_FEEDBACK_DB_URL-...}`), so it is a way to turn it off."""
+    config = _compose_config(tmp_path_factory.mktemp("nofeedback"), env={"API_FEEDBACK_DB_URL": ""})
+    assert config["services"]["api"]["environment"]["API_FEEDBACK_DB_URL"] == ""
 
 
 def test_the_review_service_reaches_it_as_the_owner(review: dict):
@@ -199,11 +192,26 @@ def test_the_review_service_reaches_it_as_the_owner(review: dict):
 
     url = review["environment"]["FEEDBACK_DB_URL"]
     assert WRITER_ROLE not in url
-    assert url.startswith("postgresql://feedback:")
+    assert url == "postgresql://feedback@nl2sql-stores:5432/nl2sql_feedback"
+    assert review["environment"]["FEEDBACK_DB_PASSWORD_FILE"] == "/run/secrets/feedback_db_password"
+
+
+@pytest.mark.parametrize(("override", "variable"), [
+    ("REVIEW_FEEDBACK_DB_URL", "FEEDBACK_DB_URL"), ("REVIEW_RETAIL_DB_URL", "RETAIL_DB_URL"),
+    ("REVIEW_CORRECTIONS_DB_URL", "CORRECTIONS_DB_URL"), ("REVIEW_COMPLETIONS_DB_URL", "COMPLETIONS_DB_URL"),
+    ("REVIEW_CHUNK_DB_URL", "CHUNK_DB_URL"), ("REVIEW_VECTOR_DB_URL", "VECTOR_DB_URL"),
+    ("REVIEW_SNIPPETS_DB_URL", "SNIPPETS_DB_URL"),
+])
+def test_each_database_can_be_pointed_elsewhere(tmp_path_factory, override: str, variable: str):
+    """review/README.md names an override for each; each reaches the service."""
+    config = _compose_config(tmp_path_factory.mktemp("override"), env={override: "postgresql://o@elsewhere:5432/d"})
+    assert config["services"]["review"]["environment"][variable] == "postgresql://o@elsewhere:5432/d"
 
 
 def test_the_review_service_waits_for_the_database(review: dict):
-    assert review["depends_on"]["feedbackdb"]["condition"] == "service_healthy"
+    """Up, and prepared: the owner made, its password set (V6-41)."""
+    assert review["depends_on"]["stores"]["condition"] == "service_healthy"
+    assert review["depends_on"]["dbprep"]["condition"] == "service_completed_successfully"
 
 
 def test_the_review_service_can_reach_the_stores_it_reloads(review: dict):
@@ -222,7 +230,7 @@ def test_the_review_service_embeds_where_and_with_what_the_agent_does(tmp_path_f
     agent's questions are compared against. Until 5.5.1 the host was read from
     an `OLLAMA_URL` nothing wrote, so `setup.sh --embed-url` moved the agent's
     embedding host and left the review service's behind."""
-    services = _compose_config(tmp_path_factory.mktemp("embed"), "agent", "feedback", "review", env=env)["services"]
+    services = _compose_config(tmp_path_factory.mktemp("embed"), "agent", "review", env=env)["services"]
     review, agent = services["review"]["environment"], services["agent"]["environment"]
     assert (review["OLLAMA_URL"], review["EMBED_MODEL"]) == (agent["EMBED_BASE_URL"], agent["EMBED_MODEL"])
 
@@ -260,28 +268,27 @@ def test_the_loaders_are_where_the_service_looks_for_them(review: dict):
 # ---------------------------------------------------------------------------
 
 
-def test_the_api_certificate_covers_the_review_service(api: dict):
-    """The review service presents the certificate the API generates rather
-    than carrying a second copy of the code that makes one. The cost of that
-    subtraction is this line, and nothing but a test connects the two."""
-    assert "nl2sql-review" in api["environment"]["API_TLS_HOSTNAMES"].split(",")
+def test_the_review_service_is_issued_its_own_certificate(config: dict):
+    """V6-36: its own key and certificate, from the pki service, rather than
+    the API's. The name its page's proxy verifies is one the pki issues it."""
+    assert "nl2sql-review" in _issued(config, "review")
+    assert "nl2sql-review" not in config["services"]["api"]["environment"]["API_TLS_HOSTNAMES"].split(",")
 
 
-def test_the_review_gui_verifies_a_name_that_certificate_covers(reviewgui: dict, api: dict):
-    covered = api["environment"]["API_TLS_HOSTNAMES"].split(",")
-    assert reviewgui["environment"]["REVIEW_SSL_NAME"] in covered
+def test_the_review_gui_verifies_a_name_that_certificate_covers(reviewgui: dict, config: dict):
+    assert reviewgui["environment"]["UPSTREAM_SSL_NAME"] in _issued(config, "review")
 
 
 def test_the_review_gui_proxies_the_name_it_verifies(reviewgui: dict):
-    upstream = reviewgui["environment"]["REVIEW_UPSTREAM"]
-    assert reviewgui["environment"]["REVIEW_SSL_NAME"] in upstream
+    upstream = reviewgui["environment"]["UPSTREAM"]
+    assert reviewgui["environment"]["UPSTREAM_SSL_NAME"] in upstream
 
 
-@pytest.mark.parametrize("service", ["review", "reviewgui"])
-def test_the_certificate_is_mounted_read_only(config: dict, service: str):
-    """Neither of these writes a certificate; only the API does."""
+@pytest.mark.parametrize(("service", "volume"), [("review", "reviewtls"), ("reviewgui", "reviewguitls")])
+def test_each_has_its_own_certificate_mounted_read_only(config: dict, service: str, volume: str):
+    """V6-36: each its own key, which only the pki service writes."""
     mounts = {mount["target"]: mount for mount in config["services"][service]["volumes"]}
-    assert mounts["/etc/nl2sql/tls"]["source"] == "apitls"
+    assert mounts["/etc/nl2sql/tls"]["source"] == volume
     assert mounts["/etc/nl2sql/tls"]["read_only"] is True
 
 
@@ -299,9 +306,12 @@ def test_the_review_token_never_reaches_the_browser(reviewgui: dict, review: dic
 
     This token can rewrite the golden question set; a browser that held it
     would be holding it in a bookmark, a screenshot and a support ticket.
+    Since 6.3 both hold the one secret file, and neither has it in its
+    environment (V6-38).
     """
-    assert "REVIEW_TOKEN" in reviewgui["environment"]
-    assert "REVIEW_TOKEN" in review["environment"]
+    assert reviewgui["environment"]["UPSTREAM_TOKEN_FILE"] == review["environment"]["REVIEW_TOKEN_FILE"]
+    assert review["environment"]["REVIEW_TOKEN_FILE"] == "/run/secrets/review_token"
+    assert "REVIEW_TOKEN" not in reviewgui["environment"] and "REVIEW_TOKEN" not in review["environment"]
 
 
 def test_the_two_interfaces_do_not_share_a_port(config: dict):
@@ -310,18 +320,21 @@ def test_the_two_interfaces_do_not_share_a_port(config: dict):
     assert not (gui_ports & review_ports)
 
 
-def test_the_two_interfaces_are_built_from_different_images(config: dict):
-    """Separate images from separate npm projects: two Vite entry points in
-    one project would share a build, and the public GUI's image would serve
-    the review interface to anyone who could reach it."""
-    assert config["services"]["gui"]["image"] != config["services"]["reviewgui"]["image"]
-    assert config["services"]["gui"]["build"]["dockerfile"] != config["services"]["reviewgui"]["build"]["dockerfile"]
+def test_the_two_interfaces_are_two_pages_of_one_image(config: dict):
+    """Separate npm projects, still: two Vite entry points in one project
+    would share a build. Since 6.3 both bundles are in one image (V6-37),
+    and each container serves only the page NL2SQL_PAGE names, from that
+    page's own root -- the public GUI's container answers nothing with the
+    review interface's files (tests/docker/test_gui_container.py)."""
+    gui, reviewgui = config["services"]["gui"], config["services"]["reviewgui"]
+    assert gui["image"] == reviewgui["image"]
+    assert (gui["environment"]["NL2SQL_PAGE"], reviewgui["environment"]["NL2SQL_PAGE"]) == ("gui", "review")
 
 
 def test_the_review_proxy_outlasts_a_promotion(reviewgui: dict, review: dict):
     """Promotion runs both RAG loaders. A proxy that gives up first cuts off
     a write that is still happening."""
-    timeout = reviewgui["environment"]["REVIEW_READ_TIMEOUT"]
+    timeout = reviewgui["environment"]["UPSTREAM_READ_TIMEOUT"]
     assert timeout.endswith("s")
     from nl2sql_review.settings import ReviewSettings
 
@@ -340,31 +353,25 @@ def test_the_review_proxy_outlasts_a_promotion(reviewgui: dict, review: dict):
 REVIEW_DIR = REPO_ROOT / "review"
 
 
-def _review_settings() -> set[str]:
+def _review_source() -> str:
     source = (REVIEW_DIR / "nl2sql_review" / "settings.py").read_text()
-    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
-    assert read, "no environment variables found in settings.py -- the regex needs updating"
-    return read
+    assert "REVIEW_TOKEN" in read_names(source), "no environment variables found in settings.py -- the regex needs updating"
+    return source
 
 
 def test_every_setting_the_review_service_reads_can_be_set_through_compose(review: dict):
-    missing = sorted(_review_settings() - set(review["environment"]))
+    missing = sorted(settable_names(_review_source()) - set(review["environment"]))
     assert missing == [], f"the review service reads these, but compose never passes them: {missing}"
 
 
 def test_every_variable_compose_sets_on_the_review_service_is_one_it_reads(review: dict):
-    unread = sorted(set(review["environment"]) - _review_settings())
+    unread = sorted(set(review["environment"]) - read_names(_review_source()))
     assert unread == [], f"compose sets {unread} on the review service, which nothing in it reads"
 
 
 def _review_proxy_variables() -> set[str]:
-    """Every ${NAME} the review GUI's nginx template and start-up script substitute."""
-    gui = REVIEW_DIR / "gui"
-    sources = (gui / "nginx.conf.template").read_text() + (gui / "10-nl2sql-review-config.envsh").read_text()
-    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources))
-    # Worked out by the start-up script rather than set by anyone: the header
-    # from REVIEW_TOKEN, and where it writes the upstream's TLS settings.
-    return names - {"REVIEW_AUTH_HEADER", "NGINX_REVIEW_UPSTREAM_TLS_CONF"}
+    """Every setting the proxy image reads for the review page."""
+    return proxy_names("review")
 
 
 def test_every_setting_the_review_proxy_reads_can_be_set_through_compose(reviewgui: dict):
@@ -387,88 +394,91 @@ def test_every_variable_compose_sets_is_one_the_review_proxy_reads(reviewgui: di
 
 def test_the_review_service_is_health_checked_on_the_scheme_it_serves(review: dict):
     """The check follows REVIEW_TLS_ENABLED rather than assuming https, so
-    turning TLS off does not make a working container look unhealthy."""
-    test = " ".join(review["healthcheck"]["test"])
-    assert "/healthz" in test
-    assert "REVIEW_TLS_ENABLED" in test
+    turning TLS off does not make a working container look unhealthy; and on
+    https it verifies the certificate it is answered with (6.3, V6-37)."""
+    assert review["healthcheck"]["test"] == ["CMD", "python", "-m", "nl2sql_common.health", "REVIEW"]
+    health = (REPO_ROOT / "common" / "nl2sql_common" / "health.py").read_text()
+    assert '_TLS_ENABLED"' in health and "/healthz" in health and '"REVIEW": 8444' in health
 
 
 def test_every_new_service_restarts_unless_stopped(config: dict):
-    for name in ("feedbackdb", "correctionsdb", "completionsdb", "review", "reviewgui"):
+    for name in ("stores", "review", "reviewgui"):
         assert config["services"][name]["restart"] == "unless-stopped"
 
 
 # ---------------------------------------------------------------------------
-# The corrections and completions stores (5.1)
+# The corrections and completions stores (5.1), databases in the stores (6.3)
 # ---------------------------------------------------------------------------
 
 FIX_STORES = {
-    "correctionsdb": ("correctionsdata", "nl2sql_corrections", "CORRECTIONS_DB_URL"),
-    "completionsdb": ("completionsdata", "nl2sql_completions", "COMPLETIONS_DB_URL"),
+    "corrections": ("nl2sql_corrections", "CORRECTIONS_DB_URL"),
+    "completions": ("nl2sql_completions", "COMPLETIONS_DB_URL"),
 }
 
 
-@pytest.mark.parametrize("service", sorted(FIX_STORES))
-def test_each_fix_store_is_pgvector_in_its_own_volume(config: dict, service: str):
-    """Records and RAG side by side, so the image has to carry pgvector;
-    and data a person typed, so it keeps it in a volume of its own."""
-    spec = config["services"][service]
-    volume, database, _ = FIX_STORES[service]
-    assert spec["image"].startswith("pgvector/pgvector:")
-    assert spec["environment"]["POSTGRES_DB"] == database
-    assert {m["target"]: m["source"] for m in spec["volumes"]} == {"/var/lib/postgresql/data": volume}
-    assert volume in config["volumes"]
-    assert "pg_isready" in " ".join(spec["healthcheck"]["test"])
+@pytest.mark.parametrize("store", sorted(FIX_STORES))
+def test_each_fix_store_is_a_pgvector_database_of_its_own(review: dict, store: str):
+    """Records and RAG side by side, so the database has to have pgvector,
+    which dbprep makes in it; and data a person typed, kept in the stores'
+    volume with its own owner."""
+    from nl2sql_ops.settings import OpsSettings
+
+    database, variable = FIX_STORES[store]
+    [prepared] = [s for s in OpsSettings.from_env().stores if s.key == store]
+    assert (prepared.database, prepared.role, prepared.vectors) == (database, store, True)
+    assert review["environment"][variable] == f"postgresql://{store}@nl2sql-stores:5432/{database}"
 
 
-def test_the_fix_stores_are_apart_from_the_golden_set_and_from_each_other(config: dict):
+def test_the_fix_stores_are_apart_from_the_golden_set_and_from_each_other(review: dict):
     """The golden set is what the agent is measured against; a record of its
     mistakes is not a benchmark answer. And a wrong join and a missing label
-    are different lessons, kept apart for whatever reads them next."""
-    services = config["services"]
-    names = {services[s]["container_name"] for s in ("correctionsdb", "completionsdb", "chunkdb", "vectordb", "feedbackdb")}
-    assert len(names) == 5
-    volumes = {services[s]["volumes"][0]["source"] for s in ("correctionsdb", "completionsdb", "chunkdb", "vectordb", "feedbackdb")}
-    assert len(volumes) == 5
-    published = {
-        service: {p["published"] for p in services[service].get("ports", [])} for service in services
-    }
-    for store in FIX_STORES:
-        for other, ports in published.items():
-            if other != store:
-                assert published[store].isdisjoint(ports), f"{store} shares a port with {other}"
+    are different lessons, kept apart for whatever reads them next: a
+    database and an owner each, and none of them the golden set's server."""
+    urls = {variable: review["environment"][variable] for _, variable in FIX_STORES.values()}
+    assert len(set(urls.values())) == 2
+    for url in urls.values():
+        assert "nl2sql-chunkdb" not in url and "nl2sql-vectordb" not in url
+    assert review["environment"]["CORRECTIONS_DB_PASSWORD_FILE"] != review["environment"]["COMPLETIONS_DB_PASSWORD_FILE"]
 
 
-@pytest.mark.parametrize("service", sorted(FIX_STORES))
-def test_the_review_service_waits_for_and_reaches_each_store(review: dict, service: str):
-    _, database, variable = FIX_STORES[service]
-    assert review["depends_on"][service]["condition"] == "service_healthy"
-    assert f"nl2sql-{service}:5432/{database}" in review["environment"][variable]
+@pytest.mark.parametrize("store", sorted(FIX_STORES))
+def test_the_review_service_waits_for_and_reaches_each_store(review: dict, store: str):
+    database, variable = FIX_STORES[store]
+    assert review["depends_on"]["stores"]["condition"] == "service_healthy"
+    assert f"@nl2sql-stores:5432/{database}" in review["environment"][variable]
 
 
 def test_only_the_review_service_is_given_a_way_into_the_fix_stores(tmp_path_factory):
     """Least access, one level up from the database roles. The agent reads
     as `nl2sql_reader`; the API writes verdicts as an INSERT-only role; and
-    neither is handed the stores' address or credentials, so no SQL either
-    of them runs can reach a fix. Rendered over every profile -- the CLI
-    agent's and the desktop build's included -- because a service in a
-    profile nobody tested is still a service somebody starts.
+    neither is handed the stores' names or credentials, so no SQL either of
+    them runs can reach a fix. dbprep makes them, and holds their owners'
+    passwords to set them. Rendered over every profile -- the CLI agent's and
+    the desktop build's included -- because a service in a profile nobody
+    tested is still a service somebody starts.
     """
-    everything = _compose_config(tmp_path_factory.mktemp("all"), *PROFILES, "agent", "desktop")
+    everything = _compose_config(tmp_path_factory.mktemp("all"), *PROFILES, "agent", "desktop", "migrate")
     assert "agent" in everything["services"]
-    markers = ("nl2sql-correctionsdb", "nl2sql-completionsdb", "nl2sql_corrections", "nl2sql_completions")
+    markers = ("nl2sql_corrections", "nl2sql_completions", "corrections_db_password", "completions_db_password")
     reaching = {
         name
         for name, spec in everything["services"].items()
-        if any(marker in json.dumps(spec.get("environment", {})) for marker in markers)
+        if any(marker in json.dumps([spec.get("environment", {}), spec.get("secrets", [])]) for marker in markers)
     }
-    assert reaching - set(FIX_STORES) == {"review"}
+    assert reaching == {"review", "dbprep"}
 
 
 def test_a_fix_is_validated_on_the_retail_database_as_the_reader(review: dict):
     """It runs SQL a person typed, so it runs it as the role that can only read."""
     assert review["depends_on"]["postgres"]["condition"] == "service_healthy"
     url = review["environment"]["RETAIL_DB_URL"]
-    assert url.startswith("postgresql://nl2sql_reader:") and "@nl2sql-postgres:5432/nl2sql_retail" in url
+    assert url == "postgresql://nl2sql_reader@nl2sql-postgres:5432/nl2sql_retail"
+    assert review["environment"]["RETAIL_DB_PASSWORD_FILE"] == "/run/secrets/postgres_reader_password"
     for knob in ("REVIEW_VALIDATE_TIMEOUT_MS", "REVIEW_VALIDATE_MAX_ROWS", "REVIEW_EMBED_FIXES"):
         assert knob in review["environment"]
+
+
+def _issued(config: dict, identity: str) -> list[str]:
+    """The names the pki service issues `identity`'s certificate for."""
+    [spec] = [arg for arg in config["services"]["pki"]["command"] if arg.startswith(f"{identity}=")]
+    return spec.split("=", 2)[2].split(",")

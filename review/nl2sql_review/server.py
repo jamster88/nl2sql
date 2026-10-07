@@ -1,8 +1,9 @@
 """Starting the review service.
 
 A sibling of the agent's `api/server.py` and deliberately smaller, because
-this process does less: no certificate to generate (it presents the one the
-agent API wrote), no job store to shut down, no pipeline to warm.
+this process does less: no certificate to generate (under compose the pki
+service issues it one of its own), no job store to shut down, no pipeline to
+warm.
 
 What it does do before binding is create its schema and reset the writer
 role the agent API connects as. That ordering is the point -- the public
@@ -15,14 +16,22 @@ own database.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import replace
-from typing import Sequence
+from pathlib import Path
+from typing import Callable, Sequence
+
+from cryptography import x509
+from nl2sql_identity import pki
 
 from .app import __version__, create_app
 from .corrections import COMPLETIONS, CORRECTIONS, FixStore
 from .settings import SERVICE_HOSTNAME, ReviewSettings
 from .store import WRITER_ROLE, Repository
+from nl2sql_common import privileges
+from nl2sql_common.urls import redacted as _redacted
+from nl2sql_common.errors import DATABASE_ERRORS
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -108,6 +117,31 @@ def settings_from_args(args: argparse.Namespace) -> ReviewSettings:
     return replace(settings, **overrides) if overrides else settings
 
 
+def describe_auth(settings: ReviewSettings) -> str:
+    """Who may call, in the banner's words. Open is said in capitals."""
+    if settings.auth_enabled:
+        return "sign-in" + (", or the review token" if settings.token else "")
+    return "bearer token" if settings.token else "NONE"
+
+
+def describe_certificate(path: str) -> str:
+    """What this service presents, as the console's banner says it: what
+    issued it and for which names. Unreadable is said too, though `main`
+    refuses to start on that before the banner is printed."""
+    try:
+        certificate = x509.load_pem_x509_certificate(Path(path).read_bytes())
+    except (OSError, ValueError):
+        return f"{path} (not readable)"
+    if certificate.issuer == certificate.subject:
+        kind = "self-signed"
+    elif pki.is_development(certificate):
+        kind = "issued by the development CA"
+    else:
+        kind = "CA-issued"
+    names = ", ".join(sorted(pki.covered_names(certificate))) or "no names"
+    return f"{kind}, the review service's own, for {names}"
+
+
 def banner(settings: ReviewSettings, *, version: str = __version__) -> str:
     lines = [
         f"nl2sql review service {version}",
@@ -119,22 +153,13 @@ def banner(settings: ReviewSettings, *, version: str = __version__) -> str:
         f"  corrections    {_redacted(settings.corrections_db_url)}",
         f"  completions    {_redacted(settings.completions_db_url)}",
         f"  reload         context={settings.reload_context} vectors={settings.reload_vectors}",
-        f"  auth           {'bearer token' if settings.authenticated else 'NONE'}",
+        f"  auth           {describe_auth(settings)}",
     ]
     if settings.tls_enabled:
-        lines.append(f"  certificate    {settings.tls_cert_file} (written by the agent API)")
+        lines.append(f"  certificate    {describe_certificate(settings.tls_cert_file)}")
     for note in settings.warnings():
         lines.append(f"  ! {note}")
     return "\n".join(lines)
-
-
-def _redacted(url: str) -> str:
-    if "@" not in url:
-        return url
-    scheme, _, rest = url.partition("://")
-    credentials, _, host = rest.rpartition("@")
-    user = credentials.partition(":")[0]
-    return f"{scheme}://{user}:***@{host}" if user else f"{scheme}://{host}"
 
 
 def prepare(settings: ReviewSettings) -> list[str]:
@@ -151,7 +176,7 @@ def prepare(settings: ReviewSettings) -> list[str]:
     try:
         Repository(settings.feedback_db_url).setup(settings.writer_password)
         notes.append(f"schema: ready, {WRITER_ROLE} reset to INSERT-only")
-    except Exception as exc:  # noqa: BLE001 - reported in the banner and /readyz
+    except DATABASE_ERRORS as exc:  # reported in the banner and /readyz
         notes.append(f"schema: NOT ready -- {type(exc).__name__}: {exc}")
     # Each store on its own: one being down does not stop the other, or the
     # golden-set work that needs neither.
@@ -162,7 +187,7 @@ def prepare(settings: ReviewSettings) -> list[str]:
         try:
             FixStore(kind, url).setup()
             notes.append(f"{kind.slug}: ready")
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             notes.append(f"{kind.slug}: NOT ready -- {type(exc).__name__}: {exc}")
     return notes
 
@@ -173,13 +198,27 @@ def build(argv: Sequence[str] | None = None):
     return create_app(settings=settings), settings
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+#: Who this service runs as when the documents' directory is root's: an image
+#: started without the checkout mounted, writing the copy inside it (V6-28).
+ACCOUNT = "nl2sql"
+
+
+def main(argv: Sequence[str] | None = None, *, become: Callable | None = None) -> int:
     args = parse_args(argv)
     settings = settings_from_args(args)
 
     if args.print_settings:
         print(banner(settings))
         return 0
+
+    # Root only long enough to see who owns the checkout's documents, then
+    # that person (V6-28): a promoted pair in the working tree is theirs, as
+    # if they had typed it, and nothing here is root's to write as. The
+    # account's group is kept beside theirs, which is how the TLS key the pki
+    # service gave it is read.
+    directory = str(settings.document_path.parent)
+    if (become or privileges.become_owner_of)(directory, fallback=ACCOUNT):
+        print(f"  running as uid {os.getuid()}, the owner of {directory}")
 
     for note in prepare(settings):
         print(note)
@@ -188,9 +227,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if settings.tls_enabled and not settings.certificate_present:
         print(
             f"error: TLS is on but {settings.tls_cert_file} is not readable.\n"
-            "  This service presents the certificate the agent API generates. Start the\n"
-            f"  API once so it writes one, mount its volume here, and make sure\n"
-            f"  API_TLS_HOSTNAMES covers {SERVICE_HOSTNAME}. Or start with --no-tls.",
+            "  Under compose the pki service issues this service its own certificate into\n"
+            f"  the reviewtls volume, for names that include {SERVICE_HOSTNAME}; mount it\n"
+            "  here. Or start with --no-tls.",
             file=sys.stderr,
         )
         return 2

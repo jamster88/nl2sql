@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.settings_names import read_names, settable_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -94,21 +96,29 @@ def test_the_api_gets_the_agents_whole_pipeline_configuration(api: dict, config:
 
 
 def test_the_api_reads_the_database_as_the_reader_role_like_everything_else(api: dict):
-    assert "nl2sql_reader:nl2sql_reader@postgres:5432" in api["environment"]["DATABASE_URL"]
-    assert "nl2sql:nl2sql@" not in api["environment"]["DATABASE_URL"]
+    assert "//nl2sql_reader@postgres:5432" in api["environment"]["DATABASE_URL"]
+    assert api["environment"]["DATABASE_PASSWORD_FILE"] == "/run/secrets/postgres_reader_password"
+    assert "postgres_password" not in {secret["source"] for secret in api["secrets"]}
 
 
-def test_the_api_waits_for_every_database(api: dict):
-    assert set(api["depends_on"]) == {"postgres", "vectordb", "chunkdb", "snippetsdb"}
+def test_the_api_waits_for_every_database_and_its_certificate(api: dict):
+    assert set(api["depends_on"]) == {"pki", "dbprep", "postgres", "vectordb", "chunkdb", "stores"}
+    assert api["depends_on"].pop("pki")["condition"] == "service_completed_successfully"
+    assert api["depends_on"].pop("dbprep")["condition"] == "service_completed_successfully"
     assert all(d["condition"] == "service_healthy" for d in api["depends_on"].values())
 
 
-def test_tls_is_on_and_the_certificate_is_generated_by_default(api: dict):
+def test_tls_is_on_with_the_certificate_the_pki_issued(api: dict):
+    """V6-36: the API presents its own certificate, which the pki service
+    issues before it starts; it generates nothing, and cannot write the
+    volume it is in."""
     env = api["environment"]
     assert env["API_TLS_ENABLED"] == "true"
-    assert env["API_TLS_GENERATE"] == "true"
+    assert env["API_TLS_GENERATE"] == "false"
     assert env["API_TLS_ALLOW_SELF_SIGNED"] == "true"
     assert env["API_TLS_CERT_FILE"] == "/etc/nl2sql/tls/server.crt"
+    [mount] = [v for v in api["volumes"] if v["target"] == "/etc/nl2sql/tls"]
+    assert (mount["source"], mount.get("read_only")) == ("apitls", True)
 
 
 def test_the_generated_certificate_names_the_service_other_containers_reach(api: dict):
@@ -141,11 +151,14 @@ def test_the_published_port_follows_the_configured_one(tmp_path_factory):
 
 def test_the_healthcheck_never_needs_a_token(api: dict):
     """/healthz is the one route that answers unauthenticated, which is what
-    lets `depends_on: service_healthy` work once API_TOKEN is set.
+    lets `depends_on: service_healthy` work once API_TOKEN is set. Since 6.3
+    the check is the shared one, which asks /healthz and verifies the
+    certificate it is answered with (V6-37).
     """
-    test = " ".join(api["healthcheck"]["test"])
-    assert "/healthz" in test
-    assert "API_TOKEN" not in test
+    test = api["healthcheck"]["test"]
+    assert test == ["CMD", "python", "-m", "nl2sql_common.health", "API"]
+    health = (REPO_ROOT / "common" / "nl2sql_common" / "health.py").read_text()
+    assert "/healthz" in health and "TOKEN" not in health
 
 
 def test_every_api_setting_the_server_reads_can_be_set_through_compose(api: dict):
@@ -153,33 +166,38 @@ def test_every_api_setting_the_server_reads_can_be_set_through_compose(api: dict
     forwarded cannot be set on the container, which is how everyone runs it.
     """
     source = (AGENT_DIR / "nl2sql_agent" / "api" / "settings.py").read_text()
-    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
-    assert read, "no environment variables found in api/settings.py -- the regex needs updating"
+    read = settable_names(source)
+    assert "API_TOKEN_FILE" in read, "no environment variables found in api/settings.py -- the regex needs updating"
     missing = sorted(read - set(api["environment"]))
     assert missing == [], f"api/settings.py reads these, but compose never passes them: {missing}"
 
 
 def test_every_api_variable_compose_sets_is_one_the_server_reads(api: dict):
-    source = (AGENT_DIR / "nl2sql_agent" / "api" / "settings.py").read_text()
+    read = read_names((AGENT_DIR / "nl2sql_agent" / "api" / "settings.py").read_text())
     for name in api["environment"]:
         if not name.startswith("API_"):
             continue  # the pipeline's own settings, checked against config.py
-        assert f'"{name}"' in source, f"compose sets {name}, but the server never reads it"
+        assert name in read, f"compose sets {name}, but the server never reads it"
 
 
 def test_an_unset_api_setting_arrives_empty_so_the_default_stands(api: dict):
-    for name in ("API_TOKEN", "API_MAX_CONCURRENCY", "API_CORS_ORIGINS"):
+    for name in ("API_MAX_CONCURRENCY", "API_CORS_ORIGINS"):
         assert api["environment"][name] == "", f"{name} is pinned in compose rather than forwarded"
 
 
-def test_a_token_and_an_origin_set_on_the_host_reach_the_container(tmp_path_factory):
-    config = _compose_config(
-        tmp_path_factory.mktemp("compose"),
-        env={"API_TOKEN": "s3cret", "API_CORS_ORIGINS": "https://gui.example.com"},
-    )
-    env = config["services"]["api"]["environment"]
-    assert env["API_TOKEN"] == "s3cret"
-    assert env["API_CORS_ORIGINS"] == "https://gui.example.com"
+def test_the_token_is_a_file_and_never_in_the_environment(api: dict, tmp_path_factory):
+    """Since 6.3 (V6-38): the token is secrets/api_token, mounted; one
+    exported on the host reaches no container, so it is never in what
+    `docker inspect` shows."""
+    assert api["environment"]["API_TOKEN_FILE"] == "/run/secrets/api_token"
+    assert "api_token" in {secret["source"] for secret in api["secrets"]}
+    config = _compose_config(tmp_path_factory.mktemp("compose"), env={"API_TOKEN": "s3cret"})
+    assert "API_TOKEN" not in config["services"]["api"]["environment"]
+
+
+def test_an_origin_set_on_the_host_reaches_the_container(tmp_path_factory):
+    config = _compose_config(tmp_path_factory.mktemp("compose"), env={"API_CORS_ORIGINS": "https://gui.example.com"})
+    assert config["services"]["api"]["environment"]["API_CORS_ORIGINS"] == "https://gui.example.com"
 
 
 def test_refusing_the_development_certificate_is_one_variable(tmp_path_factory):
@@ -222,16 +240,32 @@ def test_the_test_client_reaches_the_api_by_its_service_name_over_tls(config: di
 
 def test_the_test_client_can_read_the_certificate_it_has_to_trust(config: dict):
     """Better than --insecure even in development: it still proves the
-    connection reached the server holding that key.
+    connection reached the server holding that key. The CA's certificate,
+    and only that: a client has no business with any server's key.
     """
-    [mount] = [v for v in config["services"]["apitest"]["volumes"] if v["source"] == "apitls"]
-    assert mount["target"] == "/etc/nl2sql/tls"
-    assert mount.get("read_only") is True
+    apitest = config["services"]["apitest"]
+    [mount] = apitest["volumes"]
+    assert (mount["source"], mount["target"], mount.get("read_only")) == ("tlstrust", "/etc/nl2sql/tls", True)
+    assert apitest["environment"]["API_CACERT"] == "/etc/nl2sql/tls/ca.crt"
+    assert apitest["environment"]["API_INSECURE"] == "false"
 
 
-def test_the_test_client_is_given_the_same_token_as_the_server(tmp_path_factory):
-    config = _compose_config(tmp_path_factory.mktemp("compose"), env={"API_TOKEN": "s3cret"})
-    assert config["services"]["apitest"]["environment"]["API_TOKEN"] == "s3cret"
+def test_the_test_clients_settings_reach_it_by_the_names_agent_api_md_gives(tmp_path_factory):
+    env = {"APITEST_BASE_URL": "https://elsewhere:9443", "APITEST_CACERT": "/certs/other.crt",
+           "APITEST_INSECURE": "true", "APITEST_QUESTION": "how many?", "APITEST_WAIT_SECONDS": "9"}
+    apitest = _compose_config(tmp_path_factory.mktemp("apitest"), env=env)["services"]["apitest"]["environment"]
+    assert {key: apitest[key] for key in ("API_BASE_URL", "API_CACERT", "API_INSECURE", "APITEST_QUESTION",
+                                          "APITEST_WAIT_SECONDS")} == {
+        "API_BASE_URL": "https://elsewhere:9443", "API_CACERT": "/certs/other.crt", "API_INSECURE": "true",
+        "APITEST_QUESTION": "how many?", "APITEST_WAIT_SECONDS": "9",
+    }
+
+
+def test_the_test_client_is_given_the_same_token_as_the_server(config: dict):
+    """The same secret file, which smoke.sh reads when API_TOKEN is unset."""
+    apitest, api = config["services"]["apitest"], config["services"]["api"]
+    assert apitest["environment"]["API_TOKEN_FILE"] == api["environment"]["API_TOKEN_FILE"]
+    assert [secret["source"] for secret in apitest["secrets"]] == ["api_token"]
 
 
 def _smoke_reads() -> set[str]:
@@ -244,7 +278,9 @@ def test_every_variable_the_smoke_script_reads_can_be_set_through_compose(config
     """Its whole interface is environmental -- it takes no flags -- so a
     variable compose does not forward cannot be set on the container at all.
     """
-    read = _smoke_reads()
+    # The token itself is read only when someone sets it by hand: compose
+    # gives it the file, never the token (V6-38).
+    read = _smoke_reads() - {"API_TOKEN"}
     assert read, "no environment variables found in smoke.sh -- the regex needs updating"
     missing = sorted(read - set(config["services"]["apitest"]["environment"]))
     assert missing == [], f"smoke.sh reads these, but compose never passes them: {missing}"

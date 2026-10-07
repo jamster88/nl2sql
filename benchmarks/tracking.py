@@ -74,7 +74,7 @@ class BenchmarkRun:
                 rationale=rationale,
                 source=AssessmentSource(source_type="CODE", source_id=SOURCE),
             )
-        except Exception as exc:  # the score is in the report; this is a copy
+        except Exception as exc:  # noqa: BLE001 - the score is in the report; this is a copy
             print(f"      note: could not score trace {result.trace_id}: {exc}", file=sys.stderr)
 
     def finish(self, report: BenchmarkReport, document: dict[str, Any], *, complete: bool) -> None:

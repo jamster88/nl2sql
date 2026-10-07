@@ -9,7 +9,7 @@ rather than a browser tab, on a machine rather than a server.
 ./start.sh --desktop
 ```
 
-That builds it, copies the API's certificate out and opens it. Everything
+That builds it, copies the stack's CA certificate out and opens it. Everything
 below is what that command does and why.
 
 ---
@@ -18,6 +18,7 @@ below is what that command does and why.
 
 - [Why a second client](#why-a-second-client)
 - [Running it](#running-it)
+- [Signing in](#signing-in)
 - [Trusting the server](#trusting-the-server)
 - [What is on screen](#what-is-on-screen)
 - [Feedback](#feedback)
@@ -56,7 +57,7 @@ against the pydantic field it mirrors, so the hand-written copy cannot drift.
 ./start.sh --desktop                 # everything, then the window
 ./start.sh --desktop --review        # and the review interface in a browser window
 ./launch.sh --desktop                # build it and stop there
-java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 ```
 
 `--desktop` is an interface, not an addition to one: the web interface is not
@@ -91,7 +92,9 @@ Every one has an environment variable, and the flag wins.
 | Flag | Variable | What |
 | --- | --- | --- |
 | `--url URL` | `NL2SQL_API_URL` | The API to talk to. Default `https://localhost:8443` |
-| `--token TOKEN` | `NL2SQL_API_TOKEN` | Bearer token, when the server requires one |
+| `--token TOKEN` | `NL2SQL_API_TOKEN` | A static service token, when the server takes one. Not needed to sign in |
+| `--auth-url URL` | `NL2SQL_AUTH_URL` | The sign-in service. Default: the API's host, port 8446 |
+| `--user NAME` | `NL2SQL_USER` | The user name to offer when signing in |
 | `--cacert FILE` | `NL2SQL_API_CACERT` | PEM certificate to verify the server against |
 | `--fingerprint HEX` | `NL2SQL_API_FINGERPRINT` | Accept exactly the certificate with this SHA-256 |
 | `--insecure` | `NL2SQL_API_INSECURE` | Do not verify the certificate at all |
@@ -106,6 +109,40 @@ environment often enough for the difference to matter.
 
 ---
 
+## Signing in
+
+A server with sign-in on -- the compose default -- answers `/v1/meta` only
+to someone signed in, so the window's first call is refused with `401`, and
+that refusal is what it takes as the question: before anything is asked it
+shows a panel above the question box, with the user name from `--user`
+already in it and a line saying where the password goes, and once you have
+signed in it asks `/v1/meta` again (a server that does answer it openly and
+says `authentication: session` gets the same panel). The status bar then
+says as whom, with a link to sign out.
+
+It posts to the auth service's `/auth/token` -- on the API's host, port
+8446, unless `--auth-url` says otherwise; `./start.sh --desktop` passes the
+port `.env` gives the auth service (`AUTH_PORT`) -- over the same TLS
+settings as the API. Since 6.1 the auth service presents a certificate of its own,
+issued by the same CA as the API's: the `--cacert` with that CA reaches
+both, and a `--fingerprint` must name both, comma-separated. The session
+comes back as a token, which every call to the API then carries as a bearer
+token, and which is held in memory only -- a token on disk is a password
+anything running as the same user could read, and the price of not keeping
+one is signing in again when the window is reopened. The password field is
+emptied after every attempt.
+
+A question refused with `401` -- a session that expired, an account taken
+out of the directory -- brings the panel back, and the question is asked
+again once you have signed in. One already running carries on: it is
+polled, and the first poll after signing in carries the new session.
+
+A `--token` is somebody already, so the window does not ask: it is a static
+service token, for a script or a kiosk, and it is what the client sends
+until someone signs in.
+
+---
+
 ## Trusting the server
 
 A browser gets this for nothing. `gui/` is served by the same nginx that
@@ -114,25 +151,25 @@ token and the operating system has already decided which certificates to
 trust. A desktop application has none of that: it opens the connection
 itself, from a machine that has never heard of this server.
 
-The API writes itself a self-signed certificate on first start, which every
-client that checks will refuse — and that refusal is the feature. So there
-are three ways to say *which* server you meant, in the order `agent/API.md`
-recommends them:
+The stack issues the API and the sign-in service certificates of their own
+from a development CA it makes itself, which every client that checks will
+refuse — and that refusal is the feature. So there are three ways to say
+*which* server you meant, in the order `agent/API.md` recommends them:
 
 ```bash
-# 1. the certificate itself, which is what ./launch.sh --desktop copies out
-docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
-java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+# 1. the stack's CA, which is what ./launch.sh --desktop copies out
+docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 
-# 2. its fingerprint, which the server prints at start-up and /v1/meta carries
-java -jar desktop/target/nl2sql-desktop.jar --fingerprint 3f2c...
+# 2. the two servers' fingerprints, which each prints at start-up
+java -jar desktop/target/nl2sql-desktop.jar --fingerprint 3f2c...,a19b...
 
 # 3. nothing at all, for a throwaway experiment
 java -jar desktop/target/nl2sql-desktop.jar --insecure
 ```
 
 The status bar says which of the four it is doing — `verified against
-nl2sql-api.crt`, `pinned to 3f2c8a91b0de`, `NOT VERIFIED`, `not encrypted` —
+nl2sql-ca.crt`, `pinned to 3f2c8a91b0de and 1 more`, `NOT VERIFIED`, `not encrypted` —
 for as long as it is true. An application that stops verifying quietly is how
 it ends up doing it in production.
 
@@ -292,7 +329,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v5_6_1-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
@@ -345,7 +382,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-379 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+411 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.
@@ -359,8 +396,10 @@ on owning the process's first thread, and under a test runner that thread is
 the one running the tests, so the real back end comes up and then delivers
 nothing — a hang rather than a failure, and an intermittent one.
 
-`HttpApiClientTest` drives the client against a real `HttpsServer` on a
-loopback port, with a certificate generated by `keytool` at test time. Both
+`HttpApiClientTest` and `HttpSignInTest` drive the client and the sign-in
+against a real `HttpsServer` on a loopback port, with a certificate
+generated by `keytool` at test time -- the second proving that the session
+signing in returns is the one the API client presents next. Both
 halves of that matter: the encrypted path is where a client's mistakes stay
 invisible until deployment, and a private key committed to a repository is a
 private key in every clone and every secret scanner's report.

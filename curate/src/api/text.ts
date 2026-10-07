@@ -1,9 +1,7 @@
 /** Small wording helpers, shared by every pane. */
 
-/** `1 snippet`, `2 snippets`: a count and its noun, agreeing. */
-export function counted(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
-}
+/** `1 row`, `1,204 rows`: a count and its noun, agreeing -- every page's (`web/src/text.ts`). */
+export { counted } from "@nl2sql/web/text";
 
 /** A cell as a table shows it: NULL for nothing, the text for anything else. */
 export function cell(value: unknown): string {

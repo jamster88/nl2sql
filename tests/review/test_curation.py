@@ -176,7 +176,7 @@ def test_a_curated_fix_is_stored_with_no_submission_and_embedded(make_client, fi
     body = response.json()
     assert body["kind"] == "completions" and body["embedded"] is True
     assert body["fix"]["fix_id"] == "I0001" and body["fix"]["submission_id"] is None
-    assert body["fix"]["source"] == "curated" and body["fix"]["reviewer"] == "ann"
+    assert body["fix"]["source"] == "curated" and body["fix"]["reviewer"] == "token:review-token"
     [saved] = fix_stores["completions"].saved
     assert (saved.corrected_sql, saved.incorrect_sql) == ("SELECT sku_id, product_name FROM dim_product", "SELECT sku_id FROM dim_product")
 
@@ -195,10 +195,10 @@ def test_a_curated_fix_a_store_cannot_take_is_a_503(make_client, fix_stores):
 
 def test_a_curated_fix_is_stored_when_the_embedder_cannot_even_be_built(make_client, settings):
     def broken():
-        raise RuntimeError("no ragproc")
+        raise ModuleNotFoundError("no ragproc")
 
     body = make_client(embedder_factory=broken).post("/v1/fixes/corrections", json=FIX).json()
-    assert body["embedded"] is False and body["embed_detail"] == "not embedded: RuntimeError: no ragproc"
+    assert body["embedded"] is False and body["embed_detail"] == "not embedded: ModuleNotFoundError: no ragproc"
     off = make_client(settings=replace(settings, embed_fixes=False)).post("/v1/fixes/corrections", json=FIX).json()
     assert off["embed_detail"] == "embedding is off"
 
@@ -401,8 +401,10 @@ def test_the_default_snippet_validator_runs_against_the_configured_retail_databa
     assert run("filter", "dim_date d", "d.is_holiday").valid is True
     assert seen == {
         "kind": "filter", "applies_to": "dim_date d", "sql": "d.is_holiday",
-        "url": "postgresql://r/db", "timeout_ms": 900,
+        "url": "postgresql://r/db", "timeout_ms": 900, "principal": None,
     }
+    run("filter", "dim_date d", "d.is_holiday", principal="cora")
+    assert seen["principal"] == "cora", "a signed-in curator's snippet runs as them"
 
 
 def test_the_default_schema_reader_lists_each_table_with_its_columns_in_order(settings, monkeypatch):

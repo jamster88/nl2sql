@@ -15,9 +15,11 @@ from typing import Any
 
 import pytest
 
+from nl2sql_common.attribution import APPLICATION_NAME_SQL
 from nl2sql_agent.config import Settings
 from nl2sql_agent.console.query import Inspector
 from nl2sql_agent.database import Column, Table
+from sqlalchemy.exc import SQLAlchemyError
 
 #: A plan as Postgres 18 writes it for a small scan.
 PLAN = [{"Plan": {"Node Type": "Seq Scan", "Relation Name": "dim_store", "Total Cost": 1.4}}]
@@ -30,7 +32,7 @@ ANALYZED = [
 ]
 
 
-class DatabaseError(Exception):
+class DatabaseError(SQLAlchemyError):
     """What the driver raises, wrapped the way SQLAlchemy wraps it."""
 
     def __init__(self, message: str) -> None:
@@ -88,6 +90,8 @@ class ScriptedDatabase:
     # --- what happened -------------------------------------------------------
     statements: list[str] = field(default_factory=list)
     options: list[dict] = field(default_factory=list)
+    #: The application names a person's statement was run under (V6-64).
+    named: list[str] = field(default_factory=list)
     rolled_back: int = 0
     connections: int = 0
     fetched: list[int] = field(default_factory=list)
@@ -177,6 +181,9 @@ class _Connection:
         if db.drop_on and sql.startswith(db.drop_on):
             raise DatabaseError("server closed the connection unexpectedly")
         if sql.startswith("SET "):
+            return _Result(db=db)
+        if sql == APPLICATION_NAME_SQL:
+            db.named.append(parameters["name"])
             return _Result(db=db)
         if sql.startswith("EXPLAIN (FORMAT JSON)"):
             if db.plan_error:

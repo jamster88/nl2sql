@@ -10,20 +10,22 @@ turning into:
 | Verdict | Pane | Becomes | Stored in |
 | --- | --- | --- | --- |
 | **Correct** (`yes`) | Correct → golden set | a verified question/SQL pair | the golden question set, as before |
-| **Wrong** (`no`) | Wrong → corrections | the question, the wrong answer, and a corrected query that ran | `nl2sql-correctionsdb`: records + RAG |
-| **Correct but incomplete** (`incomplete`) | Correct but incomplete → completions | the question, the incomplete answer, and a completed query that ran | `nl2sql-completionsdb`: records + RAG |
+| **Wrong** (`no`) | Wrong → corrections | the question, the wrong answer, and a corrected query that ran | the corrections database in `nl2sql-stores`: records + RAG |
+| **Correct but incomplete** (`incomplete`) | Correct but incomplete → completions | the question, the incomplete answer, and a completed query that ran | the completions database in `nl2sql-stores`: records + RAG |
 
 Since 5.6 it is also the backend of a second page, the
 [curation interface](../curate/README.md), which writes the same golden set
 and fix stores directly, without a submission -- and the SQL snippets, which
 no verdict produces at all. See [Curation](#curation).
 
-Two processes and four databases, and the snippet store:
+Two processes and four databases, and the snippet store -- since 6.3 the
+staging, corrections, completions and snippet databases are one server,
+`nl2sql-stores`, each with an owner of its own (`stores/<database>` below):
 
 ```
 browser ──nginx──▶ agent API   POST /v1/questions/{id}/feedback
 desktop ─────────────▶ │
-                       └── INSERT only ──▶ feedbackdb  (staging)
+                       └── INSERT only ──▶ stores/feedback  (staging)
                                                 │
 reviewer ──nginx──▶ review service ──owner──────┘
                        │
@@ -33,12 +35,12 @@ reviewer ──nginx──▶ review service ──owner──────┘
                        │
                        ├─ validate ─ nl2sql_reader, READ ONLY ─▶ postgres (retail)
                        │
-                       ├─ fix (wrong) ────────▶ correctionsdb   sql_corrections + _vectors
-                       │  fix (incomplete) ───▶ completionsdb   sql_completions + _vectors
+                       ├─ fix (wrong) ────────▶ stores/corrections   sql_corrections + _vectors
+                       │  fix (incomplete) ───▶ stores/completions   sql_completions + _vectors
                        │
 curator ──nginx──▶ (the same service)
                        └─ snippet ────────────▶ context_questions/sql_snippets.md
-                                                └─▶ 07_load_snippets ─▶ snippetsdb
+                                                └─▶ 07_load_snippets ─▶ stores/snippets
 ```
 
 ## Contents
@@ -309,7 +311,7 @@ that matches nothing, and only the reviewer knows which.
 
 | Field | From |
 | --- | --- |
-| `fix_id` | `W0001`, `W0002`... for a correction, `I0001`... for a completion, so a record says which store it came from wherever it is quoted |
+| `fix_id` | `W0001`, `W0002`... for a correction, `I0001`... for a completion, so a record says which store it came from wherever it is quoted. Drawn from a sequence per store (6.2), so a deleted fix's id is never given to another |
 | `question` | The submission |
 | `incorrect_sql`, `incorrect_answer`, `incorrect_columns`, `incorrect_row_count` | What the agent generated and the user was shown |
 | `corrected_sql` | The reviewer's query, as it was validated |
@@ -326,13 +328,15 @@ rather than storing it twice.
 
 ### Two stores, not one, and neither the golden set
 
-Each kind has its own Postgres, in its own volume, holding its records and
-its RAG side by side:
+Each kind has its own database, with its own owner, holding its records and
+its RAG side by side -- in the runtime stores' server, `nl2sql-stores`, on
+port 5435, since 6.3; each was a Postgres of its own until then, on 5436 and
+5437:
 
-| Service | Port | Records | RAG |
+| Database | Owner | Records | RAG |
 | --- | --- | --- | --- |
-| `nl2sql-correctionsdb` | `5436` | `sql_corrections` | `sql_corrections_vectors` |
-| `nl2sql-completionsdb` | `5437` | `sql_completions` | `sql_completions_vectors` |
+| `nl2sql_corrections` | `corrections` | `sql_corrections` | `sql_corrections_vectors` |
+| `nl2sql_completions` | `completions` | `sql_completions` | `sql_completions_vectors` |
 
 The RAG half is a bge-m3 embedding of each question (1024 dimensions, an
 HNSW cosine index) beside the question, the incorrect SQL and the corrected
@@ -455,8 +459,8 @@ them, for the snippet form's table picker.
 
 That is the whole thing from cold: the databases, the API, the web interface
 people vote in, the staging database, the corrections and completions stores,
-this service, and the review interface -- then <http://localhost:8080> and
-<http://localhost:8081> in your browser, the second in a window of its own.
+this service, and the review interface -- then <https://localhost:8080> and
+<https://localhost:8081> in your browser, the second in a window of its own.
 
 The same containers without the browser step, or a smaller subset:
 
@@ -465,14 +469,15 @@ The same containers without the browser step, or a smaller subset:
 ./launch.sh --feedback      # just the staging database, so verdicts are kept
 ```
 
-`--review` implies `--feedback`, which implies `--api`: the interface is
-nothing without the service, the service is nothing without the database, and
-the database is nothing without the API that writes to it. `--feedback` on its
-own is for the machine that *collects* feedback when a different one reviews
-it -- the staging database is the only part that has to be where people vote.
+`--review` implies `--api`: the interface is nothing without the service,
+and the staging database is nothing without the API that writes to it. Since
+6.3 the staging database starts with the other databases, so a verdict is
+staged whenever the API is up -- once the review service has started once,
+since it makes the table and the API's role -- and `--feedback` is the same
+as `--api`.
 
 On a checkout set up before this existed, `.env` still pins the older image
-tags and knows nothing about the two review images, so run
+tags and knows nothing about the review service's image, so run
 `./setup.sh --review` once first. It re-pins the tags and pulls them, carrying
 over the Ollama host and everything else the last run chose.
 
@@ -512,7 +517,7 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `POST` | `/v1/submissions/{id}/preview` | yes | The markdown a draft would add, without writing |
 | `POST` | `/v1/submissions/{id}/promote` | yes | Write the pair into the golden set. Correct answers only |
 | `POST` | `/v1/submissions/{id}/validate` | yes | Run a corrected query against the live retail database. Wrong and incomplete answers only |
-| `POST` | `/v1/submissions/{id}/fix` | yes | Validate again and store the fix in its store. `X-Reviewer` names who |
+| `POST` | `/v1/submissions/{id}/fix` | yes | Validate again and store the fix in its store, recorded as the caller's |
 | `GET` | `/v1/fixes/{kind}` | yes | `corrections` or `completions`: what the store holds, newest first. `?limit=` |
 | `GET` | `/v1/golden` | yes | The set as the document holds it |
 | `GET` | `/v1/promotions` | yes | What has been promoted, newest first |
@@ -521,7 +526,7 @@ python -m nl2sql_review --no-reload-vectors     # no embedding host here
 | `POST` | `/v1/golden` | yes | Validate a hand-written pair's SQL, then write it into the golden set |
 | `DELETE` | `/v1/golden/{pair_id}` | yes | Take a pair out of the golden set, reopening the submission it came from |
 | `POST` | `/v1/fixes/{kind}/validate` | yes | Run a fix's SQL against the live retail database |
-| `POST` | `/v1/fixes/{kind}` | yes | Validate a fix with no submission behind it, then store it. `X-Reviewer` names who |
+| `POST` | `/v1/fixes/{kind}` | yes | Validate a fix with no submission behind it, then store it, recorded as the caller's |
 | `DELETE` | `/v1/fixes/{kind}/{fix_id}` | yes | Take a fix out of its store, reopening the submission it came from |
 | `GET` | `/v1/snippets` | yes | The snippets as their document holds them, the next id, and what the store holds |
 | `POST` | `/v1/snippets/validate` | yes | Run a snippet inside its probe query |
@@ -582,29 +587,60 @@ The error envelope is the agent API's, so one client parses both:
 | `REVIEW_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc`; `false` leaves only `/openapi.json` |
 | `REVIEW_LOG_LEVEL` | `info` | uvicorn's log level |
 
-This service **presents the certificate the agent API generates** and never
-writes one of its own. A second copy of the certificate code would be 250
-lines whose only job is to agree with the first copy, and the two would be
-discovered to disagree by a client failing to connect. The cost of that
-subtraction is a configuration requirement instead: `API_TLS_HOSTNAMES` has
-to cover `nl2sql-review`, which compose does.
+This service presents **a certificate of its own**, which the stack's pki
+service issues from its development CA before it starts (6.1; until then it
+presented the agent API's, whose key was then in eleven containers). It
+never writes one: the issuing is the pki service's, so there is one copy of
+the certificate code and one CA its page's proxy verifies against. The
+names it covers are `REVIEW_TLS_HOSTNAMES`, which must include
+`nl2sql-review`; compose's default does.
 
 ### Who may call
 
 | Variable | Default | What |
 | --- | --- | --- |
-| `REVIEW_TOKEN` | *(none)* | Require this bearer token on `/v1` |
-| `REVIEW_CORS_ORIGINS` | `*` | Browser origins allowed to call it |
+| `AUTH_ENABLED` | `true` | Accept signed-in people ([`auth/README.md`](../auth/README.md)). Only `false`, set by name, turns it off, and the service then says it is open |
+| `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
+| `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
+| `REVIEW_REVIEWER_ROLES` | `nl2sql_reviewers` | Who may work the review queue: judge, promote, fix, reopen, delete |
+| `REVIEW_CURATOR_ROLES` | `nl2sql_curators` | Who may write directly: snippets, golden pairs, corrections and completions |
+| `REVIEW_TOKEN` | *(none)* | A static service token: required on `/v1` when sign-in is off, accepted beside sessions when it is on |
+| `REVIEW_TOKEN_NAME` | `review-token` | Who the token is: what it does is recorded as `token:<name>` |
+| `REVIEW_TOKEN_ROLES` | *(see below)* | The roles it holds, and no others. Unset: with sign-in on the reviewer roles only; with it off both, because the pages' proxies send it for everyone |
+| `REVIEW_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly; its pages reach it through their own nginx |
 
-Not optional the way the agent's token is. A caller here can edit the
-question set the agent is measured against; `/readyz` and the start-up banner
-both say so loudly when it is unset.
+With sign-in on, a reviewer's or curator's own name is what is recorded on
+everything they decide -- not a name typed into a form -- and the SQL they
+validate runs as their own database role, with their name in the
+transaction's `application_name` (`nl2sql:review:<person>`, 6.2). Reading
+the queue and the stores is open to either group; changing anything takes
+the group the route belongs to, and each route is on a router that carries
+that group's guard (6.2). A static token is a caller of its own since 6.2:
+recorded as `token:<name>` -- never as the `X-Reviewer` it sends, which only
+an open service with no token records -- and holding `REVIEW_TOKEN_ROLES`:
+with sign-in on it reviews, and curating by token is something to grant
+there by name. A session signed out, or from before a password change or a
+lock, is refused with `401 session_revoked` within a minute
+([`auth/README.md`](../auth/README.md)). `/readyz` gives the reason a
+dependency is down to an administrator only.
+
+With sign-in off, the token is not optional the way the agent's is. A caller
+here can edit the question set the agent is measured against; `/readyz` and
+the start-up banner both say so loudly when it is unset.
 
 There is no query-string token, unlike the agent API. That one accepts one
 because `EventSource` cannot set headers; nothing here streams, so the token
 never has to go somewhere that ends up in an access log.
 
 ### The staging database
+
+Since 6.3 every password here is a file (V6-38): a URL is read with its
+password replaced by the one in the file `<NAME without _URL>_PASSWORD_FILE`
+names -- `FEEDBACK_DB_PASSWORD_FILE` beside `FEEDBACK_DB_URL` -- and a
+password or token by itself from `<NAME>_FILE`. Compose gives only the
+files, from `secrets/`, so none is in the container's environment; a URL
+with its password in it, or the variable itself, still works for a service
+started by hand.
 
 | Variable | Default | What |
 | --- | --- | --- |
@@ -617,18 +653,31 @@ never has to go somewhere that ends up in an access log.
 | Variable | Default | What |
 | --- | --- | --- |
 | `REVIEW_DOCUMENT` | `/app/context_questions/translated_questions.md` | The golden question set |
-| `REVIEW_RAG_DIR` | `/app/rag` | Where the loader scripts live |
-| `REVIEW_RELOAD_CONTEXT` | `true` | Run `05_load_golden_pairs.py` after writing |
-| `REVIEW_RELOAD_VECTORS` | `true` | Run `06_embed_golden_pairs.py` after that |
-| `REVIEW_RELOAD_TIMEOUT_SECONDS` | `600` | Give up on a loader that hangs |
+| `REVIEW_RAG_DIR` | `/app/rag` | Where `ragproc` lives |
+| `REVIEW_RELOAD_CONTEXT` | `true` | Load the context store (step 5) after writing |
+| `REVIEW_RELOAD_VECTORS` | `true` | Embed what changed (step 6) after that |
+| `REVIEW_RELOAD_TIMEOUT_SECONDS` | `600` | How long one request to the embedding host may take |
 | `CHUNK_DB_URL` | the compose chunkdb | Context store |
 | `VECTOR_DB_URL` | the compose vectordb | Vector store |
 | `OLLAMA_URL` / `EMBED_MODEL` | `http://localhost:11434` / `bge-m3` | For embedding |
 
-The loaders are run **as scripts**, not imported. They already handle the
-upsert, the delete of pairs no longer in the document, the BM25 rebuild and
-incremental re-embedding; a second implementation here would be a second set
-of rules to keep in agreement with the first.
+The loaders are `rag/`'s own, `ragproc.loaders` -- the code of steps 5, 6
+and 7 -- called in this process (6.2; they ran as scripts until then). They
+already handle the upsert, the delete of pairs no longer in the document,
+the BM25 rebuild and incremental re-embedding; a second implementation here
+would be a second set of rules to keep in agreement with the first. Each
+store's URL, password and all, is an argument to a function rather than
+something on a command line `ps` shows anyone on the host. Everything from
+reading the document to the last load is done holding the write lock -- in
+this process, and an advisory lock on the documents' directory between
+processes -- so two curators cannot both take Q47.
+
+The service writes the checkout's documents as whoever owns them (6.2):
+started as root, it becomes the owner of the mounted `context_questions/`
+before it reads anything, so a promoted pair in the working tree is theirs,
+as if they had typed it. A directory root owns -- the copy in the image,
+with nothing mounted -- is written as the image's account, `nl2sql` (10001),
+which is also the group its TLS key is read through.
 
 ### Fixes
 
@@ -637,13 +686,16 @@ of rules to keep in agreement with the first.
 | `RETAIL_DB_URL` | `postgresql://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail` | Where a corrected query is validated. The agent's read-only role, never the owner |
 | `REVIEW_VALIDATE_TIMEOUT_MS` | `30000` | `statement_timeout` for one validation |
 | `REVIEW_VALIDATE_MAX_ROWS` | `200` | Rows read before a result is called truncated |
-| `CORRECTIONS_DB_URL` | `postgresql://corrections:corrections@localhost:5436/nl2sql_corrections` | Where wrong answers' fixes go, as the owner |
-| `COMPLETIONS_DB_URL` | `postgresql://completions:completions@localhost:5437/nl2sql_completions` | Where incomplete answers' fixes go, as the owner |
+| `CORRECTIONS_DB_URL` | `postgresql://corrections:corrections@localhost:5435/nl2sql_corrections` | Where wrong answers' fixes go, as the owner |
+| `COMPLETIONS_DB_URL` | `postgresql://completions:completions@localhost:5435/nl2sql_completions` | Where incomplete answers' fixes go, as the owner |
 | `REVIEW_EMBED_FIXES` | `true` | Embed each fix's question at save time, with `OLLAMA_URL` / `EMBED_MODEL` |
 
-Compose points all three URLs at the containers, and takes an override for
-each as `REVIEW_RETAIL_DB_URL`, `REVIEW_CORRECTIONS_DB_URL` and
-`REVIEW_COMPLETIONS_DB_URL`. `REVIEW_EMBED_FIXES=false` stores records
+Compose points every URL here at the stack's own databases -- the runtime
+stores at `nl2sql-stores`, with no password in the URL and the password from
+the secret file beside it -- and takes an override for each:
+`REVIEW_FEEDBACK_DB_URL`, `REVIEW_RETAIL_DB_URL`, `REVIEW_CORRECTIONS_DB_URL`,
+`REVIEW_COMPLETIONS_DB_URL`, `REVIEW_CHUNK_DB_URL`, `REVIEW_VECTOR_DB_URL` and
+`REVIEW_SNIPPETS_DB_URL`. `REVIEW_EMBED_FIXES=false` stores records
 without their vectors -- the start-up banner, `/readyz` and `/v1/meta` all
 warn that nothing will be retrievable from them until they are embedded.
 
@@ -652,30 +704,59 @@ warn that nothing will be retrievable from them until they are embedded.
 | Variable | Default | What |
 | --- | --- | --- |
 | `REVIEW_SNIPPETS_DOCUMENT` | `/app/context_questions/sql_snippets.md` | The snippet document |
-| `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5438/nl2sql_snippets` | The snippet store, as its owner |
+| `SNIPPETS_DB_URL` | `postgresql://snippets:snippets@localhost:5435/nl2sql_snippets` | The snippet store, as its owner |
 | `SNIPPETS_READER_USER` / `SNIPPETS_READER_PASSWORD` | `snippets_reader` / `snippets_reader` | The read-only role the loader (re)creates for the agent |
-| `REVIEW_RELOAD_SNIPPETS` | `true` | Run `07_load_snippets.py` after writing |
+| `REVIEW_RELOAD_SNIPPETS` | `true` | Load the snippet store (step 7) after writing |
 
 Snippets are validated with `RETAIL_DB_URL` and the two limits above, and
 embedded with `OLLAMA_URL` / `EMBED_MODEL`. Compose takes the store's URL as
-`REVIEW_SNIPPETS_DB_URL`, built from `SNIPPETS_DB_USER`,
-`SNIPPETS_DB_PASSWORD` and `SNIPPETS_DB_NAME` by default, which are the
-store container's own; the reader's name and password are the agent's too.
+`REVIEW_SNIPPETS_DB_URL`, built from `SNIPPETS_DB_USER` and
+`SNIPPETS_DB_NAME` by default -- the database and owner the dbprep one-shot
+makes -- with the password in `secrets/snippets_db_password`; the reader's
+name and password file are the agent's too.
 `REVIEW_RELOAD_SNIPPETS=false` writes the document and leaves the store
 behind it, and `/readyz` and the start-up banner say so.
 
 ## The interface
 
 A React/TypeScript single page in [`gui/`](gui), built to static files and
-served by nginx, which proxies this service and holds the token so the
-reviewer's browser never does.
+served over HTTPS by the proxy image's `review` page
+([`proxy/README.md`](../proxy/README.md)), which proxies this service and the
+auth service.
+With sign-in on, the page asks who you are and admits `nl2sql_reviewers`;
+the session cookie is what reaches the service. With it off, nginx holds the
+token so the reviewer's browser never does.
 
 A **separate npm project** from [`../gui`](../gui), and the separation is
 physical rather than conventional. Two Vite entry points in one project share
-a build, and the public GUI's image would then be serving the interface that
+a build, and the public GUI would then be serving the interface that
 rewrites the golden question set to anyone who could reach it. A second
 `package.json` is a few more files and a boundary that cannot be crossed by
-forgetting something.
+forgetting something. Since 6.3 the two bundles are in one image, and each
+container serves only the page `NL2SQL_PAGE` names, from that page's own
+root: the public GUI's container answers nothing with this page's files.
+
+The page's own settings, set in `.env` by the names on the left; compose
+hands each to the proxy image as the name in the middle.
+
+| Variable | Sets | Default |
+|---|---|---|
+| `REVIEW_GUI_PORT` | `PROXY_PORT` | `8081` |
+| `REVIEW_GUI_UPSTREAM` | `UPSTREAM` | `https://nl2sql-review:8444` |
+| `REVIEW_GUI_SSL_NAME` | `UPSTREAM_SSL_NAME` | `nl2sql-review` -- a name the service's certificate covers (`REVIEW_TLS_HOSTNAMES`) |
+| `REVIEW_GUI_CACERT` | `UPSTREAM_CACERT` | `/etc/nl2sql/tls/ca.crt`, the stack's CA, beside the page's own certificate |
+| `REVIEW_GUI_READ_TIMEOUT` | `UPSTREAM_READ_TIMEOUT` | `900s` -- longer than a promotion, which runs both loaders |
+| `REVIEW_GUI_RESOLVER` | `PROXY_RESOLVER` | `127.0.0.11`, Docker's DNS |
+| `secrets/review_token` | `UPSTREAM_TOKEN_FILE` | *(empty)*: sent only with sign-in off |
+| `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are and admits `nl2sql_reviewers` |
+| `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where the sign-in form posts |
+| `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
+| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `GUI_TLS_ENABLED` | `PROXY_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
+| `GUI_TLS_CERT_FILE` | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
+
+The `GUI_` ones are shared: one line in `.env` sets them for every page.
 
 Three tabs across the top, one per verdict, each with a count of what is
 still pending in it: **Correct → golden set**, **Wrong → corrections** and
@@ -707,7 +788,7 @@ whether the stores caught up.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 155 tests, 100% coverage
+npm run test     # review GUI: 182 tests, 100% coverage
 ```
 
 ## Tests

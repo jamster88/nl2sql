@@ -24,18 +24,20 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.settings_names import read_names, settable_names
+
 pytestmark = pytest.mark.docker
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
-def _compose_config(tmp_path: Path, *, profile: str | None = None, env: dict | None = None) -> dict:
+def _compose_config(tmp_path: Path, *, profile: str | tuple[str, ...] | None = None, env: dict | None = None) -> dict:
     empty_env_file = tmp_path / "empty.env"
     empty_env_file.write_text("")
 
     cmd = ["docker", "compose", "--env-file", str(empty_env_file)]
-    if profile:
-        cmd += ["--profile", profile]
+    for name in (profile,) if isinstance(profile, str) else profile or ():
+        cmd += ["--profile", name]
     cmd += ["config", "--format", "json"]
 
     # Start from an environment with nothing compose could substitute. The
@@ -102,8 +104,12 @@ def test_the_scripts_read_the_agents_settings_from_real_compose(script: str):
 
 
 def test_all_services_present_under_the_agent_profile(agent_profile_config: dict):
+    # pki has no profile: it is the one-shot that issues every TLS server
+    # its certificate, and any of them may be what is started. Nor has
+    # dbprep, the one-shot that prepares every database (6.3), nor the
+    # runtime stores, one server since 6.3.
     assert set(agent_profile_config["services"]) == {
-        "postgres", "vectordb", "chunkdb", "snippetsdb", "agent"
+        "postgres", "vectordb", "chunkdb", "stores", "agent", "pki", "dbprep"
     }
 
 
@@ -114,14 +120,35 @@ def test_postgres_service_shape(agent_profile_config: dict):
     assert postgres["restart"] == "unless-stopped"
     assert "pg_isready" in " ".join(postgres["healthcheck"]["test"])
 
-    [volume] = postgres["volumes"]
+    volume, pgtls, ldaptls, socket = postgres["volumes"]
     assert volume["source"] == "pgdata"
     # Must match ENV PGDATA in docker/Dockerfile, or the image's baked data
     # is invisible to the named volume that's supposed to seed from it.
     assert volume["target"] == "/var/lib/pgdata"
+    # Its own certificate, written there on first start (V6-52): read-write.
+    assert (pgtls["source"], pgtls["target"], pgtls.get("read_only", False)) == ("pgtls", "/etc/nl2sql/pg-tls", False)
+    # Sign-in: pg_hba's `ldap` method verifies the directory's certificate,
+    # which libldap finds through LDAPTLS_CACERT, in the volume the
+    # directory writes it to -- read-only here.
+    assert (ldaptls["source"], ldaptls["target"], ldaptls["read_only"]) == ("ldaptls", "/etc/nl2sql/ldap-tls", True)
+    # Its socket, shared with the dbprep one-shot alone (6.3, V6-41).
+    assert (socket["source"], socket["target"]) == ("pgsocket", "/var/run/postgresql")
+    # The owner's password is a secret file (V6-38); the reader's is dbprep's
+    # to set, so it is not here at all.
+    assert postgres["environment"] == {
+        "LDAPTLS_CACERT": "/etc/nl2sql/ldap-tls/ldap.crt",
+        "POSTGRES_PASSWORD_FILE": "/run/secrets/postgres_password",
+        "POSTGRES_READER_USER": "nl2sql_reader",
+        "POSTGRES_TLS_HOSTNAMES": "",
+        "POSTGRES_REQUIRE_TLS": "",
+    }
+    assert [secret["source"] for secret in postgres["secrets"]] == ["postgres_password"]
+    # No password is a build argument any more (V6-07).
+    assert not any("PASSWORD" in name for name in postgres["build"]["args"])
 
     [port] = postgres["ports"]
     assert port["target"] == 5432
+    assert port["host_ip"] == "127.0.0.1", "this machine's unless DB_BIND_ADDRESS says otherwise (V6-06)"
 
 
 def test_vectordb_service_shape(agent_profile_config: dict):
@@ -130,8 +157,9 @@ def test_vectordb_service_shape(agent_profile_config: dict):
     assert vectordb["restart"] == "unless-stopped"
     assert "pg_isready" in " ".join(vectordb["healthcheck"]["test"])
 
-    [volume] = vectordb["volumes"]
+    volume, socket = vectordb["volumes"]
     assert volume["source"] == "vectordata"
+    assert (socket["source"], socket["target"]) == ("vectorsocket", "/var/run/postgresql")
     # Same PGDATA convention as the retail image: outside the base image's
     # declared VOLUME, so the embeddings baked into the image are visible.
     assert volume["target"] == "/var/lib/pgdata"
@@ -176,37 +204,41 @@ def test_agent_database_url_points_at_the_compose_postgres_service_as_the_read_o
     agent_profile_config: dict,
 ):
     """The agent only ever reads, so it connects as the reader role the image
-    creates (docker/reader_role.sql), never as the owner that loaded the data.
+    creates (docker/reader_role.sql), never as the owner that loaded the data
+    -- with the reader's password from its secret file, beside a URL that
+    carries none (6.3, V6-38).
     """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
-    agent_env = agent_profile_config["services"]["agent"]["environment"]
-    reader, password = postgres_args["DB_READER"], postgres_args["DB_READER_PASSWORD"]
-    assert f"{reader}:{password}@postgres:5432/{postgres_args['DB_NAME']}" in agent_env["DATABASE_URL"]
+    agent = agent_profile_config["services"]["agent"]
+    reader = postgres_args["DB_READER"]
+    assert agent["environment"]["DATABASE_URL"] == (
+        f"postgresql+psycopg://{reader}@postgres:5432/{postgres_args['DB_NAME']}"
+    )
+    assert agent["environment"]["DATABASE_PASSWORD_FILE"] == "/run/secrets/postgres_reader_password"
     assert reader != postgres_args["DB_USER"]
-    assert f"{postgres_args['DB_USER']}:" not in agent_env["DATABASE_URL"]
 
 
 def test_the_owners_credentials_never_reach_the_agent_container(agent_profile_config: dict):
     """Least privilege at the compose level: the only Postgres identity in the
-    agent's environment is the reader. The owner's password is a build arg
-    of the postgres service and nothing else.
+    agent's environment is the reader. The owner's password is a secret
+    mounted into the postgres service and nothing else.
     """
     postgres_args = agent_profile_config["services"]["postgres"]["build"]["args"]
-    agent_env = agent_profile_config["services"]["agent"]["environment"]
-    owner, owner_password = postgres_args["DB_USER"], postgres_args["DB_PASSWORD"]
-    for key, value in agent_env.items():
-        assert f"{owner}:" not in str(value), f"{key} carries the owner's login"
-        assert f":{owner_password}@" not in str(value), f"{key} carries the owner's password"
+    agent = agent_profile_config["services"]["agent"]
+    owner = postgres_args["DB_USER"]
+    for key, value in agent["environment"].items():
+        assert f"//{owner}@" not in str(value) and f"//{owner}:" not in str(value), f"{key} carries the owner's login"
+    assert "postgres_password" not in {secret["source"] for secret in agent["secrets"]}
 
 
 def test_the_reader_role_can_be_renamed_from_the_environment(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("compose"),
         profile="agent",
-        env={"POSTGRES_READER_USER": "ro", "POSTGRES_READER_PASSWORD": "secret"},
+        env={"POSTGRES_READER_USER": "ro"},
     )
     assert config["services"]["postgres"]["build"]["args"]["DB_READER"] == "ro"
-    assert "ro:secret@postgres:5432/" in config["services"]["agent"]["environment"]["DATABASE_URL"]
+    assert "//ro@postgres:5432/" in config["services"]["agent"]["environment"]["DATABASE_URL"]
 
 
 def test_named_volumes_are_declared_persistent(agent_profile_config: dict):
@@ -279,15 +311,16 @@ def test_vector_credentials_flow_into_both_the_healthcheck_and_the_agent_url(tmp
     config = _compose_config(
         tmp_path_factory.mktemp("compose"),
         profile="agent",
-        env={"VECTOR_DB_USER": "vuser", "VECTOR_DB_PASSWORD": "vpass", "VECTOR_DB_NAME": "vectors_db"},
+        env={"VECTOR_DB_USER": "vuser", "VECTOR_DB_NAME": "vectors_db"},
     )
     healthcheck = " ".join(config["services"]["vectordb"]["healthcheck"]["test"])
     assert "-U vuser" in healthcheck
     assert "-d vectors_db" in healthcheck
-    assert (
-        config["services"]["agent"]["environment"]["VECTOR_DB_URL"]
-        == "postgresql+psycopg://vuser:vpass@vectordb:5432/vectors_db"
-    )
+    agent = config["services"]["agent"]["environment"]
+    assert agent["VECTOR_DB_URL"] == "postgresql+psycopg://vuser@vectordb:5432/vectors_db"
+    # The password, one secret file that dbprep sets the login's from (6.3).
+    assert agent["VECTOR_DB_PASSWORD_FILE"] == "/run/secrets/vector_db_password"
+    assert "vector_db_password" in {secret["source"] for secret in config["services"]["dbprep"]["secrets"]}
 
 
 def test_retrieval_can_be_turned_off_through_the_environment(tmp_path_factory):
@@ -334,9 +367,9 @@ def test_every_agent_environment_variable_is_one_the_agent_actually_reads(agent_
     from nl2sql_agent.config import Settings
 
     source = Path(Settings.__module__.replace(".", "/"))  # nl2sql_agent/config
-    config_py = (REPO_ROOT / "agent" / source).with_suffix(".py").read_text()
+    read = read_names((REPO_ROOT / "agent" / source).with_suffix(".py").read_text())
     for name in agent_profile_config["services"]["agent"]["environment"]:
-        assert f'"{name}"' in config_py, f"compose sets {name}, but config.py never reads it"
+        assert name in read, f"compose sets {name}, but config.py never reads it"
 
 
 # ---------------------------------------------------------------------------
@@ -350,14 +383,15 @@ def test_the_agent_is_pointed_at_the_context_store(agent_profile_config: dict):
     fails at the first question rather than at startup.
     """
     env = agent_profile_config["services"]["agent"]["environment"]
-    assert env["CONTEXT_DB_URL"] == (
-        "postgresql+psycopg://ragproc:ragproc@chunkdb:5432/nl2sql_chunks"
-    )
+    assert env["CONTEXT_DB_URL"] == "postgresql+psycopg://ragproc@chunkdb:5432/nl2sql_chunks"
+    assert env["CONTEXT_DB_PASSWORD_FILE"] == "/run/secrets/context_db_password"
 
 
 def test_the_agent_waits_for_every_database_to_be_healthy(agent_profile_config: dict):
     depends = agent_profile_config["services"]["agent"]["depends_on"]
-    assert set(depends) == {"postgres", "vectordb", "chunkdb", "snippetsdb"}
+    assert set(depends) == {"postgres", "vectordb", "chunkdb", "stores", "dbprep"}
+    # Each database healthy, and prepared: the reader made and its password set.
+    assert depends.pop("dbprep")["condition"] == "service_completed_successfully"
     assert all(d["condition"] == "service_healthy" for d in depends.values())
 
 
@@ -425,10 +459,8 @@ def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):
 # ---------------------------------------------------------------------------
 
 
-def _settings_read() -> set[str]:
-    """Every environment variable config.py reads, by name."""
-    source = Path(REPO_ROOT / "agent" / "nl2sql_agent" / "config.py").read_text()
-    return set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple)?|os\.getenv)\(\s*"([A-Z_]+)"', source))
+def _config_py() -> str:
+    return (REPO_ROOT / "agent" / "nl2sql_agent" / "config.py").read_text()
 
 
 def test_every_setting_the_agent_reads_can_be_set_through_compose(agent_profile_config: dict):
@@ -437,7 +469,7 @@ def test_every_setting_the_agent_reads_can_be_set_through_compose(agent_profile_
     it.
     """
     env = set(agent_profile_config["services"]["agent"]["environment"])
-    missing = sorted(_settings_read() - env)
+    missing = sorted(settable_names(_config_py()) - env)
     assert missing == [], f"config.py reads these, but compose never passes them: {missing}"
 
 
@@ -448,7 +480,7 @@ def test_every_variable_compose_sets_on_the_agent_is_one_it_reads(agent_profile_
     that setting it changes nothing and says nothing.
     """
     env = set(agent_profile_config["services"]["agent"]["environment"])
-    unread = sorted(env - _settings_read())
+    unread = sorted(env - read_names(_config_py()))
     assert unread == [], f"compose passes these to the agent, and config.py never reads them: {unread}"
 
 
@@ -502,9 +534,10 @@ def test_the_context_store_volume_is_declared_and_project_scoped(agent_profile_c
     volumes = agent_profile_config["volumes"]
     assert "chunkdata" in volumes
     assert volumes["chunkdata"].get("name", "") in ("", "nl2sql_chunkdata")
-    [volume] = [v for v in agent_profile_config["services"]["chunkdb"]["volumes"]]
+    volume, socket = agent_profile_config["services"]["chunkdb"]["volumes"]
     assert volume["source"] == "chunkdata"
     assert volume["target"] == "/var/lib/pgdata"
+    assert (socket["source"], socket["target"]) == ("contextsocket", "/var/run/postgresql")
 
 
 def test_the_resolved_config_does_not_depend_on_the_developers_shell(tmp_path_factory):
@@ -578,12 +611,14 @@ def _profile_sets() -> list[str]:
     ).stdout.split("\0")
     found = set()
     for path in filter(None, tracked):
-        found |= set(re.findall(r"docker compose((?: --profile [a-z]+)+)", (REPO_ROOT / path).read_text()))
+        # A file deleted in the working tree is still listed until the commit.
+        if (REPO_ROOT / path).is_file():
+            found |= set(re.findall(r"docker compose((?: --profile [a-z]+)+)", (REPO_ROOT / path).read_text()))
     return sorted(profiles.strip() for profiles in found)
 
 
 def test_the_scripts_and_documents_name_profiles_to_check():
-    assert {"--profile api --profile gui", "--profile feedback --profile review"} <= set(_profile_sets())
+    assert {"--profile api --profile gui", "--profile review --profile reviewgui"} <= set(_profile_sets())
 
 
 @pytest.mark.parametrize("profiles", _profile_sets())
@@ -603,3 +638,204 @@ def test_every_set_of_profiles_named_is_a_project_compose_accepts(profiles: str,
         env={k: v for k, v in os.environ.items() if k not in substitutable},
     )
     assert result.returncode == 0, f"docker compose {profiles}: {result.stderr.strip()}"
+
+
+# ---------------------------------------------------------------------------
+# The stack's TLS identities (6.1, V6-36)
+# ---------------------------------------------------------------------------
+
+
+def _identities(config: dict) -> dict[str, tuple[str, list[str]]]:
+    """Each identity's directory and names; its owner, the last part since
+    6.2, is `test_unprivileged.py`'s to check."""
+    found = {}
+    for arg in config["services"]["pki"]["command"]:
+        if "=" in arg and not arg.startswith("-"):
+            name, directory, hosts = arg.split("=", 3)[:3]
+            found[name] = (directory, hosts.split(","))
+    return found
+
+
+def test_the_pki_issues_an_identity_into_each_servers_own_volume(default_config: dict):
+    pki = default_config["services"]["pki"]
+    assert pki["command"][:3] == ["python", "-m", "nl2sql_identity.pki"]
+    assert pki["image"] == "nl2sql-agent:latest", "the agent's image, which carries the package"
+    mounts = {volume["target"]: volume["source"] for volume in pki["volumes"]}
+    assert mounts["/etc/nl2sql/pki"] == "pkica"
+    for name, (directory, hosts) in _identities(default_config).items():
+        assert mounts[directory] == f"{name}tls"
+        assert "localhost" in hosts and "127.0.0.1" in hosts
+
+
+@pytest.mark.parametrize("identity", ["api", "review", "console", "auth"])
+def test_names_given_to_the_stack_reach_every_identity(tmp_path_factory, identity: str):
+    """TLS_EXTRA_HOSTNAMES is this machine's name on the network, for a
+    browser elsewhere; each service's own list is `<SERVICE>_TLS_HOSTNAMES`."""
+    names = f"localhost,nl2sql-{identity},{identity}.example"
+    config = _compose_config(
+        tmp_path_factory.mktemp("names"),
+        env={"TLS_EXTRA_HOSTNAMES": "nl2sql.lan", f"{identity.upper()}_TLS_HOSTNAMES": names},
+    )
+    assert "--also=nl2sql.lan" in config["services"]["pki"]["command"]
+    assert _identities(config)[identity][1] == names.split(",")
+
+
+# ---------------------------------------------------------------------------
+# Moving a port moves everything that proxies to it
+# ---------------------------------------------------------------------------
+
+#: (service, its variable naming an upstream, the port setting that moves
+#: what it proxies to). A service listens on its own port setting inside
+#: its container as well as publishing it, so a page whose upstream kept the
+#: default answered 502 to every request once the port was moved -- which
+#: USAGE_GUIDE.md says anyone may do in `.env`.
+FOLLOWERS = [
+    ("gui", "UPSTREAM", "API_PORT"), ("gui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("reviewgui", "UPSTREAM", "REVIEW_PORT"), ("reviewgui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("curategui", "UPSTREAM", "REVIEW_PORT"), ("curategui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("consolegui", "UPSTREAM", "CONSOLE_PORT"), ("consolegui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("directorygui", "AUTH_UPSTREAM", "AUTH_PORT"),
+    ("directorygui", "UPSTREAM", "AUTH_DIRECTORY_PORT"),
+    ("mlflowproxy", "AUTH_UPSTREAM", "AUTH_PORT"), ("apitest", "API_BASE_URL", "API_PORT"),
+]
+EVERY_PAGE = ("api", "gui", "review", "reviewgui", "curategui", "console", "consolegui",
+              "auth", "directorygui", "mlflow")
+
+
+@pytest.fixture(scope="module")
+def moved(tmp_path_factory) -> dict:
+    ports = {"API_PORT": "9443", "REVIEW_PORT": "9444", "CONSOLE_PORT": "9445", "AUTH_PORT": "9446",
+             "AUTH_DIRECTORY_PORT": "9447"}
+    return _compose_config(tmp_path_factory.mktemp("compose"), profile=EVERY_PAGE, env=ports)["services"]
+
+
+@pytest.mark.parametrize("service,variable,port", FOLLOWERS)
+def test_a_moved_port_is_followed_by_what_proxies_to_it(moved: dict, service: str, variable: str, port: str):
+    target = {"API_PORT": "9443", "REVIEW_PORT": "9444", "CONSOLE_PORT": "9445", "AUTH_PORT": "9446",
+              "AUTH_DIRECTORY_PORT": "9447"}[port]
+    assert moved[service]["environment"][variable].endswith(f":{target}")
+
+
+#: Each page's settings, by the name `.env` gives them and the name the proxy
+#: image reads (V6-37): a page whose `.env` name went nowhere would keep its
+#: default whatever the README told someone to set. Shared by every page:
+#: GUI_TLS_* and, but for the directory's, GUI_AUTH_*.
+PAGE_SETTINGS = {
+    "gui": {"GUI_PORT": "PROXY_PORT", "GUI_API_UPSTREAM": "UPSTREAM", "GUI_API_SSL_NAME": "UPSTREAM_SSL_NAME",
+            "GUI_API_CACERT": "UPSTREAM_CACERT", "GUI_API_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT",
+            "GUI_RESOLVER": "PROXY_RESOLVER"},
+    "reviewgui": {"REVIEW_GUI_PORT": "PROXY_PORT", "REVIEW_GUI_UPSTREAM": "UPSTREAM",
+                  "REVIEW_GUI_SSL_NAME": "UPSTREAM_SSL_NAME", "REVIEW_GUI_CACERT": "UPSTREAM_CACERT",
+                  "REVIEW_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "REVIEW_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "curategui": {"CURATE_GUI_PORT": "PROXY_PORT", "CURATE_GUI_UPSTREAM": "UPSTREAM",
+                  "CURATE_GUI_SSL_NAME": "UPSTREAM_SSL_NAME", "CURATE_GUI_CACERT": "UPSTREAM_CACERT",
+                  "CURATE_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "CURATE_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "consolegui": {"CONSOLE_GUI_PORT": "PROXY_PORT", "CONSOLE_GUI_UPSTREAM": "UPSTREAM",
+                   "CONSOLE_GUI_SSL_NAME": "UPSTREAM_SSL_NAME", "CONSOLE_GUI_CACERT": "UPSTREAM_CACERT",
+                   "CONSOLE_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "CONSOLE_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "directorygui": {"DIRECTORY_GUI_PORT": "PROXY_PORT", "DIRECTORY_GUI_API_UPSTREAM": "UPSTREAM",
+                     "DIRECTORY_GUI_UPSTREAM": "AUTH_UPSTREAM", "DIRECTORY_GUI_SSL_NAME": "UPSTREAM_SSL_NAME",
+                     "DIRECTORY_GUI_CACERT": "UPSTREAM_CACERT", "DIRECTORY_GUI_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT",
+                     "DIRECTORY_GUI_RESOLVER": "PROXY_RESOLVER"},
+    "mlflowproxy": {"MLFLOW_PROXY_PORT": "PROXY_PORT", "MLFLOW_PROXY_UPSTREAM": "UPSTREAM",
+                    "MLFLOW_PROXY_SSL_NAME": "UPSTREAM_SSL_NAME", "MLFLOW_PROXY_CACERT": "UPSTREAM_CACERT",
+                    "MLFLOW_PROXY_READ_TIMEOUT": "UPSTREAM_READ_TIMEOUT", "MLFLOW_PROXY_RESOLVER": "PROXY_RESOLVER"},
+}
+SHARED_PAGE_SETTINGS = {"GUI_TLS_ENABLED": "PROXY_TLS_ENABLED", "GUI_TLS_CERT_FILE": "PROXY_TLS_CERT_FILE",
+                        "GUI_TLS_KEY_FILE": "PROXY_TLS_KEY_FILE"}
+SIGN_IN_SETTINGS = {"GUI_AUTH_UPSTREAM": "AUTH_UPSTREAM", "GUI_AUTH_SSL_NAME": "AUTH_SSL_NAME",
+                    "GUI_AUTH_CACERT": "AUTH_CACERT"}
+
+
+@pytest.fixture(scope="module")
+def pages_set(tmp_path_factory) -> dict:
+    """Every page's every setting, each given a value of its own."""
+    names = {name for mapping in PAGE_SETTINGS.values() for name in mapping} | set(SHARED_PAGE_SETTINGS) | set(SIGN_IN_SETTINGS)
+    env = {name: f"set-{name.lower()}" for name in names}
+    env |= {name: str(9000 + index) for index, name in enumerate(sorted(n for n in names if n.endswith("_PORT")))}
+    env["GUI_TLS_ENABLED"] = "false"
+    services = _compose_config(tmp_path_factory.mktemp("pages"), profile=EVERY_PAGE, env=env)["services"]
+    return {"env": env, "services": services}
+
+
+@pytest.mark.parametrize("page", sorted(PAGE_SETTINGS))
+def test_each_page_setting_reaches_the_proxy_by_the_name_compose_documents(pages_set: dict, page: str):
+    env, service = pages_set["env"], pages_set["services"][page]
+    mapping = {**PAGE_SETTINGS[page], **SHARED_PAGE_SETTINGS}
+    if page != "directorygui":
+        mapping |= SIGN_IN_SETTINGS
+    for name, proxy in mapping.items():
+        assert service["environment"][proxy] == env[name], f"{page}: {name} does not reach {proxy}"
+    if page == "directorygui":
+        # One certificate answers on both of the auth service's ports.
+        assert service["environment"]["AUTH_SSL_NAME"] == env["DIRECTORY_GUI_SSL_NAME"]
+        assert service["environment"]["AUTH_CACERT"] == env["DIRECTORY_GUI_CACERT"]
+    port = next(name for name in PAGE_SETTINGS[page] if name.endswith("_PORT"))
+    assert [p["target"] for p in service["ports"]] == [int(env[port])]
+
+
+def test_no_upstream_names_a_port_of_its_own():
+    """Every `https://nl2sql-<service>:` default ends in the setting that
+    moves that service, so the list above is the whole of it."""
+    text = (REPO_ROOT / "docker-compose.yml").read_text()
+    assert re.findall(r"https://nl2sql-[a-z-]+:\d", text) == []
+    assert len(re.findall(r":-https://nl2sql-", text)) == len(FOLLOWERS)
+
+
+# ---------------------------------------------------------------------------
+# Another instance beside this one (V6-67)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def instances(tmp_path_factory) -> tuple[dict, dict]:
+    """The file resolved as the usual stack and as the acceptance tier's."""
+    usual = _compose_config(tmp_path_factory.mktemp("compose"), profile=EVERY_PAGE)
+    other = _compose_config(tmp_path_factory.mktemp("compose"), profile=EVERY_PAGE,
+                            env={"NL2SQL_INSTANCE": "nl2sql-accept"})
+    return usual, other
+
+
+def test_the_usual_stack_is_named_as_it_always_was(instances):
+    usual, _ = instances
+    assert usual["name"] == "nl2sql"
+    assert usual["volumes"]["pgdata"]["name"] == "nl2sql-pgdata"
+    assert usual["services"]["api"]["container_name"] == "nl2sql-api"
+
+
+def test_another_instance_shares_no_container_or_volume_name_with_it(instances):
+    usual, other = instances
+    assert other["name"] == "nl2sql-accept"
+    assert other["volumes"]["pgdata"]["name"] == "nl2sql-accept-pgdata"
+    named = {name: service["container_name"] for name, service in other["services"].items() if "container_name" in service}
+    assert named and all(value.startswith("nl2sql-accept-") for value in named.values())
+    assert not set(named.values()) & {s.get("container_name") for s in usual["services"].values()}
+
+
+def test_every_container_is_reached_by_its_usual_name_in_either(instances):
+    """The name the others reach it by, and the one its certificate covers:
+    an alias on its own network, so it is the same in every instance. The
+    runtime stores answer to the four names they had before 6.3 as well, so
+    a URL written then still reaches its database."""
+    legacy = ["nl2sql-feedbackdb", "nl2sql-correctionsdb", "nl2sql-completionsdb", "nl2sql-snippetsdb"]
+    for config in instances:
+        for name, service in config["services"].items():
+            usual = service["container_name"].replace(config["name"], "nl2sql", 1)
+            expected = [usual, *legacy] if name == "stores" else [usual]
+            assert service["networks"]["default"]["aliases"] == expected, name
+
+
+@pytest.mark.parametrize("sets", [(), ("--review", "--curate", "--console", "--mlflow", "--desktop"), ("--no-auth",)])
+def test_the_profiles_setup_builds_with_resolve(run_setup, tmp_path, sets):
+    """`setup.sh --build-all` names the profiles to build by what the run
+    pins; compose refuses the lot if one names a service that depends on
+    another in a profile left out -- which the fake `docker` its own tests
+    run against cannot know, and the acceptance tier found."""
+    [build] = [call for call in run_setup("--build-all", *sets).calls if call.endswith(" build")
+               and "--profile api" in call]
+    profiles = build.split("compose ", 1)[1].rsplit(" build", 1)[0].split()
+    empty = tmp_path / "empty.env"
+    empty.write_text("")
+    resolved = subprocess.run(["docker", "compose", "--env-file", str(empty), *profiles, "config", "--quiet"],
+                              cwd=REPO_ROOT, capture_output=True, text=True, timeout=60)
+    assert resolved.returncode == 0, f"{' '.join(profiles)}: {resolved.stderr}"

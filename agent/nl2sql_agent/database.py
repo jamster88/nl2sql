@@ -13,11 +13,13 @@ from typing import Any
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
+from nl2sql_common.attribution import APPLICATION_NAME_SQL, application_name
+from nl2sql_common.errors import DATABASE_ERRORS, Invalid
 
 _SELECT_START = re.compile(r"^\s*(select|with)\b", re.IGNORECASE)
 
 
-class UnsafeQueryError(ValueError):
+class UnsafeQueryError(Invalid, ValueError):
     """Raised for SQL that is not a single read-only statement."""
 
 
@@ -265,7 +267,7 @@ class Database:
     def _quote(self, table_name: str) -> str:
         return f'"{self._schema}"."{table_name}"'
 
-    def explain_plan(self, sql: str) -> tuple[float | None, str | None]:
+    def explain_plan(self, sql: str, *, principal: str | None = None) -> tuple[float | None, str | None]:
         """Plan without executing; return the estimated total cost and any error.
 
         This is the Planner Gate of the v4 architecture (section 6.2). It is
@@ -283,16 +285,29 @@ class Database:
         The cost is `Plan."Total Cost"` from the JSON plan, which is what the
         cost ceiling compares against. Returns `(None, message)` on failure
         and `(cost, None)` on success.
+
+        `principal` plans it as the person it will run as, so a table they
+        may not read is refused here, in Postgres's own words, rather than
+        only once the executor tries.
+
+        Under the executor's statement timeout too. Planning is milliseconds
+        for any query a person would write, and not for every query a model
+        might: a join of enough tables makes the planner's search the slow
+        part, and an untimed gate is a way past the timeout the executor
+        would have enforced.
         """
         cleaned = ensure_read_only(sql)
         try:
             with self._engine.connect() as conn:
                 with conn.begin():
                     conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+                    conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
+                    if principal:
+                        _as_person(conn, principal)
                     row = conn.exec_driver_sql(
                         f"EXPLAIN (FORMAT JSON) {cleaned}"
                     ).scalar()
-        except Exception as exc:  # surfaced to the Repair Agent as feedback
+        except DATABASE_ERRORS as exc:  # surfaced to the Repair Agent as feedback
             return None, str(getattr(exc, "orig", exc)).strip()
         return total_cost(row), None
 
@@ -311,9 +326,7 @@ class Database:
                 conn.exec_driver_sql("SET TRANSACTION READ ONLY")
                 conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
                 if principal:
-                    # Parameters are not allowed here, so the identifier is
-                    # quoted rather than interpolated raw.
-                    conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
+                    _as_person(conn, principal)
                 cursor = conn.exec_driver_sql(cleaned)
                 columns = list(cursor.keys())
                 rows = cursor.fetchmany(self._max_rows + 1)
@@ -324,6 +337,16 @@ class Database:
 def _quote_identifier(name: str) -> str:
     """Escape an identifier for use inside double quotes."""
     return name.replace('"', '""')
+
+
+def _as_person(conn: Any, principal: str, service: str = "agent") -> None:
+    """The rest of this transaction is `principal`'s, and Postgres says so.
+
+    `SET LOCAL ROLE` takes no parameters, so the identifier is quoted rather
+    than interpolated raw; the application name is a parameter (V6-64).
+    """
+    conn.exec_driver_sql(APPLICATION_NAME_SQL, {"name": application_name(service, principal)})
+    conn.exec_driver_sql(f'SET LOCAL ROLE "{_quote_identifier(principal)}"')
 
 
 def plan_cost_problem(cost: float | None, ceiling: float) -> str | None:

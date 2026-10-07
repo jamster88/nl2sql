@@ -16,7 +16,7 @@ import threading
 import time
 
 import pytest
-from nl2sql_agent.api.jobs import Job, JobStore, ProgressRecord
+from nl2sql_agent.api.jobs import Job, JobStore, ProgressRecord, QueueFull
 
 from .conftest import make_runner
 
@@ -88,7 +88,8 @@ def test_an_exception_inside_the_pipeline_is_a_failed_job_not_a_lost_worker(stor
     jobs = store(make_runner(raises=RuntimeError("ollama went away")))
     job = finished(jobs, jobs.submit("q"))
     assert job.status == "failed"
-    assert job.error == "RuntimeError: ollama went away"
+    assert job.error == "the question could not be answered: RuntimeError"
+    assert job.fault == "RuntimeError: ollama went away", "in its own words, for an operator (V6-32)"
     # The pool survives it: the next question still runs.
     assert finished(jobs, jobs.submit("q2")).status == "failed"
 
@@ -322,6 +323,76 @@ def test_pruning_never_drops_a_job_that_is_still_running(store):
         jobs.submit("more")
     assert jobs.get(running.id) is running
     gate.set()
+
+
+def _running(job: Job) -> None:
+    for _ in range(200):
+        if job.status == "running":
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"job stayed {job.status}")
+
+
+def test_a_full_queue_refuses_a_question_rather_than_growing(store):
+    """V6-13. Past `max_queued` waiting, a submission is refused with a time
+    to come back, not accepted into a queue that only grows."""
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), max_concurrency=1, max_queued=2)
+    _running(jobs.submit("running"))
+    jobs.submit("waiting 1")
+    jobs.submit("waiting 2")
+    with pytest.raises(QueueFull, match="API_MAX_QUEUED=2") as refused:
+        jobs.submit("one too many")
+    assert refused.value.retry_after == 60
+    gate.set()
+
+
+def test_one_person_cannot_fill_the_queue_for_everyone(store):
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), max_concurrency=1, max_per_person=2)
+    _running(jobs.submit("a1", owner="ann"))
+    jobs.submit("a2", owner="ann")
+    with pytest.raises(QueueFull, match="API_MAX_PER_PERSON=2"):
+        jobs.submit("a3", owner="ann")
+    assert jobs.submit("b1", owner="bob").status == "queued"
+    gate.set()
+
+
+def test_a_finished_question_gives_its_place_back(store):
+    jobs = store(max_per_person=1)
+    finished(jobs, jobs.submit("first", owner="ann"))
+    finished(jobs, jobs.submit("second", owner="ann"))
+
+
+def test_a_service_or_an_open_server_is_bounded_by_the_queue_alone(store):
+    """With no signed-in person every caller is the same caller, so a per-
+    person limit there would be a limit on the whole server."""
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), max_concurrency=1, max_per_person=1)
+    made = [jobs.submit(f"q{i}") for i in range(4)]
+    assert all(job.status in ("queued", "running") for job in made)
+    gate.set()
+
+
+def test_a_question_that_waited_too_long_is_failed_rather_than_run(store):
+    gate = threading.Event()
+    asked: list[str] = []
+    runner = make_runner(gate=gate)
+
+    def counting(question, principal, on_progress):
+        asked.append(question)
+        return runner(question, principal, on_progress)
+
+    jobs = store(counting, max_concurrency=1, queue_ttl_seconds=0.05)
+    first = jobs.submit("first")
+    _running(first)
+    stale = jobs.submit("stale")
+    time.sleep(0.1)
+    gate.set()
+    finished(jobs, stale)
+    assert stale.status == "failed" and stale.error.startswith("expired: waited")
+    assert "API_QUEUE_TTL_SECONDS" in stale.error
+    assert asked == ["first"]
 
 
 def test_listing_is_newest_first_and_limited(store):

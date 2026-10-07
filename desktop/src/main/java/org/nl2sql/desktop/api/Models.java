@@ -162,20 +162,25 @@ public final class Models {
 
     /** What the Audit Checker made of the narrative. */
     public record AuditReport(boolean passed, List<String> unsupported_claims,
-                              List<String> drop_reasons, List<String> redactions,
+                              List<String> drop_reasons, List<String> missing_assumptions,
                               String semantic_issue) {
         public AuditReport {
             unsupported_claims = list(unsupported_claims);
             drop_reasons = list(drop_reasons);
-            redactions = list(redactions);
+            missing_assumptions = list(missing_assumptions);
         }
     }
 
-    /** Per-node cost. */
-    public record TraceEntry(String node, double ms, int model_calls, String detail) {
+    /** Per-node cost, and for a node that called a model, which one answered and why. */
+    public record TraceEntry(String node, double ms, int model_calls, String detail,
+                             String model, String rung, String route, List<String> hops) {
         public TraceEntry {
             node = text(node);
             detail = text(detail);
+            model = text(model);
+            rung = text(rung);
+            route = text(route);
+            hops = list(hops);
         }
     }
 
@@ -195,7 +200,7 @@ public final class Models {
                          String clarification, List<String> tables, List<LiteralMatch> literals,
                          ResultTable result, ChartSpec chart, List<Claim> claims, AuditReport audit,
                          Double plan_cost, int attempts, List<TraceEntry> trace,
-                         Map<String, String> retrieval_errors) {
+                         Map<String, String> retrieval_errors, Map<String, String> node_errors) {
         public Answer {
             answer = text(answer);
             narrative = text(narrative);
@@ -208,6 +213,7 @@ public final class Models {
             audit = audit == null ? EMPTY_AUDIT : audit;
             trace = list(trace);
             retrieval_errors = map(retrieval_errors);
+            node_errors = map(node_errors);
         }
     }
 
@@ -235,6 +241,16 @@ public final class Models {
     public record JobList(List<Job> jobs, int count) {
         public JobList {
             jobs = list(jobs);
+        }
+    }
+
+    /**
+     * What an administrator's {@code POST /v1/admin/reload} dropped, to be
+     * read again. Mirrored for completeness: this client does not reload.
+     */
+    public record Reloaded(List<String> reloaded, int sessions_forgotten) {
+        public Reloaded {
+            reloaded = list(reloaded);
         }
     }
 
@@ -323,6 +339,51 @@ public final class Models {
             job_id = text(job_id);
             comment = text(comment);
             state = text(state);
+        }
+    }
+
+    // --- the auth service, which is a second server -----------------------
+    //
+    // Mirrored from auth/nl2sql_auth/models.py rather than the API's models,
+    // and checked against that file by the same contract test.
+
+    /**
+     * What signing in sends to {@code /auth/token}.
+     *
+     * <p>Its own {@code toString}, because a record's would print the password
+     * into whatever log or exception message the record ever reaches.
+     */
+    public record SignIn(String username, String password) {
+        @Override
+        public String toString() {
+            return "SignIn[username=" + username + "]";
+        }
+    }
+
+    /**
+     * A session for a client that holds its own token: who signed in, the
+     * groups Postgres says they are in, when it ends (seconds since the
+     * epoch), and the token to present until then.
+     */
+    public record Token(String user, String name, List<String> roles, String kind, long expires_at,
+                        String token) {
+        public Token {
+            user = text(user);
+            name = text(name);
+            roles = list(roles);
+            kind = text(kind);
+            token = text(token);
+        }
+
+        /** Not the token, for the reason {@link SignIn} leaves out the password. */
+        @Override
+        public String toString() {
+            return "Token[user=" + user + ", roles=" + roles + ", expires_at=" + expires_at + "]";
+        }
+
+        /** Their name and user name, or the user name alone when there is no other. */
+        public String who() {
+            return name.isEmpty() || name.equals(user) ? user : name + " (" + user + ")";
         }
     }
 

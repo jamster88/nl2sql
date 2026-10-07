@@ -9,9 +9,10 @@ from langchain_ollama import ChatOllama
 from pydantic import ValidationError
 
 from .config import Settings
+from nl2sql_common.errors import NETWORK_ERRORS, Unavailable
 
 
-class LlmUnavailableError(RuntimeError):
+class LlmUnavailableError(Unavailable, RuntimeError):
     """Ollama is unreachable, or it does not have the requested model."""
 
 
@@ -39,7 +40,7 @@ def _check_reachable(settings: Settings) -> None:
         # It answered, just not with a model list -- a proxy or a different
         # service on the port. Let ChatOllama produce the real complaint.
         return
-    except Exception as exc:
+    except NETWORK_ERRORS as exc:
         raise LlmUnavailableError(
             f"Cannot reach Ollama at {settings.ollama_base_url} "
             f"({settings.ollama_connect_timeout:g}s timeout): {exc}. "

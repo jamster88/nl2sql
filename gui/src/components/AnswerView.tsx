@@ -242,7 +242,8 @@ function Audit({ answer }: { answer: Answer }) {
  *
  * Not a chart: it is a list that happens to be sorted, and drawing it with
  * the chart machinery would put an axis and a legend around eight numbers
- * nobody compares across questions.
+ * nobody compares across questions. A node that called a model names the
+ * one that answered, with the router's reason on hover.
  */
 function Trace({ answer }: { answer: Answer }) {
   const slowest = Math.max(...answer.trace.map((entry) => entry.ms), 1);
@@ -254,8 +255,9 @@ function Trace({ answer }: { answer: Answer }) {
           <span className="trace-bar" style={{ width: `${(entry.ms / slowest) * 100}%` }} />
           <span className="trace-ms">{(entry.ms / 1000).toFixed(2)}s</span>
           {entry.model_calls > 0 && (
-            <span className="muted">
+            <span className="muted" title={entry.route || undefined}>
               {entry.model_calls} model {entry.model_calls === 1 ? "call" : "calls"}
+              {entry.model && ` · ${entry.model}`}
             </span>
           )}
         </li>

@@ -43,6 +43,7 @@ from typing import Any, Callable, Iterable, Sequence
 from sqlalchemy import text
 
 from .retrieval import KnowledgeUnavailableError, tables_mentioned
+from nl2sql_common.errors import DATABASE_ERRORS
 
 #: Reads every foreign-key edge as an unordered `(table, table)` pair. Injected
 #: so the closure can be exercised without a database.
@@ -90,12 +91,11 @@ class SchemaSelection:
 def read_foreign_keys(database: Any) -> list[tuple[str, str]]:
     """Every foreign-key edge in the database's configured schema.
 
-    `Database` exposes no connection and this module may not change it, so the
-    query runs on its engine directly rather than opening a second engine
-    against the same URL. The query belongs on `Database` itself and should
-    move there when that file is next touched.
+    On `Database`'s own pool, through its public `engine` -- the one way to
+    the engine every module uses (V6-22) -- rather than a second engine
+    against the same URL.
     """
-    engine = database._engine
+    engine = database.engine
     schema = getattr(database, "_schema", "public")
     with engine.connect() as conn:
         rows = conn.execute(text(_FOREIGN_KEY_SQL), {"schema": schema}).all()
@@ -175,6 +175,11 @@ class SchemaRetriever:
             lambda: read_foreign_keys(database)
         )
         self._edges: list[tuple[str, str]] | None = None
+
+    def forget(self) -> bool:
+        """Read the foreign keys again next time (V6-33). Whether any were held."""
+        held, self._edges = self._edges is not None, None
+        return held
 
     def select(self, question: str, *, hinted_tables: Iterable[str] = ()) -> SchemaSelection:
         """The table set for this question. Never raises; degrades instead."""
@@ -265,7 +270,7 @@ class SchemaRetriever:
         if self._edges is None:
             try:
                 self._edges = list(self._read_foreign_keys())
-            except Exception as exc:
+            except DATABASE_ERRORS as exc:
                 # Closure is an enhancement on top of the ranked tables, so a
                 # catalog that will not answer costs the bridges, not the run.
                 return {}, f"foreign-key closure skipped: {exc}"

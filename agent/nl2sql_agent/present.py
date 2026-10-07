@@ -11,8 +11,8 @@ Three components live here and exactly one of them calls a model:
   it came from. That is M6 -- "audits math vs rows" turned into something a
   program can check.
 * **Audit Checker** (`audit`) re-reads those cells, drops every claim it
-  cannot reproduce, withholds columns tagged sensitive in the catalog, and,
-  when the rows say the **SQL** is wrong rather than the prose, sets
+  cannot reproduce, and, when the rows say the **SQL** is wrong rather than
+  the prose, sets
   `semantic_issue` so the graph can spend one shared retry on a repair (W3).
   It never asks a model; there is no semantic reviewer here, only a short
   list of signals that are wrong on their face.
@@ -43,7 +43,7 @@ from __future__ import annotations
 import ast
 import html
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from datetime import date, datetime, time
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -52,6 +52,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
 from .state import AUDIT, AuditReport, ChartSpec, Claim, CompletenessReport, Issue, QueryResult
+from nl2sql_common.errors import Invalid
 
 # The row cap in the section 7.1 shape table, and the cap on what the narrator
 # is shown. Above it a chart is unreadable and a "total" is a total of a
@@ -230,51 +231,6 @@ def describe_chart(chart: ChartSpec | None) -> str:
     if chart.series:
         parts.append(f"series = {chart.series}")
     return "; ".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# The sensitive-column mechanism
-# ---------------------------------------------------------------------------
-
-# The catalog is the source of truth, so the tag is a comment on the column,
-# read out of the same `schema_and_samples` text the generator is given:
-#   ssn (text, NOT NULL)  -- [sensitive] tax identifier
-# The retail schema has no such column, which is why the tag is a convention
-# the DBA can add rather than a list hard-coded here.
-SENSITIVITY_TAGS = ("[sensitive]", "[pii]", "sensitivity: high")
-
-_CATALOG_COLUMN = re.compile(r"^\s{2}([A-Za-z_][\w$]*)\s*\([^)]*\)\s*--\s*(.+)$")
-
-
-def tagged_sensitive_columns(schema: str) -> tuple[str, ...]:
-    """Column names whose catalog comment carries a sensitivity tag."""
-    found: list[str] = []
-    for line in (schema or "").splitlines():
-        match = _CATALOG_COLUMN.match(line)
-        if not match:
-            continue
-        comment = match.group(2).lower()
-        if any(tag in comment for tag in SENSITIVITY_TAGS):
-            found.append(match.group(1))
-    return tuple(dict.fromkeys(found))
-
-
-def redact(result: QueryResult, columns: Iterable[str]) -> QueryResult:
-    """The result without the named columns, for anything the reader sees.
-
-    A tagged column's *aggregates* still appear, and they appear for free: an
-    aggregate arrives under its own alias (`avg_salary`), which is not a
-    catalog column and so carries no tag. Only the raw column is dropped.
-    """
-    hidden = {c.lower() for c in columns}
-    keep = [i for i, name in enumerate(result.columns) if name.lower() not in hidden]
-    if len(keep) == len(result.columns):
-        return result
-    return QueryResult(
-        columns=[result.columns[i] for i in keep],
-        rows=[[row[i] for i in keep] for row in result.rows],
-        truncated=result.truncated,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +508,7 @@ def narrate(
 # ---------------------------------------------------------------------------
 
 
-class FormulaError(ValueError):
+class FormulaError(Invalid, ValueError):
     """A formula the checker refuses to evaluate.
 
     Refusal is the safe outcome and the common one: the claim is dropped, the
@@ -649,7 +605,7 @@ def evaluate_formula(formula: str, cells: Sequence[float]) -> float:
                 args.append(value_of(arg))
         try:
             return float(_FORMULA_FUNCTIONS[func.id](*args))
-        except Exception as exc:  # a wrong arity or type is the model's error
+        except (TypeError, ValueError, ArithmeticError) as exc:  # a wrong arity, type or value is the model's error
             raise FormulaError(f"{func.id}() could not be applied: {exc}") from exc
 
     return float(value_of(tree.body))
@@ -811,7 +767,6 @@ def check_claim(
     claim: Claim,
     result: QueryResult,
     *,
-    sensitive_columns: Sequence[str] = (),
     question: str = "",
     assumptions: Sequence[str] = (),
 ) -> str | None:
@@ -823,11 +778,6 @@ def check_claim(
     line, so it is a function in its own right: a retry prompt that says only
     "these sentences were dropped" invites the model to write them again.
     """
-    sensitive = {c.lower() for c in sensitive_columns}
-    for _, column in claim.cells:
-        if column.lower() in sensitive:
-            return f"cites sensitive column {column!r}, which may appear only as an aggregate"
-
     cells: list[Any] = []
     for row, column in claim.cells:
         try:
@@ -948,7 +898,6 @@ def audit(
     claims: Sequence[Claim],
     result: QueryResult,
     *,
-    sensitive_columns: Sequence[str] = (),
     question: str = "",
     assumptions: Sequence[str] = (),
 ) -> AuditReport:
@@ -960,10 +909,8 @@ def audit(
     text recorded in `unsupported_claims`; `surviving_claims` is the filter
     that reads the report back, and `check_claim` is why a given one failed.
 
-    A dropped claim fails the audit, redaction included: rule 4 of section
-    7.3 sends unsupported claims back to the narrator once, and a narrator
-    that quoted a tagged column needs that round trip as much as one that
-    invented a number.
+    A dropped claim fails the audit: rule 4 of section 7.3 sends unsupported
+    claims back to the narrator once.
 
     `question` is optional because only one signal needs it -- an empty
     result is a bug in the SQL unless the question was an existence check.
@@ -974,14 +921,11 @@ def audit(
     narrator under the same once-only rule as a dropped claim.
     """
     report = AuditReport()
-    sensitive = {c.lower() for c in sensitive_columns}
-    report.redactions = [c for c in result.columns if c.lower() in sensitive]
 
     for claim in claims:
         reason = check_claim(
             claim,
             result,
-            sensitive_columns=sensitive_columns,
             question=question,
             assumptions=assumptions,
         )
@@ -1056,16 +1000,15 @@ def render_answer(
     """
     report = audit_report if audit_report is not None else AuditReport()
     kept = surviving_claims(claims, report)
-    visible = redact(result, report.redactions)
     is_scalar = chart is not None and chart.kind == "scalar"
 
     blocks: list[str] = []
-    if is_scalar and visible.columns and visible.rows:
-        blocks.append(_scalar_sentence(question, visible))
+    if is_scalar and result.columns and result.rows:
+        blocks.append(_scalar_sentence(question, result))
     if kept:
         blocks.append(" ".join(_escape_text(claim.text) for claim in kept))
     if not is_scalar:
-        table = render_table(visible)
+        table = render_table(result)
         if table:
             blocks.append(table)
 
@@ -1076,9 +1019,6 @@ def render_answer(
     if gaps:
         named = ", ".join(_escape_text(gap.column) for gap in gaps)
         notes.append(f"*This answer could not be completed with {named} in the attempts allowed.*")
-    if report.redactions:
-        withheld = ", ".join(_escape_text(c) for c in report.redactions)
-        notes.append(f"*Withheld as sensitive, aggregates only: {withheld}.*")
     if report.unsupported_claims:
         dropped = len(report.unsupported_claims)
         notes.append(f"*{dropped} claim(s) dropped: the rows do not support them.*")

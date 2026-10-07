@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.route_table import flattened
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 AGENT_DIR = REPO_ROOT / "agent"
@@ -95,7 +96,7 @@ def test_every_setting_the_agent_reads_is_documented(agent_readme: str):
     never looked for.
     """
     config_py = (AGENT_DIR / "nl2sql_agent" / "config.py").read_text()
-    env_vars = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple)?|os\.getenv)\(\s*"([A-Z_]+)"', config_py))
+    env_vars = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret|os\.getenv)\(\s*"([A-Z_]+)"', config_py))
     # Any call handed an upper-case name: a reader added under a new name is
     # caught here rather than silently left out of the check.
     named = set(re.findall(r'\w\(\s*"([A-Z][A-Z0-9_]+)"', config_py))
@@ -152,7 +153,7 @@ def test_every_api_setting_is_documented(agent_api_doc: str):
     config.py and the agent README's table, checked the same way.
     """
     source = (AGENT_DIR / "nl2sql_agent" / "api" / "settings.py").read_text()
-    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    names = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert names, "no environment variables found in api/settings.py -- the regex needs updating"
     for name in sorted(names):
         assert f"`{name}`" in agent_api_doc, f"{name} is read by the server but absent from API.md"
@@ -205,7 +206,7 @@ def test_every_route_the_server_serves_is_documented(agent_api_doc: str):
     #: FastAPI's own OAuth2 redirect helper. Plumbing for the docs page, not
     #: a route a client calls, and nothing here serves OAuth2 anyway.
     internal = {"/docs/oauth2-redirect"}
-    for route in app.routes:
+    for route in flattened(app.routes):
         path = getattr(route, "path", "")
         if not path or path in internal:
             continue
@@ -216,10 +217,12 @@ def test_every_error_code_the_server_can_return_is_documented(agent_api_doc: str
     """A client branches on these. One that is returned but undocumented is
     one nobody handles.
     """
-    source = (AGENT_DIR / "nl2sql_agent" / "api" / "app.py").read_text()
+    source = "".join((AGENT_DIR / "nl2sql_agent" / "api" / name).read_text() for name in ("app.py", "routes.py"))
     codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
     codes |= set(re.findall(r'_error_response\(\s*\n?\s*\d+,\s*\n?\s*"([a-z_]+)"', source))
-    assert codes, "no error codes found in app.py -- the regex needs updating"
+    assert {"not_found", "queue_full", "job_running", "principal_not_allowed"} <= codes, (
+        "no error codes found in app.py and routes.py -- the regex needs updating"
+    )
     for code in sorted(codes):
         assert f"`{code}`" in agent_api_doc, f"the server returns {code!r}, which API.md never lists"
 
@@ -295,7 +298,10 @@ def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_rea
     """setup.sh pins a tag per image; if the README's tag tables do not list
     it, the default nobody passes is also the one nobody has read about.
     """
-    for var in ("POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "GUI_IMAGE", "CONSOLE_GUI_IMAGE", "MLFLOW_IMAGE", "MLFLOW_DB_IMAGE"):
+    for var in (
+        "POSTGRES_IMAGE", "AGENT_IMAGE", "VECTOR_IMAGE", "REVIEW_IMAGE", "PROXY_IMAGE", "MLFLOW_IMAGE",
+        "MLFLOW_DB_IMAGE", "LDAP_IMAGE", "AUTH_IMAGE",
+    ):
         image = re.search(rf'^{var}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         tag = re.search(rf'^{var.replace("_IMAGE", "_TAG")}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         assert f"{image}:{tag}" in root_readme, f"README never shows {image}:{tag}"
@@ -336,11 +342,12 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     first thing a contributor checks a run against, so a wrong one reads as a
     broken checkout.
     """
-    total = _collected("--run-docker", "--run-node", "--run-java")
+    total = _collected("--run-docker", "--run-node", "--run-java", "--run-acceptance")
     docker_only = _collected("--run-docker", "-m", "docker")
     node_only = _collected("--run-node", "-m", "node")
     java_only = _collected("--run-java", "-m", "java")
-    offline = total - docker_only - node_only - java_only
+    acceptance_only = _collected("--run-acceptance", "-m", "acceptance")
+    offline = total - docker_only - node_only - java_only - acceptance_only
 
     quoted = _quoted_counts(root_readme)
 
@@ -349,22 +356,26 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     assert quoted["docker"] == docker_only, f"README says {quoted['docker']} docker tests, there are {docker_only}"
     assert quoted["node"] == node_only, f"README says {quoted['node']} node tests, there are {node_only}"
     assert quoted["java"] == java_only, f"README says {quoted['java']} java tests, there are {java_only}"
+    assert quoted["acceptance"] == acceptance_only, (
+        f"README says {quoted['acceptance']} acceptance tests, there are {acceptance_only}"
+    )
 
 
 def _quoted_counts(root_readme: str) -> dict[str, int]:
     return {
         "offline": int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1)),
-        "total": int(re.search(r"--run-java\s+#\s*all (\d+)", root_readme).group(1)),
+        "total": int(re.search(r"--run-acceptance\s+#\s*all (\d+)", root_readme).group(1)),
         "docker": int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1)),
         "node": int(re.search(r"The (\d+) behind `--run-node`", root_readme).group(1)),
         "java": int(re.search(r"The (\d+) behind `--run-java`", root_readme).group(1)),
+        "acceptance": int(re.search(r"The (\d+) behind `--run-acceptance`", root_readme).group(1)),
     }
 
 
 def test_the_quoted_counts_are_internally_consistent(root_readme: str):
     quoted = _quoted_counts(root_readme)
     assert (quoted["offline"] + quoted["docker"] + quoted["node"] + quoted["java"]
-            == quoted["total"])
+            + quoted["acceptance"] == quoted["total"])
 
 
 # ---------------------------------------------------------------------------
@@ -581,15 +592,49 @@ def _compose_service(name: str) -> str:
     return match.group(1)
 
 
+#: Settings every service's block reads that no service does: the stack's
+#: own name, in each container's (USAGE_GUIDE.md documents it once).
+STACK_WIDE = {"NL2SQL_INSTANCE"}
+
+
+def _compose_defaults(text: str) -> dict[str, str]:
+    """Each `${NAME:-default}` in `text`, as compose resolves it with nothing
+    set: a default may name another setting -- `https://nl2sql-auth:${AUTH_PORT:-8446}`,
+    so moving the auth service's port moves every page that proxies to it --
+    and then the documented default is that one's, `https://nl2sql-auth:8446`.
+    Only the outer names: an inner one is the other service's setting."""
+    found: dict[str, str] = {}
+    index = 0
+    while (start := text.find("${", index)) != -1:
+        match = re.match(r"\$\{([A-Z_][A-Z0-9_]*):-", text[start:])
+        if not match:
+            index = start + 2
+            continue
+        depth, cursor = 1, start + match.end()
+        while depth:
+            if text.startswith("${", cursor):
+                depth, cursor = depth + 1, cursor + 2
+            else:
+                depth -= text[cursor] == "}"
+                cursor += 1
+        default = text[start + match.end():cursor - 1]
+        while (inner := re.search(r"\$\{[A-Z_][A-Z0-9_]*:-([^${}]*)\}", default)):
+            default = default[:inner.start()] + inner.group(1) + default[inner.end():]
+        found.setdefault(match.group(1), default)
+        index = cursor
+    return found
+
+
 def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(root_readme: str):
-    """Image pins aside, which `setup.sh --mlflow` writes, every setting either
-    service takes from `.env` has a row in the README's Tracing table -- with
+    """Image pins aside, which `setup.sh --mlflow` writes, every setting the
+    three -- the store, the server and its front door -- take from `.env` has
+    a row in the README's Tracing table -- with
     the default compose really falls back to, where that is one value."""
-    block = _compose_service("mlflowdb") + _compose_service("mlflow")
+    block = _compose_service("mlflowdb") + _compose_service("mlflow") + _compose_service("mlflowproxy")
     settings = {
         name: default
-        for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", block)
-        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
+        for name, default in _compose_defaults(block).items()
+        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG")) and name not in STACK_WIDE
     }
     assert "MLFLOW_PORT" in settings, "no settings found in the MLflow services -- the regex needs updating"
     for name, default in sorted(settings.items()):
@@ -602,26 +647,40 @@ def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(r
 def _documented_with_defaults(service: str, readme: str, document: str) -> None:
     """Every setting a compose service takes from `.env`, image pins aside,
     has a row in `document` -- with the default compose falls back to, where
-    that is one value."""
+    that is one value. An image pinned by digest (6.3, V6-35) is documented
+    by name and tag: the digest is tools/pin_images.py's to keep, and a row
+    quoting it would be one more place to move each time it does."""
     settings = {
         name: default
-        for name, default in re.findall(r"\$\{([A-Z_][A-Z0-9_]*):-([^}]*)\}", _compose_service(service))
-        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG"))
+        for name, default in _compose_defaults(_compose_service(service)).items()
+        if not name.endswith(("_IMAGE_NAME", "_IMAGE_TAG")) and name not in STACK_WIDE
     }
     assert settings, f"no settings found in {service} -- the regex needs updating"
     for name, default in sorted(settings.items()):
         rows = _rows(readme, name)
         assert rows, f"compose's {service} reads {name}, which {document} never lists"
-        if default and "," not in default:
+        if "@sha256:" in default:
+            image = default.split("@", 1)[0]
+            assert any(f"`{image}`" in row and "digest" in row for row in rows), (
+                f"{document} never says {name} is {image}, pinned by digest"
+            )
+        elif default and "," not in default:
             assert any(f"`{default}`" in row for row in rows), f"{document} never says {name} defaults to {default}"
 
 
-def test_every_setting_the_snippet_store_reads_is_documented_with_its_default(root_readme: str):
-    _documented_with_defaults("snippetsdb", root_readme, "README.md")
+def test_every_setting_the_runtime_stores_read_is_documented_with_their_default(root_readme: str):
+    """The four runtime stores, one server since 6.3 (V6-40)."""
+    _documented_with_defaults("stores", root_readme, "README.md")
 
 
-def test_every_setting_the_curation_page_reads_is_documented_with_its_default():
-    _documented_with_defaults("curategui", (REPO_ROOT / "curate" / "README.md").read_text(), "curate/README.md")
+@pytest.mark.parametrize(("service", "document"), [
+    ("gui", "gui/README.md"), ("reviewgui", "review/README.md"), ("curategui", "curate/README.md"),
+    ("directorygui", "auth/README.md"), ("apitest", "agent/API.md"),
+])
+def test_every_setting_a_page_reads_is_documented_with_its_default(service: str, document: str):
+    """The console's page has its own test, with the rest of the console's
+    surface; MLflow's front door is in the README's Tracing table."""
+    _documented_with_defaults(service, (REPO_ROOT / document).read_text(), document)
 
 
 # ---------------------------------------------------------------------------
@@ -638,11 +697,30 @@ def _rows(doc: str, name: str) -> list[str]:
     return [line for line in doc.splitlines() if line.startswith("|") and f"`{name}`" in line]
 
 
+@pytest.mark.parametrize(("sources", "document"), [
+    (("auth/nl2sql_auth/settings.py",), "auth/README.md"),
+    (("ldap/nl2sql_ldap/settings.py", "ldap/nl2sql_ldap/replica.py"), "ldap/README.md"),
+    (("common/nl2sql_ops/settings.py",), "common/README.md"),
+    (("rag/ragproc/config.py", "rag/07_load_snippets.py"), "rag/README.md"),
+])
+def test_every_setting_these_services_read_has_a_row_in_their_readme(sources: tuple, document: str):
+    """The rule the agent, the API, the console and the review service are
+    held to, for the four whose settings nothing read: two of the RAG
+    loaders' and all thirty-five of dbprep's had no row until it asked."""
+    from tests.settings_names import _CALL
+
+    names = {name for path in sources for _, name in _CALL.findall((REPO_ROOT / path).read_text())}
+    assert len(names) > 3, "no settings found -- the pattern needs updating"
+    readme = (REPO_ROOT / document).read_text()
+    missing = sorted(name for name in names if not _rows(readme, name))
+    assert missing == [], f"{document} has no row for {missing}"
+
+
 def test_every_review_setting_is_documented():
     """The console's rule, for the service that can rewrite the golden set and
     the snippets: two of its settings had no row until this test asked."""
     source = (REPO_ROOT / "review" / "nl2sql_review" / "settings.py").read_text()
-    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    names = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert len(names) > 20, "the review service's settings were not found -- the regex needs updating"
     readme = (REPO_ROOT / "review" / "README.md").read_text()
     for name in sorted(names):
@@ -655,7 +733,7 @@ def test_every_console_setting_is_documented(console_readme: str):
     from nl2sql_agent.console.settings import AGENT_SETTINGS
 
     source = (AGENT_DIR / "nl2sql_agent" / "console" / "settings.py").read_text()
-    names = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    names = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert names, "no environment variables found in console/settings.py -- the regex needs updating"
     for name in sorted(names | set(AGENT_SETTINGS)):
         assert _rows(console_readme, name), f"{name} is read by the console but has no row in console/README.md"
@@ -685,18 +763,29 @@ def test_the_documented_console_defaults_are_the_real_defaults(console_readme: s
         )
 
 
-def test_every_setting_the_console_proxy_reads_is_documented(console_readme: str):
-    sources = "".join(
-        (REPO_ROOT / "console" / name).read_text()
-        for name in ("nginx.conf.template", "10-nl2sql-console-config.envsh")
-    )
-    # Worked out by the start-up script rather than set by anyone.
-    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - {
-        "CONSOLE_AUTH_HEADER", "NGINX_CONSOLE_UPSTREAM_TLS_CONF"
-    }
-    for name in sorted(names):
-        assert _rows(console_readme, name), f"the console's proxy reads {name}, which console/README.md never lists"
+def test_every_setting_the_console_page_reads_is_documented(console_readme: str):
+    """What its compose service takes from `.env`: the page is the proxy
+    image's since 6.3 (V6-37), whose own settings proxy/README.md lists."""
+    _documented_with_defaults("consolegui", console_readme, "console/README.md")
     assert "`CONSOLE_BIND_ADDRESS`" in console_readme
+
+
+#: Worked out by the proxy's start-up script rather than set by anyone.
+PROXY_COMPUTED = {"PAGE_ROOT", "PROXY_LISTEN_TLS", "UPSTREAM_AUTH_HEADER"}
+
+
+def test_every_setting_the_proxy_image_reads_is_documented():
+    """One image serves every page and MLflow's front door (V6-37); what it
+    reads is its own README's to list, once, rather than each page's."""
+    proxy = REPO_ROOT / "proxy"
+    sources = "".join(path.read_text() for path in [
+        proxy / "10-nl2sql-proxy.envsh", *sorted(proxy.glob("**/*.template")),
+    ])
+    names = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*)", sources)) - PROXY_COMPUTED
+    assert {"NL2SQL_PAGE", "UPSTREAM", "PROXY_PORT"} <= names, "the regex needs updating"
+    readme = (proxy / "README.md").read_text()
+    for name in sorted(names):
+        assert _rows(readme, name), f"the proxy reads {name}, which proxy/README.md never lists"
 
 
 def test_every_route_the_console_serves_is_documented(console_readme: str):
@@ -706,18 +795,30 @@ def test_every_route_the_console_serves_is_documented(console_readme: str):
 
     app = create_app(settings=Settings(), console_settings=ConsoleSettings(), inspector_factory=lambda: None)
     internal = {"/docs/oauth2-redirect"}
-    for route in app.routes:
+    for route in flattened(app.routes):
         path = getattr(route, "path", "")
         if path and path not in internal:
             assert path in console_readme, f"the console serves {path}, which console/README.md never mentions"
 
 
+def _identity_codes() -> set[str]:
+    """What the shared guard answers a caller it cannot let in with."""
+    identity = REPO_ROOT / "common" / "nl2sql_identity"
+    codes = set(re.findall(r'IdentityError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', (identity / "guard.py").read_text()))
+    codes |= set(re.findall(r'TokenError\(\s*"([a-z_]+)"', (identity / "tokens.py").read_text()))
+    return codes
+
+
 def test_every_error_code_the_console_can_return_is_documented(console_readme: str):
-    source = (AGENT_DIR / "nl2sql_agent" / "console" / "app.py").read_text()
+    source = "".join((AGENT_DIR / "nl2sql_agent" / "console" / name).read_text() for name in ("app.py", "routes.py"))
     codes = set(re.findall(r'ApiHTTPError\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
     codes |= set(re.findall(r'_error_response\(\s*\n?\s*[\w.]+,\s*\n?\s*"([a-z_]+)"', source))
-    assert {"unauthorized", "unknown_table", "database_unavailable", "invalid_request"} <= codes, (
-        "the error codes were not all found in console/app.py -- the regexes need updating"
+    # Who may call is decided by the guard every service shares, and a
+    # session it cannot read is refused in the session format's own words.
+    codes |= _identity_codes()
+    assert {"unauthorized", "sign_in_required", "forbidden", "expired", "unknown_table", "database_unavailable",
+            "invalid_request"} <= codes, (
+        "the error codes were not all found in console/app.py, routes.py and the guard -- the regexes need updating"
     )
     for code in sorted(codes | {"not_found"}):
         assert f"`{code}`" in console_readme, f"the console returns {code!r}, which console/README.md never lists"
@@ -913,3 +1014,8 @@ def test_the_rag_readme_quotes_the_real_number_of_rag_tests():
     assert quoted == _collected("--run-docker", "tests/rag")
     behind = int(re.search(r"(\d+) of them need a database", text).group(1))
     assert behind == _collected("--run-docker", "-m", "docker", "tests/rag")
+
+
+def test_a_nested_default_is_read_as_compose_resolves_it():
+    text = "A: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}\nB: ${PLAIN:-x}\nC: $${NOT_ONE}\n"
+    assert _compose_defaults(text) == {"GUI_AUTH_UPSTREAM": "https://nl2sql-auth:8446", "PLAIN": "x"}

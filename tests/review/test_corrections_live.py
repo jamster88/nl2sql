@@ -2,12 +2,15 @@
 
 The HTTP routes are tested against a fake store; this is where the store is
 tested as itself, because what it promises is made of things only a real
-server does: a UNIQUE that turns a double click into one record, ids taken
-under a lock, a vector column sized by the model, and a cosine search.
+server does: a UNIQUE that turns a double click into one record, ids drawn
+from a sequence that never hands one out twice, a vector column sized by the model, and a cosine search.
 
-Each test gets a throwaway database inside the store's own container,
+Each test gets a throwaway database inside the store's own server,
 created from template0 and dropped afterwards, so nothing here touches a
-fix somebody actually saved. The embedder is a deterministic fake -- the
+fix somebody actually saved. Since 6.3 no store's owner may create a
+database (V6-40), so against a stack's own stores these skip; point
+CORRECTIONS_DB_URL and COMPLETIONS_DB_URL at a throwaway pgvector, as a
+superuser, to run them. The embedder is a deterministic fake -- the
 real one is exercised by the review service's end-to-end run -- so a
 question's vector is a function of its words and a search result can be
 asserted exactly.
@@ -19,10 +22,10 @@ Docker.
 from __future__ import annotations
 
 import hashlib
-import os
 import uuid
 from urllib.parse import urlsplit, urlunsplit
 
+import psycopg
 import pytest
 
 from nl2sql_review.corrections import (
@@ -37,13 +40,10 @@ from nl2sql_review.corrections import (
     content_hash,
     vector_literal,
 )
+from tests import live_stores
 
-CORRECTIONS_ADMIN = os.environ.get(
-    "CORRECTIONS_DB_URL", "postgresql://corrections:corrections@localhost:5436/nl2sql_corrections"
-)
-COMPLETIONS_ADMIN = os.environ.get(
-    "COMPLETIONS_DB_URL", "postgresql://completions:completions@localhost:5437/nl2sql_completions"
-)
+CORRECTIONS_ADMIN = live_stores.url("corrections", variable="CORRECTIONS_DB_URL", driver="postgresql")
+COMPLETIONS_ADMIN = live_stores.url("completions", variable="COMPLETIONS_DB_URL", driver="postgresql")
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +123,7 @@ def _scratch(admin_url: str):
     try:
         admin = psycopg.connect(admin_url, autocommit=True, connect_timeout=3)
     except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"no store at {admin_url}: {exc}")
+        live_stores.unreachable("store", admin_url, exc)
     name = f"t_fixes_{uuid.uuid4().hex[:12]}"
     admin.execute(f'CREATE DATABASE "{name}" TEMPLATE template0')
     return admin, name, _with_database(admin_url, name)
@@ -284,6 +284,31 @@ def test_a_deleted_fix_can_be_saved_again(store):
     again = store.save(fix("sub-1", corrected_sql="SELECT 2"))
     assert again.corrected_sql == "SELECT 2"
     assert store.find_by_submission("sub-1") == again.fix_id
+
+
+@pytest.mark.docker
+def test_a_deleted_fixs_id_is_never_given_to_another(store):
+    """V6-29: the highest id plus one gave a deleted fix's id to the next,
+    and anything that had quoted it then meant a different fix."""
+    prefix = store.kind.prefix
+    store.save(fix("sub-1"))
+    store.save(fix("sub-2"))
+    store.delete("sub-2")
+    assert store.save(fix("sub-3")).fix_id == f"{prefix}0003"
+
+
+@pytest.mark.docker
+def test_a_store_from_before_the_sequence_carries_on_from_its_highest_id(store):
+    prefix = store.kind.prefix
+    with psycopg.connect(store.url, autocommit=True) as conn:
+        conn.execute(f"DROP SEQUENCE {store.kind.sequence}")
+    # No sequence, as a store whose schema is someone else's may have none:
+    # the highest plus one, as before.
+    assert [store.save(fix(f"sub-{n}")).fix_id for n in (1, 2)] == [f"{prefix}0001", f"{prefix}0002"]
+    store.setup()
+    assert store.save(fix("sub-3")).fix_id == f"{prefix}0003", "made, and moved past what is there"
+    store.setup()
+    assert store.save(fix("sub-4")).fix_id == f"{prefix}0004", "and never moved back"
 
 
 @pytest.mark.docker

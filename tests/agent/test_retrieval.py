@@ -104,7 +104,7 @@ def test_vector_literal_handles_ints():
 
 class _BoomEmbedder:
     def embed_query(self, text: str):
-        raise RuntimeError("connection refused")
+        raise ConnectionRefusedError("connection refused")
 
 
 class _StaticEmbedder:
@@ -232,6 +232,10 @@ def test_collection_discovery_is_cached():
     kb.collections()
     kb.collections()
     assert len(engine.calls) == 1
+    # Until an operator's reload says a document was loaded since (V6-33).
+    assert kb.forget() is True and kb.forget() is False
+    kb.collections()
+    assert len(engine.calls) == 2
 
 
 def test_configured_collections_skip_catalog_discovery_entirely():
@@ -300,7 +304,7 @@ def test_search_applies_a_statement_timeout():
     engine = _FakeEngine({"embedding <=>": []})
     kb = _kb_with_engine(engine, collections=["a_embeddings"], statement_timeout_ms=1234)
     kb.search("q")
-    assert any("SET statement_timeout = 1234" in sql for sql, _ in engine.calls)
+    assert any("SET LOCAL statement_timeout = 1234" in sql for sql, _ in engine.calls)
 
 
 def test_search_handles_a_null_chunk_meta():

@@ -7,11 +7,14 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { SignInGate } from "@nl2sql/web/auth/SignInGate";
 import "./styles.css";
 
 const root = document.getElementById("root");
 if (root) createRoot(root).render(
   <StrictMode>
-    <App />
+    <SignInGate title="NL2SQL" needs={["nl2sql_users"]} group="nl2sql-users">
+      <App />
+    </SignInGate>
   </StrictMode>,
 );

@@ -23,10 +23,10 @@ class StatusBarTest {
     void it_names_the_things_asked_of_every_answer_that_looks_wrong() {
         // Which model answered this, and how many tables were in scope.
         FxToolkit.onFx(() -> {
-            StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
+            StatusBar bar = new StatusBar("verified against nl2sql-ca.crt");
             bar.show(Fakes.meta(true));
 
-            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 5.6.1"));
+            assertTrue(Nodes.says(bar.node(), "nl2sql-agent 6.3.0"));
             assertTrue(Nodes.says(bar.node(), "qwen3.8-256k"));
             assertTrue(Nodes.says(bar.node(), "19 tables"));
             assertTrue(Nodes.says(bar.node(), "token required"));
@@ -132,7 +132,7 @@ class StatusBarTest {
     }
 
 private static double barHeight(double width, boolean failed) {
-        StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
+        StatusBar bar = new StatusBar("verified against nl2sql-ca.crt");
         if (failed) {
             bar.showError("cannot reach the API at https://nl2sql.example.com:8443: "
                     + "no route to host after ten seconds");
@@ -166,7 +166,7 @@ private static double barHeight(double width, boolean failed) {
         // the width its text wants -- so this one asked for two thousand
         // pixels and got them, at the expense of everything to its right.
         FxToolkit.onFx(() -> {
-            StatusBar bar = new StatusBar("verified against nl2sql-api.crt");
+            StatusBar bar = new StatusBar("verified against nl2sql-ca.crt");
             bar.show(Fakes.meta(true));
             bar.setWarnings(Fakes.WARNINGS);
             javafx.stage.Stage stage =

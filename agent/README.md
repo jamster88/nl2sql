@@ -1,4 +1,4 @@
-# NL2SQL Agent (v5, multi-agent)
+# NL2SQL Agent (v6, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -35,6 +35,14 @@ SQL a question's answer is built from -- a join, a filter, a measure, a
 dimension, each beside what it means -- and the generator is shown the ones
 whose tables are in scope. See [SQL snippets (v5.6)](#sql-snippets-v56).
 
+**v6 asks who is asking.** The pipeline is v5.6's. What changed is who it
+runs for: with sign-in on, the REST API, the SQL console and the review
+service accept a person signed in through the auth service, and run that
+person's questions and statements as their own database role -- the agent
+still connects as its read-only reader, and becomes the person for a
+transaction with `SET LOCAL ROLE`. The command line is unchanged: it is
+whoever runs it. See [`../auth/README.md`](../auth/README.md).
+
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
 
@@ -62,7 +70,7 @@ Or over the network, for something with a screen:
 
 ```bash
 ../launch.sh --api
-curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
 ```
 
 ## The pipeline
@@ -281,12 +289,12 @@ put one caller's progress on another caller's stream. LangGraph copies the
 context into the threads it fans stage 1 across, so the four concurrent
 retrievers report to the right run too.
 
-**TLS is the default and the development certificate is removable.** The
-container writes itself a self-signed certificate on first start because
-there is no way to hand it a real one from `docker compose up`.
-`API_TLS_ALLOW_SELF_SIGNED=false` refuses to start behind one at all --
-neither generating nor loading -- so the convenience cannot quietly become
-the deployment.
+**TLS is the default and the development certificate is removable.** Under
+compose the stack's pki service issues the API a certificate of its own
+from a development CA before it starts; on its own, the server writes
+itself a self-signed one. `API_TLS_ALLOW_SELF_SIGNED=false` refuses to
+start behind either -- neither generating nor loading one -- so the
+convenience cannot quietly become the deployment.
 
 **The translation layer is separate on purpose.** `state.py` is internal and
 changes with the architecture; `models.py` is what other people's code is
@@ -329,7 +337,7 @@ typed. What it is for, and its settings, are in
 | [`settings.py`](nl2sql_agent/console/settings.py) | `CONSOLE_*`, and `AGENT_SETTINGS`: the six of this package's settings it runs under, read through `config.Settings` |
 | [`models.py`](nl2sql_agent/console/models.py) | Its wire shapes; health, readiness and the error envelope are the API's own |
 | [`app.py`](nl2sql_agent/console/app.py) | The routes, the token, readiness with the role's privileges in it |
-| [`server.py`](nl2sql_agent/console/server.py) | Flags, the API's certificate presented rather than generated, the banner |
+| [`server.py`](nl2sql_agent/console/server.py) | Flags, its own certificate (from the pki service) presented rather than generated, the banner |
 
 `plan_cost_problem` is the one change it made here: the planner gate's
 "estimated plan cost ... exceeds the ceiling" used to be written inside
@@ -546,7 +554,7 @@ Every setting is an environment variable with a CLI override:
 | `EXAMPLES_GROUNDING_WEIGHT` | -- | 0.25 |
 | `EXAMPLES_MAX_CONTEXT_CHARS` | -- | 8000 |
 | `SNIPPETS_ENABLED` | `--snippets` / `--no-snippets` | on |
-| `SNIPPET_DB_URL` | `--snippet-db-url` | the compose snippetsdb, as the read-only `snippets_reader` role |
+| `SNIPPET_DB_URL` | `--snippet-db-url` | the snippets database in the compose runtime stores (`nl2sql-stores`, 6.3), as the read-only `snippets_reader` role, with its password from `SNIPPET_DB_PASSWORD_FILE` |
 | `SNIPPETS_TOP_K` | `--snippets-top-k` | 5 |
 | `SNIPPETS_MIN_SCORE` | -- | 0.35, the combined score a snippet must reach |
 | `SNIPPETS_MIN_SIMILARITY` | -- | 0.62, the cosine similarity at which meaning alone qualifies a snippet |

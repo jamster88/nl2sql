@@ -81,7 +81,7 @@ def test_the_defaults_are_the_document_the_stores_port_and_the_agents_role(loade
         monkeypatch.delenv(var, raising=False)
     args = loader.parse_args([])
     assert Path(args.document) == DOCUMENT
-    assert args.db_url == "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
+    assert args.db_url == "postgresql://snippets:snippets@localhost:5435/nl2sql_snippets"
     assert (args.reader_role, args.reader_password) == ("snippets_reader", "snippets_reader")
     assert args.model == "bge-m3"
 

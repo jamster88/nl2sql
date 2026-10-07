@@ -46,11 +46,13 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any
 
 import psycopg
 from psycopg import sql
 from psycopg.rows import dict_row
+from nl2sql_common.vectors import vector_literal, Embedder
+from nl2sql_common.errors import DATABASE_ERRORS, MODEL_ERRORS
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,15 @@ class Kind:
     @property
     def vector_table(self) -> str:
         return f"sql_{self.slug}_vectors"
+
+    @property
+    def sequence(self) -> str:
+        """Where fix ids come from (V6-29): never the same number twice."""
+        return f"sql_{self.slug}_fix_seq"
+
+    @property
+    def id_pattern(self) -> str:
+        return rf"^{re.escape(self.prefix)}\d+$"
 
 
 CORRECTIONS = Kind(verdict="no", slug="corrections", label="wrong", prefix="W")
@@ -94,14 +105,6 @@ class AlreadyFixed(Exception):
         super().__init__(f"{submission_id} is already {fix_id}")
         self.submission_id = submission_id
         self.fix_id = fix_id
-
-
-class Embedder(Protocol):
-    """`ragproc.embedder`'s interface: what saving a fix needs of one."""
-
-    model_name: str
-
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
 @dataclass
@@ -249,7 +252,35 @@ def ensure_schema(conn: psycopg.Connection, kind: Kind) -> None:
             sql.Identifier(kind.table)
         )
     )
+    ensure_sequence(conn, kind)
     conn.commit()
+
+
+def ensure_sequence(conn: psycopg.Connection, kind: Kind) -> None:
+    """The sequence fix ids are drawn from, never behind the ids already used.
+
+    Until 6.2 an id was the highest in the table plus one, so deleting the
+    newest fix -- which a review reopened or deleted does (5.4) -- gave its id
+    to the next one, and anything that had quoted W0007 now meant a different
+    fix. A sequence never hands a number out twice. Owned by the table's key,
+    so it goes when the table does; moved past the highest id on every start,
+    so a store from before it, or restored from a dump, carries on from there.
+    """
+    sequence = sql.Identifier(kind.sequence)
+    conn.execute(sql.SQL("CREATE SEQUENCE IF NOT EXISTS {} AS integer MINVALUE 1").format(sequence))
+    conn.execute(
+        sql.SQL("ALTER SEQUENCE {} OWNED BY {}.fix_id").format(sequence, sql.Identifier(kind.table))
+    )
+    highest = conn.execute(
+        sql.SQL("SELECT max(substring(fix_id FROM 2)::int) AS n FROM {} WHERE fix_id ~ %s").format(
+            sql.Identifier(kind.table)
+        ),
+        (kind.id_pattern,),
+    ).fetchone()["n"] or 0
+    state = conn.execute(sql.SQL("SELECT last_value, is_called FROM {}").format(sequence)).fetchone()
+    used = state["last_value"] if state["is_called"] else 0
+    if highest > used:
+        conn.execute("SELECT setval(%s::regclass, %s, true)", (kind.sequence, highest))
 
 
 def ensure_vector_table(conn: psycopg.Connection, kind: Kind, dimension: int) -> None:
@@ -288,11 +319,21 @@ def _vector_table_exists(conn: psycopg.Connection, kind: Kind) -> bool:
 
 
 def next_fix_id(conn: psycopg.Connection, kind: Kind) -> str:
+    """The next id, from the store's sequence.
+
+    A store whose schema is someone else's to manage (REVIEW_MANAGE_SCHEMA=
+    false) may not have one; there the id is the highest plus one, as before
+    6.2, under the lock `save` holds.
+    """
+    present = conn.execute("SELECT to_regclass(%s) IS NOT NULL AS present", (kind.sequence,)).fetchone()
+    if present["present"]:
+        row = conn.execute("SELECT nextval(%s::regclass) AS n", (kind.sequence,)).fetchone()
+        return f"{kind.prefix}{row['n']:04d}"
     row = conn.execute(
         sql.SQL(
             "SELECT max(substring(fix_id FROM 2)::int) AS n FROM {} WHERE fix_id ~ %s"
         ).format(sql.Identifier(kind.table)),
-        (rf"^{re.escape(kind.prefix)}\d+$",),
+        (kind.id_pattern,),
     ).fetchone()
     return f"{kind.prefix}{(row['n'] or 0) + 1:04d}"
 
@@ -310,7 +351,8 @@ def save(conn: psycopg.Connection, kind: Kind, fix: Fix) -> Fix:
 
     One per submission: the UNIQUE on `submission_id` is what makes a double
     click, or two reviewers at once, one record rather than two. The id is
-    taken under a lock on the table, so two saves cannot both take W0007.
+    the store's sequence's (V6-29); the lock on the table orders the check
+    for an existing fix before the insert.
     """
     # The lock comes first, so the check below and the insert after it see
     # the same table: a second save of the same submission waits here, then
@@ -420,10 +462,6 @@ def unembedded(conn: psycopg.Connection, kind: Kind, model: str) -> list[dict[st
         for row in rows
         if row["embedding_model"] != model or row["content_hash"] != content_hash(row["question"])
     ]
-
-
-def vector_literal(vector: Sequence[float]) -> str:
-    return "[" + ",".join(repr(float(x)) for x in vector) + "]"
 
 
 def write_vectors(
@@ -540,6 +578,6 @@ class FixStore:
                 ensure_vector_table(conn, self.kind, len(vectors[0]))
                 result.embedded = write_vectors(conn, self.kind, pending, vectors, embedder.model_name)
                 result.pending -= result.embedded
-        except Exception as exc:  # noqa: BLE001 - the record is saved; say why the vector is not
+        except MODEL_ERRORS + DATABASE_ERRORS as exc:  # the record is saved; say why the vector is not
             result.error = f"{type(exc).__name__}: {exc}"
         return result

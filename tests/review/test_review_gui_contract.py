@@ -20,6 +20,12 @@ from typing import get_args
 import pytest
 
 from nl2sql_review import models
+from nl2sql_common import envelope
+from pydantic import BaseModel
+
+#: The envelope every API shares, declared once in the shared package since
+#: 6.2 and so no longer in this service's own models module.
+_ENVELOPE = {model.__name__: model for model in (envelope.Health, envelope.Check, envelope.Readiness)}
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TYPES_TS = REPO_ROOT / "review" / "gui" / "src" / "api" / "types.ts"
@@ -41,9 +47,9 @@ MIRRORED = {
     "GoldenSet": models.GoldenSet,
     "ReviewLimits": models.ReviewLimits,
     "ReviewMeta": models.ReviewMeta,
-    "Health": models.Health,
-    "Check": models.Check,
-    "Readiness": models.Readiness,
+    "Health": envelope.Health,
+    "Check": envelope.Check,
+    "Readiness": envelope.Readiness,
     "ValidateRequest": models.ValidateRequest,
     "ValidationModel": models.ValidationModel,
     "FixRequest": models.FixRequest,
@@ -91,10 +97,12 @@ def test_every_wire_model_has_a_typescript_interface():
 
     wire = {
         name
-        for name, value in vars(models).items()
+        for name, value in {**vars(models), **_ENVELOPE}.items()
         if isinstance(value, type)
-        and issubclass(value, models.BaseModel)
-        and value is not models.BaseModel
+        and issubclass(value, BaseModel)
+        and value is not BaseModel
+        # The strict base every model shares, not a shape of its own.
+        and value is not models.Wire
         # ApiError is the error envelope; the GUI mirrors it as ApiErrorBody
         # with the payload's own shape spelled out, which is more useful than
         # `dict[str, Any]` and cannot be compared field for field against it.

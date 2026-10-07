@@ -14,10 +14,13 @@ the whole design constraint, and it produces three rules:
 * **Progress is real.** The event stream carries the pipeline's own nodes,
   so a GUI shows what the agent is actually doing rather than a spinner.
 
-Authentication is a bearer token when one is configured and nothing when it
-is not, because the common deployment is a private network and a token that
-must be invented before anything works is a token that gets committed to a
-repository.
+Who may call is decided by `nl2sql_identity.Guard`. With sign-in on
+(AUTH_ENABLED) a person's session -- the cookie their GUI sends, or the
+bearer token the desktop client holds -- is what every /v1 route needs; their
+question runs as their own database role, and the questions they see are
+theirs. The static API_TOKEN still works, for machines with no person to sign
+in. With sign-in off it is the token when one is configured and nothing when
+it is not, as it always was.
 """
 
 from __future__ import annotations
@@ -26,79 +29,54 @@ import json
 import threading
 import time
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Iterator
+from typing import Any, AsyncIterator, Callable
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.security import APIKeyHeader, HTTPBearer
+from fastapi.responses import JSONResponse
 from starlette.middleware.cors import CORSMiddleware
-from starlette.status import (
-    HTTP_202_ACCEPTED,
-    HTTP_400_BAD_REQUEST,
-    HTTP_401_UNAUTHORIZED,
-    HTTP_404_NOT_FOUND,
-    HTTP_409_CONFLICT,
-    HTTP_503_SERVICE_UNAVAILABLE,
-)
 
 from .. import __version__
 from ..config import Settings
-from ..graph import STEP_LABELS, Nl2SqlAgent
+from ..graph import Nl2SqlAgent
 from ..llm import LlmUnavailableError
-from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
-from .jobs import Job, JobStore, StreamChunk
-from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable, build_sink
-from .models import (
-    MAX_METADATA_ENTRIES,
-    MAX_QUESTION_LENGTH,
-    ApiError,
-    AskRequest,
-    Check,
-    FeedbackModel,
-    FeedbackRequest,
-    Health,
-    Job as JobModel,
-    JobList,
-    Limits,
-    Meta,
-    Pipeline,
-    Readiness,
-)
+from nl2sql_common.envelope import FALLBACK_CODES as SHARED_FALLBACK_CODES
+from nl2sql_common.envelope import Check
+from nl2sql_common.errors import DATABASE_ERRORS
+from nl2sql_identity import Guard, GuardSettings
+from nl2sql_identity.postgres import membership_lookup
+from .feedback import FeedbackSink, build_sink
+from .jobs import JobStore
+from .routes import ApiContext, _error_response, routers
 from .settings import ApiSettings
 from .tls import CertificateInfo
-from .translate import answer_from_state, job_model, progress_event
 
 #: Status codes a client can be given without a code of our own. Anything
 #: raised deliberately below carries a specific one; this is the fallback so
 #: every error body has the same shape whatever produced it.
-FALLBACK_CODES = {
-    400: "bad_request",
-    401: "unauthorized",
-    403: "forbidden",
-    404: "not_found",
-    409: "conflict",
-    422: "invalid_request",
-    500: "internal_error",
-    503: "unavailable",
-}
+#: The codes an error gets when the route raising it gave none: the shared
+#: set, which every nl2sql API answers with.
+FALLBACK_CODES = dict(SHARED_FALLBACK_CODES)
 
 
-class ApiHTTPError(HTTPException):
-    """An HTTPException that also carries the machine-readable code.
+def default_guard(settings: Settings, api: ApiSettings) -> Guard:
+    """Sign-in as the environment configures it, with roles re-read from Postgres.
 
-    The message is for a person reading a log; `code` is what a GUI branches
-    on, and it is stable across rewordings of the message.
+    The re-read uses the agent's own connection: any role can ask
+    `pg_has_role`, and the reader is a role.
     """
-
-    def __init__(self, status_code: int, code: str, detail: str, **headers: str) -> None:
-        super().__init__(status_code=status_code, detail=detail, headers=headers or None)
-        self.code = code
-
-
-_bearer = HTTPBearer(auto_error=False, description="API token, when one is configured.")
-_api_key = APIKeyHeader(name="X-API-Key", auto_error=False, description="Alternative to the bearer token.")
+    return Guard(
+        GuardSettings(
+            enabled=api.auth_enabled,
+            public_key_file=api.auth_public_key_file,
+            cookie_name=api.auth_cookie_name,
+            service_token=api.token,
+            service_roles=frozenset(api.token_roles),
+            service_name=api.token_name,
+        ),
+        recheck=membership_lookup(settings.database_url) if api.auth_enabled else None,
+    )
 
 
 class AgentHolder:
@@ -126,30 +104,36 @@ class AgentHolder:
                 except LlmUnavailableError as exc:
                     self._error = str(exc)
                     raise
-                except Exception as exc:  # a database that is not up yet
+                except Exception as exc:  # noqa: BLE001 - recorded for /readyz, then raised
                     self._error = f"{type(exc).__name__}: {exc}"
                     raise
             return self._agent
+
+    def reload(self) -> list[str]:
+        """What the agent read once, read again -- if it has read anything yet."""
+        with self._lock:
+            agent = self._agent
+        return agent.reload() if agent is not None else []
 
     def tables(self) -> list[str]:
         """Table names, best effort: `/v1/meta` is useful without them."""
         try:
             return sorted(self.get().db.table_names())
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort; /readyz reports why
             return []
 
     def routing(self) -> dict[str, Any]:
         """The routing table, best effort, as the table names are."""
         try:
             return self.get().router.table.describe()
-        except Exception:
+        except Exception:  # noqa: BLE001 - best effort; /readyz reports why
             return {}
 
     def checks(self) -> dict[str, Check]:
         """What `/readyz` reports, in the order things fail in practice."""
         try:
             agent = self.get()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - /readyz reports whatever stopped the agent
             return {
                 "agent": Check(ok=False, detail=f"{type(exc).__name__}: {exc}"),
                 "database": Check(ok=False, detail="not checked: the agent did not start"),
@@ -167,46 +151,10 @@ class AgentHolder:
                 ok=bool(names),
                 detail=f"{len(names)} tables" if names else "connected, but the schema is empty",
             )
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             results["database"] = Check(ok=False, detail=f"{type(exc).__name__}: {exc}")
         results["agent"] = Check(ok=True, detail=f"nl2sql-agent {__version__}")
         return results
-
-
-def _error_response(status: int, code: str, message: str, **detail: Any) -> JSONResponse:
-    return JSONResponse(
-        status_code=status, content=ApiError.of(code, message, **detail).model_dump()
-    )
-
-
-def _sse(chunk: StreamChunk, *, base: str) -> str:
-    """One Server-Sent Event.
-
-    SSE rather than a WebSocket because progress only ever flows one way and
-    every environment already speaks it: a browser has `EventSource` built
-    in, and everything else reads a chunked response line by line. A
-    WebSocket would need a library in each of them.
-    """
-    if chunk.kind == "keepalive":
-        return ": keep-alive\n\n"
-    if chunk.kind == "progress" and chunk.event is not None:
-        payload = progress_event(chunk.event).model_dump(mode="json")
-        return f"id: {chunk.event.seq}\nevent: progress\ndata: {json.dumps(payload)}\n\n"
-    if chunk.kind == "status":
-        return f"event: status\ndata: {json.dumps({'status': chunk.status})}\n\n"
-    if chunk.kind == "done" and chunk.job is not None:
-        payload = job_model(chunk.job, base=base).model_dump(mode="json")
-        return f"event: done\ndata: {json.dumps(payload)}\n\n"
-    return (
-        "event: timeout\ndata: "
-        + json.dumps(
-            {
-                "message": "the stream was idle too long; reconnect with "
-                "Last-Event-ID to resume"
-            }
-        )
-        + "\n\n"
-    )
 
 
 def create_app(
@@ -218,6 +166,7 @@ def create_app(
     certificate: CertificateInfo | None = None,
     feedback: FeedbackSink | None = None,
     tracer: Tracer | None = None,
+    guard: Guard | None = None,
 ) -> FastAPI:
     """The application, with every collaborator injectable.
 
@@ -228,6 +177,7 @@ def create_app(
     settings = settings or Settings.from_env()
     api = api_settings or ApiSettings.from_env()
     sink = feedback if feedback is not None else build_sink(api.feedback_db_url)
+    guard = guard or default_guard(settings, api)
     # One connection to MLflow for the server: the agent traces its runs on
     # it, and the feedback routes put verdicts on those traces.
     tracer = tracer or Tracer(settings)
@@ -244,6 +194,9 @@ def create_app(
         max_concurrency=api.max_concurrency,
         max_jobs=api.max_jobs,
         ttl_seconds=api.job_ttl_seconds,
+        max_queued=api.max_queued,
+        max_per_person=api.max_per_person,
+        queue_ttl_seconds=api.queue_ttl_seconds,
     )
     started = time.monotonic()
 
@@ -275,6 +228,7 @@ def create_app(
     app.state.certificate = certificate
     app.state.feedback = sink
     app.state.tracer = tracer
+    app.state.guard = guard
 
     if api.cors_origins:
         app.add_middleware(
@@ -288,34 +242,6 @@ def create_app(
             allow_headers=["Authorization", "Content-Type", "X-API-Key", "Last-Event-ID"],
             expose_headers=["Location", "Retry-After"],
         )
-
-    # --- authentication ---------------------------------------------------
-
-    def authenticate(
-        request: Request,
-        bearer=Depends(_bearer),
-        api_key: str | None = Depends(_api_key),
-        access_token: str | None = Query(
-            default=None,
-            description=(
-                "The token, for clients that cannot set headers. Browsers' "
-                "EventSource is the reason this exists; prefer the header "
-                "everywhere else."
-            ),
-        ),
-    ) -> None:
-        if not api.token:
-            return
-        presented = (bearer.credentials if bearer else None) or api_key or access_token
-        if presented != api.token:
-            raise ApiHTTPError(
-                HTTP_401_UNAUTHORIZED,
-                "unauthorized",
-                "a valid API token is required",
-                **{"WWW-Authenticate": "Bearer"},
-            )
-
-    guarded = [Depends(authenticate)]
 
     # --- error shape ------------------------------------------------------
 
@@ -336,385 +262,21 @@ def create_app(
             errors=json.loads(json.dumps(exc.errors(), default=str)),
         )
 
-    # --- the unauthenticated routes ---------------------------------------
+    # --- the routes (routes.py), each router carrying its guard -------------
 
-    @app.get("/", tags=["service"], summary="What this is and where to go next")
-    def root() -> dict[str, Any]:
-        return {
-            "service": "nl2sql-agent",
-            "version": __version__,
-            "docs": "/docs" if api.docs_enabled else None,
-            "openapi": "/openapi.json",
-            "endpoints": {
-                "meta": "/v1/meta",
-                "ask": "POST /v1/questions",
-                "job": "/v1/questions/{id}",
-                "events": "/v1/questions/{id}/events",
-                "health": "/healthz",
-                "readiness": "/readyz",
-            },
-        }
-
-    @app.get("/healthz", tags=["service"], response_model=Health, summary="Is the process alive")
-    def healthz() -> Health:
-        return Health(version=__version__, uptime_seconds=round(time.monotonic() - started, 3))
-
-    @app.get(
-        "/readyz",
-        tags=["service"],
-        response_model=Readiness,
-        summary="Can it answer a question right now",
-        responses={HTTP_503_SERVICE_UNAVAILABLE: {"model": Readiness}},
+    context = ApiContext(
+        settings=settings,
+        api=api,
+        holder=holder,
+        jobs=jobs,
+        sink=sink,
+        tracer=tracer,
+        guard=guard,
+        certificate=certificate,
+        started=started,
     )
-    def readyz(response: Response) -> Readiness:
-        checks = holder.checks()
-        # Readiness is decided before feedback is looked at, and feedback is
-        # reported after: a server whose staging database is down can still
-        # answer questions, which is the job. Failing readiness over it would
-        # have an orchestrator restart a working agent because an optional
-        # side channel was unavailable.
-        ready = all(check.ok for check in checks.values())
-        ok, detail = sink.check()
-        checks["feedback"] = Check(ok=ok, detail=detail)
-        if not ready:
-            response.status_code = HTTP_503_SERVICE_UNAVAILABLE
-        return Readiness(ready=ready, checks=checks, warnings=api.warnings())
-
-    # --- the API ----------------------------------------------------------
-
-    @app.get(
-        "/v1/meta",
-        tags=["service"],
-        response_model=Meta,
-        dependencies=guarded,
-        summary="Everything a client needs to configure itself",
-    )
-    def meta() -> Meta:
-        tables = holder.tables()
-        return Meta(
-            version=__version__,
-            model=settings.ollama_model,
-            intents=sorted(INTENT_FRAMING),
-            tables=tables,
-            scope=describe_scope(tables),
-            limits=Limits(
-                max_rows=settings.max_rows,
-                max_attempts=settings.max_attempts,
-                max_plan_cost=settings.max_plan_cost,
-                statement_timeout_ms=settings.statement_timeout_ms,
-                max_concurrency=api.max_concurrency,
-                max_wait_seconds=api.max_wait_seconds,
-                max_question_length=MAX_QUESTION_LENGTH,
-                max_metadata_entries=MAX_METADATA_ENTRIES,
-            ),
-            pipeline=Pipeline(
-                supervisor=settings.supervisor_enabled,
-                literals=settings.literals_enabled,
-                narrate=settings.narrate_enabled,
-                audit=settings.audit_enabled,
-                schema_retrieval=settings.schema_retrieval,
-                nodes=list(STEP_LABELS),
-            ),
-            tls=(
-                certificate.summary()
-                if certificate is not None
-                else {"enabled": api.tls_enabled, "self_signed": False}
-            ),
-            authentication="bearer" if api.token else "none",
-            routing=holder.routing(),
-            feedback=sink.check()[0],
-        )
-
-    @app.post(
-        "/v1/questions",
-        tags=["questions"],
-        response_model=JobModel,
-        status_code=HTTP_202_ACCEPTED,
-        dependencies=guarded,
-        summary="Ask a question",
-        responses={
-            HTTP_400_BAD_REQUEST: {"model": ApiError},
-            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
-        },
-    )
-    def ask(
-        body: AskRequest,
-        response: Response,
-        wait: float | None = Query(
-            default=None,
-            ge=0,
-            description=(
-                "Seconds to hold the connection open waiting for the answer. "
-                "Omit for the asynchronous flow. The server caps this at "
-                "API_MAX_WAIT_SECONDS and returns 202 with the unfinished job "
-                "if the time runs out, so a wait is an optimisation, never a "
-                "different contract."
-            ),
-        ),
-    ) -> JobModel:
-        if body.principal and not api.allow_principal:
-            raise ApiHTTPError(
-                HTTP_400_BAD_REQUEST,
-                "principal_not_allowed",
-                "this server does not accept a caller-chosen database principal; "
-                "start it with API_ALLOW_PRINCIPAL=true to enable it",
-            )
-        try:
-            job = jobs.submit(
-                body.question,
-                principal=body.principal if api.allow_principal else None,
-                metadata=body.metadata,
-            )
-        except RuntimeError as exc:
-            raise ApiHTTPError(HTTP_503_SERVICE_UNAVAILABLE, "unavailable", str(exc)) from exc
-
-        if wait:
-            jobs.wait(job, min(wait, api.max_wait_seconds))
-        model = job_model(job, base=api.root_path)
-        response.status_code = 200 if job.terminal else HTTP_202_ACCEPTED
-        response.headers["Location"] = model.links.self
-        return model
-
-    @app.get(
-        "/v1/questions",
-        tags=["questions"],
-        response_model=JobList,
-        dependencies=guarded,
-        summary="Recent questions, newest first",
-    )
-    def list_jobs(limit: int = Query(default=50, ge=1, le=500)) -> JobList:
-        found = jobs.list(limit=limit)
-        return JobList(
-            jobs=[job_model(job, base=api.root_path) for job in found], count=len(found)
-        )
-
-    def _require(job_id: str) -> Job:
-        job = jobs.get(job_id)
-        if job is None:
-            raise ApiHTTPError(
-                HTTP_404_NOT_FOUND,
-                "not_found",
-                f"no job {job_id}. Finished jobs are kept for "
-                f"{api.job_ttl_seconds} seconds.",
-            )
-        return job
-
-    @app.get(
-        "/v1/questions/{job_id}",
-        tags=["questions"],
-        response_model=JobModel,
-        dependencies=guarded,
-        summary="One question, running or finished",
-        responses={HTTP_404_NOT_FOUND: {"model": ApiError}},
-    )
-    def get_job(
-        job_id: str,
-        response: Response,
-        wait: float | None = Query(
-            default=None,
-            ge=0,
-            description="Seconds to wait for the job to finish before answering.",
-        ),
-    ) -> JobModel:
-        job = _require(job_id)
-        if wait:
-            jobs.wait(job, min(wait, api.max_wait_seconds))
-        if not job.terminal:
-            # Tells a polling client how long to sleep, so the interval is the
-            # server's decision rather than every client's guess.
-            response.headers["Retry-After"] = "2"
-        return job_model(job, base=api.root_path)
-
-    @app.get(
-        "/v1/questions/{job_id}/events",
-        tags=["questions"],
-        dependencies=guarded,
-        summary="Progress as it happens (Server-Sent Events)",
-        response_class=StreamingResponse,
-        responses={
-            200: {
-                "content": {"text/event-stream": {}},
-                "description": (
-                    "A `progress` event per pipeline node, `status` on each "
-                    "transition, and one `done` event carrying the finished job."
-                ),
-            },
-            HTTP_404_NOT_FOUND: {"model": ApiError},
-        },
-    )
-    def job_events(
-        job_id: str,
-        from_seq: int = Query(
-            default=0,
-            ge=0,
-            description="Resume after this event number. Last-Event-ID wins over it.",
-        ),
-        last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    ) -> StreamingResponse:
-        job = _require(job_id)
-        if last_event_id and last_event_id.isdigit():
-            from_seq = int(last_event_id)
-
-        def body() -> Iterator[str]:
-            for chunk in jobs.stream(
-                job,
-                from_seq=from_seq,
-                timeout=api.event_stream_timeout_seconds,
-                keepalive=api.keepalive_seconds,
-            ):
-                yield _sse(chunk, base=api.root_path)
-
-        return StreamingResponse(
-            body(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache, no-transform",
-                # nginx buffers proxied responses by default, which turns a
-                # live progress stream into one delivery at the end.
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
-
-    # --- feedback ---------------------------------------------------------
-
-    def _capture_from(job: Job, body: FeedbackRequest) -> Capture:
-        """Build the staged snapshot out of the job the server still holds.
-
-        Everything but the verdict and the comment comes from here rather
-        than from the request, so a submission can never describe an answer
-        this server did not give.
-
-        The snapshot is taken through `answer_from_state`, which is the same
-        translation the job's own document goes through. Reading `job.state`
-        directly here would be a second translation to keep in step with the
-        first -- and the one that handles a `Decimal` out of Postgres, a
-        refusal with no result, and a chart that is a dataclass in one code
-        path and a dict in another is the one that already exists.
-        """
-        answer = answer_from_state(job.state)
-        table = answer.result
-        return Capture(
-            job_id=job.id,
-            verdict=body.verdict,
-            question=job.question,
-            sql_code=answer.sql,
-            answer=answer.answer,
-            narrative=answer.narrative,
-            intent=answer.intent,
-            tables=", ".join(answer.tables),
-            row_count=table.row_count if table else 0,
-            columns=tuple(table.columns) if table else (),
-            comment=body.comment,
-            agent_version=__version__,
-        )
-
-    @app.post(
-        "/v1/questions/{job_id}/feedback",
-        tags=["feedback"],
-        response_model=FeedbackModel,
-        status_code=201,
-        dependencies=guarded,
-        summary="Say whether this answer was right",
-        responses={
-            HTTP_404_NOT_FOUND: {"model": ApiError},
-            HTTP_409_CONFLICT: {"model": ApiError},
-            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
-        },
-        description=(
-            "Records a verdict in the staging database, where it waits to be "
-            "reviewed and possibly promoted into the golden question set. The "
-            "job's question, SQL and result shape are captured with it, because "
-            "the job itself is forgotten after API_JOB_TTL_SECONDS and a verdict "
-            "pointing at a forgotten job is not reviewable.\n\n"
-            "Voting again replaces the verdict, until a reviewer has acted on it."
-        ),
-    )
-    def record_feedback(job_id: str, body: FeedbackRequest) -> FeedbackModel:
-        job = _require(job_id)
-        if not job.terminal:
-            # There is nothing to have an opinion about yet, and the snapshot
-            # taken now would be of a half-finished run -- which is the one
-            # thing a golden pair must never be built from.
-            raise ApiHTTPError(
-                HTTP_409_CONFLICT,
-                "job_running",
-                f"job {job_id} is {job.status}; wait for it to finish before judging it",
-            )
-        try:
-            submission_id = sink.record(_capture_from(job, body))
-        except AlreadyReviewed as exc:
-            raise ApiHTTPError(HTTP_409_CONFLICT, "already_reviewed", str(exc)) from exc
-        except FeedbackUnavailable as exc:
-            raise ApiHTTPError(
-                HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc)
-            ) from exc
-        # And on the run's trace, when it was traced. After the staging
-        # database has it, because that is the record a reviewer acts on;
-        # MLflow not taking it is logged and costs the response nothing.
-        tracer.record_verdict((job.state or {}).get("trace_id"), body.verdict, comment=body.comment)
-        return FeedbackModel(
-            id=submission_id, job_id=job.id, verdict=body.verdict, comment=body.comment
-        )
-
-    @app.delete(
-        "/v1/questions/{job_id}/feedback",
-        tags=["feedback"],
-        status_code=204,
-        dependencies=guarded,
-        summary="Withdraw a verdict",
-        responses={
-            HTTP_404_NOT_FOUND: {"model": ApiError},
-            HTTP_503_SERVICE_UNAVAILABLE: {"model": ApiError},
-        },
-        description=(
-            "For the misclick. Succeeds only while nobody has reviewed the "
-            "verdict; once one has been acted on it is a record of what "
-            "happened and stops being the voter's to take back."
-        ),
-    )
-    def withdraw_feedback(job_id: str) -> Response:
-        try:
-            removed = sink.withdraw(job_id)
-        except FeedbackUnavailable as exc:
-            raise ApiHTTPError(
-                HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc)
-            ) from exc
-        if not removed:
-            raise ApiHTTPError(
-                HTTP_404_NOT_FOUND,
-                "not_found",
-                f"no feedback for job {job_id} that can still be withdrawn",
-            )
-        # A verdict can outlive its job (API_JOB_TTL_SECONDS), so a job the
-        # server has forgotten is found by the id its trace is tagged with.
-        job = jobs.get(job_id)
-        trace_id = (job.state or {}).get("trace_id") if job else tracer.find_job_trace(job_id)
-        tracer.withdraw_verdict(trace_id)
-        return Response(status_code=204)
-
-    @app.delete(
-        "/v1/questions/{job_id}",
-        tags=["questions"],
-        status_code=204,
-        dependencies=guarded,
-        summary="Cancel a queued question, or forget a finished one",
-        responses={
-            HTTP_404_NOT_FOUND: {"model": ApiError},
-            HTTP_409_CONFLICT: {"model": ApiError},
-        },
-    )
-    def delete_job(job_id: str) -> Response:
-        outcome = jobs.cancel(job_id)
-        if outcome == "missing":
-            raise ApiHTTPError(HTTP_404_NOT_FOUND, "not_found", f"no job {job_id}")
-        if outcome == "running":
-            raise ApiHTTPError(
-                HTTP_409_CONFLICT,
-                "job_running",
-                "this question is already running and cannot be interrupted; "
-                "it can be deleted once it finishes",
-            )
-        return Response(status_code=204)
+    app.state.context = context
+    for router in routers(context):
+        app.include_router(router)
 
     return app

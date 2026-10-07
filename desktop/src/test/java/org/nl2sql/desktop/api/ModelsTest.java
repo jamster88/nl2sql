@@ -42,12 +42,14 @@ class ModelsTest {
                             "claims": [{"text": "...", "value": 719279.97,
                                         "cells": [[0, "net_sales"]], "formula": null}],
                             "audit": {"passed": true, "unsupported_claims": [],
-                                      "drop_reasons": [], "redactions": [],
+                                      "drop_reasons": [], "missing_assumptions": [],
                                       "semantic_issue": null},
                             "plan_cost": 125767.4, "attempts": 1,
                             "trace": [{"node": "generate_sql", "ms": 8123.4,
-                                       "model_calls": 1, "detail": "..."}],
-                            "retrieval_errors": {}},
+                                       "model_calls": 1, "detail": "...",
+                                       "model": "coder:14b", "rung": "standard",
+                                       "route": "attempt 1", "hops": ["small:3b"]}],
+                            "retrieval_errors": {}, "node_errors": {}},
                  "error": null,
                  "links": {"self": "/v1/questions/3f2c", "events": "/v1/questions/3f2c/events"}}
                 """, Models.Job.class);
@@ -56,9 +58,21 @@ class ModelsTest {
         assertEquals(Models.JobStatus.SUCCEEDED, job.status());
         assertEquals("sql", job.progress().get(0).label());
         assertEquals("SELECT sum(x) FROM y", job.answer().sql());
+        assertEquals("coder:14b", job.answer().trace().get(0).model());
+        assertEquals(List.of("small:3b"), job.answer().trace().get(0).hops());
         assertEquals("719279.97", job.answer().result().rows().get(0).get(0));
         assertEquals(List.of("net_sales"), job.answer().chart().y());
         assertEquals("/v1/questions/3f2c/events", job.links().events());
+    }
+
+    @Test
+    void a_reload_says_what_was_read_again_and_nothing_is_a_null() {
+        // Mirrored for completeness: this client does not reload.
+        Models.Reloaded reloaded = Json.read(
+                "{\"reloaded\": [\"literals\"], \"sessions_forgotten\": 2}", Models.Reloaded.class);
+        assertEquals(List.of("literals"), reloaded.reloaded());
+        assertEquals(2, reloaded.sessions_forgotten());
+        assertEquals(List.of(), Json.read("{}", Models.Reloaded.class).reloaded());
     }
 
     @Test
@@ -74,6 +88,7 @@ class ModelsTest {
         assertEquals(List.of(), answer.claims());
         assertEquals(List.of(), answer.trace());
         assertEquals(Map.of(), answer.retrieval_errors());
+        assertEquals(Map.of(), answer.node_errors());
         assertEquals("", answer.sql());
         assertTrue(answer.audit().passed());
         assertEquals(List.of(), answer.audit().drop_reasons());
@@ -176,5 +191,35 @@ class ModelsTest {
     @Test
     void an_error_envelope_parses_even_when_it_is_empty() {
         assertEquals(Map.of(), Json.read("{}", Models.ApiErrorBody.class).error());
+    }
+
+    @Test
+    void neither_record_that_carries_a_secret_prints_it() {
+        Models.SignIn signIn = new Models.SignIn("ada", "correct horse");
+        Models.Token token = Fakes.token("ada", "Ada Lovelace");
+
+        assertEquals("SignIn[username=ada]", signIn.toString());
+        assertFalse(token.toString().contains(token.token()), token.toString());
+        assertTrue(token.toString().contains("user=ada"));
+        // And what goes over the wire is still the whole of it.
+        assertTrue(Json.write(signIn).contains("\"password\":\"correct horse\""));
+    }
+
+    @Test
+    void a_session_from_an_older_or_terser_service_has_no_nulls_in_it() {
+        Models.Token token = Json.read("{\"expires_at\": 5}", Models.Token.class);
+
+        assertEquals("", token.user());
+        assertEquals("", token.token());
+        assertEquals(List.of(), token.roles());
+        assertEquals("", token.kind());
+        assertEquals(5, token.expires_at());
+    }
+
+    @Test
+    void who_is_their_name_and_user_name_once_and_only_once() {
+        assertEquals("Ada Lovelace (ada)", Fakes.token("ada", "Ada Lovelace").who());
+        assertEquals("ada", Fakes.token("ada", "").who());
+        assertEquals("ada", Fakes.token("ada", "ada").who());
     }
 }

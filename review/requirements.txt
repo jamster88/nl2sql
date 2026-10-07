@@ -5,6 +5,9 @@ fastapi==0.141.1
 uvicorn==0.53.0
 pydantic>=2,<3
 psycopg[binary]==3.3.5
+# Verifies the session the auth service signs (nl2sql_identity, Ed25519):
+# the same pin as the agent image and the auth service.
+cryptography==50.0.1
 
 # --- what the loaders need (rag/ragproc) -----------------------------------
 # Promotion runs 05_load_golden_pairs.py and 06_embed_golden_pairs.py as

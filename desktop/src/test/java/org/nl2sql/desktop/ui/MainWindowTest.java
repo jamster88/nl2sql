@@ -33,6 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class MainWindowTest {
 
     private final Fakes.FakeClient client = new Fakes.FakeClient();
+    private final Fakes.FakeSignIn signIn = new Fakes.FakeSignIn();
     private final Stores.Recording sender = new Stores.Recording();
     private final AtomicBoolean feedbackAccepted = new AtomicBoolean();
     private final List<String> problems = new ArrayList<>();
@@ -40,7 +41,7 @@ class MainWindowTest {
 
     private MainWindow window(String... arguments) {
         store = Stores.of(sender, problems);
-        return new MainWindow(client, store, Settings.from(Map.of(), arguments),
+        return new MainWindow(client, signIn, store, Settings.from(Map.of(), arguments),
                 Runnable::run, Runnable::run, feedbackAccepted);
     }
 
@@ -64,7 +65,7 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 5.6.1"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
@@ -84,7 +85,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 5.6.1"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
             window.close();
         });
     }
@@ -350,7 +351,7 @@ class MainWindowTest {
 
     private MainWindow window(java.util.function.Consumer<Runnable> foreground) {
         store = Stores.of(sender, problems);
-        return new MainWindow(client, store, Settings.from(Map.of()),
+        return new MainWindow(client, signIn, store, Settings.from(Map.of()),
                 Runnable::run, foreground, feedbackAccepted);
     }
 
@@ -475,7 +476,7 @@ class MainWindowTest {
                         + "2025, which is an increase of eleven per cent over the previous year "
                         + "across every banner in the group.", 719279.97,
                         List.of(List.of(0, "net_sales")), null)),
-                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of());
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of());
         Models.Job job = Fakes.answered();
         return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
                 job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),
@@ -486,8 +487,9 @@ class MainWindowTest {
 /** The whole window, laid out at one width, with its answer on screen. */
     private double answerHeadlineHeight(double width) {
         Fakes.FakeClient fresh = new Fakes.FakeClient();
-        MainWindow window = new MainWindow(fresh, Stores.of(new Stores.Recording()),
-                Settings.from(Map.of()), Runnable::run, Runnable::run, new AtomicBoolean());
+        MainWindow window = new MainWindow(fresh, new Fakes.FakeSignIn(),
+                Stores.of(new Stores.Recording()), Settings.from(Map.of()), Runnable::run,
+                Runnable::run, new AtomicBoolean());
         window.start();
         window.show(wordy());
         javafx.stage.Stage stage = FxToolkit.render(window.root(), width, 760);
@@ -537,7 +539,7 @@ class MainWindowTest {
         // was left of the other half.
         FxToolkit.onFx(() -> {
             for (double width : new double[] {1100, 560}) {
-                MainWindow window = new MainWindow(new Fakes.FakeClient(),
+                MainWindow window = new MainWindow(new Fakes.FakeClient(), new Fakes.FakeSignIn(),
                         Stores.of(new Stores.Recording()), Settings.from(Map.of()),
                         Runnable::run, Runnable::run, new AtomicBoolean());
                 window.start();
@@ -567,7 +569,7 @@ class MainWindowTest {
         // which the per-component tests below could not: each of them was
         // measuring a component that was, on its own, fine.
         FxToolkit.onFx(() -> {
-            MainWindow window = new MainWindow(new Fakes.FakeClient(),
+            MainWindow window = new MainWindow(new Fakes.FakeClient(), new Fakes.FakeSignIn(),
                     Stores.of(new Stores.Recording()), Settings.from(Map.of()),
                     Runnable::run, Runnable::run, new AtomicBoolean());
             window.start();
@@ -586,7 +588,7 @@ class MainWindowTest {
     @Test
     void nothing_is_drawn_wider_than_the_pane_that_holds_it() {
         FxToolkit.onFx(() -> {
-            MainWindow window = new MainWindow(new Fakes.FakeClient(),
+            MainWindow window = new MainWindow(new Fakes.FakeClient(), new Fakes.FakeSignIn(),
                     Stores.of(new Stores.Recording()), Settings.from(Map.of()),
                     Runnable::run, Runnable::run, new AtomicBoolean());
             window.start();
@@ -599,6 +601,189 @@ class MainWindowTest {
                         "." + pane + " is " + width + " wide in a 1260 window");
             }
             stage.close();
+            window.close();
+        });
+    }
+
+    // --- signing in -------------------------------------------------------
+
+    private void signInAs(MainWindow window, String user, String password) {
+        window.signInView().user().setText(user);
+        window.signInView().password().setText(password);
+        window.signInView().action().fire();
+    }
+
+    @Test
+    void a_server_with_sign_in_on_asks_who_you_are_before_the_first_question() {
+        FxToolkit.onFx(() -> {
+            client.meta = Fakes.meta(true, "session");
+            MainWindow window = window("--user", "ada");
+
+            window.start();
+
+            assertTrue(window.signInView().node().isVisible());
+            assertEquals("ada", window.signInView().user().getText());
+            assertTrue(Nodes.says(window.root(), "sign-in required"));
+            assertTrue(Nodes.says(window.root(), "Your questions run as your own database account."));
+            window.close();
+        });
+    }
+
+    @Test
+    void a_server_that_answers_nobody_until_they_sign_in_asks_who_you_are_and_then_describes_itself() {
+        // What the real API does: /v1/meta is a /v1 route, and with sign-in
+        // on it answers only someone signed in. That is not a server that
+        // cannot be reached, and the window must not say it is.
+        FxToolkit.onFx(() -> {
+            client.failMeta = new ApiException(401, "sign_in_required", "sign in to use this service");
+            client.meta = Fakes.meta(true, "session");
+            signIn.then = () -> client.failMeta = null;
+            MainWindow window = window();
+
+            window.start();
+
+            assertTrue(window.signInView().node().isVisible());
+            assertFalse(Nodes.says(window.root(), "Not connected."));
+            assertTrue(Nodes.says(window.root(), "Your questions run as your own database account."));
+
+            signInAs(window, "ada", "pw");
+
+            assertFalse(window.signInView().node().isVisible());
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
+            assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
+            window.close();
+        });
+    }
+
+    @Test
+    void a_static_token_is_somebody_already_and_is_not_asked() {
+        FxToolkit.onFx(() -> {
+            client.meta = Fakes.meta(true, "session");
+            MainWindow window = window("--token", "s3cret");
+
+            window.start();
+
+            assertFalse(window.signInView().node().isVisible());
+            window.close();
+        });
+    }
+
+    @Test
+    void signing_in_says_who_and_offers_to_sign_out() {
+        FxToolkit.onFx(() -> {
+            client.meta = Fakes.meta(true, "session");
+            MainWindow window = window();
+            window.start();
+
+            signInAs(window, "ada", "correct horse");
+
+            assertEquals(List.of("ada:correct horse"), signIn.attempts);
+            assertFalse(window.signInView().node().isVisible());
+            assertEquals("", window.signInView().password().getText());
+            assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
+            assertTrue(Nodes.says(window.root(), "Sign out"));
+            assertEquals(List.of(), client.asked, "nothing was waiting to be asked");
+            window.close();
+        });
+    }
+
+    @Test
+    void signing_in_before_the_server_has_answered_is_not_asked_for_twice() {
+        FxToolkit.onFx(() -> {
+            client.meta = Fakes.meta(true, "session");
+            MainWindow window = window();
+
+            signInAs(window, "ada", "pw");
+            window.start();
+
+            assertFalse(window.signInView().node().isVisible());
+            window.close();
+        });
+    }
+
+    @Test
+    void a_question_refused_for_want_of_a_session_is_asked_again_once_there_is_one() {
+        FxToolkit.onFx(() -> {
+            client.failAsk = new ApiException(401, "sign_in_required", "sign in to use this service");
+            signIn.then = () -> client.failAsk = null;
+            client.streams.add(stream(event("done", Json.write(Fakes.answered()))));
+            MainWindow window = window();
+
+            window.ask("how many stores");
+
+            assertTrue(window.signInView().node().isVisible());
+            assertTrue(Nodes.says(window.root(), "sign in to use this service"));
+            assertFalse(Nodes.says(window.root(), "That question could not be sent."));
+
+            signInAs(window, "ada", "pw");
+
+            assertEquals(List.of("how many stores", "how many stores"), client.asked);
+            assertTrue(Nodes.says(window.root(), "Produce net sales were $719,279.97"));
+            window.close();
+        });
+    }
+
+    @Test
+    void a_refused_sign_in_says_why_and_leaves_the_form_to_try_again() {
+        FxToolkit.onFx(() -> {
+            client.meta = Fakes.meta(true, "session");
+            signIn.fail = new ApiException(401, "invalid_credentials",
+                    "that user name and password were not accepted");
+            MainWindow window = window();
+            window.start();
+
+            signInAs(window, "ada", "wrong");
+
+            assertTrue(window.signInView().node().isVisible());
+            assertTrue(window.signInView().problem().isVisible());
+            assertEquals("that user name and password were not accepted",
+                    window.signInView().problem().getText());
+            assertFalse(window.signInView().action().isDisabled());
+            assertEquals("", window.signInView().password().getText());
+            window.close();
+        });
+    }
+
+    @Test
+    void signing_out_forgets_the_session_and_asks_again() {
+        FxToolkit.onFx(() -> {
+            client.meta = Fakes.meta(true, "session");
+            MainWindow window = window();
+            window.start();
+            signInAs(window, "ada", "pw");
+
+            Nodes.withClass(window.root(), "hyperlink").stream()
+                    .map(javafx.scene.control.Hyperlink.class::cast)
+                    .filter(link -> link.getText().equals("Sign out"))
+                    .findFirst().orElseThrow().fire();
+
+            assertEquals(1, signIn.signOuts);
+            assertTrue(window.signInView().node().isVisible());
+            assertTrue(Nodes.says(window.root(), "Signed out."));
+            assertFalse(Nodes.says(window.root(), "signed in as"));
+            window.close();
+        });
+    }
+
+    @Test
+    void a_session_that_ends_mid_question_asks_again_without_losing_the_answer() {
+        FxToolkit.onFx(() -> {
+            // The stream fails, so the question is polled; one poll is a
+            // server error, which is said, and one finds the session gone.
+            client.failEvents = new IOException("no stream");
+            client.pollAnswers.add(new ApiException(503, "busy", "the database is busy"));
+            client.pollAnswers.add(new ApiException(401, "expired", "your session has expired"));
+            store = Stores.of(sender, problems);
+            MainWindow window = new MainWindow(client, signIn, store,
+                    Settings.from(Map.of("NL2SQL_POLL_INTERVAL_MS", "1")),
+                    Runnable::run, Runnable::run, feedbackAccepted);
+
+            window.ask("how many stores");
+
+            assertTrue(window.signInView().node().isVisible());
+            assertTrue(Nodes.says(window.root(), "your session has expired"));
+            assertTrue(Nodes.says(window.root(), "the database is busy"));
+            assertTrue(Nodes.says(window.root(), "Produce net sales were $719,279.97"));
             window.close();
         });
     }

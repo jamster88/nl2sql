@@ -37,6 +37,7 @@ from typing import Any, Literal, Sequence
 from pydantic import BaseModel, Field
 
 from .prompts import SUPERVISOR_PROMPT
+from nl2sql_common.errors import MODEL_ERRORS
 
 #: A fallback description, used only when the table list cannot be read. A
 #: prose summary is a poor substitute and was measurably wrong: written by
@@ -182,7 +183,7 @@ def screen(
                 domain=describe_scope(tables), question=question
             )
         )
-    except Exception as exc:
+    except MODEL_ERRORS as exc:
         return {
             "verdict": "proceed",
             "intent": "aggregate",
@@ -190,7 +191,7 @@ def screen(
             "entities": [],
             "measure": "",
             "period": "",
-            "retrieval_errors": {"supervisor": str(exc)},
+            "node_errors": {"supervisor": str(exc)},
         }
 
     verdict = getattr(screening, "verdict", "proceed") or "proceed"

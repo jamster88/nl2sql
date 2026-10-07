@@ -18,16 +18,21 @@ the embedding model if it lacks it; pulls what is missing, and whatever this
 checkout ships that is newer than `.env` pins; starts every container; and
 puts an interface in front of you. Which interface is the only choice it asks
 you to make, and it has a default: with no flag it waits until the page
-actually answers and opens it in your browser at <http://localhost:8080>; with
+actually answers and opens it in your browser at <https://localhost:8080>; with
 `--desktop` it fetches the desktop client's jar (building it if there is no
-published one for this machine), copies the API's certificate out for the
-client to verify against, and opens the window instead. Either way
+published one for this machine), copies the stack's CA certificate out for
+the client to verify against, and opens the window instead. Either way
 `--review` brings the feedback system up as well and opens the review page
 in a browser window of its own, `--console` does the same for the SQL
 console -- the retail database, queried the way the agent queries it --
 `--mlflow` for MLflow, where every question is traced agent by agent, and
 `--curate` for the curation interface, where the SQL snippets and the golden
 pairs the agent learns from are written directly.
+
+Every page asks who you are. The first person is `admin`, whose password
+the first run generates into `secrets/` (`cat secrets/ldap_admin_password`); they
+add everyone else on the directory page at <https://localhost:8084>. See
+[Sign-in](#sign-in), and `--no-auth` for a run without it.
 
 First run is a few minutes and about 3 GB of images; afterwards it is
 seconds.
@@ -46,27 +51,40 @@ Either way the same containers come up:
 | `nl2sql-postgres` | The retail dataset, baked into the image |
 | `nl2sql-vectordb` | pgvector: the knowledge base and the golden-pair vectors |
 | `nl2sql-chunkdb` | The context store: the golden pairs and their BM25 index |
-| `nl2sql-snippetsdb` | pgvector: the SQL snippets -- joins, filters, measures and dimensions -- and an embedding of what each means, loaded from `context_questions/sql_snippets.md` |
+| `nl2sql-stores` | The runtime stores, four databases in one pgvector server: the SQL snippets -- joins, filters, measures and dimensions, each with an embedding of what it means, loaded from `context_questions/sql_snippets.md` -- the verdicts given in the web interface, waiting to be reviewed, and the validated queries that fix wrong answers and complete incomplete ones |
 | `agent` | The v4 agent, run on demand per question |
 | `nl2sql-api` | The same agent as a TLS REST server, started only with `--api` |
 | `nl2sql-gui` | The web interface, and the proxy in front of the API, with `--gui` |
-| `nl2sql-feedbackdb` | Verdicts from the web interface, waiting to be reviewed, with `--feedback` |
-| `nl2sql-correctionsdb` | pgvector: wrong answers and the validated queries that fix them, with `--review` |
-| `nl2sql-completionsdb` | pgvector: incomplete answers and the validated queries that complete them, with `--review` |
 | `nl2sql-review` | The service that turns reviewed feedback into golden questions or fixes, with `--review` |
 | `nl2sql-review-gui` | The review interface, and the proxy in front of that service, with `--review` |
 | `nl2sql-curate-gui` | The curation interface, and the proxy in front of the same service, with `--curate` |
 | `nl2sql-console` | The agent image again, as the SQL console: the retail database queried as the agent's read-only role and through its gates, with `--console` |
 | `nl2sql-console-gui` | The SQL console's interface, and the proxy in front of it, on this machine only, with `--console` |
 | `nl2sql-mlflowdb` | MLflow's tracking store: every question's trace, and the verdicts given on it, with `--mlflow` |
-| `nl2sql-mlflow` | MLflow's server and interface, on this machine only, with `--mlflow` |
+| `nl2sql-mlflow` | MLflow's server and interface, with `--mlflow`; reached only through its front door |
+| `nl2sql-mlflow-proxy` | MLflow's front door: HTTPS, and sign-in asked about every request, on this machine only, with `--mlflow` |
+| `nl2sql-ldap` | The directory: people, their passwords and the four groups -- standalone, or a read-only replica of another directory -- with the API |
+| `nl2sql-auth` | Sign-in: checks a password by signing in to the retail database, issues the session, keeps the database's roles in step with the directory, with the API |
+| `nl2sql-directory-gui` | The directory page, where administrators add and edit people, on this machine only, beside a standalone directory |
 
-The agent, the GUI, both halves of the review system, the curation
-interface, the SQL console's interface, the desktop client's jar and MLflow's
-server and store are published images (`v5_6_1`); the rest are built or pulled
-by `setup.sh` as well -- the snippet store is a stock pgvector, filled from
-its document by `launch.sh`. [Pulling the images](#pulling-the-images) has
-the tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
+Every page -- the web interface, the review, curation and SQL console
+interfaces, the directory page and MLflow's front door -- is one published
+image, `nl2sql-proxy`, each container told which page it serves. It, the
+agent, the review service, the desktop client's jar, MLflow's server and
+store, the directory and the auth service are published images (`v6_3`);
+the rest are built or pulled by `setup.sh` as well -- the runtime stores are
+a stock pgvector, pinned by digest like every image this project does not
+build. Two one-shot containers run before the rest and exit: `pki`, which
+issues each service its certificate, and `dbprep`, which prepares every
+database -- the roles, the extensions, the sign-in rules -- so neither
+script runs SQL of its own. [Pulling the images](#pulling-the-images) has the
+tags, and [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what changed in each.
+
+Every container is read-only, holds no Linux capability it does not use,
+cannot gain a privilege, and has a ceiling on its memory and its processes;
+no password or token is in any container's environment, only in a file in
+`secrets/` mounted where the service reads it. See
+[What each container may use](#what-each-container-may-use).
 
 ### Three scripts
 
@@ -86,7 +104,7 @@ agent tag, no knowledge base.
 ./start.sh --review        # and the review interface, in a window of its own
 ./start.sh --desktop       # the Java desktop client instead of the web one
 ./start.sh --desktop --review   # the window, and the review page in a browser
-./start.sh --feedback      # keep verdicts, without the review interface
+./start.sh --feedback      # the same as --api since 6.3: verdicts are kept whenever it is up
 ./start.sh --load-golden   # load the golden question document into the stores first
 ./start.sh --console       # and the SQL console, in a window of its own
 ./start.sh --mlflow        # and MLflow, where every question is traced
@@ -94,14 +112,15 @@ agent tag, no knowledge base.
 ./start.sh --review --curate --console --mlflow   # all five pages, the last four in windows of their own
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
+./start.sh --no-auth       # no sign-in, this once: every page open to whoever reaches it
 ./start.sh --restart       # recreate the containers
 ./start.sh --quiet         # only print problems
 BROWSER=firefox ./start.sh # open it with something in particular
 ```
 
-`--review` is the whole feedback system in one command: the staging database
-that keeps verdicts, the service that promotes them into the golden question
-set, and a second page at <http://localhost:8081> in a browser window of its
+`--review` is the whole feedback system in one command: the service that
+promotes verdicts into the golden question set -- they are staged in the
+runtime stores, which start with the databases -- and a second page at <https://localhost:8081> in a browser window of its
 own. `open` and `xdg-open` cannot ask for a window -- they hand the browser a
 link and its settings pick a tab or a window -- so `start.sh` asks the
 default browser itself: Safari through AppleScript, which macOS lets a
@@ -119,7 +138,7 @@ Or in a browser -- see [The web interface](#the-web-interface):
 
 ```bash
 ./launch.sh --gui          # without the browser step
-open http://localhost:8080
+open https://localhost:8080
 ```
 
 Or with the feedback system, which keeps the verdicts people give in the web
@@ -143,7 +162,7 @@ verdict of each beside the rows; see [The SQL console](#the-sql-console):
 Or, to teach it this database's pieces -- how two tables join, what a phrase
 filters to, how a measure is calculated -- and to add or remove golden pairs,
 corrections and completions without going through the review queue, the
-curation interface, at <http://localhost:8083>; see
+curation interface, at <https://localhost:8083>; see
 [SQL snippets and curation](#sql-snippets-and-curation):
 
 ```bash
@@ -153,7 +172,7 @@ curation interface, at <http://localhost:8083>; see
 
 Or, to see what the agent did with a question -- each agent's span with what
 it read and what it wrote, and every model call inside it -- MLflow, at
-<http://localhost:5001>; see [Tracing](#tracing):
+<https://localhost:5001>; see [Tracing](#tracing):
 
 ```bash
 ./start.sh --mlflow        # opened for you, in a window of its own
@@ -175,7 +194,7 @@ started as a server instead of a command -- see
 
 ```bash
 ./launch.sh --api
-curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
 ```
 
 Setup and launch fail in different ways, which is why they are separate.
@@ -240,9 +259,9 @@ actually retrieve from the knowledge base:
 ==> Setup complete. Running now:
 
     nl2sql-postgres    the retail dataset
+    nl2sql-stores      feedback, corrections, completions and SQL snippets
     nl2sql-vectordb    the embedded knowledge base
     nl2sql-chunkdb     the golden pairs and their BM25 index
-    nl2sql-snippetsdb  the SQL snippets the generator is shown
 ```
 
 It takes a couple of minutes, mostly downloading, and is safe to re-run.
@@ -340,13 +359,14 @@ this checkout was developed against; on any other host every call goes to
 and `MODEL_ROUTING_ENABLED=false` makes it v5.1 outright.
 
 The design, and every place it departs from the source documents, is in
-[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_1.md)
-(arch4 plus the answer contract and the Completeness Reviewer, plus the human
-review of section 14);
-[`Multi-Agent_NL2SQL_arch5_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md)
-supersedes it with section 15, model routing; its status line predates the
-build, and [`agent/README.md`](agent/README.md#model-routing-arch52) says
-where the code departs from it and why.
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md):
+arch5.2 as built in 6.1.0 -- the answer contract, the Completeness Reviewer,
+human review and model routing, with each field of the shared state given
+its lifetime and the security blueprint made a verified table -- plus the
+console, taking a judgement back, tracing, snippets and curation, and the
+sign-in design (section 20) and 6.1's transport (section 21). The threat
+model and the deployment tiers the defaults implement are in
+[`SECURITY.md`](SECURITY.md).
 
 See [`agent/USAGE.md`](agent/USAGE.md) for how to launch it and ask questions,
 and [`agent/README.md`](agent/README.md) for how it works.
@@ -376,19 +396,28 @@ produce an answer at all.
 ### Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v5_6_1     # the agent, the REST API and the SQL console
-docker pull mcfaddja/nl2sql-gui:v5_6_1       # the web interface
-docker pull mcfaddja/nl2sql-review:v5_6_1    # the review service, and the snippet loader
-docker pull mcfaddja/nl2sql-review-gui:v5_6_1  # the review interface
-docker pull mcfaddja/nl2sql-curate-gui:v5_6_1  # the curation interface
-docker pull mcfaddja/nl2sql-console-gui:v5_6_1  # the SQL console's interface
-docker pull mcfaddja/nl2sql-mlflow:v5_6_1    # MLflow, where every question is traced
-docker pull mcfaddja/nl2sql-mlflowdb:v5_6_1  # the Postgres MLflow keeps traces in
+docker pull mcfaddja/nl2sql-agent:v6_3     # the agent, the REST API, the SQL console and dbprep
+docker pull mcfaddja/nl2sql-proxy:v6_3     # every page, and MLflow's front door
+docker pull mcfaddja/nl2sql-review:v6_3    # the review service, and the snippet loader
+docker pull mcfaddja/nl2sql-mlflow:v6_3    # MLflow, where every question is traced
+docker pull mcfaddja/nl2sql-mlflowdb:v6_3  # the Postgres MLflow keeps traces in
+docker pull mcfaddja/nl2sql-ldap:v6_3      # the directory
+docker pull mcfaddja/nl2sql-auth:v6_3      # sign-in
 ```
 
-The console has no image of its own: it is the agent's, started a third way.
-Nor does the snippet store: it is stock `pgvector/pgvector:pg18`, filled from
-the document by the loader in the review service's image -- which is why
+`nl2sql-proxy` is nginx with every page built into it -- the web interface,
+the review, curation and SQL console interfaces and the directory page --
+and MLflow's front door, which serves no page; `NL2SQL_PAGE` says which a
+container is ([`proxy/README.md`](proxy/README.md)). Until 6.3 each was an
+image of its own: `nl2sql-gui`, `nl2sql-review-gui`, `nl2sql-curate-gui`,
+`nl2sql-console-gui`, `nl2sql-directory-gui` and `nl2sql-mlflow-proxy`, six
+copies of one nginx and one start-up script to keep in step. Their
+published tags are still there, and still `6.2`'s.
+
+The console has no image of its own: it is the agent's, started a third way,
+and so is `dbprep`. Nor do the runtime stores: they are stock
+`pgvector/pgvector:pg18`, pinned by digest, the snippets filled from their
+document by the loader in the review service's image -- which is why
 `setup.sh` pins that image whenever retrieval is on.
 MLflow's two are thin: MLflow's own published server
 ([`docker/mlflow/Dockerfile`](docker/mlflow/Dockerfile)), pinned to the
@@ -398,27 +427,30 @@ and published with the release so that a release's images are one set.
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v5_6_1-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64` and the four siblings
 named in [The desktop client](#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
 building it when there is nothing to pull.
 
-`setup.sh` pulls the agent for you and pins it in `.env`. The GUI is opt-in,
-because most people ask questions from a terminal and an image for a
-container that is never started is a download nobody asked for:
+`setup.sh` pulls the agent for you and pins it in `.env`. Every page is one
+image, `nl2sql-proxy`, which `setup.sh` pins whenever anything will serve a
+page: the directory's, with sign-in on, which it is unless `--no-auth`; any
+page asked for; or MLflow's front door. With sign-in off and no page asked
+for, it is left out, because most people ask questions from a terminal and
+an image for a container that is never started is a download nobody asked
+for:
 
 ```bash
-./setup.sh --gui        # pulls and pins it too, so ./launch.sh --gui runs it
-./setup.sh              # leaves it out; ./launch.sh --gui builds it here
-./setup.sh --curate     # the same for the curation interface
-./setup.sh --console    # the same for the SQL console's interface
-./setup.sh --mlflow     # and for MLflow's server and store
+./setup.sh                    # sign-in is on, so the pages' image is pinned
+./setup.sh --no-auth          # leaves it out; ./launch.sh --gui builds it here
+./setup.sh --no-auth --gui    # pulls and pins it, so ./launch.sh --gui runs it
+./setup.sh --mlflow           # and MLflow's server and store
 ```
 
 Both work. The difference is that compose builds a service whose image is
-missing, so without the pin the first `./launch.sh --gui` spends a couple of
-minutes running `npm ci` inside a container.
+missing, so without the pin the first `./launch.sh --gui` spends several
+minutes running `npm ci` for every page inside a build.
 
 ### Upgrading an existing checkout
 
@@ -485,18 +517,35 @@ and `launch.sh` says so -- and no SQL console before `v5_3`, whose container
 then stops, saying the module is missing, which `launch.sh --console` passes
 on.
 
-Going to `v5_6` brings up one new container, `nl2sql-snippetsdb`, on a new
-empty volume. The first `launch.sh` finds its hash missing and loads
-[`context_questions/sql_snippets.md`](context_questions/sql_snippets.md) into
-it, in the review service's image; from then on it loads again only when the
-document changes -- a `git pull` that brings snippets, or a save in the
-curation interface.
+Going to `v6_3` moves three things, and the first `launch.sh` after the
+pull does all three:
 
-Going from `v5` to `v5_1` or later, the same two commands also bring up two new
-containers, `nl2sql-correctionsdb` and `nl2sql-completionsdb`, each on a new
-empty volume. The review service creates their schemas on its first start and
-widens the staging table to the new `corrected` state, so nothing is migrated
-by hand and every verdict already staged is still there, in its pane.
+* **The runtime stores are one server.** The feedback, corrections,
+  completions and snippet stores were four Postgres containers until 6.3;
+  they are four databases in `nl2sql-stores` now, on one port (5435, where
+  feedback's was). `setup.sh` and `launch.sh` stop the four old containers
+  -- cleanly, so what each holds is whole -- and remove them, keeping their
+  volumes; then the first `launch.sh` finds each old volume --
+  `nl2sql_feedbackdata`, `nl2sql_correctionsdata`, `nl2sql_completionsdata`
+  -- and moves what it holds into its database with the `storesmigrate`
+  service ([`docker/migrate_store.sh`](docker/migrate_store.sh)): the old
+  volume mounted read-only, dumped by a Postgres of its own, restored into a
+  database that has no tables yet, and marked as migrated so it is never
+  moved twice. It leaves the old volumes where they were and says how to
+  remove them once you are satisfied. The snippets are not moved: their
+  document is what they are loaded from, and they are loaded again.
+* **The passwords are files.** Every password and token moves out of `.env`
+  into `secrets/`, a file each, which compose mounts into only the services
+  that read it; `setup.sh` and `launch.sh` move the values a `.env` from
+  before holds, so nothing changes but where they are. `cat
+  secrets/ldap_admin_password` is the first sign-in's password now.
+* **The pages are one image.** `setup.sh` pins `nl2sql-proxy` in place of
+  the six it replaces; `start.sh` runs it again for that on its own.
+
+Going to `v5_6` brought up the snippet store and `v5_1` the corrections and
+completions stores, on new empty volumes; `v6_3`'s `nl2sql-stores` is where
+all three are now, and the review service still creates each schema on its
+first start, so nothing is migrated by hand.
 
 To publish new ones, build both architectures in the same step so the tags
 stay multi-arch, as every earlier tag is:
@@ -504,22 +553,28 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v5_6_1 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v6_3 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f gui/Dockerfile --push -t mcfaddja/nl2sql-gui:v5_6_1 .
+  -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v6_3 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v5_6_1 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v6_3 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/gui/Dockerfile --push -t mcfaddja/nl2sql-review-gui:v5_6_1 .
+  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v6_3 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f curate/Dockerfile --push -t mcfaddja/nl2sql-curate-gui:v5_6_1 .
+  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v6_3 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f console/Dockerfile --push -t mcfaddja/nl2sql-console-gui:v5_6_1 .
+  -f ldap/Dockerfile --push -t mcfaddja/nl2sql-ldap:v6_3 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v5_6_1 .
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v5_6_1 .
+  -f auth/Dockerfile --push -t mcfaddja/nl2sql-auth:v6_3 .
 ```
+
+Every base image those builds start from, and every stock image compose
+runs, is pinned by digest as well as by tag, so a build is of the bytes it
+was tested with rather than whatever a tag points at that day.
+[`tools/pin_images.py`](tools/pin_images.py) checks that nothing is
+unpinned -- `tests/security/test_pinned_images.py` runs it -- and, with
+`--update`, asks the registry for each tag's current digest and writes it
+in, which is how a base image is moved on purpose.
 
 The desktop client is published along a second axis as well. Every tag is
 multi-architecture like the ones above -- that is the machine the image
@@ -530,7 +585,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v5_6_1-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v6_3-$platform .
 done
 ```
 
@@ -547,10 +602,10 @@ version with its dots turned into underscores, truncated to however many
 components the tag carries: `v5_1_2` is exactly 5.1.2, `v5_1` is 5.1.x and
 `v5` is 5.x, and
 [`tests/docs/test_versions.py`](tests/docs/test_versions.py) holds the
-twenty-four places that say so to the same number.
+thirty places that say so to the same number.
 
 The database images are not in that list. `mcfaddja/nl2sql-retail-postgres`
-(`v1_1`) and the two RAG stores (`v3_2`) version independently, because their
+(`v1_2`) and the two RAG stores (`v3_2`) version independently, because their
 *content* changes independently of the code. All three are multi-arch, and
 [`tests/docker/test_published_images.py`](tests/docker/test_published_images.py)
 asks the registry so. The RAG stores used not to be: they are published by
@@ -566,8 +621,8 @@ way. A store that falls behind the document again is what
 `./start.sh --load-golden` catches up on start.
 
 The agent's version label comes from `AGENT_VERSION` in
-[`agent/Dockerfile`](agent/Dockerfile) and the GUI's from
-[`gui/package.json`](gui/package.json); tests pin both to
+[`agent/Dockerfile`](agent/Dockerfile) and the pages' from
+[`gui/package.json`](gui/package.json) and its siblings; tests pin both to
 `nl2sql_agent.__version__`, and pin the two published tags to each other, so
 none of them can drift. They are built from one checkout and only ever tested
 together, so "which GUI goes with which API" should not be a question anyone
@@ -580,7 +635,12 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v5_6_1` | A correction to `v5_6`: a claim the narrator cited only in its own sentence ("as shown in row 0, column ...") is cited by that address, so it survives the audit on the first pass rather than costing a rewrite, or the whole narrative when the rewrite failed too. The other images are `v5_6`'s under the new version. Pinned -- what `setup.sh` pulls. |
+| `v6_3` | The second review's phase 5. Every container is read-only, holds no capability it does not use, cannot gain a privilege, and has a ceiling on its memory and its processes. Every password and token is a file in `secrets/`, mounted into only the services that read it, and in no container's environment. Every page and MLflow's front door are one image, `nl2sql-proxy`, whose health check -- like every service's -- verifies the certificate it is answered with. The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`, and `launch.sh` moves a store from before into it. A one-shot, `dbprep`, prepares every database in Python, over each database's own socket, so neither script runs SQL. Each service's database role has a statement timeout, a memory ceiling and a connection limit; every base image is pinned by digest. Twelve tags where `v6_2` had seventeen. Pinned -- what `setup.sh` pulls. |
+| `v6_2` | The second review's phases 3 and 4. A session can be ended: signing out, a password changed or set, an account locked or removed ends the sessions it should for every service within a minute, from lists only the auth service writes. A service token is somebody -- named, recorded as `token:<name>`, holding only the roles it is given -- and a header never names who did something. Nothing runs as root but the one-shot `pki`: each service runs as an account of its own, each key is that account's, and the review service writes the checkout's documents as the person who owns them, loading the stores in its own process under a lock. Every route is on a router that carries its guard; a failure's own words are an administrator's; a person's name is in the transaction's `application_name`; the sign-in throttle believes only the page proxies' `X-Forwarded-For`; fix ids come from sequences; an administrator can make the agent read its catalogs again. What the services share is one installed package, `common/`, and what the pages share one source package, `web/`; every Python image installs a hash-checked lock. Pinned. |
+| `v6_1` | Hardening, from the second adversarial review (`v6_1_review`). The databases answer on this machine only unless `DB_BIND_ADDRESS` says otherwise, and `setup.sh` generates every store's password; the retail database is `v1_2`, with no password baked in, TLS on, and sign-in accepted only over TLS, verified by the auth service. Every service has its own certificate, issued by a development CA that a new one-shot service, `pki`, keeps; a client trusts `nl2sql-ca.crt` once. Sign-in is on in the code as well as in compose, CORS is closed until opened, the job queue is bounded and answers 429, `EXPLAIN` is time-boxed, tokens are scrubbed from the access log, and the directory's API answers on its own port, behind its page. A repair starts from a clean attempt, a narrator or supervisor that fails says so in `node_errors`, every wire model refuses a field it does not know, and each trace entry carries its model, rung, route and hops. `SECURITY.md` is the threat model; `Multi-Agent_NL2SQL_arch6.md` the architecture as built. Pinned. |
+| `v6_0_1` | A correction to `v6_0`, found by running the published stack under compose. The directory starts as root just long enough to take its certificate's volume -- which compose creates owned by root when the auth service's container is made after the directory's -- and then runs as `ldap`; under `v6_0` it could not write its certificate, restarted for ever, and nobody could sign in. The sign-in throttle lets an address fail fifty times rather than five, since everyone behind one proxy or one machine's NAT is one address. The desktop client offers to sign in when `/v1/meta` asks who it is, instead of saying it is not connected. The other images are `v6_0`'s under the new version. Pinned. |
+| `v6_0` | Sign-in, on by default. A person signs in with the password a directory holds, which the retail database checks itself, and the groups they are in decide what they may open; what they ask or run, runs as their own database role. Four new images: `nl2sql-ldap`, the directory -- standalone, or a read-only replica of Active Directory or any LDAP server -- `nl2sql-auth`, which signs people in and keeps the database's roles in step with the directory, `nl2sql-directory-gui`, its page, and `nl2sql-mlflow-proxy`, MLflow's front door. Every interface is HTTPS and asks who you are; the desktop client signs in too. `--no-auth` turns it off. Pinned. |
+| `v5_6_1` | A correction to `v5_6`: a claim the narrator cited only in its own sentence ("as shown in row 0, column ...") is cited by that address, so it survives the audit on the first pass rather than costing a rewrite, or the whole narrative when the rewrite failed too. The other images are `v5_6`'s under the new version. Pinned. |
 | `v5_6` | SQL snippets: a fifth retriever shows the SQL Generator verified joins, filters, measures and dimensions whose meaning matches the question and whose tables are in scope, from a store loaded out of `context_questions/sql_snippets.md`. A new image, `nl2sql-curate-gui`, is the curation interface: snippets, golden pairs, corrections and completions written or removed directly, each run against the retail database first. The review service carries the snippet loader and the curation routes, and runs a golden pair's SQL before promoting it. The audit no longer drops a correct claim whose sentence named the cell it came from. Pinned. |
 | `v5_5_1` | A correction to `v5_5`. The golden set is no longer capped at `Q99`: a pair id is `Q` and two or more digits, so the hundredth promotion is `Q100`, and the review service's `/v1/meta` no longer reports the `max_pair_number` that described the cap. The agent's `--help` gives each retrieval switch's real default (it said `--multi-shot` was off). `start.sh` keeps an agent tag chosen with `setup.sh --agent-tag` rather than re-pinning it. The web interface, the SQL console's interface, the desktop client and MLflow's two are `v5_5`'s under the new version. Pinned. |
 | `v5_5` | The agent traces every question into MLflow -- one trace per question, a span per agent with what it read and wrote, and every model call inside it with its messages, its answer and the route that chose it -- when `MLFLOW_TRACKING_URI` names a server that answers; `--mlflow` starts one. A verdict given on an answer is recorded on its trace, and the benchmark files each configuration as an MLflow run. MLflow's server and store are published with the release from here on, as `nl2sql-mlflow` and `nl2sql-mlflowdb`. Of the rest only the agent image changed; the others are `v5_4`'s under a new version. Pinned. |
@@ -642,6 +702,148 @@ docker pull mcfaddja/nl2sql-rag-chunkdb:v3_2     # context store: golden pairs +
 | `nl2sql-rag-vectordb:v3`, `nl2sql-rag-chunkdb:v3` | The same contents as `v3_1`, arm64 only. Pinned, and superseded by `v3_1` |
 | `nl2sql-rag-vectordb:v1` | Knowledge collections only -- what v2 searches |
 
+## Sign-in
+
+```bash
+./start.sh                       # sign-in is on: every page asks who you are
+cat secrets/ldap_admin_password  # the first person, admin
+open https://localhost:8084      # add everyone else
+```
+
+Who may use what is decided by the retail database and a directory beside
+it. A person signs in with the user name and password the directory holds;
+**Postgres checks that password itself** -- pg_hba's `ldap` method, which
+the `dbprep` one-shot writes on every start -- and the groups they are in become the database roles
+they hold. Every page, the desktop client, the REST API, the SQL console,
+the review service and MLflow then believe the session that sign-in issued,
+and what a person asks or runs, runs as their own database role.
+
+| Group | Lets in |
+|---|---|
+| `nl2sql-users` | the web interface, the desktop client, the API |
+| `nl2sql-reviewers` | the review interface, the SQL console, MLflow |
+| `nl2sql-curators` | the curation interface, the SQL console |
+| `nl2sql-admins` | the directory page, MLflow |
+
+Everyone in a group can ask questions. Three containers make it work, all
+started with the API:
+
+| Container | Port | |
+|---|---|---|
+| `nl2sql-ldap` | none | the directory: OpenLDAP, **standalone** -- people loaded from a file on its first start and edited on the directory page -- or a **read-only replica** of another directory, Active Directory or any LDAP server, copied on an interval with every password passed through to it. See [`ldap/README.md`](ldap/README.md) |
+| `nl2sql-auth` | 8446 | signs people in, issues the session, keeps the database's roles in step with the directory, and answers the directory page and MLflow's front door. See [`auth/README.md`](auth/README.md) |
+| `nl2sql-directory-gui` | 8084 | the directory page, for `nl2sql-admins`; standalone only |
+
+Every page is HTTPS, so a password is never typed into a page served in
+clear, and since 6.1 every server has a certificate of its own: a one-shot
+container, `nl2sql-pki`, keeps a development CA for the stack and issues
+each one a key that no other container holds. A browser warns until this
+machine is told to trust that CA, once, for every page --
+`docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt
+./nl2sql-ca.crt`, then add it to the system's trust store (Keychain Access
+on macOS, `update-ca-certificates` on Debian and Ubuntu) -- or until real
+certificates are mounted. `TLS_EXTRA_HOSTNAMES` adds this machine's name to
+every certificate, for a browser elsewhere. Behind something that terminates
+TLS itself, `GUI_TLS_ENABLED=false` makes every page plain again; the
+terminator must send `X-Forwarded-Proto: https`, which the pages pass on so
+the session cookie stays `Secure`.
+
+A person's password reaches the database only over TLS: the retail
+database serves TLS and refuses everything over the network without it,
+and the auth service verifies its certificate (`verify-full`). The
+directory's own API -- the routes that make people -- answers on the auth
+service's port 8447, which is not published: only the directory page
+reaches it. [`SECURITY.md`](SECURITY.md) says what each of these protects,
+from whom, and what is still open.
+
+Off with `--no-auth` for one run of `start.sh` or `launch.sh`, or
+`./setup.sh --no-auth` -- `AUTH_ENABLED=false` in `.env` -- for good: no
+directory, no auth service, and every page and port as it was before, open
+to whoever can reach it unless a static token is set.
+
+The directory GUI: 61 tests, at 100% of statements, branches, functions and
+lines.
+
+## What each container may use
+
+Since 6.3 every service in [`docker-compose.yml`](docker-compose.yml) starts
+from one block, `x-hardened`: its filesystem is **read-only** but for a
+`/tmp` in memory and the volumes it is given; it **drops every Linux
+capability**; and it **cannot gain a privilege** (`no-new-privileges`), so
+nothing it runs -- a setuid binary included -- can become more than the
+account it started as. Each has a ceiling on its memory and its processes,
+so one that runs away is stopped by Docker before it takes the machine with
+it:
+
+| Container | Memory | Processes | Capabilities given back |
+|---|---|---|---|
+| `nl2sql-postgres` | 2 GB | 512 | the five a Postgres entrypoint needs to hand its volume to `postgres` and drop to it: `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETGID`, `SETUID` |
+| `nl2sql-stores` | 1 GB | 512 | the same five |
+| `nl2sql-vectordb`, `nl2sql-mlflowdb` | 1 GB | 256 | the same five |
+| `nl2sql-chunkdb` | 512 MB | 256 | the same five |
+| `api`, `agent` | 2 GB | 512 | none |
+| `nl2sql-review` | 2 GB | 256 | `SETUID`, `SETGID`: it writes the checkout's documents as the person who owns them |
+| `nl2sql-console` | 1 GB | 256 | none |
+| `nl2sql-mlflow` | 3 GB | 512 | the five, to take its volume and drop |
+| `nl2sql-ldap` | 1.5 GB | 128 | the five; and a second in-memory directory, where `slapd` keeps its socket |
+| `nl2sql-auth` | 512 MB | 128 | the five |
+| every page, MLflow's front door, `apitest` | 128 MB | 64 | none |
+| `pki` | 256 MB | 64 | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`: the one service that runs as root, to give each key to the account that reads it |
+| `dbprep` | 256 MB | 64 | none: it runs as the agent image's account, 10001 |
+| `storesmigrate` | 1 GB | 128 | none: it runs as the stores' `postgres` account, 999 |
+| `desktop` | 256 MB | 64 | `SETUID`, `SETGID` |
+
+`tests/security/test_posture.py` holds every service to the block, and to
+giving back nothing beyond those five; the acceptance tier checks, in the
+running stack, that no process in any container is root and that no
+container can write its own image.
+
+**No password or token is in a container's environment.** Each is a file in
+`secrets/`, which `setup.sh` generates -- the directory `0700`, so only you
+can list it -- and compose mounts at `/run/secrets/<name>` in only the
+services that read it; each service reads `<NAME>_FILE`, and builds the URL
+it connects with from the file. `docker inspect` shows a container's
+environment to anyone who can run it, and it now shows no secret:
+
+| File | What |
+|---|---|
+| `ldap_admin_password` | the first person's, `admin` |
+| `ldap_service_password`, `auth_rolesync_password` | the auth service's, in the directory and in the retail database |
+| `postgres_password`, `postgres_reader_password` | the retail database's owner, and the agent's reader |
+| `context_db_password`, `vector_db_password` | the two RAG stores |
+| `stores_db_password` | the runtime stores' superuser, which only `dbprep` uses, over its socket |
+| `feedback_db_password`, `feedback_writer_password`, `corrections_db_password`, `completions_db_password`, `snippets_db_password`, `snippets_reader_password` | each runtime store's owner, and the API's and the agent's roles in them |
+| `mlflow_db_password` | MLflow's store |
+| `api_token`, `review_token`, `console_token` | the service tokens, empty unless `setup.sh --tokens` made them |
+| `ldap_upstream_bind_password` | a replica directory's bind password, empty for a standalone one |
+
+**No database's superuser is reachable over the network.** Each Postgres
+container's socket is a volume of its own, shared with nobody but the
+`dbprep` one-shot (and, for the runtime stores, `storesmigrate`): over its
+own socket Postgres trusts whoever connects, so holding that volume is
+holding the database. `dbprep` -- `python -m nl2sql_ops prepare`, in the
+agent's image -- runs before anything else on every start: it makes the
+roles and extensions each database needs, sets each login's password from
+its file, and writes the retail database's sign-in rules into `pg_hba.conf`,
+so neither `setup.sh` nor `launch.sh` runs SQL of its own.
+
+**Every role a service connects as has a ceiling** (V6-39): how long a
+statement may run, how much memory a sort may take, how long a transaction
+may sit idle, and how many connections the role may hold at once.
+
+| Role | Statement | `work_mem` | Idle in a transaction | Connections |
+|---|---|---|---|---|
+| `nl2sql_reader`, the agent's | 2 min | 16 MB | 1 min | 60 |
+| a person's own, made by the auth service | `AUTH_USER_STATEMENT_TIMEOUT_MS`, 1 min | 16 MB | 1 min | `AUTH_USER_CONNECTION_LIMIT`, 5 |
+| `nl2sql_rolesync`, the auth service's | 1 min | 4 MB | 1 min | 10 |
+| `snippets_reader`, the agent's in the snippet store | 30 s | 16 MB | 1 min | 30 |
+| `nl2sql_feedback_writer`, the API's | 10 s | 4 MB | 30 s | 20 |
+| each runtime store's owner | -- | 16 MB | -- | 20 |
+
+They are applied where each role is made -- by `dbprep`, by the snippet
+loader, by the review service and by the auth service --
+from one place, [`common/nl2sql_common/roles.py`](common/nl2sql_common/roles.py).
+
 ## The web interface
 
 ```bash
@@ -682,15 +884,20 @@ answer, shown back in the answer and in the session list. The third is for an
 answer whose SQL was right and which still left out something a reader
 needed -- a name beside an id, the figure a ranking was ranked by -- because
 that calls for fleshing out rather than correcting, and a plain "no" cannot
-say which. With the staging database up (`--feedback` or
-`--review`) the verdict is also sent to the API and waits to be reviewed; on
-a server without one it is kept in the browser and says so, because a button
+say which. Once the review service has started once (`--review` or
+`--curate`), making the staging table, the verdict is also sent to the API
+and waits to be reviewed; on a server without one it is kept in the browser
+and says so, because a button
 whose every click fails is worse than no button. See [Feedback](#feedback).
 
-The container also holds the API token and verifies the API's certificate, so
-the browser sees neither. That is not a requirement of the API -- it answers
-a browser directly when `API_CORS_ORIGINS` names the origin -- but a
-self-signed certificate blocks `EventSource` with no warning to click, and
+The container verifies the API's certificate against the stack's CA, so the
+browser never has to,
+and with sign-in off it holds the API token as well; with sign-in on, the
+session the page signed in with is what reaches the API, and no token is
+added. Neither is a requirement of the API -- it answers
+a browser directly when `API_CORS_ORIGINS` names the origin (none does by
+default) -- but an untrusted certificate blocks `EventSource` with no
+warning to click, and
 [`gui/README.md`](gui/README.md) explains the three problems one same-origin
 hop removes.
 
@@ -743,10 +950,11 @@ service with one token.
 browser never does here. The web interface is served by the nginx that
 proxies the API, so it talks to its own origin and the proxy holds both the
 token and the trust decision. This one opens the connection itself, so
-`./launch.sh --desktop` copies the API's certificate out and the client is
-run with `--cacert`. `--fingerprint` and `--insecure` are the other two
-answers, and the status bar says which of them is in force for as long as it
-is true.
+`./launch.sh --desktop` copies the stack's CA certificate out and the client
+is run with `--cacert`, which covers the API and the sign-in service alike.
+`--fingerprint` -- both servers', comma-separated -- and `--insecure` are
+the other two answers, and the status bar says which of them is in force
+for as long as it is true.
 
 **Docker fetches it; Java runs it.** Nothing runs a desktop application in a
 container, so what the `desktop` image does is *carry* a jar -- and that keeps
@@ -770,8 +978,8 @@ container, so `launch.sh` reads `uname`, pulls the tag for what it finds, and
 builds locally only when there is nothing to pull:
 
 ```bash
-./launch.sh --desktop        # fetch it and copy the certificate out
-java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+./launch.sh --desktop        # fetch it and copy the CA certificate out
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 ```
 
 One jar is one platform. The same native library file names are used on macOS
@@ -781,11 +989,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v5_6_1-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v5_6_1-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v5_6_1-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_6_1-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v5_6_1-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v6_3-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v6_3-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v6_3-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v6_3-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.
@@ -799,22 +1007,26 @@ right. This is where those answers go.
 ./start.sh --review
 ```
 
-That is the whole thing: databases, the API, the web interface, the staging
-database, the corrections and completions stores, the review service and the
-review interface -- and both pages opened in your browser, the review page in
-a window of its own. [`./launch.sh --review`](launch.sh) is the same
-containers without the browser step.
+That is the whole thing: databases, the API, the web interface, the review
+service and the review interface -- and both pages opened in your browser,
+the review page in a window of its own. [`./launch.sh --review`](launch.sh)
+is the same containers without the browser step. Where a verdict is staged,
+and where the fixes go, are three of the four runtime stores in
+`nl2sql-stores`, which start with the databases.
 
-Without it, a verdict stays in the browser and nothing is lost -- the buttons
-still work, the verdict is still shown, and `/v1/meta` tells the page not to
-claim it was sent anywhere. With it, a verdict is staged and reviewed, and
-where it goes depends on what it said:
+The review service makes the staging table, and the API's role for writing
+to it, on its first start; until it has run once, a verdict stays in the
+browser and nothing is lost -- the buttons still work, the verdict is still
+shown, and `/v1/meta` tells the page not to claim it was sent anywhere. From
+then on every verdict is staged whenever the API is up, and waits for a
+reviewer; `API_FEEDBACK_DB_URL` set empty keeps them in the browser. Where a
+reviewed verdict goes depends on what it said:
 
 | Verdict | Review pane | Where it ends up |
 |---|---|---|
 | **Correct** | Correct → golden set | Promoted into the golden question set, as before |
-| **Wrong** | Wrong → corrections | A corrected query, validated against the live database, in `nl2sql-correctionsdb` |
-| **Correct but incomplete** | Correct but incomplete → completions | A completed query, validated the same way, in `nl2sql-completionsdb` |
+| **Wrong** | Wrong → corrections | A corrected query, validated against the live database, in the corrections store |
+| **Correct but incomplete** | Correct but incomplete → completions | A completed query, validated the same way, in the completions store |
 
 ### Why bother
 
@@ -834,7 +1046,7 @@ against.
 | | |
 |---|---|
 | **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
-| **Staged** | In `nl2sql-feedbackdb`, its own Postgres, in its own volume. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
+| **Staged** | In the feedback store, a database of its own in `nl2sql-stores`. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
 | **Reviewed** | In a second web interface, one pane per verdict: what was asked, what the agent answered and the SQL it wrote, what the user thought -- and beside it a form for building a golden pair, or an editor for the query that should have been generated |
 | **Promoted** *(correct)* | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
 | **Fixed** *(wrong, incomplete)* | The reviewer's query is run against the live retail database, read-only, as the agent's own role; only one that runs can be saved. The question, the incorrect answer and the corrected query go into that verdict's own store, with an embedding of the question beside them for retrieval |
@@ -890,9 +1102,9 @@ is a verdict with no fix in it. Since 5.6 a promotion is held to the same
 rule: the pair's SQL is run before anything is written, and it must return
 rows.
 
-Corrections and completions each get their own Postgres -- records and RAG
-side by side, on ports 5436 and 5437 -- because they are different lessons,
-and neither is a golden pair. The curation interface writes
+Corrections and completions each get a database of their own -- records and
+RAG side by side -- because they are different lessons, and neither is a
+golden pair. The curation interface writes
 them directly too, without a submission. Nothing reads them yet; they are what a later
 agent will retrieve from ("a question like this one was answered wrongly
 before, and this is what fixed it"), and a later version adds an agent to
@@ -904,8 +1116,11 @@ The internet-facing process can add a verdict and nothing else. It connects
 to the staging database as a role that cannot read a submission back, cannot
 change a review, and cannot see any row a curator has already judged -- by a
 row-level security policy, not by the SQL in the API being careful. The
-powers that matter belong to a separate service, on a separate port, behind a
-separate token, and it is the only client of the two fix stores.
+powers that matter belong to a separate service, on a separate port, and it
+is the only client of the two fix stores. With sign-in on, only
+`nl2sql-reviewers` work its queue and only `nl2sql-curators` write to it
+directly, each under their own name and with the SQL they validate run as
+their own database role; with it off, it is behind a token of its own.
 
 [`review/README.md`](review/README.md) has the whole of it.
 
@@ -969,7 +1184,7 @@ p.is_private_label
 ````
 
 **How the agent uses them.** The document is loaded into a store of its own,
-`nl2sql-snippetsdb`, by [`rag/07_load_snippets.py`](rag/07_load_snippets.py):
+the snippets database in `nl2sql-stores`, by [`rag/07_load_snippets.py`](rag/07_load_snippets.py):
 the rows, a keyword matcher, and an embedding of what each snippet means.
 The agent reads it through a role that can only `SELECT`. A fifth Stage 1
 retriever finds each question's snippets on two signals. A keyword phrase
@@ -991,7 +1206,7 @@ recorded and loads again when they differ, so a snippet arrives with a
 and is retried on the next start, and the keyword half answers meanwhile.
 
 **The curation interface** is where they are written, at
-<http://localhost:8083> -- a fourth web page, in front of the review service
+<https://localhost:8083> -- a fourth web page, in front of the review service
 like the review interface, with three tabs:
 
 | Tab | What it writes |
@@ -1008,14 +1223,25 @@ pair's SQL must also return rows, because in the golden set an empty result
 reads as a failure, and since 5.6 a promotion out of the review queue is held
 to the same rule. A snippet's SQL must use the tables it says it does.
 
-The store reads these from `.env`, like the rest of the stack:
+The runtime stores read these from `.env`, like the rest of the stack -- the
+four of them one server since 6.3, each a database with an owner of its own:
 
 | Setting | Default | |
 |---|---|---|
-| `SNIPPETS_DB_PORT` | `5438` | The host port of the snippet store |
-| `SNIPPETS_DB_USER`, `SNIPPETS_DB_PASSWORD`, `SNIPPETS_DB_NAME` | `snippets`, `snippets`, `nl2sql_snippets` | The store's owner and database: what the store is created with, and what the review service loads it as |
-| `SNIPPETS_READER_USER`, `SNIPPETS_READER_PASSWORD` | `snippets_reader` | The read-only role the loader creates and the agent reads as |
-| `SNIPPETS_IMAGE` | `pgvector/pgvector:pg18` | The store's image: stock pgvector, since what it holds comes from the document |
+| `STORES_DB_PORT` | `5435` | The host port of the runtime stores: all four, where the feedback store's was |
+| `DB_BIND_ADDRESS` | `127.0.0.1` | The address that port is published on -- this machine's, as for every store (6.1) |
+| `SNIPPETS_DB_USER`, `SNIPPETS_DB_NAME` | `snippets`, `nl2sql_snippets` | The snippets' owner and database: what the `dbprep` one-shot creates, and what the review service loads it as. Its password is `secrets/snippets_db_password` |
+| `SNIPPETS_READER_USER` | `snippets_reader` | The read-only role the loader creates and the agent reads as; its password is `secrets/snippets_reader_password` |
+| `FEEDBACK_DB_USER`, `FEEDBACK_DB_NAME` | `feedback`, `nl2sql_feedback` | The staging database and its owner, the review service; `secrets/feedback_db_password`. The API writes as `nl2sql_feedback_writer`, `secrets/feedback_writer_password` |
+| `CORRECTIONS_DB_USER`, `CORRECTIONS_DB_NAME` | `corrections`, `nl2sql_corrections` | The corrections store and its owner; `secrets/corrections_db_password` |
+| `COMPLETIONS_DB_USER`, `COMPLETIONS_DB_NAME` | `completions`, `nl2sql_completions` | The completions store and its owner; `secrets/completions_db_password` |
+| `STORES_IMAGE` | `pgvector/pgvector:pg18`, pinned by digest | The server's image: stock pgvector, since what it holds comes from people and documents, not a build |
+
+No owner is a superuser: each owns its database and nothing else, and the
+server's own superuser (`secrets/stores_db_password`) is reached only over
+its socket, by `dbprep`. Before 6.3 these were four servers, on ports 5435
+to 5438; see [Upgrading an existing checkout](#upgrading-an-existing-checkout)
+for what moves a store from then.
 
 Snippets and golden pairs are written into the documents in this checkout, so
 they show up in `git diff` and are committed by a person. Fixes are rows in
@@ -1034,7 +1260,7 @@ are about the database it read and the gates in front of it -- would the
 validator have passed this query, what did the planner estimate, did it
 finish inside the timeout, what do the rows actually say -- and each has an
 exact answer that only running SQL can give. The SQL console is where that
-SQL is run, at <http://localhost:8082>, as the agent would run it: as
+SQL is run, at <https://localhost:8082>, as the agent would run it: as
 `nl2sql_reader`, inside a read-only transaction, under the agent's statement
 timeout, through the agent's own static validator and planner gate.
 
@@ -1074,7 +1300,7 @@ otherwise, and the database refuses what the validator does not catch:
 
 The agent's own trace -- the list of nodes, their timings and the model each
 call went to -- says *what* happened to a question. MLflow, at
-<http://localhost:5001>, shows *why*: every question is a trace, every agent
+<https://localhost:5001>, shows *why*: every question is a trace, every agent
 in it a span holding the part of the state it read and the part it wrote
 back, and every model call inside its agent a span of its own, with the
 messages it was sent, the answer it gave, the tokens that cost (where the
@@ -1129,20 +1355,43 @@ API. `MLFLOW_TRACKING_URI=` (empty) turns tracing off outright, and survives
 `setup.sh` being run again. The server is MLflow's own image, pinned to the
 version of the tracing client in the agent image and published with the
 release (`nl2sql-mlflow`), with a Postgres of its own behind it
-(`nl2sql-mlflowdb`, whose port is not published). Its interface has no login and
-shows the rows every question returned, so it is published on this machine
-only unless `MLFLOW_BIND_ADDRESS` says otherwise, and `launch.sh` warns when
-it does.
+(`nl2sql-mlflowdb`, whose port is not published).
 
-The server and its store read these from `.env`, like the rest of the stack:
+**It has a front door.** MLflow's interface has no login of its own and shows
+the rows every question returned, so the server publishes nothing: a browser
+-- and the benchmark -- reach it through `nl2sql-mlflow-proxy`, the proxy
+image's `mlflow` page, nginx over HTTPS with a certificate of its own, which asks the auth service about every
+request. Someone not signed in is sent to sign in; someone signed in who is
+not in `nl2sql-reviewers` or `nl2sql-admins` (`MLFLOW_ALLOWED_ROLES`) is
+turned away; an MLflow client signs in with `MLFLOW_TRACKING_USERNAME` and
+`MLFLOW_TRACKING_PASSWORD`. The agent traces to the server directly, on the
+stack's own network. It is published on this machine only unless
+`MLFLOW_BIND_ADDRESS` says otherwise; with sign-in off `launch.sh` warns
+when it is. See [Sign-in](#sign-in).
+
+The server, its store and its front door read these from `.env`, like the
+rest of the stack:
 
 | Setting | Default | |
 |---|---|---|
-| `MLFLOW_PORT` | `5001` | The host port of its interface and API. Not 5000, which macOS keeps for AirPlay |
+| `MLFLOW_PORT` | `5001` | The host port of its interface and API, through the front door. Not 5000, which macOS keeps for AirPlay |
 | `MLFLOW_BIND_ADDRESS` | `127.0.0.1` | The address that port is published on |
+| `MLFLOW_PROXY_PORT` | `5001` | The port the front door listens on inside its container |
+| `MLFLOW_PROXY_UPSTREAM` | `http://nl2sql-mlflow:5000` | The server, on the stack's network. An `https://` one is verified against `MLFLOW_PROXY_CACERT`, as `MLFLOW_PROXY_SSL_NAME` |
+| `MLFLOW_PROXY_SSL_NAME` | `nl2sql-mlflow` | Read only for an `https://` upstream |
+| `MLFLOW_PROXY_CACERT` | `/etc/nl2sql/tls/ca.crt` | Read only for an `https://` upstream |
+| `MLFLOW_PROXY_READ_TIMEOUT` | `300s` | How long a request may take, through it |
+| `MLFLOW_PROXY_RESOLVER` | `127.0.0.11` | Docker's DNS, for the per-request lookup |
+| `AUTH_ENABLED` | `true` | Ask the auth service about every request. Off, the front door lets anyone through |
+| `GUI_AUTH_UPSTREAM` | `https://nl2sql-auth:8446` | The auth service, as every interface reaches it |
+| `GUI_AUTH_SSL_NAME` | `nl2sql-auth` | |
+| `GUI_AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` | The stack's CA, which the pki service puts beside every page's own certificate |
+| `GUI_TLS_ENABLED` | `true` | HTTPS, with the front door's own certificate, as every interface is |
+| `GUI_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | |
+| `GUI_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | |
 | `MLFLOW_WORKERS` | `2` | The server's worker processes |
 | `MLFLOW_ALLOWED_HOSTS` | MLflow's own list, plus `nl2sql-mlflow` and `mlflow` | The `Host` headers it answers, against DNS rebinding. Setting it replaces the whole list, as MLflow's own flag does, so keep `nl2sql-mlflow:*` in it or the agent is turned away |
-| `MLFLOW_DB_USER`, `MLFLOW_DB_PASSWORD`, `MLFLOW_DB_NAME` | `mlflow` | The store's role, password and database, each one setting that both containers read |
+| `MLFLOW_DB_USER`, `MLFLOW_DB_NAME` | `mlflow` | The store's role and database, each one setting that both containers read. Its password is `secrets/mlflow_db_password`, from which the server's entrypoint builds the store's URL -- no URL with a password in it is on its command line or in its environment (6.3) |
 
 [`agent/README.md`](agent/README.md#tracing-mlflow) has the agent's two
 settings and the reasons.
@@ -1158,10 +1407,10 @@ rather than written by hand.
 
 ```bash
 ./launch.sh --api
-docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
 
-curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
-curl --cacert ./nl2sql-api.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
+curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-ca.crt -X POST 'https://localhost:8443/v1/questions?wait=180' \
      -H 'Content-Type: application/json' \
      -d '{"question": "How many stores are there?"}'
 ```
@@ -1183,17 +1432,23 @@ own nodes as they happen -- screening, schema, literals, SQL, the plan gate,
 execution, the narrator, the audit -- and it resumes from `Last-Event-ID`
 after a dropped connection.
 
-**TLS is on by default.** The container has no certificate to be given, so on
-first start it writes itself a self-signed one covering `localhost` and the
-compose service name, and keeps it in a volume so a restart presents the same
-certificate. That is a development convenience, and
-`API_TLS_ALLOW_SELF_SIGNED=false` takes it away: the server then refuses to
-start behind a self-signed certificate at all -- it will not generate one and
-will not load one it finds -- so a deployment meant to have a real chain fails
-at startup instead of quietly serving the throwaway one.
+**TLS is on by default.** Under compose the API's certificate is its own,
+issued by the stack's development CA before it starts (the `pki` service),
+and kept in a volume so a restart presents the same one; started on its
+own, the server writes itself a self-signed one instead. Either is a
+development convenience, and `API_TLS_ALLOW_SELF_SIGNED=false` takes both
+away: the server then refuses to start behind a development certificate at
+all -- self-signed or issued by the stack's CA -- so a deployment meant to
+have a real chain fails at startup instead of quietly serving the throwaway
+one.
 
-Set `API_TOKEN` to require a bearer token, and `API_CORS_ORIGINS` to the
-GUI's origin when a browser calls it directly.
+Sign-in is on by default, in the server's own settings as well as in
+compose. `API_TOKEN` adds a service token for scripts (`setup.sh --tokens`
+generates one); `API_CORS_ORIGINS` names a browser origin allowed to call
+the API directly, and none is by default. At most `API_MAX_QUEUED` questions
+wait behind those running and a signed-in person has at most
+`API_MAX_PER_PERSON` in the air; past either, `POST /v1/questions` is `429`
+with a `Retry-After`.
 
 To try the whole thing from outside, with no Python and no shared code:
 
@@ -1349,6 +1604,20 @@ the nodes it drew in the SVG, which is what lets
 the pictures against `graph.py` and fail when a node is renamed. Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
+The adversarial reviews in [`adversary_reviews/`](adversary_reviews) are
+illustrated the same way:
+[`adversary_reviews/diagrams/generate.py`](adversary_reviews/diagrams/generate.py)
+writes their nineteen figures as draw.io files -- ten for the first cycle
+(`v6_x_review`, at 5.6.1) and nine for the second (`v6_2_review`, at 6.0.1),
+a first-cycle figure never edited for the second -- draw.io's own command
+line exports the SVG and PNG beside each (the commands are in the script's
+docstring), and
+[`tests/docs/test_review_diagrams.py`](tests/docs/test_review_diagrams.py)
+holds the committed files to the script, the exports to the files, the
+`_enhanced` editions of the reviews to the originals they add figures to,
+and the second cycle's comparison document to the finding ids both cycles
+use.
+
 ## Model catalog
 
 [`models/`](models) holds the list arch5.2's model router routes from: every
@@ -1405,8 +1674,22 @@ docker compose up -d --build     # build it yourself: generates, loads, starts (
 docker compose up -d             # afterwards: just starts, nothing regenerated
 ```
 
-Connect with `psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail`
-(the `postgres` superuser has the same password).
+It serves **TLS only** over the network, with a certificate it writes
+itself on first start, and has **no password baked in** (`v1_2`): its
+entrypoint sets the owner's from `secrets/postgres_password` on every start,
+and the `dbprep` one-shot the reader's from `secrets/postgres_reader_password`
+-- `setup.sh` generates both -- and the `postgres` superuser has none at all,
+so it is reached only over the database's own socket: by `dbprep`, or with
+`docker compose exec postgres psql -U postgres`. Its port is this
+machine's unless `DB_BIND_ADDRESS` says otherwise. Connect as the owner with
+
+```bash
+psql "postgresql://nl2sql@localhost:5432/nl2sql_retail?sslmode=require"   # the password in secrets/postgres_password
+```
+
+and see [`USAGE_GUIDE.md`](USAGE_GUIDE.md#connecting-to-the-retail-database-directly)
+for verifying its certificate (`sslmode=verify-full`) and for a person
+signing in with their own directory password.
 
 ### Roles
 
@@ -1442,10 +1725,12 @@ own role:
 
 The superuser keeps both, and nothing that reads the dataset needs either.
 
-The image build creates the role, and so do `setup.sh` and `launch.sh` on every
-start, because a volume created from an older image keeps the roles it had.
-The file is idempotent, so running it again is always safe. If you run the
-container by hand, do the same once:
+The image build creates the role, and so does the `dbprep` one-shot that
+`setup.sh` and `launch.sh` run on every start, because a volume created from
+an older image keeps the roles it had: the same statements, from Python
+([`common/nl2sql_ops/retail.py`](common/nl2sql_ops/retail.py)), so neither
+script runs SQL of its own (6.3). Both are idempotent, so running either
+again is always safe. If you run the container by hand, do the same once:
 
 ```bash
 docker exec -i nl2sql-postgres psql -U postgres -d nl2sql_retail \
@@ -1453,8 +1738,9 @@ docker exec -i nl2sql-postgres psql -U postgres -d nl2sql_retail \
   -f - < docker/reader_role.sql
 ```
 
-`POSTGRES_READER_USER` / `POSTGRES_READER_PASSWORD` rename the role; both the
-build and the agent's `DATABASE_URL` read them, so they stay in step.
+`POSTGRES_READER_USER` renames the role, and `secrets/postgres_reader_password`
+is its password; the build, `dbprep` and the agent's `DATABASE_URL` all read
+them, so they stay in step.
 
 That this is really least privilege, and not just a file that says so, is
 tested against the live cluster by
@@ -1530,7 +1816,7 @@ dataset is published, so pulling it avoids building anything -- no Python, no
 generator run -- and everyone gets byte-identical data:
 
 ```bash
-docker pull mcfaddja/nl2sql-retail-postgres:v1_1
+docker pull mcfaddja/nl2sql-retail-postgres:v1_2
 ```
 
 The repository is public, so no `docker login` is needed. It is multi-arch
@@ -1538,44 +1824,48 @@ The repository is public, so no `docker login` is needed. It is multi-arch
 automatically. Expect roughly a 290 MB download that expands to about 1.4 GB on
 disk.
 
-Three tags are published:
+The tags:
 
 | Tag | Use |
 |---|---|
-| `v1_1` | The same dataset as `v1`, byte for byte, with the agent's read-only role built in -- and that role unable to connect to the cluster's other databases or to cancel or kill another session (see [Roles](#roles)). Pinned -- what `setup.sh` pulls. |
+| `v1_2` | The same dataset again, with no password baked in and TLS on: its entrypoint writes a certificate on first start, refuses anything over the network without TLS and the superuser over the network at all, and sets the owner's and the reader's passwords from the environment on every start -- of a fresh volume or of one an older image made. Pinned -- what `setup.sh` pulls since 6.1. |
+| `v1_1` | The same dataset as `v1`, byte for byte, with the agent's read-only role built in -- and that role unable to connect to the cluster's other databases or to cancel or kill another session (see [Roles](#roles)). Its superuser's and owner's password is `nl2sql` in every copy: do not publish its port. |
 | `v1` | The first publish. Pinned; it predates the read-only role, which `setup.sh` and `launch.sh` create on every start. |
-| `latest` | Moves to the newest publish: `v1_1` today. |
+| `latest` | Moves to the newest publish. |
 
 #### Run it directly
 
 ```bash
 docker run -d --name nl2sql-postgres \
-  -p 5432:5432 \
+  -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_PASSWORD="$(openssl rand -hex 24)" \
   -v nl2sql-pgdata:/var/lib/pgdata \
-  mcfaddja/nl2sql-retail-postgres:v1_1
+  mcfaddja/nl2sql-retail-postgres:v1_2
 ```
 
 The volume must be mounted at `/var/lib/pgdata`, which is where this image puts
 `PGDATA` (see the note above). The data is present on first start; the volume
 only keeps what you write afterwards. Connect exactly as with a locally built
-image:
+image, over TLS, with the password you gave it:
 
 ```
-psql postgresql://nl2sql:nl2sql@localhost:5432/nl2sql_retail
+psql "postgresql://nl2sql@localhost:5432/nl2sql_retail?sslmode=require"
 ```
 
-The credentials are baked into the published cluster, so treat them as public --
-fine for synthetic test data, and not to be reused elsewhere. `v1_1` carries
-the agent's read-only role; the older `v1` predates it, so with that tag create
-it as shown under [Roles](#roles) before running the agent against a container
-started this way.
+Give `POSTGRES_READER_PASSWORD` too to set the agent's reader's. With
+neither, nothing can sign in over the network -- `docker exec` still can.
+The older `v1_1` and `v1` carry the owner's and the superuser's password,
+`nl2sql`, in every copy: treat it as public, and never publish their port
+beyond this machine. `v1` predates the agent's read-only role, so with that
+tag create it as shown under [Roles](#roles) before running the agent
+against a container started this way.
 
 #### Use it with compose
 
 To point compose at the published image without running `setup.sh`:
 
 ```bash
-export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1_1
+export IMAGE_NAME=mcfaddja/nl2sql-retail-postgres IMAGE_TAG=v1_2
 docker compose pull postgres
 docker compose up -d --no-build
 ```
@@ -1585,9 +1875,9 @@ table above, and `down -v` to reset to the pristine dataset.
 
 ### Publishing an update
 
-A published tag never moves, so an update is a new tag: a patch (`v1_2`) for
-a change to the image around the same dataset, as `v1_1` was, and a new major
-(`v2`) for a new dataset. Build both architectures in one step so the tag stays
+A published tag never moves, so an update is a new tag: a patch (`v1_3`) for
+a change to the image around the same dataset, as `v1_1` and `v1_2` were,
+and a new major (`v2`) for a new dataset. Build both architectures in one step so the tag stays
 multi-arch, then move `latest` onto it without rebuilding:
 
 ```bash
@@ -1605,38 +1895,74 @@ calling a patch a patch.
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 3660 tests, no Docker, npm, JDK or network needed
-pytest --run-docker --run-node --run-java       # all 4362, including ones that build and run containers
+pytest                                          # 4839 tests, no Docker, npm, JDK or network needed
+pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
+pytest --run-docker --run-node --run-java --run-acceptance   # all 5663, the whole stack included
 ```
+
+The proxy image's start-up tests use this machine's `envsubst`, which
+gettext provides (`brew install gettext`, `apt install gettext-base`) and the
+nginx image carries; without it they skip, saying so.
 
 | Directory | Covers |
 |---|---|
 | [`tests/data_gen/`](tests/data_gen) | The generator: calendar, dimensions, facts, validation, CSV/SQLite writing, and `generate_data.py` as a script |
-| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, least privilege -- what the reader role can and cannot do, asked of a live catalog -- and the MLflow trace every run writes, read back as a tree from a fake MLflow: a span per agent named as the architecture names it, the four concurrent retrievers under their own run, a repair as a second generation, a routed call that fell back as two calls, and a server that is down, comes back, or refuses a verdict costing nothing but the trace |
+| [`tests/agent/`](tests/agent) | The agent: config, prompts, the LangGraph pipeline, the model router -- the table built from catalogs made to show each rule, the fallback chain, and every rung rule on its boundary, then again inside the pipeline, with the trace naming each call's model -- the tools, both retrievers, the ensemble fusion, the answer contract and the Completeness Reviewer -- rule by rule on hand-built rows, then again on real ones from the live database -- read-only enforcement, least privilege -- what the reader role can and cannot do, asked of a live catalog, including that it may become a signed-in person for a transaction and inherits nothing from anyone -- and the MLflow trace every run writes, read back as a tree from a fake MLflow: a span per agent named as the architecture names it, the four concurrent retrievers under their own run, a repair as a second generation, a routed call that fell back as two calls, and a server that is down, comes back, or refuses a verdict costing nothing but the trace |
 | [`tests/api/`](tests/api) | The REST server: the certificate policy and the switch that refuses a self-signed one, the job store, every route and status code, the event stream, the two published request limits checked against the lengths actually enforced, a real uvicorn bound to a loopback port over real TLS, the curl-only smoke script run against it for real, and a verdict recorded on, replaced on and withdrawn from the answer's trace -- after the staging database takes it, and never instead |
 | [`tests/rag/`](tests/rag) | The RAG pipeline: parsing the golden pairs, the BM25 index checked against an independent implementation, the pgvector storage layer, the semantic chunker the markdown one inherits from, both loader scripts -- their flags offline and their writes against a throwaway database created and dropped around each test -- and the seven shell scripts that build and publish the knowledge base, run against a fake `docker`, plus the two published images and the compose file that runs them |
-| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, every set of compose profiles a script runs or a document prints resolved by the real compose file, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network -- and the thirteen tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures -- and MLflow: its two services as compose resolves them, one version across the server and both clients, and tracing against a real server started from the pinned image on a private network under the name `setup.sh` writes -- the pipeline's trace read back by MLflow's own client, verdicts, the benchmark's runs, and the agent image's own tracing client doing everything the agent asks of it |
-| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists, the nginx start-up script's branches, and the GUI's own 312-test suite run from here |
-| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 379-test Java suite run from here |
-| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, a judgement taken back -- a promoted pair withdrawn from a real copy of the document and checked by the loader's parser, a fix deleted with its vector, the promotion log cleared and the row handed back to the public process -- the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 155-test review GUI suite run from here |
-| [`tests/curate/`](tests/curate) | The curation interface: its TypeScript types compared field by field against the review service's curation models, its nginx start-up script's branches, the project's pins and coverage gate, the compose wiring both ways -- every setting it reads, and the review service's token reaching it and never a browser -- and its own 81-test curation GUI suite run from here. The service behind it is in `tests/review/`: each snippet kind validated against the live retail database, every curation route, the snippet document round-tripped through the loader's parser, and golden pairs and fixes added and removed directly |
-| [`tests/console/`](tests/console) | The SQL console: the agent's gates in the agent's order against a scripted database -- what is refused before the database is asked, the read-only fence, the cost judged as the planner gate judges it -- every route and error code, the certificate it presents and refuses to start without, the real retail database as the real reader, including a write the transaction refuses and a timeout, the compose wiring both ways -- the agent's own URL and limits, one credential, loopback ports -- four real containers on a private network, the interface's types against the models, and its own 130-test console GUI suite run from here |
-| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together |
+| [`tests/docker/`](tests/docker) | The Dockerfiles, the reader-role SQL, `docker-compose.yml` as `docker compose config` resolves it (including that the owner's credentials never reach the agent and that every setting the agent reads can be set through it), retrieval end to end inside the real containers, in a compose project of their own, and `start.sh`/`setup.sh`/`launch.sh` run against fake `docker`, `curl` and browser binaries -- including the browser opener each platform gets, chosen from a fake `uname` so the Linux and Windows branches run on a Mac too, the window each default browser is asked for, and Docker and Ollama started when they are down -- plus a structural check that every flag, warning and fatal message in the nine scripts that take them is exercised by some test, an inventory check that every shell script, Dockerfile and compose file git tracks -- and every service in both compose files -- is named by tests that mention it, every set of compose profiles a script runs or a document prints resolved by the real compose file, `docker/init_db.sh` run against fake `initdb`, `pg_ctl` and `psql`, and the measurement that says they all reach 100%, the API container reached over TLS by a curl-only container with nothing of this project in it, and the GUI container driven against a real API container on a private network, over HTTPS verified against the certificate that API wrote -- and the twelve tags `setup.sh` pins, asked of Docker Hub: published, for both architectures, and at this checkout's version, and the three dataset images it pins, for both architectures -- and MLflow: its two services as compose resolves them, one version across the server and both clients, and tracing against a real server started from the pinned image on a private network under the name `setup.sh` writes -- the pipeline's trace read back by MLflow's own client, verdicts, the benchmark's runs, and the agent image's own tracing client doing everything the agent asks of it |
+| [`tests/gui/`](tests/gui) | The web interface: its TypeScript types compared field by field against the pydantic models they mirror, the proxy configuration in both of the places it exists -- the dev server and the page's template in the proxy image -- the event stream left unbuffered, and the GUI's own 340-test suite run from here |
+| [`tests/java/`](tests/java) | The desktop client: its Java records compared component by component -- and in order, because records are positional -- against the pydantic models they mirror, the pom's pins and its coverage gate, the image that cross-builds its jar, and the client's own 411-test Java suite run from here |
+| [`tests/review/`](tests/review) | The feedback system: rendering a golden pair against the rules the loader actually enforces, the promotion path round-tripped through the loader's own parser on a real copy of the real question document, the whole HTTP surface against a fake repository, the staging schema and its row-level policies asked of a live Postgres -- including everything the public process must *not* be able to do -- a reviewer's corrected SQL validated against the live retail database, including a writing CTE the database itself refuses, the corrections and completions stores and their vectors in a real pgvector Postgres, a judgement taken back -- a promoted pair withdrawn from a real copy of the document and checked by the loader's parser, a fix deleted with its vector, the promotion log cleared and the row handed back to the public process -- the compose wiring that no single file shows -- every setting the service and its proxy read, and nothing either does not -- and the review interface's own 182-test review GUI suite run from here |
+| [`tests/curate/`](tests/curate) | The curation interface: its TypeScript types compared field by field against the review service's curation models, its dev server and its page's template agreeing on what they proxy, the project's pins and coverage gate, the compose wiring both ways -- every setting it reads, and the review service's token reaching it and never a browser -- and its own 108-test curation GUI suite run from here. The service behind it is in `tests/review/`: each snippet kind validated against the live retail database, every curation route, the snippet document round-tripped through the loader's parser, and golden pairs and fixes added and removed directly |
+| [`tests/console/`](tests/console) | The SQL console: the agent's gates in the agent's order against a scripted database -- what is refused before the database is asked, the read-only fence, the cost judged as the planner gate judges it -- every route and error code, the certificate it presents and refuses to start without, the real retail database as the real reader, including a write the transaction refuses and a timeout, the compose wiring both ways -- the agent's own URL and limits, one credential, loopback ports -- four real containers on a private network, the interface's types against the models, and its own 157-test console GUI suite run from here |
+| [`tests/auth/`](tests/auth) | Sign-in: the session format -- signed, verified, refused in each way it can be wrong -- and the guard every service puts in front of its routes, with its origin check and its roles re-read from Postgres; the auth service's settings, keys, throttle, sign-in against the database, the role sync's plan, every route and status code, and the directory page's API; the four sign-in services as compose resolves them; the directory page as a project, its types against the service's models and its own 61-test directory GUI suite; and, behind `--run-docker`, sign-in end to end -- a real retail database, directory and MLflow on a private network: the first administrator, a person added on the page who reads as their own role and stops being able to once removed, the database prepared again on a later start changing no membership, and MLflow's front door |
+| [`tests/ldap/`](tests/ldap) | The directory: its settings and both modes, the CSV and LDIF it loads, every operation on people and groups against ldap3's in-memory directory, the `slapd.conf` it renders, its certificate, the first start, the replica's copy -- paged, nested groups resolved, a copy that would empty it refused -- and the supervisor; and, behind `--run-docker`, the image, slaptest on both modes' configuration, a replica copying a second directory end to end, and -- as compose leaves it -- a certificate volume another image's container was created on last still written, with nothing running as root |
+| [`tests/security/`](tests/security) | The security tier (6.1): what the stack exposes by default, read from the files that decide it -- every store on this machine only, no password baked into the dataset image and its start refusing clear text and the superuser over the network, sign-in's database rules TLS-only and the auth service verifying the database, every TLS server its own key and no container another's, sign-in on by default in every service's own code, no secret on a script's command line -- every route in every service that does something carrying a guard, walked from each application's own route table, and every wire model in the four contracts refusing a field it does not declare -- and since 6.2 every route on a router that carries its guard and none added past one, every image naming its account or dropping root by a route the test can point at and every key handed to its service's account, every Python image installing a hash-checked lock, and every broad `except` saying why -- and since 6.3 every container read-only, capability-less but for the few given back and capped in memory and processes, no secret in any service's environment and every secret compose mounts one `setup.sh` writes, each database's socket shared with the dbprep one-shot alone, no health check that skips verifying, and every base and stock image pinned by digest (`tools/pin_images.py`, at 100%). [`SECURITY.md`](SECURITY.md) lists what each defends |
+| [`tests/common/`](tests/common) | The shared Python package (6.2, [`common/README.md`](common/README.md)): settings read the same way by every service, the error families and the one envelope, the readiness an operator and anyone else are each shown, dropping root -- to an account, or to whoever owns a mounted directory -- and a person's name in a transaction's `application_name` -- and since 6.3 a URL with its password from the file beside it, the ceilings on each service's role, and the health check that verifies the certificate it is answered with |
+| [`tests/ops/`](tests/ops) | The dbprep one-shot (6.3, `common/nl2sql_ops/`): against a fake connection that records each statement and answers what each question asks -- the retail database's extensions, the reader and its ceilings, the sign-in schema and role sync, the sign-in block of `pg_hba.conf` written through the server and checked before it is reloaded, put back when it does not parse; the runtime stores' databases, owners and pgvector; every login's password; the report and the snippets' state; each way a run fails, and what it says -- and behind `--run-docker` against a real Postgres over its socket, run twice to show nothing changes the second time -- and the service as compose declares it, both ways: every setting it is given read, every setting it reads settable but the six the stack fixes, each socket mounted where its settings look |
+| [`tests/proxy/`](tests/proxy) | The proxy image (6.3, [`proxy/README.md`](proxy/README.md)): its start-up script sourced the way the nginx entrypoint sources it, for every page -- the token header only with sign-in off, each upstream verified or plainly not, MLflow's sign-in, the page's own listener, each way it stops a page saying why -- and its health check, against a `curl` that says what it was asked -- and, once, what every page's template shares: the site rules, each page's read timeout its own setting, the token added where a page has one |
+| [`tests/web/`](tests/web) | The shared web package (6.2, [`web/README.md`](web/README.md)): every page taking it in the same way -- its Vite, Vitest and TypeScript configuration, its image -- and the desktop client unescaping the agent's text by the same rule. Its own tests run in every page's suite |
+| [`tests/docs/`](tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together -- and the adversarial reviews' figures: each committed draw.io file held to the script that computes it, its SVG and PNG exports to the file, and the `_enhanced` review documents to the originals they add figures to |
 | [`tests/benchmarks/`](tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer tested against both kinds of mistake it could make, and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
 | [`tests/models/`](tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
-The 656 tests behind `--run-docker` are the ones that need a working daemon:
-they build the agent, GUI, console and desktop images and run them, resolve the real
-compose file, query the live databases, trace into a real MLflow server, and ask Docker Hub whether the
+The 758 tests behind `--run-docker` are the ones that need a working daemon:
+they build the agent, GUI, console, desktop, directory and auth images and run them, resolve the real
+compose file, query the live databases -- found as compose finds them, with the passwords in
+`secrets/` ([`tests/live_stores.py`](tests/live_stores.py)), so a database that refuses the login is a
+failure rather than a skip -- trace into a real MLflow server, and ask Docker Hub whether the
 tags `setup.sh` pins were really published -- which also needs the network,
 and skips rather than fails without it. Two more ask the chat host and
-ollama.com what the model catalog is built from. The 40 behind `--run-node`
-need npm, and run the four GUIs' own suites. The 6 behind `--run-java` need
+ollama.com what the model catalog is built from. The 50 behind `--run-node`
+need npm, and run the five GUIs' own suites. The 6 behind `--run-java` need
 Maven and a JDK of 21 or later, and run the desktop client's. Three flags
 rather than one because the three needs are different -- a clone with Docker
 but no npm should still be able to run every container test, a GUI developer
 with npm and no Docker daemon should still be able to run the interface's,
 and neither of them should be asked for a JDK to run the Python ones.
+
+The 10 behind `--run-acceptance` are the **acceptance tier**
+([`tests/acceptance/`](tests/acceptance)), and they are what a release passes
+before it is published. They copy this checkout, start it as a stack of its
+own beside any other -- `NL2SQL_INSTANCE` names its containers, volumes and
+compose project, every port is a free one -- with the two commands a user
+types, `./setup.sh --build-all --review --curate --console --mlflow --desktop`
+and `./start.sh --review --curate --console --mlflow --no-browser`, and then
+use it: the generated administrator signs in on every page, a question goes
+through the web interface, its verdict through review into the golden set,
+SQL through the console, and MLflow is asked for the question's trace through
+its front door. Four of the ten are the four defects 6.0 shipped with every
+other tier green: a container that restarted for ever, a database nobody
+could sign in to, a lockout of everybody behind one address, and the desktop
+client's classes against a server that asks who it is. Since 6.3 one more
+reads the running stack itself: no process in any container is root, no
+container can write its own image, and no secret is in any container's
+environment. Everything is removed
+afterwards (`NL2SQL_ACCEPTANCE_KEEP=1` keeps it). It needs Docker with about
+3.5 GiB of its memory free -- it says so rather than starting -- and ten to
+twenty minutes; the tests that need an answer are skipped, saying why, when
+the chat model `.env` names cannot be reached.
 Everything else runs offline,
 in about five minutes -- `setup.sh` included, since it is exercised against
 fake binaries rather than real Docker -- as are `launch.sh`'s and
@@ -1683,9 +2009,9 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-11,390 statements and 2,730 branches, none missed. `coverage report` fails below
+16,096 statements and 3,782 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](.coveragerc)) rather than printing
-a number, the way the four web interfaces' vitest thresholds and the desktop
+a number, the way the five web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST
 server and its SQL console, the feedback review service, the benchmark, the RAG pipeline and its
 four loader scripts, the data generator and its CLI, the chunker, the
@@ -1786,28 +2112,31 @@ the shell measurement turns on.
 
 The other two languages -- TypeScript and Java -- are measured separately,
 because they have different runners, and to the same standard. First the
-four web interfaces:
+five web interfaces:
 
 ```bash
 cd gui && npm test           # the web interface
 cd review/gui && npm test    # the review interface
 cd curate && npm test        # the curation interface
 cd console && npm test       # the SQL console's interface
+cd auth/gui && npm test      # the directory page
 ```
 
-**100% of statements, branches, functions and lines** across 312 tests, with
+**100% of statements, branches, functions and lines** across 340 tests, with
 only `main.tsx` excluded -- it mounts React onto a DOM element that exists
 only in a browser, and a test pins the exclusion list so nothing else joins
-it. The review interface is held to the same thresholds in its 155-test
+it. The review interface is held to the same thresholds in its 182-test
 review GUI suite: it decides what goes into the question set the agent is
 measured against, so a partially tested path there is a partially tested
-benchmark. The console's is held to them in its 130-test console GUI suite:
+benchmark. The console's is held to them in its 157-test console GUI suite:
 what it shows is what someone decides the agent did wrong from. The curation
-interface's is held to them in its 81-test curation GUI suite, for the same
-reason as the review interface's: it writes what the agent learns from.
+interface's is held to them in its 108-test curation GUI suite, for the same
+reason as the review interface's: it writes what the agent learns from. And
+the directory page's in its 61-test directory GUI suite: it makes the people
+everything else lets in.
 
 The thresholds are in each project's `vitest.config.ts` and fail the run
-rather than printing a number, and `pytest --run-node` runs all four suites
+rather than printing a number, and `pytest --run-node` runs all five suites
 from the Python one so none can go stale unnoticed.
 
 Getting there deleted code in the same way. Four guards came out that no
@@ -1831,7 +2160,7 @@ The desktop client is held to the same standard in Java:
 cd desktop && mvn test       # or pytest tests/java --run-java
 ```
 
-**100% of lines and branches** across the desktop client's own 379-test Java
+**100% of lines and branches** across the desktop client's own 411-test Java
 suite, gated by JaCoCo rather than reported by it, with only `Main` excluded
 -- it calls `Application.launch()`, which does not return until the window is
 closed. The interface half is tested through the real toolkit, headless via
@@ -1854,8 +2183,8 @@ raising. The test that found it is now the one that pins the order.
 
 #### The parts a coverage report cannot see
 
-Twelve shell scripts, four nginx entrypoint fragments, two compose files,
-fourteen Dockerfiles and four nginx templates, none of them Python. They are covered by
+Seventeen shell scripts, one nginx entrypoint fragment, two compose files,
+thirteen Dockerfiles and five nginx templates, none of them Python. They are covered by
 reading and by running -- and, since nothing in coverage.py can see a shell
 script, by a measurement of their own:
 
@@ -1870,10 +2199,14 @@ script, by a measurement of their own:
   `osascript`, `xdg-settings` and browser binaries; the seven scripts in
   [`rag/`](rag) the same way; `docker/apitest/smoke.sh` against a real HTTPS
   server; `docker/init_db.sh` -- which otherwise runs only inside `docker
-  build` -- against fake `initdb`, `pg_ctl` and `psql`; and
-  all four `10-nl2sql-*.envsh` fragments as the nginx entrypoint sources them.
+  build` -- against fake `initdb`, `pg_ctl` and `psql`;
+  `docker/migrate_store.sh` against fake `psql`, `pg_ctl`, `pg_dump` and
+  `pg_restore`; the dataset image's `docker/entrypoint.sh` against a fake
+  stock entrypoint, `openssl`, `psql` and `gosu`; and the proxy image's
+  `10-nl2sql-proxy.envsh` and `health.sh`, for every page, as the nginx
+  entrypoint and Docker's health check run them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1501 of 1501**.
+  the traces mention -- **1734 of 1734**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not
@@ -1957,10 +2290,14 @@ script, by a measurement of their own:
 * **Both compose files** are checked in both directions for every service
   that takes settings: nothing is set that the code never reads, and nothing
   the code reads is missing from it. That holds for the agent's own settings
-  against `config.py`, the API's against `api/settings.py`, the GUI proxy's
-  against its nginx template, the review service's against its own
-  `settings.py`, the review interface's proxy against its template and
-  start-up script, the smoke script's against the script itself, and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
+  against `config.py`, the API's against `api/settings.py`, the console's,
+  the review service's and the auth service's against their own settings,
+  the directory's against its settings and its replica, every page against
+  what the proxy image reads for it -- and each page's settings by the name
+  `.env` gives them, all at once -- the dbprep one-shot's against
+  `nl2sql_ops` (but six the stack itself fixes, named), MLflow's server
+  against its entrypoint, the migration's against what `launch.sh` hands it,
+  the smoke script's against the script itself, and -- in [`rag/docker-compose.yml`](rag/docker-compose.yml) -- the two
   image overrides the start-up scripts `export`, where a name compose does not
   read would make `--image` a silent no-op that pulls a published store and
   then starts a local one.

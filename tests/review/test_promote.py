@@ -9,10 +9,10 @@ mostly ways of making that step fail on purpose.
 
 from __future__ import annotations
 
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import psycopg
 import pytest
 
 from nl2sql_review import promote as promotion
@@ -225,56 +225,64 @@ def test_a_promotion_is_reloaded_only_when_every_step_that_ran_worked():
     assert Promotion(**base, steps=[]).reloaded is False
 
 
-def test_the_loaders_are_run_as_scripts_from_the_rag_directory(settings, draft, monkeypatch):
-    calls: list[dict] = []
+class Report:
+    def __init__(self, text: str, complete: bool = True) -> None:
+        self.text, self.complete = text, complete
 
-    class Done:
-        returncode = 0
-        stdout = "46 rows written"
-        stderr = ""
+    def summary(self) -> str:
+        return self.text
 
-    def fake_run(argv, **kwargs):
-        calls.append({"argv": argv, **kwargs})
-        return Done()
 
-    monkeypatch.setattr(promotion.subprocess, "run", fake_run)
+class FakeLoaders:
+    """`ragproc.loaders` as the review service calls it: in this process,
+    each store's URL an argument (V6-27)."""
+
+    def __init__(self, fail: dict[str, BaseException] | None = None) -> None:
+        self.fail = fail or {}
+        self.calls: list[tuple] = []
+
+    def _done(self, name: str, *args, text: str = "46 rows written"):
+        self.calls.append((name, *args))
+        if name in self.fail:
+            raise self.fail[name]
+        return Report(text)
+
+    def load_golden_pairs(self, document, db_url, **options):
+        return self._done("load_golden_pairs", str(document), db_url)
+
+    def embed_golden_pairs(self, chunk_db_url, vector_db_url, embedder, **options):
+        return self._done("embed_golden_pairs", chunk_db_url, vector_db_url, embedder.model_name)
+
+
+@pytest.fixture
+def loaders(monkeypatch):
+    fake = FakeLoaders()
+    monkeypatch.setattr(promotion, "_loaders", lambda settings: fake)
+    return fake
+
+
+def test_the_loaders_are_called_in_this_process_with_each_store_as_an_argument(settings, draft, loaders):
     result = promotion.promote(replace(settings, reload_context=True, reload_vectors=True), draft)
-
-    assert [Path(call["argv"][1]).name for call in calls] == [
-        "05_load_golden_pairs.py",
-        "06_embed_golden_pairs.py",
+    assert loaders.calls == [
+        ("load_golden_pairs", str(settings.document_path), settings.chunk_db_url),
+        ("embed_golden_pairs", settings.chunk_db_url, settings.vector_db_url, settings.embed_model),
     ]
-    assert all(call["cwd"] == settings.rag_dir for call in calls)
     assert result.reloaded is True
     assert "46 rows written" in result.detail
 
 
-def test_the_context_loader_is_pointed_at_the_document_that_was_written(settings, draft, monkeypatch):
-    seen: list[list[str]] = []
-
-    class Done:
-        returncode = 0
-        stdout = ""
-        stderr = ""
-
-    monkeypatch.setattr(
-        promotion.subprocess, "run", lambda argv, **kw: (seen.append(argv), Done())[1]
-    )
+def test_the_context_loader_is_pointed_at_the_document_that_was_written(settings, draft, loaders):
     promotion.promote(replace(settings, reload_context=True, reload_vectors=False), draft)
-    assert settings.document in seen[0]
+    assert [call[:2] for call in loaders.calls] == [("load_golden_pairs", str(settings.document_path))]
 
 
-def test_the_embedder_is_not_attempted_when_the_context_load_failed(settings, draft, monkeypatch):
-    class Failed:
-        returncode = 1
-        stdout = ""
-        stderr = "could not connect to the context store"
-
-    monkeypatch.setattr(promotion.subprocess, "run", lambda argv, **kw: Failed())
+def test_the_embedder_is_not_attempted_when_the_context_load_failed(settings, draft, loaders):
+    loaders.fail["load_golden_pairs"] = psycopg.OperationalError("could not connect to the context store")
     result = promotion.promote(replace(settings, reload_context=True, reload_vectors=True), draft)
 
     context, vectors = result.steps
     assert (context.ran, context.ok) == (True, False)
+    assert "OperationalError: could not connect to the context store" in context.detail
     # Running it anyway would fail with a confusing error about the wrong
     # thing: it reads the rows the first step writes.
     assert vectors.ran is False
@@ -282,13 +290,8 @@ def test_the_embedder_is_not_attempted_when_the_context_load_failed(settings, dr
     assert result.reloaded is False
 
 
-def test_a_failed_reload_does_not_un_write_the_pair(settings, draft, document, monkeypatch):
-    class Failed:
-        returncode = 1
-        stdout = ""
-        stderr = "boom"
-
-    monkeypatch.setattr(promotion.subprocess, "run", lambda argv, **kw: Failed())
+def test_a_failed_reload_does_not_un_write_the_pair(settings, draft, document, loaders):
+    loaders.fail["load_golden_pairs"] = psycopg.OperationalError("boom")
     result = promotion.promote(replace(settings, reload_context=True), draft)
 
     # The document is the source of truth and it is already correct. Rolling
@@ -299,27 +302,88 @@ def test_a_failed_reload_does_not_un_write_the_pair(settings, draft, document, m
     assert result.reloaded is False
 
 
-def test_a_loader_that_hangs_is_given_up_on(settings, draft, monkeypatch):
-    def timeout(argv, **kwargs):
-        raise subprocess.TimeoutExpired(argv, 600)
-
-    monkeypatch.setattr(promotion.subprocess, "run", timeout)
-    result = promotion.promote(replace(settings, reload_context=True), draft)
-    assert "timed out" in result.steps[0].detail
+def test_the_embedding_host_is_waited_on_for_the_reload_timeout_and_no_longer(settings):
+    """In this process a load cannot be killed, so the one part that can
+    take minutes -- a request to the embedding host -- is what is bounded."""
+    embedder = promotion.embedder_factory(replace(settings, reload_timeout_seconds=42))()
+    assert embedder.timeout == 42 and embedder.model_name == settings.embed_model
 
 
-def test_a_loader_that_cannot_be_started_is_a_failed_step_not_a_crash(settings, draft, monkeypatch):
-    """An interpreter that has gone from under the service -- a broken venv,
-    an image rebuilt beneath a running container -- raises rather than exits.
-    The pair is in the document by then, so it is reported, not raised."""
-    def unstartable(argv, **kwargs):
-        raise FileNotFoundError(2, "No such file or directory", argv[0])
-
-    monkeypatch.setattr(promotion.subprocess, "run", unstartable)
+def test_a_loader_that_breaks_is_a_failed_step_not_a_crash(settings, draft, loaders):
+    """Whatever a load does wrong -- a bug among it -- the pair is in the
+    document by then, so it is reported, not raised."""
+    loaders.fail["load_golden_pairs"] = TypeError("unexpected keyword argument")
     result = promotion.promote(replace(settings, reload_context=True), draft)
     assert result.pair_id == NEXT_ID
     assert (result.steps[0].ran, result.steps[0].ok) == (True, False)
-    assert "No such file or directory" in result.steps[0].detail
+    assert "TypeError: unexpected keyword argument" in result.steps[0].detail
+
+
+def test_a_load_that_says_it_is_incomplete_is_a_failed_step(settings, draft, monkeypatch):
+    class Partial(FakeLoaders):
+        def load_golden_pairs(self, document, db_url, **options):
+            return Report("rows written; vectors FAILED", complete=False)
+
+    monkeypatch.setattr(promotion, "_loaders", lambda settings: Partial())
+    result = promotion.promote(replace(settings, reload_context=True), draft)
+    assert result.steps[0].ok is False and "vectors FAILED" in result.steps[0].detail
+
+
+# --- one writer at a time (V6-27) ----------------------------------------------------
+
+
+def test_a_write_holds_the_documents_directory_against_other_processes(tmp_path):
+    import fcntl
+    import os
+
+    with promotion.writing(tmp_path):
+        other = os.open(str(tmp_path), os.O_RDONLY)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(other)
+    other = os.open(str(tmp_path), os.O_RDONLY)
+    try:
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    finally:
+        os.close(other)
+
+
+def test_two_writes_in_this_process_take_turns(tmp_path):
+    import threading
+    import time
+
+    order: list[str] = []
+    inside = threading.Event()
+
+    def first():
+        with promotion.writing(tmp_path):
+            order.append("first in")
+            inside.set()
+            time.sleep(0.2)
+            order.append("first out")
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    inside.wait(5)
+    with promotion.writing(tmp_path):
+        order.append("second in")
+    thread.join()
+    assert order == ["first in", "first out", "second in"]
+
+
+def test_a_directory_that_cannot_be_locked_still_takes_turns_here(tmp_path, monkeypatch):
+    import fcntl
+
+    def refuse(handle, operation):
+        raise OSError(45, "Operation not supported")
+
+    monkeypatch.setattr(fcntl, "flock", refuse)
+    with promotion.writing(tmp_path):
+        pass
+    with promotion.writing(tmp_path / "not-there"):
+        pass
 
 
 def test_a_missing_loader_script_is_named(settings, draft, tmp_path):
@@ -450,19 +514,10 @@ def test_a_pair_the_document_no_longer_holds_is_reported_not_refused(settings, d
     assert document.read_text() == before
 
 
-def test_the_stores_are_reloaded_after_a_withdrawal_even_of_a_pair_already_gone(settings, monkeypatch):
+def test_the_stores_are_reloaded_after_a_withdrawal_even_of_a_pair_already_gone(settings, loaders):
     """They follow the document, whoever last edited it."""
-    calls: list[str] = []
-
-    class Done:
-        returncode = 0
-        stdout = "45 rows written, 1 removed"
-        stderr = ""
-
-    monkeypatch.setattr(promotion.subprocess, "run", lambda argv, **kw: (calls.append(Path(argv[1]).name), Done())[1])
     result = promotion.withdraw(replace(settings, reload_context=True, reload_vectors=True), "Q98")
-
-    assert calls == ["05_load_golden_pairs.py", "06_embed_golden_pairs.py"]
+    assert [call[0] for call in loaders.calls] == ["load_golden_pairs", "embed_golden_pairs"]
     assert result.reloaded is True
 
 
@@ -509,3 +564,10 @@ def test_a_removal_that_would_break_the_document_is_refused(settings, draft, doc
     with pytest.raises(PromotionError, match="would leave a document that does not parse"):
         promotion.withdraw(settings, NEXT_ID)
     assert document.read_text() == before
+
+
+def test_the_loaders_are_rag_s_own_when_the_image_has_them(settings):
+    """Not faked: the module a promotion calls is `rag/ragproc/loaders.py`."""
+    loaders = promotion._loaders(settings)
+    assert loaders.__name__ == "ragproc.loaders"
+    assert hasattr(loaders, "load_golden_pairs") and hasattr(loaders, "load_snippets")

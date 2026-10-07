@@ -16,9 +16,19 @@ live here and are never read by the other one.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+
+from nl2sql_identity import CURATORS, DEFAULT_PUBLIC_KEY_FILE, REVIEWERS, SESSION_COOKIE
+from nl2sql_common.env import (
+    env_str as _env_str,
+    env_int as _env_int,
+    env_float as _env_float,
+    env_bool as _env_bool,
+    env_tuple as _env_tuple,
+    env_url as _env_url,
+    secret as _secret,
+)
 
 #: The document that *is* the golden set. Everything downstream -- the
 #: context store rows, the BM25 statistics, both vector tables -- is built
@@ -45,8 +55,8 @@ DEFAULT_RETAIL_DB_URL = "postgresql://nl2sql_reader:nl2sql_reader@localhost:5432
 #: answer's correction and a *correct but incomplete* answer's completion.
 #: Each is its own Postgres with pgvector -- its records and its RAG side by
 #: side -- apart from the golden set and apart from each other.
-DEFAULT_CORRECTIONS_DB_URL = "postgresql://corrections:corrections@localhost:5436/nl2sql_corrections"
-DEFAULT_COMPLETIONS_DB_URL = "postgresql://completions:completions@localhost:5437/nl2sql_completions"
+DEFAULT_CORRECTIONS_DB_URL = "postgresql://corrections:corrections@localhost:5435/nl2sql_corrections"
+DEFAULT_COMPLETIONS_DB_URL = "postgresql://completions:completions@localhost:5435/nl2sql_completions"
 
 #: The SQL snippets' source of truth, as the golden question document is the
 #: golden pairs': written here, then loaded into the snippet store.
@@ -54,52 +64,20 @@ DEFAULT_SNIPPETS_DOCUMENT = "/app/context_questions/sql_snippets.md"
 
 #: The snippet store, as its owner: the loader creates its tables and the
 #: read-only role the agent connects as.
-DEFAULT_SNIPPETS_DB_URL = "postgresql://snippets:snippets@localhost:5438/nl2sql_snippets"
+DEFAULT_SNIPPETS_DB_URL = "postgresql://snippets:snippets@localhost:5435/nl2sql_snippets"
 
-#: The certificate the agent API generates, as this service sees it. The
-#: same volume, mounted read-only: this process presents that certificate
-#: and never writes one.
+#: This service's own certificate, which the stack's pki service issues from
+#: its development CA (6.1; until then it presented the agent API's). Mounted
+#: read-only: this process presents it and never writes one.
 DEFAULT_TLS_DIR = "/etc/nl2sql/tls"
 DEFAULT_CERT_FILE = f"{DEFAULT_TLS_DIR}/server.crt"
 DEFAULT_KEY_FILE = f"{DEFAULT_TLS_DIR}/server.key"
 
 #: The name the certificate must cover for another container to verify this
-#: one. Compose adds it to API_TLS_HOSTNAMES; named here so the readiness
-#: check can say which name is missing rather than "handshake failed".
+#: one. Compose gives it to the pki service in REVIEW_TLS_HOSTNAMES; named
+#: here so the readiness check can say which name is missing rather than
+#: "handshake failed".
 SERVICE_HOSTNAME = "nl2sql-review"
-
-
-def _env(name: str) -> str | None:
-    raw = os.getenv(name)
-    return raw if raw not in (None, "") else None
-
-
-def _env_str(name: str, default: str) -> str:
-    return _env(name) or default
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = _env(name)
-    return int(raw) if raw else default
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = _env(name)
-    return float(raw) if raw else default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = _env(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
-def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    raw = _env(name)
-    if raw is None:
-        return default
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 @dataclass
@@ -112,18 +90,18 @@ class ReviewSettings:
     root_path: str = ""
 
     # --- TLS -------------------------------------------------------------
-    # This service presents the certificate the agent API already generated,
-    # mounted read-only from the volume that API writes it into. It does not
-    # generate one of its own, and that is a deliberate subtraction: a second
-    # copy of the certificate code would be 250 lines whose only job is to
-    # agree with the first copy, and the two would be discovered to disagree
-    # by a client failing to connect.
+    # This service presents a certificate of its own, issued by the stack's
+    # pki service and mounted read-only (6.1; until then it presented the
+    # agent API's, whose key was then in eleven containers). It does not
+    # generate one: the issuing is the pki service's, so there is one copy of
+    # the certificate code and one CA that every client trusts.
     #
     # The consequence is a configuration requirement rather than a code one.
-    # The certificate has to be valid for this service's name too, so compose
-    # adds `nl2sql-review` to API_TLS_HOSTNAMES. `warnings()` says so when the
-    # file is not where it should be, and the server refuses to start with TLS
-    # claimed and no certificate to present -- which is the failure that would
+    # The certificate has to be valid for this service's name, so compose
+    # gives the pki service `nl2sql-review` in REVIEW_TLS_HOSTNAMES.
+    # `warnings()` says so when the file is not where it should be, and the
+    # server refuses to start with TLS claimed and no certificate to present
+    # -- which is the failure that would
     # otherwise look like a working HTTPS URL.
     tls_enabled: bool = True
     tls_cert_file: str = DEFAULT_CERT_FILE
@@ -134,7 +112,31 @@ class ReviewSettings:
     # write the golden question set; `warnings()` says so loudly when it is
     # unset, and the readiness endpoint repeats it.
     token: str | None = None
-    cors_origins: tuple[str, ...] = ("*",)
+    # Who the token is, and what it may do (V6-62). What it does is
+    # recorded under `token:<name>` -- never under the X-Reviewer it sends.
+    # Empty roles: with sign-in on, the reviewer roles only, and curating by
+    # token is something to grant here by name; with it off, both, because
+    # the review and curation pages' proxies then send this token for
+    # everyone who uses them.
+    token_name: str = "review-token"
+    token_roles: tuple[str, ...] = ()
+    # None by default: the review and curation pages reach this through their
+    # own nginx, on their own origin, so a cross-origin browser call is
+    # something to allow by name (REVIEW_CORS_ORIGINS).
+    cors_origins: tuple[str, ...] = ()
+    # Sign-in (the auth service). On, a person's session is what every /v1
+    # route needs: the review routes take a reviewer, the curation routes a
+    # curator, and reading takes either. What they do is recorded as done by
+    # them -- not by whatever name a header claimed -- and the SQL they run
+    # to check a fix or a snippet runs as their own database role.
+    # REVIEW_TOKEN still works, for scripts, as itself. On by default
+    # in the code as well as in compose, so a review service started any
+    # other way is not open by accident.
+    auth_enabled: bool = True
+    auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
+    auth_cookie_name: str = SESSION_COOKIE
+    reviewer_roles: tuple[str, ...] = (REVIEWERS,)
+    curator_roles: tuple[str, ...] = (CURATORS,)
 
     # --- The staging database -------------------------------------------
     # As the owner: this service creates the schema and the writer role.
@@ -209,36 +211,37 @@ class ReviewSettings:
             tls_enabled=_env_bool("REVIEW_TLS_ENABLED", True),
             tls_cert_file=_env_str("REVIEW_TLS_CERT_FILE", DEFAULT_CERT_FILE),
             tls_key_file=_env_str("REVIEW_TLS_KEY_FILE", DEFAULT_KEY_FILE),
-            token=_env("REVIEW_TOKEN"),
-            cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ("*",)),
-            feedback_db_url=_env_str(
-                "FEEDBACK_DB_URL", "postgresql://feedback:feedback@localhost:5435/nl2sql_feedback"
-            ),
-            writer_password=_env_str("FEEDBACK_WRITER_PASSWORD", "nl2sql_feedback_writer"),
+            token=_secret("REVIEW_TOKEN"),
+            token_name=_env_str("REVIEW_TOKEN_NAME", "review-token"),
+            token_roles=_env_tuple("REVIEW_TOKEN_ROLES", ()),
+            cors_origins=_env_tuple("REVIEW_CORS_ORIGINS", ()),
+            auth_enabled=_env_bool("AUTH_ENABLED", True),
+            auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
+            auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
+            reviewer_roles=_env_tuple("REVIEW_REVIEWER_ROLES", (REVIEWERS,)),
+            curator_roles=_env_tuple("REVIEW_CURATOR_ROLES", (CURATORS,)),
+            feedback_db_url=_env_url("FEEDBACK_DB_URL", "postgresql://feedback:feedback@localhost:5435/nl2sql_feedback"),
+            writer_password=_secret("FEEDBACK_WRITER_PASSWORD") or "nl2sql_feedback_writer",
             manage_schema=_env_bool("REVIEW_MANAGE_SCHEMA", True),
-            retail_db_url=_env_str("RETAIL_DB_URL", DEFAULT_RETAIL_DB_URL),
+            retail_db_url=_env_url("RETAIL_DB_URL", DEFAULT_RETAIL_DB_URL),
             validate_timeout_ms=_env_int("REVIEW_VALIDATE_TIMEOUT_MS", 30000),
             validate_max_rows=_env_int("REVIEW_VALIDATE_MAX_ROWS", 200),
-            corrections_db_url=_env_str("CORRECTIONS_DB_URL", DEFAULT_CORRECTIONS_DB_URL),
-            completions_db_url=_env_str("COMPLETIONS_DB_URL", DEFAULT_COMPLETIONS_DB_URL),
+            corrections_db_url=_env_url("CORRECTIONS_DB_URL", DEFAULT_CORRECTIONS_DB_URL),
+            completions_db_url=_env_url("COMPLETIONS_DB_URL", DEFAULT_COMPLETIONS_DB_URL),
             embed_fixes=_env_bool("REVIEW_EMBED_FIXES", True),
             document=_env_str("REVIEW_DOCUMENT", DEFAULT_DOCUMENT),
             rag_dir=_env_str("REVIEW_RAG_DIR", DEFAULT_RAG_DIR),
             reload_context=_env_bool("REVIEW_RELOAD_CONTEXT", True),
             reload_vectors=_env_bool("REVIEW_RELOAD_VECTORS", True),
             reload_timeout_seconds=_env_float("REVIEW_RELOAD_TIMEOUT_SECONDS", 600.0),
-            chunk_db_url=_env_str(
-                "CHUNK_DB_URL", "postgresql://ragproc:ragproc@localhost:5433/nl2sql_chunks"
-            ),
-            vector_db_url=_env_str(
-                "VECTOR_DB_URL", "postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors"
-            ),
+            chunk_db_url=_env_url("CHUNK_DB_URL", "postgresql://ragproc:ragproc@localhost:5433/nl2sql_chunks"),
+            vector_db_url=_env_url("VECTOR_DB_URL", "postgresql://ragproc:ragproc@localhost:5434/nl2sql_vectors"),
             ollama_url=_env_str("OLLAMA_URL", "http://localhost:11434"),
             embed_model=_env_str("EMBED_MODEL", "bge-m3"),
             snippets_document=_env_str("REVIEW_SNIPPETS_DOCUMENT", DEFAULT_SNIPPETS_DOCUMENT),
-            snippets_db_url=_env_str("SNIPPETS_DB_URL", DEFAULT_SNIPPETS_DB_URL),
+            snippets_db_url=_env_url("SNIPPETS_DB_URL", DEFAULT_SNIPPETS_DB_URL),
             snippets_reader_user=_env_str("SNIPPETS_READER_USER", "snippets_reader"),
-            snippets_reader_password=_env_str("SNIPPETS_READER_PASSWORD", "snippets_reader"),
+            snippets_reader_password=_secret("SNIPPETS_READER_PASSWORD") or "snippets_reader",
             reload_snippets=_env_bool("REVIEW_RELOAD_SNIPPETS", True),
             docs_enabled=_env_bool("REVIEW_DOCS_ENABLED", True),
             log_level=_env_str("REVIEW_LOG_LEVEL", "info"),
@@ -250,10 +253,6 @@ class ReviewSettings:
     @property
     def scheme(self) -> str:
         return "https" if self.tls_enabled else "http"
-
-    @property
-    def authenticated(self) -> bool:
-        return bool(self.token)
 
     @property
     def document_path(self) -> Path:
@@ -276,12 +275,21 @@ class ReviewSettings:
         shown = host or ("localhost" if self.host in ("0.0.0.0", "::", "") else self.host)
         return f"{self.scheme}://{shown}:{self.port}{self.root_path}"
 
+    def token_holds(self) -> frozenset[str]:
+        """The roles REVIEW_TOKEN holds: REVIEW_TOKEN_ROLES, or the default above."""
+        if self.token_roles:
+            return frozenset(self.token_roles)
+        if self.auth_enabled:
+            return frozenset(self.reviewer_roles)
+        return frozenset((*self.reviewer_roles, *self.curator_roles))
+
     def warnings(self) -> list[str]:
         """Configurations that will work and probably should not."""
         notes: list[str] = []
-        if not self.token:
+        if not self.token and not self.auth_enabled:
             notes.append(
-                "No REVIEW_TOKEN is set, so anyone who can reach this port can edit "
+                "This review service is OPEN: sign-in is off (AUTH_ENABLED=false) and "
+                "no REVIEW_TOKEN is set, so anyone who can reach this port can edit "
                 "and promote golden questions. This service writes the question set "
                 "the agent is measured against; it is not the one to leave open."
             )
@@ -293,9 +301,8 @@ class ReviewSettings:
         elif not self.certificate_present:
             notes.append(
                 f"REVIEW_TLS_ENABLED is on but {self.tls_cert_file} is not readable. "
-                "This service presents the certificate the agent API generates, so "
-                "the API has to have started at least once and the apitls volume has "
-                "to be mounted here."
+                "Under compose the pki service issues this service its own certificate "
+                "into the reviewtls volume, which has to be mounted here."
             )
         if self.token and "*" in self.cors_origins:
             notes.append(

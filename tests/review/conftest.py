@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from dataclasses import replace
 
+from nl2sql_identity import ADMINS, CURATORS, REVIEWERS
 from nl2sql_review import snippets as snippets_module
 from nl2sql_review.app import create_app
 from nl2sql_review.corrections import COMPLETIONS, CORRECTIONS, AlreadyFixed, EmbedResult, Kind
@@ -88,6 +89,11 @@ def settings(document: Path, snippet_document: Path) -> ReviewSettings:
         snippets_db_url="postgresql://snippets:secret@nowhere:5432/nl2sql_snippets",
         reload_snippets=False,
         token="test-token",
+        # Every role there is, an administrator's among them: the readiness
+        # tests read what only an operator is told (V6-32).
+        token_roles=(REVIEWERS, CURATORS, ADMINS),
+        # The token-guarded service of 5.x; sign-in has its own file.
+        auth_enabled=False,
     )
 
 
@@ -349,6 +355,7 @@ class FakeValidator:
 
     def __init__(self, result: Validation | None = None) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.principals: list[str | None] = []
         self.result = result or Validation(
             sql="",
             valid=True,
@@ -359,8 +366,9 @@ class FakeValidator:
             elapsed_ms=3.0,
         )
 
-    def __call__(self, sql: str, reference: str) -> Validation:
+    def __call__(self, sql: str, reference: str, principal: str | None = None) -> Validation:
         self.calls.append((sql, reference))
+        self.principals.append(principal)
         return replace(self.result, sql=clean(sql))
 
 
@@ -398,10 +406,12 @@ class FakeSnippetValidator:
 
     def __init__(self, result: SnippetValidation | None = None) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.principals: list[str | None] = []
         self.result = result
 
-    def __call__(self, kind: str, applies_to: str, sql: str) -> SnippetValidation:
+    def __call__(self, kind: str, applies_to: str, sql: str, principal: str | None = None) -> SnippetValidation:
         self.calls.append((kind, applies_to, sql))
+        self.principals.append(principal)
         if self.result is not None:
             return replace(self.result, kind=kind, applies_to=applies_to, sql=sql)
         tables = [t for t in ("fact_pos_retail_sales", "dim_date", "dim_product") if t in f"{applies_to} {sql}"]

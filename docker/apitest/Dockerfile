@@ -9,20 +9,24 @@
 # curl and jq are all it has, which is also the smallest thing a GUI author
 # can copy from: every request in smoke.sh translates line for line into
 # fetch(), requests, or HttpClient.
-FROM alpine:3.21
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
 
 RUN apk add --no-cache curl jq ca-certificates bash
 
 COPY docker/apitest/smoke.sh /usr/local/bin/smoke.sh
 RUN chmod +x /usr/local/bin/smoke.sh
 
-# Where the server's certificate is expected to appear -- mounted by compose
-# from the volume the API writes it into. The directory exists in the image so
-# the certificate can also be placed here by `docker cp` on a stopped
+# Where the stack's CA certificate is expected to appear -- mounted by compose
+# from the volume the pki service writes it into. The directory exists in the
+# image so a certificate can also be placed here by `docker cp` on a stopped
 # container, which is how the test suite trusts it without a bind mount.
 RUN mkdir -p /etc/nl2sql/tls
 
 LABEL org.opencontainers.image.title="nl2sql API smoke test" \
       org.opencontainers.image.description="curl-only external client for the nl2sql agent REST API"
+
+# Nobody: it reads the stack's CA certificate and talks to the API, and
+# writes nothing (V6-31).
+USER nobody
 
 ENTRYPOINT ["/usr/local/bin/smoke.sh"]

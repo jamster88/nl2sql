@@ -20,25 +20,41 @@
 * v5_5 - MLflow traces
 * v5_5_1 - more than 100 golden questions
 * v5_6 - other SQL relationships (_join, filter, measure/metric_)
-* v5_7 - more model choice flexibility (_list available models, choose models and set their capacity/strength/intelligence_) - _MIGHT MOVE THIS TO v6\_3_
+* v5_6_1 - fixes for SQL snippets stuff + tests and release
 
 ## V6
-* v6 - question decomposition
-* v6_1 - answer planning
-* v6_2 - answer assembly + tests and release
+* v6 - adversarial reivew
+* v6_1 - user support via DB and LDAP
+* v6_2 - re-run adversarial review
+* v6_3 - fixes from adversarial review + test and release
+* v6_3_1 - documentation clean-up (docs folder, shorter readme, break-up current readme into multiple files in the docs folder)
 
 ## V7
-* v7 - user support (_via DB_)
-* v7_1 - via LDAP
-* v7_2 - short and long-term memory
-* v7_3 - semantic cache
+* v7 - question classification, question decomposition, answer planning and answer assembly arch
+* v7_1 - question classification (easy/medium/hard/xhard + simple/complex) + wrappers for v5_6_1 and v3_x (or v2_x)
+* v7_2 - question decomposition
+* v7_3 - answer planning
+* v7_4 - answer assembly + tests and release
+* v7_5 - more model choice flexibility (list available models, choose models and set their capacity/strength/intelligence)
 
 ## V8
-* v8 - reset containers and initialize + tests and release
-* v8_1 - once “primed” everything is internal (*loads from given docs and targeted DB*)
-* v8_2 - kubernetes deployment (rasPi proxmox cluster)
+* v8 - memory arch
+* v8_1 - short-term memory
+* v8_2 - long-term memory
+* v8_3 - semantic cache
 
 ## V9
-* v9 - multiple (*independent*) instances of the overall agent package
-* v9_1 - iPad App
-* v9_2 - iPhone App
+* v9 - adversarial review 2 (MULTI-AGENT - eg multiple adversary review agents) 
+* v9_1 - fixes from adversarial review + test and release
+* v9_2 - documentation clean-up 2
+
+## V10
+* v10 - reset containers and initialize + tests and release (GENERALIZATION)
+* v10_1 - once “primed” everything is internal (loads from given docs and targeted DB)
+* v10_2 - release package + GitHub workflows to generate the release package
+* v10_3 - kubernetes deployment (rasPi proxmox cluster)
+
+## V11
+* v11 - multiple instances of the overall agent package
+* v11_1 - iPad App
+* v11_2 - iPhone App

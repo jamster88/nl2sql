@@ -356,7 +356,7 @@ class Client:
     def invoke(self, messages):
         self.calls += 1
         if self.fail:
-            raise RuntimeError(self.fail)
+            raise ConnectionError(self.fail)
         return SimpleNamespace(content=self.content)
 
     def with_structured_output(self, schema):
@@ -366,7 +366,7 @@ class Client:
             def invoke(self, messages):
                 client.calls += 1
                 if client.fail:
-                    raise RuntimeError(client.fail)
+                    raise ConnectionError(client.fail)
                 return client.structured
 
         return Bound()
@@ -443,9 +443,9 @@ def test_the_last_model_in_the_chain_is_the_callers_to_handle():
     """Callers have always handled a failed or an empty call, and still do."""
     failing = {"light:7b": Client("light:7b", fail=" "), ANCHOR: Client(ANCHOR, fail="host unreachable")}
     routed = router(failing).model("generator", "light")
-    with pytest.raises(RuntimeError, match="host unreachable"):
+    with pytest.raises(ConnectionError, match="host unreachable"):
         routed.invoke([])
-    assert routed.hops == ["light:7b: RuntimeError"]
+    assert routed.hops == ["light:7b: ConnectionError"]
     assert routed.record()["model"] == ANCHOR
 
     empty = router({"heavy:70b": Client("heavy:70b", content=""), ANCHOR: Client(ANCHOR, content="")})
@@ -456,6 +456,6 @@ def test_the_last_model_in_the_chain_is_the_callers_to_handle():
 def test_a_chain_names_each_model_once():
     clients = {ANCHOR: Client(ANCHOR, fail="down")}
     routed = router(clients).model("supervisor", "light")
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ConnectionError):
         routed.invoke([])
     assert clients[ANCHOR].calls == 1 and routed.hops == []

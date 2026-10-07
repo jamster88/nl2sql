@@ -46,8 +46,21 @@ Then set the stack up against it -- once, a few minutes, mostly downloads:
 ```
 
 It starts every container, checks each one is ready, and opens
-<http://localhost:8080> in your browser. From now on, `./start.sh` is all it
+<https://localhost:8080> in your browser. From now on, `./start.sh` is all it
 takes: seconds rather than minutes.
+
+The page is HTTPS with a certificate from a CA the stack made itself, so the
+browser warns about it the first time; accept it, or trust `nl2sql-ca.crt` --
+once, for every page -- as [`USAGE_GUIDE.md`](USAGE_GUIDE.md#signing-in) shows. Then sign in as
+`admin`, with the password the first run generated into `secrets/`:
+
+```bash
+cat secrets/ldap_admin_password
+```
+
+Everyone else gets their own account on the directory page,
+<https://localhost:8084>, where `admin` can add them. `./start.sh --no-auth`
+starts without sign-in.
 
 ## 4. Ask
 
@@ -82,11 +95,12 @@ docker compose run --rm agent "How many stores are there?"
 
 | Page | Address |
 |---|---|
-| Web interface | <http://localhost:8080> |
-| Review interface | <http://localhost:8081> |
-| Curation interface | <http://localhost:8083> |
-| SQL console | <http://localhost:8082> |
-| MLflow | <http://localhost:5001> |
+| Web interface | <https://localhost:8080> |
+| Review interface | <https://localhost:8081> |
+| Curation interface | <https://localhost:8083> |
+| SQL console | <https://localhost:8082> |
+| MLflow | <https://localhost:5001> |
+| Directory page | <https://localhost:8084> |
 
 ## Stop
 

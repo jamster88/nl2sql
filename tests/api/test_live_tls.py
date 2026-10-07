@@ -83,6 +83,7 @@ def serve(tmp_path: Path):
 
     def _serve(*, tls: bool = True, token: str | None = None, runner=None, **kwargs) -> Served:
         api = ApiSettings(
+            auth_enabled=False,
             host="127.0.0.1",
             port=free_port(),
             tls_enabled=tls,

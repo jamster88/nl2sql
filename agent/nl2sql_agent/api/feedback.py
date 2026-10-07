@@ -30,6 +30,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol
+from nl2sql_common.errors import DATABASE_ERRORS, Unavailable
 
 #: The table the review service owns. Named here because this process writes
 #: to it and has no way to import the module that creates it -- the two run
@@ -57,7 +58,7 @@ COLUMNS = (
 )
 
 
-class FeedbackUnavailable(RuntimeError):
+class FeedbackUnavailable(Unavailable, RuntimeError):
     """Feedback cannot be recorded, with a reason fit to show a user."""
 
 
@@ -167,7 +168,7 @@ class PostgresSink:
                 conn.execute(f"DELETE FROM {TABLE} WHERE job_id = %s", (capture.job_id,))
                 try:
                     row = conn.execute(statement, [submission_id, *capture.values()]).fetchone()
-                except Exception as exc:
+                except DATABASE_ERRORS as exc:
                     if _is_unique_violation(exc):
                         conn.rollback()
                         raise AlreadyReviewed(capture.job_id) from exc
@@ -175,7 +176,7 @@ class PostgresSink:
                 conn.commit()
         except (AlreadyReviewed, FeedbackUnavailable):
             raise
-        except Exception as exc:  # noqa: BLE001 - every driver failure reads the same here
+        except DATABASE_ERRORS as exc:  # every driver failure reads the same here
             raise FeedbackUnavailable(f"cannot record feedback: {type(exc).__name__}") from exc
         return str(row[0]) if row else submission_id
 
@@ -192,7 +193,7 @@ class PostgresSink:
                 result = conn.execute(f"DELETE FROM {TABLE} WHERE job_id = %s", (job_id,))
                 conn.commit()
                 return result.rowcount > 0
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             raise FeedbackUnavailable(f"cannot withdraw feedback: {type(exc).__name__}") from exc
 
     def check(self) -> tuple[bool, str]:
@@ -200,7 +201,7 @@ class PostgresSink:
         try:
             with self._connect(self.url) as conn:
                 conn.execute("SELECT 1").fetchone()
-        except Exception as exc:  # noqa: BLE001
+        except DATABASE_ERRORS as exc:
             return False, f"{type(exc).__name__}: {exc}"
         return True, "reachable"
 

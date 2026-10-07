@@ -1,0 +1,34 @@
+# The directory page: people and groups, for nl2sql_admins.
+#
+# Two upstreams on the auth service: sign-in on its published port, like
+# every page (/auth/), and the directory's own API on its internal one
+# (V6-58), which nothing outside this network can reach. The session cookie
+# is the only credential that crosses either hop.
+server {
+    listen ${PROXY_PORT}${PROXY_LISTEN_TLS};
+    server_name _;
+    include /tmp/nginx/server-tls.conf;
+    root ${PAGE_ROOT};
+
+    include /etc/nginx/nl2sql/shared/site.conf;
+    include /etc/nginx/nl2sql/shared/health.conf;
+    include /tmp/nginx/auth.conf;
+
+    location /directory/ {
+        resolver ${PROXY_RESOLVER} valid=10s ipv6=off;
+        set $upstream ${UPSTREAM};
+        proxy_pass $upstream$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $nl2sql_forwarded_proto;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Authorization "";
+        proxy_set_header Connection "";
+        include /tmp/nginx/upstream-tls.conf;
+        # An import is a file sent as JSON; a few thousand people as CSV is
+        # well under this, and the service refuses anything past 5 MB itself.
+        client_max_body_size 6m;
+        proxy_read_timeout ${UPSTREAM_READ_TIMEOUT};
+    }
+}

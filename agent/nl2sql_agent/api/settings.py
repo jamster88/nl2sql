@@ -16,7 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
 
-from ..config import _env, _env_bool, _env_float, _env_int, _env_str
+from nl2sql_identity import DEFAULT_PUBLIC_KEY_FILE, SESSION_COOKIE, USERS
+
+from nl2sql_common.env import env_bool as _env_bool
+from nl2sql_common.env import env_float as _env_float
+from nl2sql_common.env import env_int as _env_int
+from nl2sql_common.env import env_str as _env_str
+from nl2sql_common.env import env_tuple as _env_tuple
+from nl2sql_common.env import env_url as _env_url
+from nl2sql_common.env import secret as _secret
 
 #: Where the dummy certificate is written inside the container. A directory
 #: rather than the working tree: it is a volume in compose, so a regenerated
@@ -34,14 +42,6 @@ DEFAULT_PORT = 8443
 #: service, which is how another container reaches it; the rest are how the
 #: machine running Docker does.
 DEFAULT_HOSTNAMES = ("localhost", "nl2sql-api", "api", "127.0.0.1", "::1")
-
-
-def _env_tuple(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
-    """A comma-separated list, with empty read as unset rather than empty list."""
-    raw = _env(name)
-    if raw is None:
-        return default
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
 
 
 @dataclass
@@ -74,19 +74,40 @@ class ApiSettings:
     tls_days: int = 365
 
     # --- Who may call ----------------------------------------------------
-    # Unset means no authentication, which is only reasonable on a private
-    # network. Set it and every /v1 route needs `Authorization: Bearer ...`
-    # or `X-API-Key: ...`.
+    # A static token for scripts and other services: with it set, every /v1
+    # route also accepts `Authorization: Bearer ...` or `X-API-Key: ...`.
     token: str | None = None
-    # Browsers enforce this, so a React GUI on another origin needs its own
-    # origin listed. "*" is the default because the token (or the network) is
-    # the actual control; a deployment with a token should narrow it, since
-    # "*" and credentials are not a combination browsers allow.
-    cors_origins: tuple[str, ...] = ("*",)
+    # Who the token is, and what it may do (V6-62): its questions and jobs
+    # are recorded under `token:<name>`, and it holds these roles and no
+    # others. Asking takes nl2sql_users; reloading the caches takes
+    # nl2sql_admins, which a token holds only when it is named here.
+    token_name: str = "api-token"
+    token_roles: tuple[str, ...] = (USERS,)
+    # Browser origins allowed to call this API directly. None by default:
+    # every page of this stack reaches the API through its own nginx, on its
+    # own origin, so a cross-origin browser call is something to allow by
+    # name (API_CORS_ORIGINS), never by default.
+    cors_origins: tuple[str, ...] = ()
     # Forwarding a caller-chosen database principal means letting an HTTP
     # client pick the role rows are read as. Off unless someone decides
     # otherwise: the default identity is the agent's own read-only role.
+    # Never for a signed-in person, whose principal is themselves.
     allow_principal: bool = False
+    # Who sees a failure in its own words -- a driver's error, a host, a
+    # port, the readiness detail (V6-32). An administrator does; anyone else
+    # sees which part failed. True shows everyone, for a development server.
+    debug_detail: bool = False
+    # Sign-in (the auth service). On -- the default, here as well as in
+    # compose, so a server started any other way is not open by accident --
+    # a person's session (the cookie a GUI sends, or the bearer the desktop
+    # client holds) is what every /v1 route needs, their question runs as
+    # their own database role, and they see only their own questions. The
+    # token above still works, for the machines that have no person to sign
+    # in. Off (AUTH_ENABLED=false) is the open server of 5.x, and the banner
+    # says so.
+    auth_enabled: bool = True
+    auth_public_key_file: str = DEFAULT_PUBLIC_KEY_FILE
+    auth_cookie_name: str = SESSION_COOKIE
 
     # --- Work ------------------------------------------------------------
     # Questions in flight at once. Two, not one, so a browser polling a
@@ -97,6 +118,16 @@ class ApiSettings:
     # collect the answer it asked for.
     job_ttl_seconds: int = 3600
     max_jobs: int = 200
+    # Questions waiting behind those running. Past this a new one is refused
+    # with 429 and Retry-After rather than queued: a queue that only grows
+    # is a promise the model host cannot keep.
+    max_queued: int = 20
+    # What one signed-in person may have waiting or running at once, so one
+    # person's loop cannot fill the queue for everyone else.
+    max_per_person: int = 3
+    # A question still waiting after this long is failed rather than run for
+    # a caller who has very likely gone.
+    queue_ttl_seconds: int = 600
     # The ceiling on `POST /v1/questions?wait=`. A question takes about a
     # minute; this is the point past which a caller should be using the job
     # or the event stream instead of holding a socket open.
@@ -140,16 +171,25 @@ class ApiSettings:
             tls_allow_self_signed=_env_bool("API_TLS_ALLOW_SELF_SIGNED", True),
             tls_hostnames=_env_tuple("API_TLS_HOSTNAMES", DEFAULT_HOSTNAMES),
             tls_days=_env_int("API_TLS_DAYS", 365),
-            token=_env("API_TOKEN"),
-            cors_origins=_env_tuple("API_CORS_ORIGINS", ("*",)),
+            token=_secret("API_TOKEN"),
+            token_name=_env_str("API_TOKEN_NAME", "api-token"),
+            token_roles=_env_tuple("API_TOKEN_ROLES", (USERS,)),
+            cors_origins=_env_tuple("API_CORS_ORIGINS", ()),
             allow_principal=_env_bool("API_ALLOW_PRINCIPAL", False),
+            debug_detail=_env_bool("API_DEBUG_DETAIL", False),
+            auth_enabled=_env_bool("AUTH_ENABLED", True),
+            auth_public_key_file=_env_str("AUTH_PUBLIC_KEY_FILE", DEFAULT_PUBLIC_KEY_FILE),
+            auth_cookie_name=_env_str("AUTH_COOKIE_NAME", SESSION_COOKIE),
             max_concurrency=_env_int("API_MAX_CONCURRENCY", 2),
             job_ttl_seconds=_env_int("API_JOB_TTL_SECONDS", 3600),
             max_jobs=_env_int("API_MAX_JOBS", 200),
+            max_queued=_env_int("API_MAX_QUEUED", 20),
+            max_per_person=_env_int("API_MAX_PER_PERSON", 3),
+            queue_ttl_seconds=_env_int("API_QUEUE_TTL_SECONDS", 600),
             max_wait_seconds=_env_float("API_MAX_WAIT_SECONDS", 900.0),
             event_stream_timeout_seconds=_env_float("API_EVENT_STREAM_TIMEOUT_SECONDS", 300.0),
             keepalive_seconds=_env_float("API_KEEPALIVE_SECONDS", 15.0),
-            feedback_db_url=_env("API_FEEDBACK_DB_URL"),
+            feedback_db_url=_env_url("API_FEEDBACK_DB_URL"),
             docs_enabled=_env_bool("API_DOCS_ENABLED", True),
             log_level=_env_str("API_LOG_LEVEL", "info"),
             source="environment",
@@ -182,17 +222,18 @@ class ApiSettings:
                 "cross the network in clear text. Only do this behind something "
                 "that terminates TLS itself."
             )
-        if not self.token:
+        if not self.token and not self.auth_enabled:
             notes.append(
-                "No API_TOKEN is set, so every caller that can reach the port can "
-                "ask questions."
+                "This server is OPEN: sign-in is off (AUTH_ENABLED=false) and no "
+                "API_TOKEN is set, so every caller that can reach the port can ask "
+                "questions."
             )
         if self.token and "*" in self.cors_origins:
             notes.append(
                 "API_CORS_ORIGINS is '*' while a token is required; browsers refuse "
                 "to send credentials to a wildcard origin. List the GUI's origin."
             )
-        if self.feedback_db_url and not self.token:
+        if self.feedback_db_url and not self.token and not self.auth_enabled:
             notes.append(
                 "API_FEEDBACK_DB_URL is set while no API_TOKEN is, so anyone who can "
                 "reach the port can write rows into the feedback staging database."

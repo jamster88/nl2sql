@@ -97,9 +97,21 @@ def test_declares_oci_image_labels_for_the_published_image(postgres_dockerfile: 
 
 def test_build_args_are_all_consumed_by_init_db_sh(postgres_dockerfile: str, init_db_sh: str):
     arg_names = set(re.findall(r"^ARG (\w+)=", postgres_dockerfile, re.MULTILINE))
-    assert {"DB_NAME", "DB_USER", "DB_PASSWORD", "DB_READER", "DB_READER_PASSWORD"} <= arg_names
-    for name in ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_READER", "DB_READER_PASSWORD"):
+    assert {"DB_NAME", "DB_USER", "DB_READER"} <= arg_names
+    for name in ("DB_NAME", "DB_USER", "DB_READER"):
         assert f"${{{name}}}" in init_db_sh, f"{name} is declared as a build ARG but never used in init_db.sh"
+
+
+def test_no_password_is_a_build_argument(postgres_dockerfile: str):
+    """V6-07: a build argument is in the image's history, and these were in
+    its data too."""
+    assert not re.search(r"^ARG \w*PASSWORD", postgres_dockerfile, re.MULTILINE)
+
+
+def test_the_entrypoint_is_the_images_own(postgres_dockerfile: str):
+    assert "COPY docker/entrypoint.sh /usr/local/bin/nl2sql-entrypoint.sh" in postgres_dockerfile
+    assert 'ENTRYPOINT ["nl2sql-entrypoint.sh"]' in postgres_dockerfile
+    assert 'CMD ["postgres"]' in postgres_dockerfile
 
 
 def test_the_reader_role_sql_is_shipped_in_the_image(postgres_dockerfile: str):
@@ -221,7 +233,10 @@ def test_reader_role_sql_takes_signalling_other_sessions_away_from_public(reader
 
 
 def test_reader_role_is_a_plain_login_role_that_starts_read_only(reader_role_sql: str):
-    assert re.search(r"ALTER ROLE :\"reader\" WITH LOGIN PASSWORD :'reader_password'", reader_role_sql)
+    assert re.search(r"ALTER ROLE :\"reader\" WITH LOGIN\n", reader_role_sql)
+    # The password from the environment, never a psql argument (V6-55).
+    assert "\\getenv reader_password NL2SQL_READER_PASSWORD" in reader_role_sql
+    assert "ALTER ROLE :\"reader\" PASSWORD :'reader_password';" in reader_role_sql
     for attribute in ("NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE", "NOBYPASSRLS"):
         assert attribute in reader_role_sql
     assert "SET default_transaction_read_only = on" in reader_role_sql
@@ -303,13 +318,9 @@ def test_emitted_sql_ends_with_a_newline(emitted_load_sql: str):
 # ---------------------------------------------------------------------------
 
 
-def test_agent_entrypoint_matches_the_cli_module(agent_dockerfile: str):
-    assert 'ENTRYPOINT ["python", "-m", "nl2sql_agent"]' in agent_dockerfile
-
-
 def test_agent_requirements_are_installed_before_source_is_copied(agent_dockerfile: str):
     lines = agent_dockerfile.splitlines()
-    req_idx = next(i for i, l in enumerate(lines) if "COPY agent/requirements.txt" in l)
+    req_idx = next(i for i, l in enumerate(lines) if "COPY agent/requirements.lock" in l)
     src_idx = next(i for i, l in enumerate(lines) if "COPY agent/nl2sql_agent" in l)
     assert req_idx < src_idx, "requirements should be copied (and installed) before source, for layer caching"
 
@@ -419,10 +430,10 @@ def test_the_image_installs_what_the_api_needs(agent_dockerfile: str):
     """An image built before these were added starts and then fails on the
     first import, which is the failure launch.sh has a branch for.
     """
-    requirements = (DOCKER_DIR.parent / "agent" / "requirements.txt").read_text()
-    for package in ("fastapi", "uvicorn", "cryptography"):
+    requirements = (DOCKER_DIR.parent / "agent" / "requirements.lock").read_text()
+    for package in ("fastapi==", "uvicorn==", "cryptography=="):
         assert package in requirements, f"{package} is not installed in the image"
-    assert "COPY agent/requirements.txt" in agent_dockerfile
+    assert "COPY agent/requirements.lock" in agent_dockerfile
 
 
 def test_the_image_prepares_somewhere_to_keep_the_certificate(agent_dockerfile: str):
@@ -545,8 +556,8 @@ def test_init_db_sh_builds_a_working_cluster(tmp_path, docker_daemon_available: 
         [
             "docker", "run", "--rm",
             "-v", f"{work}:/work:ro",
-            "-e", "DB_NAME=testdb", "-e", "DB_USER=nl2sql", "-e", "DB_PASSWORD=secret",
-            "-e", "DB_READER=nl2sql_reader", "-e", "DB_READER_PASSWORD=reader_secret",
+            "-e", "DB_NAME=testdb", "-e", "DB_USER=nl2sql",
+            "-e", "DB_READER=nl2sql_reader",
             "--user", "postgres",
             base.group(1), "bash", "-c", script,
         ],
@@ -602,7 +613,9 @@ def test_the_dockerignore_keeps_what_the_images_actually_need():
     root = DOCKER_DIR.parent
     ignored = set((root / ".dockerignore").read_text().split())
     needed = [
-        "review/nl2sql_review", "review/requirements.txt", "review/gui/src",
+        "review/nl2sql_review", "review/requirements.lock", "review/gui/src", "common/pyproject.toml",
+        "common/nl2sql_common", "common/nl2sql_identity", "agent/requirements.lock", "auth/requirements.lock",
+        "ldap/requirements.lock", "data_gen/requirements.lock",
         "review/gui/package.json", "agent/nl2sql_agent", "gui/src",
         "console/src", "console/package.json",
         "rag/ragproc", "context_questions",

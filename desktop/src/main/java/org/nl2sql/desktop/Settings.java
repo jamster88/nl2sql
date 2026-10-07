@@ -34,10 +34,23 @@ public record Settings(
         int waitSeconds,
         int pollIntervalMs,
         int historyLimit,
-        Path feedbackFile) {
+        Path feedbackFile,
+        URI authUrl,
+        String user) {
 
     /** The compose deployment, published on the host. */
     public static final String DEFAULT_BASE_URL = "https://localhost:8443";
+
+    /**
+     * Where the auth service listens, on whichever host the API is.
+     *
+     * <p>Derived rather than fixed, so pointing {@code --url} at another
+     * machine signs in on that machine too: the compose deployment publishes
+     * both from the same host, and a client that sent a password to
+     * {@code localhost} while asking questions somewhere else would be
+     * signing in to a different deployment from the one it uses.
+     */
+    public static final int DEFAULT_AUTH_PORT = 8446;
 
     /**
      * How long to let the server hold the POST open.
@@ -88,6 +101,8 @@ public record Settings(
         int pollIntervalMs = number(environment, "NL2SQL_POLL_INTERVAL_MS", DEFAULT_POLL_INTERVAL_MS);
         int historyLimit = number(environment, "NL2SQL_HISTORY_LIMIT", DEFAULT_HISTORY_LIMIT);
         String feedbackFile = value(environment, "NL2SQL_FEEDBACK_FILE", defaultFeedbackFile(environment));
+        String authUrl = value(environment, "NL2SQL_AUTH_URL", "");
+        String user = value(environment, "NL2SQL_USER", "");
 
         for (int index = 0; index < arguments.length; index++) {
             String argument = arguments[index];
@@ -98,13 +113,16 @@ public record Settings(
                 case "--fingerprint" -> fingerprint = next(arguments, ++index, argument);
                 case "--insecure" -> insecure = true;
                 case "--wait" -> waitSeconds = positive(next(arguments, ++index, argument), argument);
+                case "--auth-url" -> authUrl = next(arguments, ++index, argument);
+                case "--user" -> user = next(arguments, ++index, argument);
                 default -> throw new IllegalArgumentException(
                         "unknown option: " + argument + "\n\n" + usage());
             }
         }
 
+        URI api = uri(baseUrl);
         return new Settings(
-                uri(baseUrl),
+                api,
                 token,
                 caCert.isEmpty() ? null : Path.of(caCert),
                 normaliseFingerprint(fingerprint),
@@ -114,7 +132,11 @@ public record Settings(
                 historyLimit,
                 feedbackFile.isEmpty() || feedbackFile.equals(NO_FILE)
                         ? null
-                        : Path.of(feedbackFile));
+                        : Path.of(feedbackFile),
+                uri(authUrl.isEmpty()
+                        ? api.getScheme() + "://" + api.getHost() + ":" + DEFAULT_AUTH_PORT
+                        : authUrl),
+                user);
     }
 
     /** True when a bearer token should be presented. */
@@ -129,10 +151,19 @@ public record Settings(
                   --url URL            the API to talk to (default %s)
                   --token TOKEN        bearer token, when the server requires one
                   --cacert FILE        PEM certificate to verify the server against
-                  --fingerprint HEX    accept exactly the certificate with this SHA-256
+                  --fingerprint HEX    accept exactly the certificates with these SHA-256s,
+                                       comma-separated: the API's and the sign-in
+                                       service's
                   --insecure           do not verify the certificate at all
                   --wait SECONDS       how long to let the server hold a question open
+                  --auth-url URL       the sign-in service (default: the API's host, port %d)
+                  --user NAME          the user name to offer when signing in
                   --help               show this message
+
+                A server with sign-in on asks who you are before it answers: the
+                window shows a sign-in form, and the session it gets back is held in
+                memory only, for as long as the window is open. A --token is a
+                service token instead, for a script, and needs no sign-in.
 
                 Verdicts you give are also kept in ~/.nl2sql/feedback.json, so one
                 that could not be sent is still on screen after a restart. Set
@@ -140,16 +171,19 @@ public record Settings(
 
                 Each option has an environment variable: NL2SQL_API_URL,
                 NL2SQL_API_TOKEN, NL2SQL_API_CACERT, NL2SQL_API_FINGERPRINT,
-                NL2SQL_API_INSECURE and NL2SQL_API_WAIT_SECONDS. The flag wins.
+                NL2SQL_API_INSECURE, NL2SQL_API_WAIT_SECONDS, NL2SQL_AUTH_URL and
+                NL2SQL_USER. The flag wins.
 
-                The API writes itself a self-signed certificate on first start, so
-                one of --cacert, --fingerprint or --insecure is needed to reach it:
+                The API and the sign-in service each present a certificate of their
+                own, issued by the stack's development CA, so one of --cacert,
+                --fingerprint or --insecure is needed to reach them. The CA covers
+                both:
 
-                  docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
-                  java -jar nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+                  docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
+                  java -jar nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 
                 ./start.sh --desktop does that copy for you.
-                """.formatted(DEFAULT_BASE_URL);
+                """.formatted(DEFAULT_BASE_URL, DEFAULT_AUTH_PORT);
     }
 
     /** True when the arguments are asking for the usage message rather than a run. */
@@ -212,32 +246,39 @@ public record Settings(
         try {
             parsed = new URI(value.endsWith("/") ? value.substring(0, value.length() - 1) : value);
         } catch (URISyntaxException cause) {
-            throw new IllegalArgumentException("not a usable API address: " + value);
+            throw new IllegalArgumentException("not a usable address: " + value);
         }
         if (parsed.getScheme() == null || parsed.getHost() == null) {
             throw new IllegalArgumentException(
-                    "the API address needs a scheme and a host, like " + DEFAULT_BASE_URL
+                    "an address needs a scheme and a host, like " + DEFAULT_BASE_URL
                             + " -- got " + value);
         }
         return parsed;
     }
 
     /**
-     * A fingerprint as the server prints it, however it was pasted.
+     * A fingerprint as the server prints it, however it was pasted -- or
+     * several, comma-separated: the API's and the sign-in service's, which
+     * since 6.1 present certificates of their own.
      *
      * <p>The API prints plain lowercase hex; every other tool that shows one
      * groups it in colon-separated pairs, and a user who pins the one their
-     * browser showed them should not have to know which this expects.
+     * browser showed them should not have to know which this expects. Each is
+     * normalised to lower-case hexadecimal, and they are joined by commas.
      */
     private static String normaliseFingerprint(String value) {
-        String stripped = value.replace(":", "").replace(" ", "").toLowerCase(java.util.Locale.ROOT);
-        if (stripped.isEmpty()) {
-            return "";
+        java.util.List<String> pins = new java.util.ArrayList<>();
+        for (String part : value.split(",")) {
+            String stripped = part.replace(":", "").replace(" ", "").toLowerCase(java.util.Locale.ROOT);
+            if (stripped.isEmpty()) {
+                continue;
+            }
+            if (!stripped.matches("[0-9a-f]{64}")) {
+                throw new IllegalArgumentException(
+                        "a SHA-256 fingerprint is 64 hexadecimal characters; got " + part.strip());
+            }
+            pins.add(stripped);
         }
-        if (!stripped.matches("[0-9a-f]{64}")) {
-            throw new IllegalArgumentException(
-                    "a SHA-256 fingerprint is 64 hexadecimal characters; got " + value);
-        }
-        return stripped;
+        return String.join(",", pins);
     }
 }

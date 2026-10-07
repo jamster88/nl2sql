@@ -11,16 +11,23 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
+import { sharedPackage } from "../web/src/config.ts";
+
+const shared = sharedPackage(import.meta.url);
+
 export default defineConfig({
   plugins: [react()],
+  resolve: shared.resolve,
+  server: shared.server,
   test: {
     globals: true,
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
-    include: ["test/**/*.test.{ts,tsx}"],
+    include: ["test/**/*.test.{ts,tsx}", ...shared.tests],
     coverage: {
       provider: "v8",
-      include: ["src/**/*.{ts,tsx}"],
+      include: ["src/**/*.{ts,tsx}", ...shared.sources],
+      allowExternal: true,
       exclude: ["src/main.tsx"],
       reporter: ["text", "html", "lcov"],
       thresholds: { statements: 100, branches: 100, functions: 100, lines: 100 },

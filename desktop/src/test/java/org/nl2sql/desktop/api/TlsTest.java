@@ -54,8 +54,8 @@ class TlsTest {
         assertEquals("NOT VERIFIED", Tls.describe(with("--insecure")));
         assertEquals("not encrypted", Tls.describe(with("--url", "http://localhost:8443")));
         assertTrue(Tls.describe(with("--fingerprint", "ab".repeat(32))).startsWith("pinned to abab"));
-        assertTrue(Tls.describe(with("--cacert", "/tmp/nl2sql-api.crt"))
-                .equals("verified against nl2sql-api.crt"));
+        assertTrue(Tls.describe(with("--cacert", "/tmp/nl2sql-ca.crt"))
+                .equals("verified against nl2sql-ca.crt"));
     }
 
     @Test
@@ -68,7 +68,7 @@ class TlsTest {
     @Test
     void a_pin_accepts_the_certificate_it_names() throws Exception {
         X509Certificate presented = certificate();
-        X509TrustManager pinned = new Tls.TrustOneCertificate(Tls.fingerprintOf(presented));
+        X509TrustManager pinned = new Tls.TrustPinned(Tls.fingerprintOf(presented));
 
         pinned.checkServerTrusted(new X509Certificate[] {presented}, "RSA");
         pinned.checkClientTrusted(new X509Certificate[] {presented}, "RSA");
@@ -77,18 +77,32 @@ class TlsTest {
 
     @Test
     void a_pin_refuses_a_different_certificate_and_says_why() throws Exception {
-        X509TrustManager pinned = new Tls.TrustOneCertificate("ab".repeat(32));
+        X509TrustManager pinned = new Tls.TrustPinned("ab".repeat(32));
 
         CertificateException refused = assertThrows(CertificateException.class,
                 () -> pinned.checkServerTrusted(new X509Certificate[] {certificate()}, "RSA"));
-        // The likeliest cause, named: the API writes a new certificate when
+        // The likeliest cause, named: the stack issues a new certificate when
         // the names it must cover change, and says so at start-up.
-        assertTrue(refused.getMessage().contains("writes a new certificate"));
+        assertTrue(refused.getMessage().contains("issues a server a new certificate"));
+    }
+
+    @Test
+    void a_pin_of_several_accepts_each_of_them() throws Exception {
+        X509Certificate presented = certificate();
+        X509TrustManager pinned = new Tls.TrustPinned("ab".repeat(32) + "," + Tls.fingerprintOf(presented));
+
+        pinned.checkServerTrusted(new X509Certificate[] {presented}, "EC");
+    }
+
+    @Test
+    void several_pins_are_described_as_such() {
+        assertEquals("pinned to abababababab and 1 more",
+                Tls.describe(with("--fingerprint", "ab".repeat(32) + "," + "cd".repeat(32))));
     }
 
     @Test
     void a_pin_refuses_a_server_that_presented_nothing() {
-        X509TrustManager pinned = new Tls.TrustOneCertificate("ab".repeat(32));
+        X509TrustManager pinned = new Tls.TrustPinned("ab".repeat(32));
 
         assertThrows(CertificateException.class,
                 () -> pinned.checkServerTrusted(new X509Certificate[0], "RSA"));
@@ -114,7 +128,7 @@ class TlsTest {
         // Under compose it comes out of the apitls volume, and that is the
         // sentence somebody needs rather than "NoSuchFileException".
         ApiException failed = assertThrows(ApiException.class,
-                () -> Tls.trustManagerFor(Path.of("/nowhere/nl2sql-api.crt")));
+                () -> Tls.trustManagerFor(Path.of("/nowhere/nl2sql-ca.crt")));
 
         assertEquals("tls_unusable", failed.code());
         assertTrue(failed.getMessage().contains("docker compose"));

@@ -13,7 +13,6 @@ and skipped rather than failed when nothing is listening.
 
 from __future__ import annotations
 
-import os
 
 import pytest
 import sqlalchemy
@@ -21,12 +20,11 @@ from nl2sql_agent.completeness import R1, R2, R3, review
 from nl2sql_agent.contract import build_contract, load_resources
 from nl2sql_agent.database import Database
 from nl2sql_agent.state import QueryResult
+from tests import live_stores
 
 pytestmark = pytest.mark.docker
 
-POSTGRES_URL = os.environ.get(
-    "POSTGRES_URL", "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail"
-)
+POSTGRES_URL = live_stores.url("retail", variable="POSTGRES_URL")
 
 BARE_SKUS = (
     "SELECT p.sku_id FROM fact_pos_retail_sales s JOIN dim_product p USING (product_key) "
@@ -58,7 +56,7 @@ def db() -> Database:
     try:
         database.table_names()
     except sqlalchemy.exc.SQLAlchemyError as exc:
-        pytest.skip(f"no reachable Postgres at {POSTGRES_URL}: {exc}")
+        live_stores.unreachable("Postgres", POSTGRES_URL, exc)
     return database
 
 

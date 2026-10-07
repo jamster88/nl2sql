@@ -5,6 +5,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TitledPane;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
@@ -334,8 +335,15 @@ public final class AnswerView {
             HBox row = new HBox(8, name, bar, ms);
             row.setAlignment(Pos.CENTER_LEFT);
             if (entry.model_calls() > 0) {
-                row.getChildren().add(muted(entry.model_calls()
-                        + (entry.model_calls() == 1 ? " model call" : " model calls")));
+                // The model that answered, as the web GUI shows it, with the
+                // router's reason for asking it on hover.
+                Label calls = muted(entry.model_calls()
+                        + (entry.model_calls() == 1 ? " model call" : " model calls")
+                        + (entry.model().isEmpty() ? "" : " · " + entry.model()));
+                if (!entry.route().isEmpty()) {
+                    calls.setTooltip(new Tooltip(entry.route()));
+                }
+                row.getChildren().add(calls);
             }
             rows.getChildren().add(row);
         }

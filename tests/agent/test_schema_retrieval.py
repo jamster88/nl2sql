@@ -29,6 +29,8 @@ from nl2sql_agent.schema_retrieval import (
 )
 
 from .conftest import FakeDatabase, FakeKnowledgeBase, make_chunk
+from tests import live_stores
+from sqlalchemy.exc import ProgrammingError
 
 # The 19 tables of data_gen/ddl.sql.
 RETAIL_TABLES = [
@@ -293,6 +295,10 @@ def test_the_foreign_key_graph_is_read_once_and_reused():
     retriever.select(B15)
     retriever.select(B15)
     assert len(reads) == 1
+    # Until an operator's reload says the catalog changed (V6-33).
+    assert retriever.forget() is True and retriever.forget() is False
+    retriever.select(B15)
+    assert len(reads) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -409,7 +415,7 @@ def test_an_empty_store_falls_back_without_calling_it_an_error():
 
 def test_a_catalog_that_will_not_answer_costs_the_bridges_not_the_run():
     def explode():
-        raise RuntimeError("permission denied for pg_constraint")
+        raise ProgrammingError("SELECT conrelid", None, Exception("permission denied for pg_constraint"))
 
     retriever = SchemaRetriever(
         FakeKnowledgeBase(chunks=ddl_chunks(["fact_ad_performance", "dim_ad_channel"])),
@@ -463,7 +469,7 @@ def test_read_foreign_keys_asks_only_for_the_configured_schema():
     unrelated graphs into one and invent join paths that do not exist.
     """
     engine = _RecordingEngine([("fact_ad_performance", "dim_ad_placement")])
-    database = SimpleNamespace(_engine=engine, _schema="retail")
+    database = SimpleNamespace(engine=engine, _schema="retail")
 
     assert read_foreign_keys(database) == [("fact_ad_performance", "dim_ad_placement")]
     statement, params = engine.connection.calls[0]
@@ -473,7 +479,7 @@ def test_read_foreign_keys_asks_only_for_the_configured_schema():
 
 def test_read_foreign_keys_defaults_to_public():
     engine = _RecordingEngine([])
-    read_foreign_keys(SimpleNamespace(_engine=engine))
+    read_foreign_keys(SimpleNamespace(engine=engine))
     assert engine.connection.calls[0][1] == {"schema": "public"}
 
 
@@ -481,13 +487,8 @@ def test_read_foreign_keys_defaults_to_public():
 # Live: the real catalog and the real vector store (pytest --run-docker)
 # ---------------------------------------------------------------------------
 
-RETAIL_DB_URL = os.environ.get(
-    "TEST_DATABASE_URL",
-    "postgresql+psycopg://nl2sql_reader:nl2sql_reader@localhost:5432/nl2sql_retail",
-)
-VECTOR_DB_URL = os.environ.get(
-    "TEST_VECTOR_DB_URL", "postgresql+psycopg://ragproc:ragproc@localhost:5434/nl2sql_vectors"
-)
+RETAIL_DB_URL = live_stores.url("retail", variable="TEST_DATABASE_URL")
+VECTOR_DB_URL = live_stores.url("vectors", variable="TEST_VECTOR_DB_URL")
 EMBED_BASE_URL = os.environ.get("TEST_EMBED_BASE_URL", "http://localhost:11434")
 EMBED_MODEL = os.environ.get("TEST_EMBED_MODEL", "bge-m3")
 DDL_COLLECTION = "ddl_index_embeddings"
@@ -504,7 +505,7 @@ def live_database() -> Database:
     try:
         database.table_names()
     except Exception as exc:
-        pytest.skip(f"no reachable retail database at {RETAIL_DB_URL}: {exc}")
+        live_stores.unreachable("retail database", RETAIL_DB_URL, exc)
     return database
 
 
@@ -516,7 +517,7 @@ def live_knowledge_base() -> KnowledgeBase:
     try:
         knowledge_base.search("smoke test", top_k=1)
     except Exception as exc:
-        pytest.skip(f"no reachable DDL vectors at {VECTOR_DB_URL}: {exc}")
+        live_stores.unreachable("DDL vectors", VECTOR_DB_URL, exc)
     return knowledge_base
 
 

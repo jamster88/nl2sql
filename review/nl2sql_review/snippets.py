@@ -27,7 +27,6 @@ A new snippet goes at the end of its kind's section (`# Joins`, `# Filters`,
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -36,8 +35,10 @@ from . import promote as promotion_module
 from .promote import PromotionError, StepResult
 from .settings import ReviewSettings
 from .snippet_validation import KINDS, static_problems
+from nl2sql_common.errors import DATABASE_ERRORS
 
-LOADER = "07_load_snippets.py"
+#: What the snippet load is called in a step's report.
+STEP = "load_snippets"
 
 #: The `#` heading each kind's snippets sit under.
 SECTIONS = {"join": "Joins", "filter": "Filters", "measure": "Measures", "dimension": "Dimensions"}
@@ -318,27 +319,22 @@ def _write(settings: ReviewSettings, text: str) -> str:
 
 
 def reload(settings: ReviewSettings) -> list[StepResult]:
-    """Load the store from the document. The loader skips what is current."""
-    env = {
-        **os.environ,
-        "SNIPPETS_READER_USER": settings.snippets_reader_user,
-        "SNIPPETS_READER_PASSWORD": settings.snippets_reader_password,
-    }
+    """Load the store from the document, in this process (V6-27). The loader
+    skips what is current; the reader's password is an argument, not an
+    environment variable the loader's process inherits."""
     return [
-        promotion_module._run_loader(
+        promotion_module.run_step(
             settings,
-            LOADER,
-            [
-                settings.snippets_document,
-                "--db-url",
+            STEP,
+            lambda loaders: loaders.load_snippets(
+                settings.snippets_document_path,
                 settings.snippets_db_url,
-                "--ollama-url",
-                settings.ollama_url,
-                "--model",
-                settings.embed_model,
-            ],
+                reader_role=settings.snippets_reader_user,
+                reader_password=settings.snippets_reader_password,
+                embedder=promotion_module.embedder_factory(settings),
+                model=settings.embed_model,
+            ),
             enabled=settings.reload_snippets,
-            env=env,
         )
     ]
 
@@ -356,6 +352,11 @@ def preview(settings: ReviewSettings, draft: SnippetDraft, snippet_id: str | Non
 
 
 def add(settings: ReviewSettings, draft: SnippetDraft) -> Outcome:
+    with promotion_module.writing(settings.snippets_document_path.parent):
+        return _add(settings, draft)
+
+
+def _add(settings: ReviewSettings, draft: SnippetDraft) -> Outcome:
     promotion_module._ensure_importable(settings.rag_dir)
     document = _read(settings)
     snippet_id = next_snippet_id(document)
@@ -367,6 +368,11 @@ def add(settings: ReviewSettings, draft: SnippetDraft) -> Outcome:
 
 
 def change(settings: ReviewSettings, snippet_id: str, draft: SnippetDraft) -> Outcome:
+    with promotion_module.writing(settings.snippets_document_path.parent):
+        return _change(settings, snippet_id, draft)
+
+
+def _change(settings: ReviewSettings, snippet_id: str, draft: SnippetDraft) -> Outcome:
     promotion_module._ensure_importable(settings.rag_dir)
     document = _read(settings)
     reasons = problems(draft, snippet_id)
@@ -379,6 +385,11 @@ def change(settings: ReviewSettings, snippet_id: str, draft: SnippetDraft) -> Ou
 
 
 def delete(settings: ReviewSettings, snippet_id: str) -> Outcome:
+    with promotion_module.writing(settings.snippets_document_path.parent):
+        return _delete(settings, snippet_id)
+
+
+def _delete(settings: ReviewSettings, snippet_id: str) -> Outcome:
     promotion_module._ensure_importable(settings.rag_dir)
     document = _read(settings)
     updated = remove_snippet(document, snippet_id)
@@ -432,7 +443,7 @@ def store_status(url: str, digest: str, *, connect: Any = None) -> dict[str, Any
             loaded = (
                 conn.execute("SELECT document_hash FROM sql_snippet_source").fetchone() if source_present else None
             )
-    except Exception as exc:  # noqa: BLE001 - reported, never raised at a browser
+    except DATABASE_ERRORS as exc:  # reported, never raised at a browser
         return {"reachable": False, "detail": f"{type(exc).__name__}: {exc}"}
     current = loaded is not None and loaded[0] == digest
     if current:

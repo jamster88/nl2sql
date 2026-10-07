@@ -22,17 +22,14 @@ import type {
   SchemaModel,
 } from "./types";
 
-export class ApiError extends Error {
-  readonly code: string;
-  readonly status: number;
+import { ApiError } from "@nl2sql/web/api/errors";
+import { notifyUnauthorized } from "@nl2sql/web/auth/session";
 
-  constructor(status: number, code: string, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.code = code;
-  }
-}
+/**
+ * A failure the service described -- the error every page throws for one
+ * (`web/src/api/errors.ts`): branch on `code`, show `message`.
+ */
+export { ApiError };
 
 export interface ClientOptions {
   /** Empty means same origin, which is the normal case: nginx proxies /v1. */
@@ -76,6 +73,9 @@ export function createClient(options: ClientOptions = {}): Client {
 
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
+      // A session that ended while the page was open: the sign-in gate
+      // listens for this and asks for a sign-in again.
+      if (response.status === 401) notifyUnauthorized();
       if (isErrorBody(body)) throw new ApiError(response.status, body.error.code, body.error.message);
       throw new ApiError(response.status, "error", `HTTP ${response.status}`);
     }

@@ -6,10 +6,16 @@ that anyone can `docker compose up` is not something this repository can do
 for you, so it makes its own: a self-signed certificate written on first
 start, valid for the names the container is actually reachable by.
 
-That is a development convenience and it should never quietly become the
+Under compose it does not have to: the `pki` service issues the API its own
+certificate from the stack's development CA before the API starts
+(`nl2sql_identity.pki`), and this module finds it in place. Generating one
+here is for a server started on its own.
+
+Either is a development convenience and it should never quietly become the
 production arrangement, which is what `API_TLS_ALLOW_SELF_SIGNED=false` is
 for. With it off the server will not generate a throwaway certificate and
-will not load one it finds -- it stops, and says which file is self-signed.
+will not load a development one it finds -- self-signed, or issued by the
+development CA -- it stops, and says which file it is.
 The failure happens at startup, in front of whoever is deploying it, rather
 than in a browser warning that someone clicks through.
 
@@ -30,6 +36,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from nl2sql_identity.pki import is_development
 
 from .settings import ApiSettings
 
@@ -59,6 +66,9 @@ class CertificateInfo:
     not_after: dt.datetime
     hostnames: list[str] = field(default_factory=list)
     self_signed: bool = False
+    #: Self-signed, or issued by the stack's development CA: either way a
+    #: certificate no client trusts until someone tells it to.
+    development: bool = False
     fingerprint_sha256: str = ""
     generated: bool = False
     #: Names that were missing from a certificate already on disk, and which
@@ -67,6 +77,13 @@ class CertificateInfo:
     #: Names the configuration asks for that this certificate does not cover
     #: and which cannot be added, because it is CA-issued. Empty otherwise.
     missing_hostnames: list[str] = field(default_factory=list)
+
+    @property
+    def kind(self) -> str:
+        """What issued it, in the banner's words."""
+        if self.self_signed:
+            return "self-signed"
+        return "issued by the development CA" if self.development else "CA-issued"
 
     @property
     def expired(self) -> bool:
@@ -88,6 +105,7 @@ class CertificateInfo:
         return {
             "enabled": True,
             "self_signed": self.self_signed,
+            "development": self.development,
             "subject": self.subject,
             "issuer": self.issuer,
             "hostnames": list(self.hostnames),
@@ -124,7 +142,7 @@ def describe_certificate(path: str | os.PathLike[str]) -> CertificateInfo:
         cert = x509.load_pem_x509_certificate(file.read_bytes())
     except FileNotFoundError as exc:
         raise TlsError(f"no certificate at {file}") from exc
-    except Exception as exc:  # a truncated file, a key pasted in its place
+    except (ValueError, OSError) as exc:  # a truncated file, a key pasted in its place
         raise TlsError(f"{file} is not a readable PEM certificate: {exc}") from exc
 
     return CertificateInfo(
@@ -138,6 +156,7 @@ def describe_certificate(path: str | os.PathLike[str]) -> CertificateInfo:
         # a CA in the issuer field, so this needs no list of known-dummy
         # values to stay true.
         self_signed=cert.issuer == cert.subject,
+        development=cert.issuer == cert.subject or is_development(cert),
         fingerprint_sha256=cert.fingerprint(hashes.SHA256()).hex(),
     )
 
@@ -289,12 +308,16 @@ def ensure_certificate(settings: ApiSettings) -> CertificateInfo | None:
         elif missing:
             info.missing_hostnames = missing
 
-    if info.self_signed and not settings.tls_allow_self_signed:
+    if info.development and not settings.tls_allow_self_signed:
+        what = (
+            f"self-signed (issuer and subject are both {info.subject})"
+            if info.self_signed
+            else f"issued by the development CA ({info.issuer})"
+        )
         raise TlsError(
-            f"{cert_file} is self-signed (issuer and subject are both {info.subject}) "
-            "and API_TLS_ALLOW_SELF_SIGNED=false. Replace it with a CA-issued "
-            "certificate, or set API_TLS_ALLOW_SELF_SIGNED=true to accept the "
-            "development one."
+            f"{cert_file} is {what} and API_TLS_ALLOW_SELF_SIGNED=false. Replace it "
+            "with a certificate from a real CA, or set API_TLS_ALLOW_SELF_SIGNED=true "
+            "to accept the development one."
         )
     return info
 
@@ -324,14 +347,22 @@ def certificate_notes(info: CertificateInfo | None) -> list[str]:
     if info.missing_hostnames:
         notes.append(
             f"the certificate at {info.path} does not cover "
-            f"{', '.join(info.missing_hostnames)} and is CA-issued, so it was left "
-            "alone. Anything connecting under those names will fail to verify it; "
-            "reissue it to cover them."
+            f"{', '.join(info.missing_hostnames)} and was not generated here, so it "
+            "was left alone. Anything connecting under those names will fail to "
+            "verify it. Under compose, add them to API_TLS_HOSTNAMES and start "
+            "again: the pki service reissues it."
         )
     if info.self_signed:
         notes.append(
             "the certificate is self-signed, so clients must trust it explicitly: "
             "curl --cacert, or the CA store of whatever is calling. Set "
             "API_TLS_ALLOW_SELF_SIGNED=false to refuse to start without a real one."
+        )
+    elif info.development:
+        notes.append(
+            "the certificate is issued by the stack's development CA, so clients "
+            "must trust that CA explicitly: launch.sh copies it out as "
+            "./nl2sql-ca.crt, for curl --cacert, the desktop client and a browser. "
+            "Set API_TLS_ALLOW_SELF_SIGNED=false to refuse to start without a real one."
         )
     return notes

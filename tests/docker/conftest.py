@@ -24,6 +24,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 FAKE_DOCKER = r"""#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_LOG"
+# What each compose call was told about sign-in: compose reads the shell
+# before .env, so this is what every service it starts would be given.
+if [[ "${1:-}" == compose ]]; then
+    printf '%s\n' "${AUTH_ENABLED-unset}" >> "${FAKE_LOG%/*}/auth-enabled"
+fi
 
 read_env() {  # read_env KEY DEFAULT -- reflects whatever setup.sh wrote to .env
     local key="$1" default="$2" value=""
@@ -50,21 +55,32 @@ case "$1" in
         fi
         exit 0 ;;
     stop) exit 0 ;;
+    container)
+        # A runtime store's own container from before 6.3 --
+        # `<instance>-feedbackdb` -- is there when FAKE_LEGACY_STORES names it.
+        if [[ "$2" == "inspect" && "$*" =~ -(feedbackdb|correctionsdb|completionsdb|snippetsdb)$ ]]; then
+            [[ " ${FAKE_LEGACY_STORES:-} " == *" ${BASH_REMATCH[1]} "* ]] && exit 0
+        fi
+        exit 1 ;;
     ps)
         [[ -n "${FAKE_LEGACY_CONTAINER:-}" ]] && echo "c0ffee123456"
         exit 0 ;;
     volume)
+        # A runtime store's volume from before 6.3 -- `<instance>_feedbackdata`
+        # -- is there when FAKE_LEGACY_VOLUMES names the store; the retail
+        # volume when FAKE_VOLUME_EXISTS says so.
+        if [[ "$*" =~ _(feedback|corrections|completions|snippets)data ]]; then
+            [[ " ${FAKE_LEGACY_VOLUMES:-} " == *" ${BASH_REMATCH[1]} "* ]] && exit 0
+            exit 1
+        fi
         [[ -n "${FAKE_VOLUME_EXISTS:-}" ]] && exit 0
         exit 1 ;;
     image)
-        # `docker image inspect <tag>` -- launch.sh asks whether the desktop
-        # client's image is already here before deciding what to say about
-        # where the jar is coming from.
-        if [[ "$2" == "inspect" ]]; then
-            [[ -n "${FAKE_DESKTOP_IMAGE_PRESENT:-}" ]] && exit 0
-            exit 1
-        fi
-        exit 0 ;;
+        # `docker image inspect <tag>`, the only `image` command the scripts
+        # run -- launch.sh asks whether the desktop client's image is already
+        # here before deciding what to say about where the jar is coming from.
+        [[ -n "${FAKE_DESKTOP_IMAGE_PRESENT:-}" ]] && exit 0
+        exit 1 ;;
     inspect)
         if [[ "$*" == *nl2sql-vectordb* ]]; then
             echo "${FAKE_VECTOR_HEALTH:-healthy}"
@@ -78,12 +94,8 @@ case "$1" in
             echo "${FAKE_GUI_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-gui* ]]; then
             echo "${FAKE_GUI_HEALTH:-healthy}"
-        elif [[ "$*" == *nl2sql-feedbackdb* ]]; then
-            echo "${FAKE_FEEDBACK_HEALTH:-healthy}"
-        elif [[ "$*" == *nl2sql-correctionsdb* ]]; then
-            echo "${FAKE_CORRECTIONS_HEALTH:-healthy}"
-        elif [[ "$*" == *nl2sql-completionsdb* ]]; then
-            echo "${FAKE_COMPLETIONS_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-stores* ]]; then
+            echo "${FAKE_STORES_HEALTH:-healthy}"
         # The review GUI's container name contains the review service's, so
         # the longer name is matched first or every review-gui inspect would
         # be answered as the service.
@@ -105,12 +117,27 @@ case "$1" in
             echo "${FAKE_CONSOLE_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-console* ]]; then
             echo "${FAKE_CONSOLE_HEALTH:-healthy}"
+        # The front door's name holds MLflow's, so it is matched first.
+        elif [[ "$*" == *nl2sql-mlflow-proxy* && "$*" == *Running* ]]; then
+            echo "${FAKE_MLFLOW_PROXY_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-mlflow-proxy* ]]; then
+            echo "${FAKE_MLFLOW_PROXY_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-ldap* && "$*" == *Running* ]]; then
+            echo true
+        elif [[ "$*" == *nl2sql-ldap* ]]; then
+            echo "${FAKE_LDAP_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-auth* && "$*" == *Running* ]]; then
+            echo "${FAKE_AUTH_RUNNING:-true}"
+        elif [[ "$*" == *nl2sql-auth* ]]; then
+            echo "${FAKE_AUTH_HEALTH:-healthy}"
+        elif [[ "$*" == *nl2sql-directory-gui* && "$*" == *Running* ]]; then
+            echo true
+        elif [[ "$*" == *nl2sql-directory-gui* ]]; then
+            echo "${FAKE_DIRECTORY_GUI_HEALTH:-healthy}"
         elif [[ "$*" == *nl2sql-mlflow* && "$*" == *Running* ]]; then
             echo "${FAKE_MLFLOW_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-mlflow* ]]; then
             echo "${FAKE_MLFLOW_HEALTH:-healthy}"
-        elif [[ "$*" == *nl2sql-snippetsdb* ]]; then
-            echo "${FAKE_SNIPPETS_HEALTH:-healthy}"
         elif [[ "$*" == *nl2sql-curate-gui* && "$*" == *Running* ]]; then
             echo "${FAKE_CURATE_GUI_RUNNING:-true}"
         elif [[ "$*" == *nl2sql-curate-gui* ]]; then
@@ -131,10 +158,68 @@ case "$1" in
             printf 'not really a jar\n' > desktop/target/nl2sql-desktop.jar
             exit 0
         fi
+        # setup.sh --build-all: every image this run pins, in one build.
+        if [[ "$*" == "--profile api"*" build" && -n "${FAKE_BUILD_ALL_FAILS:-}" ]]; then
+            echo "failed to solve: the Dockerfile did not build" >&2
+            exit 1
+        fi
         if [[ "$*" == *" cp api:"* ]]; then
-            # Copies the API's certificate out of the volume it writes it to.
+            # Copies the stack's CA certificate out of the API's volume.
             [[ -n "${FAKE_CERT_COPY_FAILS:-}" ]] && exit 1
-            printf 'not really a certificate\n' > "${@: -1}"
+            printf '%s\n' "${FAKE_CA:-not really a certificate}" > "${@: -1}"
+            exit 0
+        fi
+        if [[ "$*" == *"run --rm --no-deps -T dbprep python -m nl2sql_ops report"* ]]; then
+            # What each database holds, as the dbprep service reports it.
+            # FAKE_REPORT is its whole answer; the default is a full stack.
+            if [[ -n "${FAKE_REPORT:-}" ]]; then
+                printf '%s\n' "$FAKE_REPORT"
+                exit 0
+            fi
+            printf '%s\n' "STEP Checking what is actually in each database" \
+                "STATE retail_rows=${FAKE_ROW_COUNT-194101}" \
+                "INFO retail dataset: ${FAKE_ROW_COUNT-194101} sales rows" \
+                "INFO knowledge base: 53 embedded chunks" \
+                "INFO worked examples: 48 golden pairs, 48 embedded questions" \
+                "INFO SQL snippets: 32 snippets, 32 embedded meanings" \
+                "STEP Checking the multi-agent pipeline" \
+                "INFO literal matching: pg_trgm installed (trigram search)" \
+                "INFO least privilege: the agent's role holds SELECT and nothing else"
+            exit 0
+        fi
+        if [[ "$*" == *"run --rm --no-deps -T dbprep python -m nl2sql_ops snippets"* ]]; then
+            # Whether the snippet store is behind its document.
+            printf '%s\n' "${FAKE_SNIPPETS_STATE:-current}"
+            exit 0
+        fi
+        if [[ "$*" == *"run --rm --no-deps -T dbprep"* ]]; then
+            # The databases prepared: what the one-shot says it did, or why
+            # it could not.
+            if [[ -n "${FAKE_DBPREP_FAILS:-}" ]]; then
+                printf '%s\n' "dbprep: $FAKE_DBPREP_FAILS" >&2
+                exit 1
+            fi
+            printf '%s\n' "INFO role nl2sql_reader can read every table and write none" \
+                "INFO a person signs in with their directory password, which Postgres checks itself" \
+                "INFO the runtime stores: feedback (nl2sql_feedback), corrections (nl2sql_corrections)"
+            [[ -n "${FAKE_DBPREP_WARNS:-}" ]] && printf 'WARN %s\n' "$FAKE_DBPREP_WARNS"
+            exit 0
+        fi
+        if [[ "$*" == *"--profile migrate run"*storesmigrate* ]]; then
+            # A runtime store from before 6.3 moved into the one server.
+            # FAKE_MIGRATE_FAILS names the store whose move fails;
+            # FAKE_MIGRATED the ones moved already.
+            [[ "$*" =~ NL2SQL_OWNER=([a-z]+) ]]
+            store="${BASH_REMATCH[1]}"
+            if [[ "${FAKE_MIGRATE_FAILS:-}" == "$store" ]]; then
+                echo "migrate_store: nl2sql_$store in the runtime stores already has 2 tables, so it is not merged into it." >&2
+                exit 1
+            fi
+            if [[ " ${FAKE_MIGRATED:-} " == *" $store "* ]]; then
+                echo "migrate_store: nl2sql_$store was moved from nl2sql_${store}data already"
+            else
+                echo "migrate_store: moved nl2sql_$store from nl2sql_${store}data into the runtime stores (2 tables); nl2sql_${store}data is kept"
+            fi
             exit 0
         fi
         if [[ "$*" == "config" || "$*" == *" config" ]]; then
@@ -231,40 +316,6 @@ ROUTE note the catalog describes http://192.168.10.82:11434, and the agent is po
                 fi
                 printf 'PROBE {"chunks": %s, "collections": %s}\n' \
                     "${FAKE_PROBE_CHUNKS-1}" "${FAKE_PROBE_COLLECTIONS-3}"
-                exit 0 ;;
-            exec)
-                # Ordered most specific first: several of these run against the
-                # same service and are told apart only by the SQL.
-                if [[ "$*" == *"snippetsdb sha256sum"* ]]; then
-                    # The document's hash, taken in the store's own container.
-                    echo "${FAKE_SNIPPETS_DOC_HASH-5ca1ab1e}  -"
-                elif [[ "$*" == *sql_snippet_source* ]]; then
-                    # What the store says it was loaded from: by default the
-                    # document as it is, so a start has nothing to load.
-                    echo "${FAKE_SNIPPETS_LOADED_HASH-5ca1ab1e}"
-                elif [[ "$*" == *sql_snippet_vectors* ]]; then
-                    echo "${FAKE_SNIPPET_VECTORS-32}"
-                elif [[ "$*" == *sql_snippets* ]]; then
-                    echo "${FAKE_SNIPPET_COUNT-32}"
-                elif [[ "$*" == *"pg_extension"* ]]; then
-                    echo "${FAKE_TRGM_INSTALLED-1}"
-                elif [[ "$*" == *"role_table_grants"* ]]; then
-                    echo "${FAKE_READER_EXTRA_GRANTS-0}"
-                elif [[ "$*" == *ddl_index_embeddings* ]]; then
-                    echo "${FAKE_DDL_CHUNKS-20}"
-                elif [[ "$*" == *reader=* ]]; then
-                    # docker/reader_role.sql, piped in as the superuser.
-                    [[ -n "${FAKE_READER_ROLE_FAILS:-}" ]] && exit 1
-                    exit 0
-                elif [[ "$*" == *golden_pair_question_vectors* ]]; then
-                    echo "${FAKE_VECTOR_COUNT-45}"
-                elif [[ "$*" == *golden_pairs* ]]; then
-                    echo "${FAKE_PAIR_COUNT-45}"
-                elif [[ "$*" == *vectordb* ]]; then
-                    echo "${FAKE_CHUNK_COUNT-53}"
-                else
-                    echo "${FAKE_ROW_COUNT-194101}"
-                fi
                 exit 0 ;;
             *) exit 0 ;;
         esac ;;
@@ -515,6 +566,13 @@ class SetupRun:
             values[key] = value
         return values
 
+    def secrets(self) -> dict[str, str]:
+        """secrets/, as the script wrote it: each file's name and what it holds."""
+        directory = self.workdir / "secrets"
+        if not directory.is_dir():
+            return {}
+        return {path.name: path.read_text() for path in sorted(directory.iterdir())}
+
     def called(self, fragment: str) -> bool:
         return any(fragment in call for call in self.calls)
 
@@ -536,9 +594,10 @@ def _copy_snippet_document(workdir: Path) -> None:
 
 
 def _copy_reader_role_sql(workdir: Path) -> None:
-    """Both scripts pipe docker/reader_role.sql into the (fake) container."""
+    """What the scripts read of docker/: the migration script compose mounts.
+    Nothing is piped into a database since 6.3 -- the dbprep service does it."""
     (workdir / "docker").mkdir()
-    shutil.copy(REPO_ROOT / "docker" / "reader_role.sql", workdir / "docker" / "reader_role.sql")
+    shutil.copy(REPO_ROOT / "docker" / "migrate_store.sh", workdir / "docker" / "migrate_store.sh")
 
 
 def _make_desktop_sources(workdir: Path) -> None:
@@ -763,8 +822,9 @@ def run_start(tmp_path: Path):
         "IMAGE_TAG=v1\n"
         "AGENT_IMAGE_NAME=mcfaddja/nl2sql-agent\n"
         f"AGENT_IMAGE_TAG={shipped}\n"
-        "GUI_IMAGE_NAME=mcfaddja/nl2sql-gui\n"
-        f"GUI_IMAGE_TAG={shipped}\n"
+        # Every page's image, one since 6.3.
+        "PROXY_IMAGE_NAME=mcfaddja/nl2sql-proxy\n"
+        f"PROXY_IMAGE_TAG={shipped}\n"
         # Pinned whenever retrieval is on, since 5.6: it loads the snippets.
         "REVIEW_IMAGE_NAME=mcfaddja/nl2sql-review\n"
         f"REVIEW_IMAGE_TAG={shipped}\n"
@@ -873,9 +933,7 @@ def run_init_db(tmp_path: Path):
                 "PGDATA": str(pgdata),
                 "DB_NAME": "nl2sql_retail",
                 "DB_USER": "nl2sql",
-                "DB_PASSWORD": "owner-secret",
                 "DB_READER": "nl2sql_reader",
-                "DB_READER_PASSWORD": "reader-secret",
                 "DDL_FILE": str(workdir / "ddl.sql"),
                 "LOAD_SQL": str(workdir / "_load.sql"),
                 "READER_SQL": str(workdir / "reader_role.sql"),

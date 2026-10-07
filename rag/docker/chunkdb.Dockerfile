@@ -1,4 +1,4 @@
-ARG POSTGRES_IMAGE=postgres:18
+ARG POSTGRES_IMAGE=postgres:18@sha256:5a5a84b19854a9ffaa54082c166ff4ec27473a361e496e5ea167f298f2da9722
 FROM ${POSTGRES_IMAGE}
 
 # PGDATA must sit outside /var/lib/postgresql: the base image declares that

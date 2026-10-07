@@ -50,13 +50,15 @@ unreachable context store costs the agent its worked examples and nothing else.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from .rerank import DEFAULT_GROUNDING_WEIGHT, DEFAULT_LAMBDA, DEFAULT_RERANK, DEFAULT_RERANK_K
 from .rerank import rerank as rerank_pairs
+from nl2sql_common.vectors import vector_literal as _vector_literal, QueryEmbedder as Embedder
+from nl2sql_common.errors import DATABASE_ERRORS, MODEL_ERRORS, Unavailable
 
 PAIRS_TABLE = "golden_pairs"
 BM25_FUNCTION = "golden_pairs_bm25"
@@ -83,12 +85,8 @@ DEFAULT_FUSION = FUSION_SCORE
 DEFAULT_RRF_K = 60
 
 
-class ExamplesUnavailableError(RuntimeError):
+class ExamplesUnavailableError(Unavailable, RuntimeError):
     """The context store, the vector store, or the embedding model is unreachable."""
-
-
-class Embedder(Protocol):
-    def embed_query(self, text: str) -> list[float]: ...
 
 
 @dataclass
@@ -292,7 +290,7 @@ class GoldenPairLibrary:
         try:
             with self._context.connect() as conn:
                 return int(conn.exec_driver_sql(f"SELECT COUNT(*) FROM {PAIRS_TABLE}").scalar())
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise ExamplesUnavailableError(
                 f"Could not read {PAIRS_TABLE} from the context store: {exc}"
             ) from exc
@@ -362,7 +360,7 @@ class GoldenPairLibrary:
                     ).fetchall()
                 for left, right, similarity in rows:
                     table[(left, right)] = float(similarity)
-            except Exception:
+            except DATABASE_ERRORS:
                 return None
 
         def similarity(a: str, b: str) -> float:
@@ -394,7 +392,7 @@ class GoldenPairLibrary:
                     """,
                     (question, self._candidate_k),
                 ).fetchall()
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise ExamplesUnavailableError(
                 f"Could not run the keyword search: {exc}"
             ) from exc
@@ -404,7 +402,7 @@ class GoldenPairLibrary:
         """Both vector rankings from one embedding call."""
         try:
             vector = self._embedder.embed_query(question)
-        except Exception as exc:
+        except MODEL_ERRORS as exc:
             raise ExamplesUnavailableError(
                 f"Could not embed the question: {exc}. Is the embedding model "
                 "available on the configured Ollama host?"
@@ -418,7 +416,7 @@ class GoldenPairLibrary:
                     BY_QUESTION: self._nearest(conn, QUESTION_VECTORS, literal),
                     BY_REASONING: self._nearest(conn, REASONING_VECTORS, literal),
                 }
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise ExamplesUnavailableError(
                 f"Could not search the golden-pair vectors: {exc}"
             ) from exc
@@ -452,7 +450,7 @@ class GoldenPairLibrary:
                     """,
                     (chunk_ids,),
                 ).fetchall()
-        except Exception as exc:
+        except DATABASE_ERRORS as exc:
             raise ExamplesUnavailableError(
                 f"Could not load golden pairs from the context store: {exc}"
             ) from exc
@@ -474,7 +472,9 @@ class GoldenPairLibrary:
         }
 
     def _apply_timeout(self, conn) -> None:
-        conn.exec_driver_sql(f"SET statement_timeout = {int(self._statement_timeout_ms)}")
+        # LOCAL: it ends with the transaction this connection's block began,
+        # not with the pooled connection (V6-22).
+        conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
 
 
 def build_embedder(settings) -> Embedder:
@@ -488,7 +488,3 @@ def build_embedder(settings) -> Embedder:
 
     return OllamaEmbeddings(model=settings.embed_model, base_url=settings.embed_base_url)
 
-
-def _vector_literal(vector: list[float]) -> str:
-    """pgvector's text input format, so no client-side vector type is needed."""
-    return "[" + ",".join(repr(float(v)) for v in vector) + "]"

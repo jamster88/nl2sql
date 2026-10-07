@@ -95,9 +95,13 @@ def test_default_run_pulls_all_four_images(run_setup):
 
 def test_default_run_starts_every_database(run_setup):
     result = run_setup()
-    assert result.called("compose up -d postgres")
-    assert result.called("compose up -d vectordb")
-    assert result.called("compose up -d chunkdb")
+    assert result.called("compose up -d postgres stores vectordb chunkdb")
+
+
+def test_without_retrieval_the_knowledge_stores_are_not_started(run_setup):
+    result = run_setup("--no-rag")
+    assert result.called("compose up -d postgres stores")
+    assert not result.called("vectordb chunkdb")
 
 
 def test_default_run_writes_env_pinning_every_image(run_setup):
@@ -292,52 +296,48 @@ def test_a_failed_agent_pull_falls_back_to_building_from_source(run_setup):
 # ---------------------------------------------------------------------------
 
 
-def test_the_gui_image_is_not_pulled_unless_it_is_asked_for(run_setup):
+def test_the_pages_image_is_not_pulled_unless_a_page_is_wanted(run_setup):
     """Most people ask questions from a terminal. An image for a container
-    that is never started is a download nobody asked for.
+    that is never started is a download nobody asked for -- and with sign-in
+    off there is no directory page either.
     """
-    result = run_setup()
-    assert not result.called("pull mcfaddja/nl2sql-gui")
-    assert "GUI_IMAGE_NAME" not in result.env_file()
+    result = run_setup("--no-auth")
+    assert not result.called("pull mcfaddja/nl2sql-proxy")
+    assert "PROXY_IMAGE_NAME" not in result.env_file()
 
 
-def test_the_gui_flag_pulls_and_pins_it(run_setup):
-    """Pinning is what makes the published image the one that runs: compose
+def test_the_pages_image_is_pulled_and_pinned_with_sign_in_on(run_setup):
+    """Sign-in has a page of its own, the directory's, so the pages' image is
+    wanted whenever it is on -- and is one image for every page (V6-37).
+    Pinning is what makes the published image the one that runs: compose
     builds a service with a `build:` section whenever its image is missing.
     """
-    result = run_setup("--gui")
-    tag = _shipped_tag("GUI_TAG")
-    assert f"pull mcfaddja/nl2sql-gui:{tag}" in result.calls
-    assert result.env_file()["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
-    assert result.env_file()["GUI_IMAGE_TAG"] == tag
+    result = run_setup()
+    tag = _shipped_tag("PROXY_TAG")
+    assert f"pull mcfaddja/nl2sql-proxy:{tag}" in result.calls
+    assert result.env_file()["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
+    assert result.env_file()["PROXY_IMAGE_TAG"] == tag
+    for gone in ("nl2sql-gui:", "nl2sql-review-gui:", "nl2sql-console-gui:", "nl2sql-directory-gui:"):
+        assert not result.calls_matching(f"pull mcfaddja/{gone}"), gone
 
 
-def test_naming_a_gui_image_or_tag_implies_the_flag(run_setup):
-    """Asking for a particular GUI image and then not getting one would be a
-    silent no-op, which is the worst kind of flag.
-    """
-    result = run_setup("--gui-tag", "v9_9")
-    assert result.called("pull mcfaddja/nl2sql-gui:v9_9")
-    assert result.env_file()["GUI_IMAGE_TAG"] == "v9_9"
-
-    # Read from setup.sh rather than written in: this assertion is about the
-    # *image* flag implying --gui, and hardcoding the default tag beside it
-    # made it fail on every version bump for a reason unrelated to the flag.
-    result = run_setup("--gui-image", "example.com/other-gui")
-    assert result.called(f"pull example.com/other-gui:{_shipped_tag('GUI_TAG')}")
-    assert result.env_file()["GUI_IMAGE_NAME"] == "example.com/other-gui"
+def test_naming_the_pages_image_or_tag_implies_the_flag(run_setup):
+    """Asking for a particular image and then not getting one would be a
+    silent no-op, which is the worst kind of flag."""
+    result = run_setup("--no-auth", "--proxy-tag", "v9_9")
+    assert result.called("pull mcfaddja/nl2sql-proxy:v9_9")
+    assert result.env_file()["PROXY_IMAGE_TAG"] == "v9_9"
+    result = run_setup("--no-auth", "--proxy-image", "example.com/pages")
+    assert result.called(f"pull example.com/pages:{_shipped_tag('PROXY_TAG')}")
+    assert result.env_file()["PROXY_IMAGE_NAME"] == "example.com/pages"
 
 
-def test_a_failed_gui_pull_is_not_fatal(run_setup):
+def test_a_failed_pages_pull_is_not_fatal(run_setup):
     """There is a Dockerfile right here, so a registry nobody can reach costs
-    a build rather than the whole setup.
-    """
-    result = run_setup("--gui", env={"FAKE_FAIL_PULL": "nl2sql-gui"})
+    a build rather than the whole setup."""
+    result = run_setup("--gui", env={"FAKE_FAIL_PULL": "nl2sql-proxy"})
     assert result.returncode == 0
-    # Named rather than quoting the shared half of the sentence: the review
-    # images say the same thing about themselves, and a test that matched
-    # either would stop proving anything about this one.
-    assert "./launch.sh --gui will build it from source instead." in result.output
+    assert "./launch.sh will build it from source the first time a page starts." in result.output
 
 
 def test_a_failed_context_store_pull_is_fatal_with_actionable_guidance(run_setup):
@@ -358,52 +358,30 @@ def test_a_context_store_that_never_becomes_healthy_is_reported(run_setup):
     """
     result = run_setup(env={"FAKE_CONTEXT_HEALTH": "starting"}, timeout=180)
     assert result.returncode != 0
-    assert "the context store did not become healthy" in result.output
-    assert "docker compose logs chunkdb" in result.output
+    assert "chunkdb did not become healthy. Check 'docker compose logs chunkdb'." in result.output
 
 
-def test_a_knowledge_base_with_no_embedded_chunks_warns_rather_than_stopping(run_setup):
-    """Same shape as the context store below, and the same reasoning: an
-    empty vector store is a working stack with worse answers. The agent
-    retrieves nothing and falls back to the schema.
-    """
-    result = run_setup(env={"FAKE_CHUNK_COUNT": "0"})
+def test_the_runtime_stores_never_becoming_healthy_is_fatal(run_setup):
+    result = run_setup(env={"FAKE_STORES_HEALTH": "starting"}, timeout=180)
+    assert result.returncode != 0
+    assert "stores did not become healthy. Check 'docker compose logs stores'." in result.output
+
+
+def test_what_the_one_shot_reports_is_said_as_it_said_it(run_setup):
+    """The checks are the dbprep service's (nl2sql_ops.report): its steps are
+    this script's steps, its warnings its warnings, and an empty store is a
+    working stack with worse answers, not a reason to stop."""
+    report = "\n".join((
+        "STEP Checking what is actually in each database", "STATE retail_rows=194101",
+        "INFO retail dataset: 194101 sales rows", "WARN the vector store is up but holds no embedded chunks.",
+        "SOMETHING else this script does not know",
+    ))
+    result = run_setup(env={"FAKE_REPORT": report})
     assert result.returncode == 0
-    assert "the knowledge base is up but has no embedded chunks in it" in result.output
-    assert "Retrieval will be skipped until it is populated" in result.output
-
-
-def test_a_populated_knowledge_base_says_how_many_chunks_it_has(run_setup):
-    result = run_setup()
-    assert "knowledge base ready with 53 embedded chunks" in result.output
-    assert "has no embedded chunks" not in result.output
-
-
-def test_a_context_store_with_no_golden_pairs_warns_rather_than_stopping(run_setup):
-    """An empty context store is a working stack with worse answers, not a
-    broken one: the agent skips worked examples and carries on. Stopping
-    setup over it would be wrong, and saying nothing would leave the
-    degradation to be discovered from the answers.
-    """
-    result = run_setup(env={"FAKE_PAIR_COUNT": "0"})
-    assert result.returncode == 0
-    assert "the context store is up but holds no golden pairs" in result.output
-    assert "Worked examples will be skipped until it is populated" in result.output
-
-
-def test_a_context_store_that_cannot_be_counted_warns_the_same_way(run_setup):
-    """`psql` failing leaves the count empty rather than zero, and an empty
-    string must not read as "fine".
-    """
-    result = run_setup(env={"FAKE_PAIR_COUNT": ""})
-    assert result.returncode == 0
-    assert "holds no golden pairs" in result.output
-
-
-def test_a_populated_context_store_says_how_many_pairs_it_has(run_setup):
-    result = run_setup()
-    assert "context store ready with 45 golden question/SQL pairs" in result.output
-    assert "holds no golden pairs" not in result.output
+    assert "==> Checking what is actually in each database" in result.output
+    assert "    retail dataset: 194101 sales rows" in result.output
+    assert "WARNING: the vector store is up but holds no embedded chunks." in result.output
+    assert "SOMETHING" not in result.output and "STATE" not in result.output
 
 
 def test_a_failed_vector_pull_is_fatal_with_actionable_guidance(run_setup):
@@ -452,10 +430,11 @@ def test_vectordb_never_becoming_healthy_is_fatal(run_setup):
     assert "logs vectordb" in result.output
 
 
-def test_a_missing_dataset_is_fatal_and_suggests_reset(run_setup):
-    result = run_setup(env={"FAKE_ROW_COUNT": ""})
+@pytest.mark.parametrize("rows", ["", "0"])
+def test_a_missing_dataset_is_fatal_and_suggests_reset(run_setup, rows):
+    result = run_setup(env={"FAKE_ROW_COUNT": rows})
     assert result.returncode != 0
-    assert "--reset" in result.output
+    assert "the database is up but the dataset is missing. Try --reset." in result.output
 
 
 def test_reset_removes_the_existing_volumes_first(run_setup):
@@ -539,8 +518,8 @@ def test_final_message_advertises_a_question_that_needs_the_knowledge_base(run_s
 @pytest.mark.parametrize(
     ("flags", "running"),
     [
-        ((), ["nl2sql-postgres", "nl2sql-vectordb", "nl2sql-chunkdb", "nl2sql-snippetsdb"]),
-        (("--no-rag",), ["nl2sql-postgres"]),
+        ((), ["nl2sql-postgres", "nl2sql-stores", "nl2sql-vectordb", "nl2sql-chunkdb"]),
+        (("--no-rag",), ["nl2sql-postgres", "nl2sql-stores"]),
     ],
 )
 def test_final_message_lists_exactly_the_databases_it_started(run_setup, flags, running):
@@ -613,29 +592,29 @@ def test_a_check_that_returns_no_chunks_warns(run_setup):
 # ---------------------------------------------------------------------------
 
 
-def test_default_run_creates_the_agents_read_only_role(run_setup):
-    """Setup ends by telling the user to run the agent, and the agent connects
-    as the reader role -- so setup has to create it, as the superuser, before
-    that command can work.
-    """
+def test_the_databases_are_prepared_by_the_one_shot_after_they_are_healthy(run_setup):
+    """The agent connects as the reader role, so it has to exist before
+    setup tells the user to run the agent. The dbprep service makes it, and
+    everything else each database needs; this script runs no SQL (V6-41)."""
     result = run_setup()
-    [call] = result.calls_matching("reader=")
-    assert "compose exec -T postgres psql -U postgres" in call
-    assert "reader=nl2sql_reader" in call and "owner=nl2sql" in call
-    assert "read-only role nl2sql_reader ready" in result.output
+    assert result.index_of("compose run --rm --no-deps -T dbprep") > result.index_of("nl2sql-chunkdb")
+    assert "==> Preparing the databases" in result.output
+    assert "role nl2sql_reader can read every table and write none" in result.output
+    assert not result.calls_matching("psql") and not result.calls_matching("compose exec")
 
 
-def test_a_role_that_cannot_be_created_is_fatal(run_setup):
-    result = run_setup(env={"FAKE_READER_ROLE_FAILS": "1"})
+def test_a_warning_the_one_shot_gives_is_a_warning_here(run_setup):
+    result = run_setup(env={"FAKE_DBPREP_WARNS": "could not create pg_trgm; literal matching falls back to difflib"})
+    assert result.returncode == 0
+    assert "WARNING: could not create pg_trgm" in result.output
+
+
+def test_databases_that_cannot_be_prepared_stop_setup_with_the_reason(run_setup):
+    result = run_setup(env={"FAKE_DBPREP_FAILS": "the retail database's socket is not in /run/nl2sql/sockets/retail"})
     assert result.returncode != 0
-    assert "read-only role" in result.output
-    assert "docker compose logs postgres" in result.output
+    assert "dbprep: the retail database's socket is not in" in result.output
+    assert "the databases could not be prepared, so nothing could use them" in result.output
 
-
-def test_default_run_installs_the_trigram_extension(run_setup):
-    result = run_setup()
-    [call] = result.calls_matching("CREATE EXTENSION")
-    assert "IF NOT EXISTS pg_trgm" in call
 
 
 def test_a_chat_model_tagged_latest_is_not_reported_as_missing(run_setup):
@@ -652,41 +631,32 @@ def test_a_chat_model_tagged_latest_is_not_reported_as_missing(run_setup):
 # ---------------------------------------------------------------------------
 
 
-def test_review_pulls_both_images_and_the_interface_in_front_of_them(run_setup):
-    """Feedback has to be given before it can be reviewed, so asking for the
-    review images asks for the web interface too."""
-    result = run_setup("--review")
-
+def test_review_pulls_the_service_and_the_pages(run_setup):
+    """Feedback has to be given before it can be reviewed; both pages are the
+    one pages image."""
+    result = run_setup("--review", "--no-auth")
     assert result.called(f"pull mcfaddja/nl2sql-review:{_shipped_tag('REVIEW_TAG')}")
-    assert result.called(f"pull mcfaddja/nl2sql-review-gui:{_shipped_tag('REVIEW_GUI_TAG')}")
-    assert result.called(f"pull mcfaddja/nl2sql-gui:{_shipped_tag('GUI_TAG')}")
+    assert result.called(f"pull mcfaddja/nl2sql-proxy:{_shipped_tag('PROXY_TAG')}")
 
 
-def test_review_pins_all_four_names_in_the_env_file(run_setup):
-    """Unpinned, compose builds them from this checkout on first start --
-    a pip install and an npm ci inside two containers."""
-    env = run_setup("--review").env_file()
-
+def test_review_pins_the_service_and_the_pages_in_the_env_file(run_setup):
+    env = run_setup("--review", "--no-auth").env_file()
     assert env["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
-    assert env["REVIEW_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-review-gui"
     assert env["REVIEW_IMAGE_TAG"] == _shipped_tag("REVIEW_TAG")
-    assert env["REVIEW_GUI_IMAGE_TAG"] == _shipped_tag("REVIEW_GUI_TAG")
+    assert env["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
 
 
-def test_no_review_page_is_pinned_unless_it_was_asked_for(run_setup):
-    """Pinning an image nobody wanted makes compose go looking for it. The
-    review *service* is wanted with retrieval on, since 5.6: it carries the
-    loader that fills the snippet store. Its pages are not."""
-    env = run_setup().env_file()
+def test_the_review_service_is_pinned_with_retrieval_on(run_setup):
+    """The review *service* is wanted with retrieval on, since 5.6: it carries
+    the loader that fills the snippet store. Pages are the pages' image."""
+    env = run_setup("--no-auth").env_file()
     assert env.get("REVIEW_IMAGE_NAME") == "mcfaddja/nl2sql-review"
-    assert "REVIEW_GUI_IMAGE_NAME" not in env
-    assert "CURATE_GUI_IMAGE_NAME" not in env
+    assert "PROXY_IMAGE_NAME" not in env
 
 
 def test_without_retrieval_nothing_about_review_is_pinned(run_setup):
     env = run_setup("--no-rag").env_file()
     assert "REVIEW_IMAGE_NAME" not in env
-    assert "REVIEW_GUI_IMAGE_NAME" not in env
 
 
 def test_naming_any_review_image_or_tag_implies_the_flag(run_setup):
@@ -703,10 +673,6 @@ def test_naming_any_review_image_or_tag_implies_the_flag(run_setup):
         "REVIEW_IMAGE_NAME"
     ] == "example.com/rev"
     assert run_setup("--review-tag", "v9_9").env_file()["REVIEW_IMAGE_TAG"] == "v9_9"
-    assert run_setup("--review-gui-image", "example.com/rev-gui").env_file()[
-        "REVIEW_GUI_IMAGE_NAME"
-    ] == "example.com/rev-gui"
-    assert run_setup("--review-gui-tag", "v9_9").env_file()["REVIEW_GUI_IMAGE_TAG"] == "v9_9"
 
 
 def test_a_failed_review_pull_is_not_fatal(run_setup):
@@ -714,7 +680,7 @@ def test_a_failed_review_pull_is_not_fatal(run_setup):
     registry costs a build rather than the whole setup."""
     result = run_setup("--review", env={"FAKE_FAIL_PULL": "nl2sql-review"})
     assert result.returncode == 0
-    assert "./launch.sh --review will build it from source instead." in result.output
+    assert "compose will build it from source the first time it is needed." in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -722,52 +688,35 @@ def test_a_failed_review_pull_is_not_fatal(run_setup):
 # ---------------------------------------------------------------------------
 
 
-def test_console_pulls_and_pins_its_interface_and_nothing_else(run_setup):
-    """One image: the console behind the page is the agent's own image,
-    pulled anyway, started with a different command. And not the web
-    interface -- the answers being troubleshot come from a terminal as often
-    as from a page."""
-    result = run_setup("--console")
-
-    tag = _shipped_tag("CONSOLE_GUI_TAG")
-    pulled = [call for call in result.calls if call.startswith("pull") and "console" in call]
-    assert pulled == [f"pull mcfaddja/nl2sql-console-gui:{tag}"]
-    env = result.env_file()
-    assert env["CONSOLE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-console-gui"
-    assert env["CONSOLE_GUI_IMAGE_TAG"] == tag
-    assert "GUI_IMAGE_NAME" not in env
+def test_console_needs_only_the_pages_image(run_setup):
+    """The console behind its page is the agent's own image, pulled anyway,
+    started with a different command; its page is the pages' image."""
+    result = run_setup("--console", "--no-auth")
+    assert not [call for call in result.calls if call.startswith("pull") and "console" in call]
+    assert result.called(f"pull mcfaddja/nl2sql-proxy:{_shipped_tag('PROXY_TAG')}")
 
 
-def test_nothing_about_the_console_is_pinned_unless_it_was_asked_for(run_setup):
+
+def test_a_pinned_pages_image_stays_pinned_without_the_flag(run_setup):
+    """"Was it asked for last time" is the same question as "is it pinned"."""
+    run_setup("--console", "--no-auth")
+    assert run_setup().env_file()["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
+
+
+def test_a_page_pinned_by_a_release_before_one_image_keeps_the_pages_pinned(run_setup):
+    """6.2 pinned each page's own image; any of them is the pages' now."""
+    first = run_setup("--no-auth")
+    dotenv = first.workdir / ".env"
+    dotenv.write_text(dotenv.read_text() + "CONSOLE_GUI_IMAGE_NAME=mcfaddja/nl2sql-console-gui\n")
     env = run_setup().env_file()
-    assert "CONSOLE_GUI_IMAGE_NAME" not in env
-
-
-def test_naming_the_console_image_or_tag_implies_the_flag(run_setup):
-    """Written out rather than parametrized, for the reason the review
-    images' test gives."""
-    assert run_setup("--console-gui-image", "example.com/console").env_file()[
-        "CONSOLE_GUI_IMAGE_NAME"
-    ] == "example.com/console"
-    assert run_setup("--console-gui-tag", "v9_9").env_file()["CONSOLE_GUI_IMAGE_TAG"] == "v9_9"
-
-
-def test_a_failed_console_pull_is_not_fatal(run_setup):
-    result = run_setup("--console", env={"FAKE_FAIL_PULL": "nl2sql-console-gui"})
-    assert result.returncode == 0
-    assert "could not pull mcfaddja/nl2sql-console-gui:" in result.output
-    assert "./launch.sh --console will build it from source instead." in result.output
-
-
-def test_a_pinned_console_stays_pinned_without_the_flag(run_setup):
-    run_setup("--console")
-    assert run_setup().env_file()["CONSOLE_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-console-gui"
+    assert env["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
+    assert "CONSOLE_GUI_IMAGE_NAME" not in env, "retired, not kept as a setting added by hand"
 
 
 def test_setup_ends_by_saying_the_console_is_there(run_setup):
     output = run_setup().output
     assert "./launch.sh --console" in output
-    assert "http://localhost:8082" in output
+    assert "https://localhost:8082" in output
 
 
 # ---------------------------------------------------------------------------
@@ -786,6 +735,9 @@ def test_mlflow_pulls_and_pins_its_server_and_its_store(run_setup):
     env = result.env_file()
     assert (env["MLFLOW_IMAGE_NAME"], env["MLFLOW_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflow", server)
     assert (env["MLFLOW_DB_IMAGE_NAME"], env["MLFLOW_DB_IMAGE_TAG"]) == ("mcfaddja/nl2sql-mlflowdb", store)
+    # Its front door is the pages' image.
+    assert env["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
+
 
 
 def test_nothing_about_mlflow_is_pulled_or_pinned_unless_it_was_asked_for(run_setup):
@@ -820,7 +772,7 @@ def test_a_pinned_mlflow_stays_pinned_without_the_flag(run_setup):
 def test_setup_ends_by_saying_mlflow_is_there(run_setup):
     output = run_setup().output
     assert "./launch.sh --mlflow" in output
-    assert "http://localhost:5001" in output
+    assert "https://localhost:5001" in output
 
 
 # ---------------------------------------------------------------------------
@@ -871,18 +823,12 @@ def test_every_optional_value_survives_a_re_run(run_setup):
     assert env["POSTGRES_PORT"] == "5999"
 
 
-def test_a_pinned_gui_stays_pinned_without_the_flag(run_setup):
-    """"Was it asked for last time" is the same question as "is it pinned"."""
-    run_setup("--gui")
-    env = run_setup().env_file()
-    assert env["GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-gui"
-
 
 def test_a_pinned_review_stays_pinned_without_the_flag(run_setup):
     run_setup("--review")
     env = run_setup().env_file()
     assert env["REVIEW_IMAGE_NAME"] == "mcfaddja/nl2sql-review"
-    assert env["REVIEW_GUI_IMAGE_NAME"] == "mcfaddja/nl2sql-review-gui"
+    assert env["PROXY_IMAGE_NAME"] == "mcfaddja/nl2sql-proxy"
 
 
 def test_nothing_is_carried_over_on_a_first_run(run_setup):
@@ -890,9 +836,7 @@ def test_nothing_is_carried_over_on_a_first_run(run_setup):
     write empty values into the new one."""
     env = run_setup().env_file()
     assert "OLLAMA_BASE_URL" not in env
-    assert "GUI_IMAGE_NAME" not in env
-    assert "REVIEW_GUI_IMAGE_NAME" not in env
-    assert "CURATE_GUI_IMAGE_NAME" not in env
+    assert not [key for key in env if key.endswith("_GUI_IMAGE_NAME")]
 
 
 def test_settings_added_by_hand_survive_a_re_run(run_setup):
@@ -904,14 +848,13 @@ def test_settings_added_by_hand_survive_a_re_run(run_setup):
     first = run_setup()
     dotenv = first.workdir / ".env"
     # No newline at the end, as an editor may leave it: the last line counts.
-    dotenv.write_text(dotenv.read_text() + "# a note\nAPI_TOKEN=s3cret\nGUI_PORT=9090")
+    dotenv.write_text(dotenv.read_text() + "# a note\nGUI_PORT=9090")
 
     second = run_setup()
     env = second.env_file()
 
-    assert env["API_TOKEN"] == "s3cret"
     assert env["GUI_PORT"] == "9090"
-    assert "kept 2 other setting(s) from the previous .env" in second.output
+    assert "kept 1 other setting(s) from the previous .env" in second.output
     assert "# a note" not in (second.workdir / ".env").read_text()
 
 
@@ -1044,8 +987,7 @@ def test_the_tag_pulled_names_the_machine_this_is(run_setup, system, machine, cl
 
 def test_the_agent_is_pointed_at_the_mlflow_service(run_setup):
     """Written whether or not MLflow is ever started: a run that finds no
-    server is answered untraced, as the feedback URL beside it is harmless
-    without the staging database."""
+    server is answered untraced."""
     assert run_setup().env_file()["MLFLOW_TRACKING_URI"] == "http://nl2sql-mlflow:5000"
 
 
@@ -1079,28 +1021,13 @@ def test_an_old_backup_is_not_where_the_tracking_uri_comes_from(run_setup):
 # ---------------------------------------------------------------------------
 
 
-def test_curate_pulls_and_pins_its_page_and_the_service_behind_it(run_setup):
-    result = run_setup("--curate", "--no-rag")
+def test_curate_pulls_and_pins_the_pages_and_the_service_behind_them(run_setup):
+    result = run_setup("--curate", "--no-rag", "--no-auth")
     env = result.env_file()
-    assert env.get("CURATE_GUI_IMAGE_NAME") == "mcfaddja/nl2sql-curate-gui"
+    assert env.get("PROXY_IMAGE_NAME") == "mcfaddja/nl2sql-proxy"
     assert env.get("REVIEW_IMAGE_NAME") == "mcfaddja/nl2sql-review"
-    assert "REVIEW_GUI_IMAGE_NAME" not in env
-    assert result.called("pull mcfaddja/nl2sql-curate-gui:")
+    assert result.called("pull mcfaddja/nl2sql-proxy:")
     assert result.called("pull mcfaddja/nl2sql-review:")
-    assert not result.called("pull mcfaddja/nl2sql-review-gui:")
-
-
-def test_naming_the_curation_image_or_tag_implies_the_flag(run_setup):
-    image = run_setup("--curate-gui-image", "me/curate").env_file()
-    assert image.get("CURATE_GUI_IMAGE_NAME") == "me/curate"
-    tag = run_setup("--curate-gui-tag", "dev").env_file()
-    assert tag.get("CURATE_GUI_IMAGE_TAG") == "dev"
-
-
-def test_a_curation_page_that_will_not_pull_is_built_later(run_setup):
-    result = run_setup("--curate", env={"FAKE_FAIL_PULL": "nl2sql-curate-gui"})
-    assert result.returncode == 0
-    assert "./launch.sh --curate will build it from source instead." in result.output
 
 
 def test_a_review_service_that_will_not_pull_is_built_when_first_needed(run_setup):
@@ -1109,21 +1036,14 @@ def test_a_review_service_that_will_not_pull_is_built_when_first_needed(run_setu
     assert "compose will build it from source the first time it is needed." in result.output
 
 
-def test_a_rerun_keeps_the_curation_page_and_does_not_mistake_the_service_pin_for_the_review_page(run_setup):
-    first = run_setup("--curate")
-    assert "CURATE_GUI_IMAGE_NAME" in first.env_file()
-    again = run_setup()
-    env = again.env_file()
-    assert env.get("CURATE_GUI_IMAGE_NAME") == "mcfaddja/nl2sql-curate-gui"
-    assert "REVIEW_GUI_IMAGE_NAME" not in env
 
-
-def test_the_snippet_store_is_started_and_loaded_from_the_document(run_setup):
+def test_the_snippets_are_loaded_from_the_document_as_the_images_account(run_setup):
     result = run_setup()
-    assert result.called("up -d snippetsdb")
-    assert result.called("inspect --format {{.State.Health.Status}} nl2sql-snippetsdb")
-    assert result.called("--profile feedback --profile review run --rm --no-deps -T --entrypoint sh review")
-    assert result.called("07_load_snippets.py")
+    # One call, its `sh -c` script spread over the log's lines.
+    log = "\n".join(result.calls)
+    assert "--profile review run --rm --no-deps -T --user 10001:10001 --entrypoint sh review" in log
+    assert "07_load_snippets.py" in log
+    assert "--db-url" not in log, "the store's URL and password are the service's own"
     assert "32 rows written, 0 stale rows removed" in result.output
     assert "vectors -> sql_snippet_vectors: 32 embedded, 0 already current" in result.output
 
@@ -1135,17 +1055,240 @@ def test_a_snippet_load_that_fails_is_a_warning_not_a_failed_setup(run_setup):
     assert "searchable by keyword" in result.output
 
 
-def test_a_snippet_store_that_never_comes_up_stops_setup(run_setup):
-    result = run_setup(env={"FAKE_SNIPPETS_HEALTH": "starting"}, timeout=240)
-    assert result.returncode != 0
-    assert "the snippet store did not become healthy" in result.output
-
 
 def test_without_retrieval_no_snippet_store_is_started(run_setup):
     result = run_setup("--no-rag")
-    assert not result.called("snippetsdb")
     assert not result.called("07_load_snippets.py")
 
 
 def test_the_closing_lines_point_at_the_curation_interface(run_setup):
-    assert "./launch.sh --curate                     # http://localhost:8083" in run_setup().output
+    assert "./launch.sh --curate                     # https://localhost:8083" in run_setup().output
+
+
+# ---------------------------------------------------------------------------
+# Sign-in
+# ---------------------------------------------------------------------------
+
+SIGNIN_SECRETS = ("ldap_admin_password", "ldap_service_password", "auth_rolesync_password")
+
+
+def test_sign_in_is_pulled_pinned_and_given_its_passwords_by_default(run_setup):
+    result = run_setup()
+    assert result.returncode == 0
+    for image, family in (("nl2sql-ldap", "LDAP"), ("nl2sql-auth", "AUTH"), ("nl2sql-proxy", "PROXY")):
+        tag = _shipped_tag(f"{family}_TAG")
+        assert result.called(f"pull mcfaddja/{image}:{tag}"), image
+        env = result.env_file()
+        assert (env[f"{family}_IMAGE_NAME"], env[f"{family}_IMAGE_TAG"]) == (f"mcfaddja/{image}", tag)
+    env, secrets = result.env_file(), result.secrets()
+    for name in SIGNIN_SECRETS:
+        assert re.fullmatch(r"[0-9a-f]{48}", secrets[name]), name
+    assert len({secrets[name] for name in SIGNIN_SECRETS}) == 3
+    assert "AUTH_ENABLED" not in env
+    assert (result.workdir / ".env").stat().st_mode & 0o777 == 0o600
+    output = " ".join(result.output.split())
+    assert "The first person is admin, whose password is in secrets/ldap_admin_password" in output
+    assert "which ./launch.sh --api starts at https://localhost:8084" in output
+
+
+def test_the_passwords_are_kept_from_one_env_to_the_next_and_so_is_the_backup_private(run_setup):
+    first = run_setup().secrets()
+    again = run_setup()
+    assert [again.secrets()[name] for name in SIGNIN_SECRETS] == [first[name] for name in SIGNIN_SECRETS]
+    assert (again.workdir / ".env.bak").stat().st_mode & 0o777 == 0o600
+
+
+def test_no_auth_turns_sign_in_off_for_good_and_pulls_nothing_for_it(run_setup):
+    result = run_setup("--no-auth")
+    env = result.env_file()
+    assert env["AUTH_ENABLED"] == "false"
+    assert "LDAP_IMAGE_NAME" not in env and "AUTH_IMAGE_NAME" not in env
+    assert not result.calls_matching("pull mcfaddja/nl2sql-ldap")
+    assert "Sign-in is off (AUTH_ENABLED=false in .env)" in result.output
+    # And it stays off on the next run, which is given no flag.
+    again = run_setup()
+    assert again.env_file()["AUTH_ENABLED"] == "false"
+    assert not again.calls_matching("pull mcfaddja/nl2sql-auth")
+
+
+def test_a_sign_in_image_that_will_not_pull_is_built_instead(run_setup):
+    result = run_setup(env={"FAKE_FAIL_PULL": "nl2sql-auth"})
+    assert result.returncode == 0
+    assert "./launch.sh will build it from source the first time sign-in starts." in result.output
+
+
+# ---------------------------------------------------------------------------
+# Every password and token, a file in secrets/ (6.1 V6-08, 6.3 V6-38)
+# ---------------------------------------------------------------------------
+
+STORE_SECRETS = (
+    "postgres_password", "postgres_reader_password", "context_db_password", "vector_db_password",
+    "stores_db_password", "snippets_db_password", "snippets_reader_password", "feedback_db_password",
+    "feedback_writer_password", "corrections_db_password", "completions_db_password", "mlflow_db_password",
+)
+TOKENS = ("api_token", "review_token", "console_token")
+
+
+def test_every_store_is_given_a_password_of_its_own_in_a_file_and_none_in_env(run_setup):
+    result = run_setup()
+    secrets, env = result.secrets(), result.env_file()
+    assert all(re.fullmatch(r"[0-9a-f]{48}", secrets[name]) for name in STORE_SECRETS)
+    assert len({secrets[name] for name in STORE_SECRETS}) == len(STORE_SECRETS)
+    assert not [key for key in env if key.endswith(("_PASSWORD", "_TOKEN"))], "a secret is in .env"
+    assert not any(value in (result.workdir / ".env").read_text() for value in secrets.values() if value)
+
+
+def test_the_directory_is_its_owners_and_the_files_are_readable_to_the_containers(run_setup):
+    """A container's account -- 10001, nginx's 101, postgres's 999 -- is not
+    the person who owns the checkout, and on Linux a bind-mounted file keeps
+    its mode; the directory is what keeps everyone else out."""
+    directory = run_setup().workdir / "secrets"
+    assert directory.stat().st_mode & 0o777 == 0o700
+    assert {path.stat().st_mode & 0o777 for path in directory.iterdir()} == {0o644}
+
+
+def test_store_passwords_are_kept_from_one_run_to_the_next(run_setup):
+    first = run_setup().secrets()
+    again = run_setup().secrets()
+    assert [again[name] for name in STORE_SECRETS] == [first[name] for name in STORE_SECRETS]
+
+
+def test_a_password_in_a_env_from_before_6_3_is_moved_into_its_file(run_setup):
+    """Generated once and never replaced: a store keeps the password it was
+    given, so the old value is the one the file must hold."""
+    first = run_setup()
+    (first.workdir / "secrets" / "postgres_password").unlink()
+    dotenv = first.workdir / ".env"
+    dotenv.write_text(dotenv.read_text() + "POSTGRES_PASSWORD=from-6-2\nAPI_TOKEN=tok-6-2\n")
+    (first.workdir / "secrets" / "api_token").unlink()
+    again = run_setup()
+    assert again.secrets()["postgres_password"] == "from-6-2"
+    assert again.secrets()["api_token"] == "tok-6-2"
+    assert "POSTGRES_PASSWORD" not in again.env_file() and "API_TOKEN" not in again.env_file()
+
+
+def test_no_service_token_unless_asked_for(run_setup):
+    secrets = run_setup().secrets()
+    assert [secrets[name] for name in TOKENS] == ["", "", ""], "empty files, which compose mounts and nothing reads"
+    assert secrets["ldap_upstream_bind_password"] == ""
+
+
+def test_tokens_makes_the_three_service_tokens_and_keeps_them(run_setup):
+    """'The three tokens when set' (V6-08): generated, not chosen, once someone
+    asks for them, and carried from then on with or without the flag."""
+    first = run_setup("--tokens").secrets()
+    assert all(re.fullmatch(r"[0-9a-f]{48}", first[name]) for name in TOKENS)
+    assert len({first[name] for name in TOKENS}) == 3
+    again = run_setup().secrets()
+    assert [again[name] for name in TOKENS] == [first[name] for name in TOKENS]
+
+
+def test_the_backup_keeps_the_settings_and_not_the_secrets(run_setup):
+    """.env.bak is a record of what the last .env said; a secret a .env from
+    before 6.3 held is in secrets/ now, and a copy in the backup is one more
+    place to read it."""
+    first = run_setup()
+    dotenv = first.workdir / ".env"
+    dotenv.write_text(dotenv.read_text() + "POSTGRES_PASSWORD=old-and-secret\n")
+    again = run_setup()
+    backup = (again.workdir / ".env.bak").read_text()
+    assert "IMAGE_NAME=" in backup and "AGENT_IMAGE_TAG=" in backup
+    assert "old-and-secret" not in backup
+    assert "# POSTGRES_PASSWORD: in secrets/, not kept here" in backup
+    assert (again.workdir / ".env.bak").stat().st_mode & 0o777 == 0o600
+
+
+# ---------------------------------------------------------------------------
+# Another instance beside this one (V6-67)
+# ---------------------------------------------------------------------------
+
+
+def test_another_instance_has_its_own_database_volume_and_containers(run_setup):
+    result = run_setup(env={"NL2SQL_INSTANCE": "nl2sql-accept"})
+    assert result.returncode == 0, result.output
+    assert result.called("volume inspect nl2sql-accept-pgdata")
+    for name in ("postgres", "stores", "vectordb", "chunkdb"):
+        assert result.called(f"{{{{.State.Health.Status}}}} nl2sql-accept-{name}"), name
+    assert not result.called("nl2sql-pgdata")
+
+
+def test_an_instance_named_in_dotenv_is_used_and_kept(run_setup):
+    """How the acceptance tier names its stack: in the .env it starts from,
+    which setup.sh rewrites -- and must not lose the name in rewriting."""
+    dotenv = run_setup().workdir / ".env"  # a .env to start from
+    dotenv.write_text(dotenv.read_text() + "NL2SQL_INSTANCE=nl2sql-accept\nGUI_PORT=18080\n")
+    result = run_setup()
+    assert result.returncode == 0, result.output
+    assert result.called("volume inspect nl2sql-accept-pgdata")
+    kept = result.env_file()
+    assert (kept["NL2SQL_INSTANCE"], kept["GUI_PORT"]) == ("nl2sql-accept", "18080")
+
+
+# ---------------------------------------------------------------------------
+# --build-all: the stack as this checkout builds it (V6-67)
+# ---------------------------------------------------------------------------
+
+EVERY_SET = ("--review", "--curate", "--console", "--mlflow", "--desktop")
+
+
+def test_build_all_pulls_nothing_of_ours_and_builds_everything_it_pins(run_setup):
+    result = run_setup("--build-all", *EVERY_SET)
+    assert result.returncode == 0, result.output
+    assert not result.calls_matching("pull mcfaddja/nl2sql-agent"), "an image of ours was pulled"
+    assert not [call for call in result.calls_matching("pull ") if "rag-" not in call], result.calls_matching("pull ")
+    [build] = [call for call in result.calls if call.endswith(" build") and "--profile api" in call]
+    for profile in ("api", "gui", "review", "mlflow", "auth", "desktop"):
+        assert f"--profile {profile} " in build + " ", profile
+    # The pages' image through one page: the others are the same image.
+    for profile in ("reviewgui", "curategui", "consolegui", "directorygui"):
+        assert f"--profile {profile} " not in build + " ", profile
+    assert result.called("compose build postgres"), "the dataset is built too"
+    assert "Building every image from this checkout (--build-all)" in result.output
+
+
+def test_build_all_pins_the_local_builds(run_setup):
+    pinned = run_setup("--build-all", *EVERY_SET).env_file()
+    for image in ("AGENT", "REVIEW", "PROXY", "MLFLOW", "MLFLOW_DB", "DESKTOP", "LDAP", "AUTH"):
+        assert pinned[f"{image}_IMAGE_TAG"] == "local", image
+        assert not pinned[f"{image}_IMAGE_NAME"].startswith("mcfaddja/"), image
+    assert (pinned["IMAGE_NAME"], pinned["IMAGE_TAG"]) == ("nl2sql-retail-postgres", "latest")
+    # The knowledge-base stores have no Dockerfile here, and stay published.
+    assert pinned["VECTOR_IMAGE_NAME"].startswith("mcfaddja/")
+
+
+def test_build_all_builds_only_what_the_run_asked_for(run_setup):
+    result = run_setup("--build-all", "--no-auth")
+    [build] = [call for call in result.calls if call.endswith(" build") and "--profile api" in call]
+    assert "--profile review " in build, "the review image loads the snippets"
+    assert "--profile gui" not in build and "--profile auth" not in build
+
+
+def test_an_image_that_does_not_build_stops_setup_and_says_so(run_setup):
+    result = run_setup("--build-all", env={"FAKE_BUILD_ALL_FAILS": "1"})
+    assert result.returncode != 0
+    assert "an image did not build from this checkout" in result.output
+
+
+# ---------------------------------------------------------------------------
+# A stack from before 6.3
+# ---------------------------------------------------------------------------
+
+
+def test_the_old_stores_containers_are_retired_before_the_databases_start(run_setup):
+    """The feedback store's own container holds the port the runtime stores
+    publish since 6.3: stopped cleanly and removed, its volume kept for
+    launch.sh to move."""
+    result = run_setup(env={"FAKE_LEGACY_STORES": "feedbackdb correctionsdb"})
+    assert result.returncode == 0, result.output
+    for store in ("feedbackdb", "correctionsdb"):
+        assert result.index_of(f"stop -t 60 nl2sql-{store}") < result.index_of(f"rm nl2sql-{store}")
+        assert result.index_of(f"rm nl2sql-{store}") < result.index_of("compose up -d postgres stores")
+    assert not result.called("stop -t 60 nl2sql-snippetsdb")
+    assert not result.calls_matching("volume rm")
+    assert "Retiring the stores' containers from before 6.3: feedbackdb correctionsdb" in result.output
+
+
+def test_a_fresh_stack_retires_nothing(run_setup):
+    result = run_setup()
+    assert not result.calls_matching("stop -t 60")
+    assert "Retiring" not in result.output

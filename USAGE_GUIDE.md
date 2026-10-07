@@ -16,6 +16,7 @@ that way; this guide is about using it.
 - [First run](#first-run)
 - [Starting and stopping](#starting-and-stopping)
 - [Where everything is](#where-everything-is)
+- [Signing in](#signing-in)
 - [Asking questions](#asking-questions)
   - [In the web interface](#in-the-web-interface)
   - [In the desktop client](#in-the-desktop-client)
@@ -144,7 +145,7 @@ proving the agent container can retrieve from the knowledge base:
 ```
 
 `start.sh` then starts everything else, checks it, waits until the web
-interface actually answers, and opens <http://localhost:8080> in your
+interface actually answers, and opens <https://localhost:8080> in your
 browser.
 
 If the compose default host is yours, skip `setup.sh`: `./start.sh` on its
@@ -191,7 +192,7 @@ another agent version, no knowledge base.
 ./start.sh --mlflow                       # and MLflow, in a window of its own
 ./start.sh --curate                       # and the curation interface, in a window of its own
 ./start.sh --review --curate --console --mlflow   # every page
-./start.sh --feedback                     # keep verdicts, without the review interface
+./start.sh --feedback                     # the same as --api since 6.3: verdicts are kept whenever it is up
 ./start.sh --load-golden                  # load the golden question document into the stores first
 ./start.sh --no-browser                   # start everything, and print the URLs instead
 ./start.sh --no-rag                       # the retail database only: no knowledge, no examples
@@ -222,12 +223,12 @@ without re-pinning anything:
 ./launch.sh                               # the four databases: enough for the terminal
 ./launch.sh --api                         # and the REST API
 ./launch.sh --gui                         # and the web interface, with the API behind it
-./launch.sh --feedback                    # and the staging database verdicts are kept in
-./launch.sh --review                      # and the whole review system (implies --feedback)
+./launch.sh --feedback                    # the same as --api since 6.3
+./launch.sh --review                      # and the whole review system (implies --api)
 ./launch.sh --console                     # and the SQL console (implies --api)
 ./launch.sh --mlflow                      # and MLflow
 ./launch.sh --curate                      # and the curation interface, with the review service behind it
-./launch.sh --desktop                     # build or fetch the desktop jar, and copy the API's certificate out
+./launch.sh --desktop                     # build or fetch the desktop jar, and copy the stack's CA certificate out
 ./launch.sh --load-golden                 # load the golden question document into the stores first
 ./launch.sh --no-rag                      # the retail database only
 ./launch.sh --restart                     # recreate the containers
@@ -260,7 +261,7 @@ to do about each warning.
 ```bash
 docker compose --profile '*' down         # everything; all data is kept
 docker compose down                       # the four databases only
-docker compose --profile mlflow down      # MLflow, and the four databases
+docker compose --profile mlflow down      # MLflow and its front door, and the four databases
 ```
 
 `down` stops and removes containers. The data is in volumes, which `down`
@@ -288,31 +289,141 @@ those included.
 
 | What | Address | Started by |
 |---|---|---|
-| Web interface | <http://localhost:8080> | `start.sh`, `launch.sh --gui` |
-| Review interface | <http://localhost:8081> | `--review` |
-| Curation interface | <http://localhost:8083> | `--curate` |
-| SQL console | <http://localhost:8082> (this machine only) | `--console` |
-| MLflow | <http://localhost:5001> (this machine only) | `--mlflow` |
+| Web interface | <https://localhost:8080> | `start.sh`, `launch.sh --gui` |
+| Review interface | <https://localhost:8081> | `--review` |
+| Curation interface | <https://localhost:8083> | `--curate` |
+| SQL console | <https://localhost:8082> (this machine only) | `--console` |
+| MLflow | <https://localhost:5001> (this machine only) | `--mlflow` |
+| Directory page (people and groups) | <https://localhost:8084> (this machine only) | `--api` and everything that implies it, beside a standalone directory |
+| Auth service (sign-in) | <https://localhost:8446> | `--api` and everything that implies it |
+| The directory's own API | `nl2sql-auth:8447`, inside the stack only -- not published | with the auth service |
 | REST API | <https://localhost:8443> | `--api`, `--gui`, `--feedback`, `--review`, `--console`, `--desktop` |
 | Review service | <https://localhost:8444> | `--review`, `--curate` |
 | SQL console's service | <https://localhost:8445> (this machine only) | `--console` |
-| Retail database | `localhost:5432` | always |
-| Context store (golden pairs) | `localhost:5433` | always, unless `--no-rag` |
-| Knowledge base (pgvector) | `localhost:5434` | always, unless `--no-rag` |
-| Snippet store (pgvector) | `localhost:5438` | always, unless `--no-rag` |
-| Staging database (verdicts) | `localhost:5435` | `--feedback`, `--review` |
-| Corrections store | `localhost:5436` | `--review`, `--curate` |
-| Completions store | `localhost:5437` | `--review`, `--curate` |
+| Retail database | `localhost:5432` (this machine only) | always |
+| Context store (golden pairs) | `localhost:5433` (this machine only) | always, unless `--no-rag` |
+| Knowledge base (pgvector) | `localhost:5434` (this machine only) | always, unless `--no-rag` |
+| The runtime stores: snippets, verdicts, corrections and completions | `localhost:5435` (this machine only), a database each | always |
 
-MLflow's own database is not published at all. Every port can be moved in
+MLflow's own database is not published at all, nor is MLflow itself -- port
+5001 is its front door -- nor the directory, nor the directory's own API.
+The databases are this machine's unless `DB_BIND_ADDRESS` says otherwise
+(6.1). Every port can be moved in
 `.env`: `GUI_PORT`, `REVIEW_GUI_PORT`, `CURATE_GUI_PORT`, `CONSOLE_GUI_PORT`,
-`MLFLOW_PORT`, `API_PORT`, `REVIEW_PORT`, `CONSOLE_PORT`, `POSTGRES_PORT`,
-`CONTEXT_DB_PORT`, `VECTOR_DB_PORT`, `SNIPPETS_DB_PORT`, `FEEDBACK_DB_PORT`,
-`CORRECTIONS_DB_PORT` and `COMPLETIONS_DB_PORT`. The scripts read the same
-file, so the URLs they print and open follow.
+`DIRECTORY_GUI_PORT`, `MLFLOW_PORT`, `API_PORT`, `REVIEW_PORT`,
+`CONSOLE_PORT`, `AUTH_PORT`, `AUTH_DIRECTORY_PORT`, `POSTGRES_PORT`,
+`CONTEXT_DB_PORT`, `VECTOR_DB_PORT` and `STORES_DB_PORT` -- and, inside its own
+container, MLflow's front door listens on `MLFLOW_PROXY_PORT`, which only a
+proxy in front of it need know about. The scripts read the same file, so
+the URLs they print and open follow, and so does every page that proxies to
+a moved service (6.1; before it, moving `API_PORT`, `REVIEW_PORT`,
+`CONSOLE_PORT` or `AUTH_PORT` left the pages asking the old one).
+
+`NL2SQL_INSTANCE` (default `nl2sql`) names the stack itself: its compose
+project, every container (`nl2sql-api` becomes `<instance>-api`) and the
+retail database's volume. With it set in a second checkout's `.env`, and
+every port moved, a second stack runs beside the first -- the acceptance
+tier's does -- and the scripts wait on its containers, not the other's.
+Inside each stack the services still reach each other as `nl2sql-api` and so
+on, which is what their certificates are issued for.
 
 `docker compose ps` lists what is running, and
 `docker compose --profile '*' logs -f <service>` follows one service's log.
+
+---
+
+## Signing in
+
+Every page asks who you are, and so do the desktop client and the REST API.
+The first person is `admin`, in every group; the first run generated their
+password into `secrets/`, which only you can list:
+
+```bash
+cat secrets/ldap_admin_password
+```
+
+Sign in as them on the directory page, <https://localhost:8084>, and add
+everyone else: a user name, a name, an address, the groups they are in, and
+a password -- typed, or generated by the page for you to hand over. Or load
+them all at once, there (**Import**) or on the directory's first start, from
+a CSV or LDIF file: copy `ldap/seed/people.example.csv` to
+`ldap/seed/people.csv`, edit it, and set `LDAP_SEED_FILE=/seed/people.csv`
+in `.env` before the first start.
+
+| Group | What it lets a person open |
+|---|---|
+| `nl2sql-users` | the web interface, the desktop client, the API |
+| `nl2sql-reviewers` | the review interface, the SQL console, MLflow |
+| `nl2sql-curators` | the curation interface, the SQL console |
+| `nl2sql-admins` | the directory page, MLflow |
+
+Everyone in any group can ask questions, and what they ask runs as them:
+inside the database, the statement's `current_user` is the person, so
+their grants -- and any row-level rule a table is ever given -- apply to
+them. The connection itself is the agent's reader, so `session_user` is the
+reader; the transaction's `application_name` names the person
+(`nl2sql:agent:alice`, 6.2), which is what `pg_stat_activity` shows while it
+runs and what `%a` puts in the database's own log, and what they asked is in
+the agent's trace (MLflow), under their name. Every group reads every table
+today: running as them is attribution, not yet isolation. A person changes
+their own password from any page, beside **Sign out** -- which ends every
+session they signed in with the old one, except the page they changed it
+on. **Sign out** ends the session everywhere a copy of it is, not only in
+that browser. Five wrong passwords in a row lock an account for fifteen
+minutes, which the directory page can clear sooner; the lock ends the
+sessions from before it too.
+
+Already have a directory -- Active Directory, or any LDAP server? Make this
+one a read-only copy of it instead: `LDAP_MODE=replica` and where the
+primary is, in `.env` ([`ldap/README.md`](ldap/README.md#replica) has the
+settings, with Active Directory's). People and groups are then copied every
+minute, a password is checked by the primary itself at each sign-in, and
+there is no directory page: everything is changed on the primary.
+
+Every page is HTTPS, each with a certificate of its own issued by the
+stack's development CA, so the browser warns until this machine trusts that
+CA -- once, for every page. Copy it out and add it to the system's trust
+store (Keychain Access on macOS, `update-ca-certificates` on Debian and
+Ubuntu), or mount real certificates:
+
+```bash
+docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
+```
+
+For a browser on another machine, add this machine's name to
+`TLS_EXTRA_HOSTNAMES` in `.env` -- every certificate is then issued to cover
+it on the next start -- and give that browser the same `nl2sql-ca.crt`.
+
+To run without sign-in -- on a machine nothing else can reach ([`SECURITY.md`](SECURITY.md#1-alone-sign-in-off)):
+
+```bash
+./start.sh --no-auth           # this run only
+./setup.sh --no-auth           # from now on: AUTH_ENABLED=false in .env
+```
+
+[`auth/README.md`](auth/README.md) explains how it works.
+
+### Connecting to the retail database directly
+
+A person can also connect to the retail database with their own tools --
+`psql`, a BI tool -- as themselves, with their directory password: read
+only, a minute per statement, five connections at a time. The connection
+must be encrypted -- the database refuses anything else over the network --
+and should check that the server is the database (`sslmode=verify-full`),
+because their directory password is their password for everything:
+
+```bash
+docker compose cp postgres:/etc/nl2sql/pg-tls/server.crt ./nl2sql-postgres.crt
+psql "host=localhost dbname=nl2sql_retail user=alice sslmode=verify-full sslrootcert=./nl2sql-postgres.crt"
+```
+
+The database is published on this machine only. To let people connect from
+elsewhere, set `DB_BIND_ADDRESS` (`0.0.0.0` for every interface) and add the
+name they will connect to to `POSTGRES_TLS_HOSTNAMES` (its certificate is
+reissued to cover it on the next start), and give them `nl2sql-postgres.crt`.
+`launch.sh` warns while the databases are published beyond this machine.
+Every store's port moves with `DB_BIND_ADDRESS`, so keep their passwords --
+generated into `secrets/` -- out of reach.
 
 ---
 
@@ -324,7 +435,7 @@ host. Every interface shows the pipeline's progress while it works.
 ### In the web interface
 
 ```bash
-./start.sh                                # opens http://localhost:8080
+./start.sh                                # opens https://localhost:8080
 ```
 
 - **Ask.** Type the question and press Enter (Shift-Enter adds a line). An
@@ -354,8 +465,8 @@ cells, the chart, the rows, the SQL. Verdicts go to the same place the web
 interface's do, so a reviewer sees one queue.
 
 `start.sh --desktop` fetches the jar for this machine (or builds it, if no
-published one fits), copies the API's certificate out so the client can
-verify it, and opens the window, which stays open after the terminal closes.
+published one fits), copies the stack's CA certificate (`nl2sql-ca.crt`) out
+so the client can verify the API, and opens the window, which stays open after the terminal closes.
 Running it again finds the window already open rather than opening another.
 It needs a Java runtime of 21 or later; without one, it says so and prints
 the command to run with a newer one.
@@ -363,7 +474,7 @@ the command to run with a newer one.
 To run it yourself, against this API or another:
 
 ```bash
-java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-api.crt
+java -jar desktop/target/nl2sql-desktop.jar --cacert ./nl2sql-ca.crt
 java -jar desktop/target/nl2sql-desktop.jar --url https://other-host:8443 --token <token> --cacert other.crt
 ```
 
@@ -457,10 +568,10 @@ that is not a shell.
 
 ```bash
 ./launch.sh --api
-docker compose --profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt
+docker compose --profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt
 
-curl --cacert ./nl2sql-api.crt https://localhost:8443/v1/meta
-curl --cacert ./nl2sql-api.crt 'https://localhost:8443/v1/questions?wait=180' \
+curl --cacert ./nl2sql-ca.crt https://localhost:8443/v1/meta
+curl --cacert ./nl2sql-ca.crt 'https://localhost:8443/v1/questions?wait=180' \
      -H 'Content-Type: application/json' \
      -d '{"question": "How many stores are there?"}'
 ```
@@ -588,10 +699,14 @@ can be changed until a reviewer acts on it.
 
 Where a verdict goes depends on what is running:
 
-- **With `--review` or `--feedback`**, the API stages it in the staging
-  database for review.
-- **Without either**, it is kept in the browser and shown as given, and the
-  page does not claim it was sent anywhere.
+- **Once the review service has started once** -- `--review` or `--curate`,
+  any time before -- the API stages it in the staging database for review,
+  whenever the API is up: the staging database starts with the other
+  databases since 6.3, and the review service makes its table and the API's
+  role.
+- **Before that**, or with `API_FEEDBACK_DB_URL` set empty, it is kept in
+  the browser and shown as given, and the page does not claim it was sent
+  anywhere.
 - **With `--mlflow`** as well, it is also recorded on that answer's MLflow
   trace.
 
@@ -602,7 +717,7 @@ A verdict that could not be sent is marked *not sent*, with a Retry button.
 ## Reviewing feedback
 
 ```bash
-./start.sh --review                       # both pages: http://localhost:8080 and http://localhost:8081
+./start.sh --review                       # both pages: https://localhost:8080 and https://localhost:8081
 ```
 
 The review interface has three tabs, one per verdict, each counting what is
@@ -650,7 +765,7 @@ rules each step enforces.
 ## Curating what it learns from
 
 ```bash
-./start.sh --curate                       # opens http://localhost:8083
+./start.sh --curate                       # opens https://localhost:8083
 ```
 
 The review interface works through what people said about answers. The
@@ -709,7 +824,7 @@ it can be up with or without the review interface.
 ## When an answer is wrong: the SQL console
 
 ```bash
-./start.sh --console                      # opens http://localhost:8082
+./start.sh --console                      # opens https://localhost:8082
 ```
 
 The retail database, queried the way the agent queries it: as its read-only
@@ -741,7 +856,7 @@ has the rest.
 ## Seeing what the agent did: MLflow
 
 ```bash
-./start.sh --mlflow                       # opens http://localhost:5001
+./start.sh --mlflow                       # opens https://localhost:5001
 ```
 
 Every question asked from then on -- from the web interface, the desktop
@@ -778,8 +893,10 @@ agent could not answer. From the terminal, `--json` prints the run's
 Tracing is best effort. When MLflow is not up, questions are answered
 untraced, and the agent looks for it again thirty seconds later, so MLflow
 can be started or stopped under a running stack. `MLFLOW_TRACKING_URI=`
-(empty) in `.env` turns it off altogether. MLflow's interface has no login,
-and shows every question's rows, so it is published on this machine only.
+(empty) in `.env` turns it off altogether. MLflow's interface has no login
+of its own and shows every question's rows, so it is reached only through
+its front door, which asks who you are and lets in `nl2sql-reviewers` and
+`nl2sql-admins`, and is published on this machine only.
 [`README.md`](README.md#tracing) has the server's settings.
 
 ---
@@ -865,7 +982,7 @@ from a document in this checkout:
   knowledge base): questions already answered with SQL that runs, in
   [`context_questions/translated_questions.md`](context_questions/translated_questions.md).
   The closest are shown to the SQL Generator as worked examples.
-- **The SQL snippets** (`nl2sql-snippetsdb`): joins, filters, measures and
+- **The SQL snippets** (the snippets database in `nl2sql-stores`): joins, filters, measures and
   dimensions, each run against the database and written beside what it
   means, in
   [`context_questions/sql_snippets.md`](context_questions/sql_snippets.md).
@@ -945,27 +1062,61 @@ in [`README.md`](README.md#tracing).
 
 ## Security
 
-The stack is set up for one person on one machine. Before anything else can
-reach it:
+[`SECURITY.md`](SECURITY.md) is the threat model: what the stack protects,
+from whom, what each credential is worth, and the three deployment tiers.
+The defaults are its second, **a team on a trusted network**:
 
-- **The API** listens on every interface, over TLS with a self-signed
-  certificate, and with no token. Set `API_TOKEN`, and mount a real
-  certificate -- `API_TLS_ALLOW_SELF_SIGNED=false` makes the server refuse
-  to start without one. The web interface's proxy holds the token, so the
-  browser never sees it. `launch.sh` warns while no token is set.
-- **The review service** can rewrite the golden question set and the SQL
-  snippets, through the review interface or the curation interface. Set
-  `REVIEW_TOKEN`; both pages' proxies hold it, and neither browser sees it.
-- **The SQL console and MLflow** are published on `127.0.0.1` only. The
-  console runs SQL, and MLflow has no login and shows every question's rows.
-  Opening either up (`CONSOLE_BIND_ADDRESS`, `MLFLOW_BIND_ADDRESS`) gets a
-  warning from `launch.sh`. Set `CONSOLE_TOKEN` when you open the console.
-- **The databases** are published on their ports with the development
-  passwords compose defaults to. Change them in `.env`, or stop publishing
-  them, before the machine is shared.
+- **Sign-in** is on: every page, the API, the console, the review service
+  and MLflow need a person signed in and in the right group, and what they
+  do runs as their own database role. It is on in every service's own
+  defaults as well as in compose, so only `AUTH_ENABLED=false` -- set by
+  name -- turns it off, and a service started that way says it is open.
+- **Every connection is encrypted, with a key of its own.** Each server and
+  page has its own certificate from the stack's development CA, which
+  clients trust once (`nl2sql-ca.crt`). Mount real certificates for anything
+  beyond a trusted network; `API_TLS_ALLOW_SELF_SIGNED=false` makes the API
+  refuse to start without one. The retail database refuses anything over
+  the network without TLS, and a person's password reaches it only over a
+  verified connection.
+- **The pages, the API, the review service and sign-in** are reachable from
+  the network. **The SQL console, MLflow, the directory page and every
+  database** are this machine's only; opening one up (`CONSOLE_BIND_ADDRESS`,
+  `MLFLOW_BIND_ADDRESS`, `DIRECTORY_GUI_BIND_ADDRESS`, `DB_BIND_ADDRESS`)
+  gets a warning from `launch.sh`.
+- **Every password is generated** per installation into `secrets/`, a file
+  each, in a directory only its owner can list: each database's, the agent's
+  reader's, the directory's and sign-in's (6.3; `.env` before). Compose
+  mounts each into only the services that read it, so none is in any
+  container's environment. The `postgres` superusers have none, or one only
+  the `dbprep` one-shot uses over the database's own socket. No service
+  token is set unless you ask for them (`./setup.sh --tokens`); with sign-in
+  off they are each service's only control, and its page's proxy holds it so
+  the browser never sees it.
 - **The agent cannot write.** It connects as a role with `SELECT` and
   nothing else, re-created on every start, and runs every query in a
-  read-only transaction.
+  read-only transaction under a timeout -- the planner's `EXPLAIN`
+  included.
+- **A session can be ended** (6.2): signing out, a password changed or set,
+  a lock or a removal ends the sessions it should, for every service within
+  a minute.
+- **A service token is somebody** (6.2): `API_TOKEN_NAME` and its siblings
+  name it, and what it does is recorded under `token:<name>`;
+  `API_TOKEN_ROLES` and its siblings say what it may do, and nothing else.
+- **Nothing runs as root** (6.2) but the one-shot pki service: each service
+  runs as an account of its own and reads only its own key, and the review
+  service writes the checkout's documents as the person who owns them.
+- **A failure's own words are an administrator's** (6.2): hosts, drivers and
+  configuration in `/readyz` and in answers, to `nl2sql_admins` only
+  (`API_DEBUG_DETAIL=true` shows everyone, for a development server).
+- **Every container is read-only and capped** (6.3): no capability it does
+  not use, no privilege it can gain, and a ceiling on its memory and its
+  processes. Every database role a service connects as has a statement
+  timeout, a memory ceiling and a connection limit. The table is in
+  [`README.md`](README.md#what-each-container-may-use).
+
+With sign-in off (`--no-auth`) the stack is the first tier, **alone**: keep
+it on a machine nothing else can reach. What none of this does yet is
+listed at the end of [`SECURITY.md`](SECURITY.md#known-limits).
 
 ---
 
@@ -996,8 +1147,57 @@ it. `./setup.sh` with no `--agent-tag` goes back to the shipped version, and
 pulling a newer checkout re-pins it like everything else. An agent from
 before `v4_1` has no REST API, so only the terminal can ask it questions.
 
-Upgrading to `v5_6` adds one container, `nl2sql-snippetsdb`, on an empty
-volume of its own; the first start loads the snippet document into it.
+Upgrading to `v5_6` added the snippet store; the first start loads the
+snippet document into it.
+
+Upgrading to `v6_0_1` turns sign-in on ([Signing in](#signing-in)). It adds
+three containers with the API -- the directory, the auth service and the
+directory page -- and MLflow's front door with `--mlflow`, which now starts
+the API too. `start.sh` generates the directory's and the role sync's
+passwords into `.env` and makes the file readable by you alone; nothing in
+the databases is lost, and the first start prepares the retail database for
+sign-in. Every page becomes HTTPS, so the browser warns until it trusts the
+certificate, and asks you to sign in -- as `admin` at first. Replace a
+desktop jar from before 6.0.1 (`./start.sh --desktop` fetches the current
+one). `./start.sh --no-auth`, or `./setup.sh --no-auth` for good, keeps the
+stack as it was. `v6_0` itself is not worth pinning: under compose its
+directory could not write its certificate, and nobody could sign in.
+
+Upgrading to `v6_1` changes nothing you do and much of what runs:
+
+- **Every server gets a certificate of its own**, from a development CA
+  the stack now keeps (a new one-shot container, `nl2sql-pki`). The browser
+  warns once more, for the CA: trust `nl2sql-ca.crt` instead of
+  `nl2sql-api.crt` ([Signing in](#signing-in)), and the desktop client is
+  started with `--cacert ./nl2sql-ca.crt` (`./start.sh --desktop` does it).
+- **The retail database is `v1_2`**: TLS on, no password baked in. The
+  first start applies it to the volume you have -- your data is kept --
+  takes the superuser's password away and gives the owner and the reader
+  the ones now in `.env`.
+- **Every database password is generated** into `.env` the first time, and
+  each store is told its new one as it starts; nothing in them is lost.
+- **The databases are on this machine only.** Set `DB_BIND_ADDRESS` to
+  publish them as before.
+
+Upgrading to `v6_3` moves three things, and the first start does each:
+
+- **The four runtime stores are one server**, `nl2sql-stores`, on port 5435:
+  the snippets, the staged verdicts, the corrections and the completions, a
+  database each. The four old containers are stopped and removed, their
+  volumes kept, and `launch.sh` moves what the feedback, corrections and
+  completions stores from before hold into their databases, once, and
+  leaves the old volumes for you to remove when you are satisfied -- it
+  prints the command. The snippets are loaded again from their document.
+- **The passwords move from `.env` into `secrets/`**, a file each, with the
+  same values: `cat secrets/ldap_admin_password` is `admin`'s now.
+- **Every page is one image**, `nl2sql-proxy`; `start.sh` pins it in place
+  of the six it replaces.
+
+An agent from before `v6_0` does not check sessions, so pinned with
+`--agent-tag`, its API answers according to its own `API_TOKEN`, signed in
+or not. An agent or a page from before `v6_1` does not know the stack's CA,
+and a dataset image from before `v1_2` serves no TLS, so sign-in fails
+against it: pin them back together or not at all.
 
 [`README.md`](README.md) lists what each tag is, and
 [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what each version changed.
@@ -1024,7 +1224,10 @@ the first question.
 | `.env pins the agent image at ..., but this checkout ships ...` | You are running an older agent than the checkout | `./start.sh`, or `./setup.sh` |
 | `model routing: ...` and a note about another host | The catalog describes a different Ollama host, so every call goes to `OLLAMA_MODEL` | Fine as it is; or build and calibrate a catalog ([Models](#models)) |
 | `the REST API container did not become healthy` | It failed to start | `docker compose --profile api logs api` |
-| `no API_TOKEN is set` | Anything that can reach port 8443 may ask questions | Set `API_TOKEN` in `.env` before sharing the machine |
+| `no API_TOKEN is set` | Sign-in is off, and anything that can reach port 8443 may ask questions | Turn sign-in back on (take `AUTH_ENABLED=false` out of `.env`), or set `API_TOKEN` before sharing the machine |
+| `could not prepare the retail database for sign-in` | The group roles or the `pg_hba.conf` lines could not be written, so nobody can sign in | `docker compose logs postgres`; `./launch.sh` tries again on every start |
+| `the directory or the auth service did not become healthy` | Nobody can sign in. Most often a directory image older than `v6_0_1`, which cannot write its certificate under compose | `./start.sh`, which re-pins `.env`; otherwise `docker compose --profile api --profile auth logs ldap auth` |
+| `the directory page did not become healthy` | People cannot be added from a browser; everything else works | `docker compose --profile api --profile auth --profile directorygui logs directorygui`. Beside a replica it is never started, on purpose |
 | `... cannot reach the API through its proxy` | The proxy holds an old certificate | `launch.sh` restarts it; if that fails, `./start.sh --restart` |
 | `API_FEEDBACK_DB_URL is not set` | Verdicts will not be stored | Re-run `./setup.sh`, which writes it |
 | `MLFLOW_TRACKING_URI is not set` | Nothing will be traced | Re-run `./setup.sh`, which writes it |
@@ -1041,10 +1244,17 @@ Problems with answers rather than with the stack:
 | Retrieval returns irrelevant knowledge | The embedding model is not the one the knowledge base was built with: use `bge-m3` |
 | Questions take minutes | Normal is about a minute, on a host that is not busy with something else. `launch.sh`'s routing table shows which models are in play; `--reasoning` (`OLLAMA_REASONING`) is off by default and much slower when on |
 | Results stop at 50 rows | Raise `MAX_ROWS`, or ask for fewer rows |
+| The browser warns that the page's certificate is not trusted | Every page's certificate is issued by the stack's development CA: trust `nl2sql-ca.crt` once ([Signing in](#signing-in)), or mount real ones. From another machine, also add this machine's name to `TLS_EXTRA_HOSTNAMES` |
+| `psql` says "pg_hba.conf rejects connection ... no encryption" | The database accepts nothing in clear over the network: add `sslmode=require`, or better `verify-full` ([Connecting to the retail database directly](#connecting-to-the-retail-database-directly)) |
+| "That name and password were not accepted" for someone just added | The role sync makes them a database role within thirty seconds; try again then |
+| "Too many wrong passwords; try again in N seconds" | Five wrong for one name, or fifty from one address, in fifteen minutes. Wait, or restart the auth service, which forgets the count: `docker compose --profile api --profile auth restart auth` |
+| "Locked out after too many wrong passwords" on the directory page | The directory locked the account after five wrong in a row; **Unlock** on the page, or wait fifteen minutes |
+| The desktop client says "Not connected." to a server with sign-in on | A client older than 6.0.1; use the current jar (`./start.sh --desktop`) |
 
 The logs: `docker compose --profile '*' logs <service>`, with the service
 names in [Where everything is](#where-everything-is) (`api`, `gui`,
-`review`, `reviewgui`, `curategui`, `console`, `consolegui`, `mlflow`, `snippetsdb`, `postgres`, ...).
+`review`, `reviewgui`, `curategui`, `console`, `consolegui`, `mlflow`, `mlflowproxy`, `ldap`, `auth`,
+`directorygui`, `stores`, `dbprep`, `postgres`, ...).
 
 ---
 
@@ -1059,10 +1269,11 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--curate` | Also the curation interface, and the review service behind it |
 | `--console` | Also the SQL console |
 | `--mlflow` | Also MLflow |
-| `--feedback` | Keep verdicts, without the review interface |
+| `--feedback` | The same as `--api` since 6.3: verdicts are kept whenever the API is up |
 | `--load-golden` | Load the golden question document into the stores first |
 | `--no-browser` | Print the URLs instead of opening them |
 | `--no-rag` | The retail database only |
+| `--no-auth` | Without sign-in, this run only |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |
@@ -1073,17 +1284,22 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 |---|---|
 | `--api` | Also the REST API |
 | `--gui` | Also the web interface, and the API |
-| `--feedback` | Also the staging database, and the API |
-| `--review` | Also the review service, its interface and the two fix stores; implies `--feedback` |
-| `--curate` | Also the review service, the two fix stores and the curation interface, without the review interface; implies `--feedback` |
+| `--feedback` | The same as `--api` since 6.3: the staging database starts with the others |
+| `--review` | Also the review service and its interface; implies `--api` |
+| `--curate` | Also the review service and the curation interface, without the review interface; implies `--api` |
 | `--console` | Also the SQL console, and the API |
-| `--mlflow` | Also MLflow |
-| `--desktop` | Build or fetch the desktop client, and copy the API's certificate out; implies `--api` |
+| `--mlflow` | Also MLflow, and its front door; implies `--api`, which brings up the sign-in the front door asks |
+| `--desktop` | Build or fetch the desktop client, and copy the stack's CA certificate out; implies `--api` |
 | `--load-golden` | Load the golden question document into the context store and its vectors before anything is asked |
 | `--no-rag` | The retail database only |
+| `--no-auth` | Without sign-in, this run only: no directory, no auth service, every page open |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |
+
+With the API -- and everything that implies it -- `launch.sh` also prepares
+the retail database for sign-in and starts the directory, the auth service
+and, beside a standalone directory, the directory page.
 
 ### setup.sh
 
@@ -1094,20 +1310,23 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--embed-url URL` | The embedding model's Ollama host |
 | `--embed-model NAME` | The embedding model |
 | `-p`, `--port PORT` | The retail database's host port |
-| `--gui` | Also pull and pin the web interface |
-| `--review` | Also the review service and its interface (implies `--gui`) |
-| `--curate` | Also the curation interface. The review service is pinned whenever retrieval is on, because it loads the snippets |
-| `--console` | Also the SQL console's interface |
+| `--gui` | Also pull and pin the pages' image, `nl2sql-proxy` -- pinned anyway with sign-in on, for the directory page |
+| `--review` | Also the review service, and the pages' image (implies `--gui`) |
+| `--curate` | Also the pages' image, for the curation interface. The review service is pinned whenever retrieval is on, because it loads the snippets |
+| `--console` | Also the pages' image, for the SQL console's interface |
 | `--mlflow` | Also MLflow's server and store |
 | `--desktop` | Also the desktop client's jar, for this machine |
 | `--agent-tag TAG`, `--agent-image NAME` | Another agent version, or repository |
 | `--build-agent` | Build the agent from this checkout instead of pulling it |
 | `-t`, `--tag TAG`, `-i`, `--image NAME` | Another retail database image |
 | `--build` | Build the retail database here, regenerating the data |
-| `--gui-tag`, `--gui-image`, `--review-tag`, `--review-image`, `--review-gui-tag`, `--review-gui-image`, `--curate-gui-tag`, `--curate-gui-image`, `--console-gui-tag`, `--console-gui-image`, `--mlflow-tag`, `--mlflow-image`, `--mlflow-db-tag`, `--mlflow-db-image`, `--desktop-tag`, `--desktop-image`, `--vector-tag`, `--vector-image`, `--context-tag`, `--context-image` | Another version or repository of each image |
+| `--build-all` | Build every image this checkout has a Dockerfile for -- the dataset, the agent, the pages' image, the review service, the directory, the auth service, MLflow's two and the desktop client -- tagged `local`, and pin those instead of pulling the published ones (the two knowledge-base stores are still pulled). How the acceptance tier runs a release before it is published, and how to try a change as the whole stack |
+| `--proxy-tag`, `--proxy-image`, `--review-tag`, `--review-image`, `--mlflow-tag`, `--mlflow-image`, `--mlflow-db-tag`, `--mlflow-db-image`, `--desktop-tag`, `--desktop-image`, `--vector-tag`, `--vector-image`, `--context-tag`, `--context-image` | Another version or repository of each image |
 | `--no-rag` | No knowledge base: the agent answers from the schema alone |
+| `--no-auth` | Sign-in off from now on (`AUTH_ENABLED=false` in `.env`); without it the sign-in images are pulled and pinned and their passwords generated into `secrets/` |
+| `--tokens` | Also generate the three service tokens -- `API_TOKEN`, `REVIEW_TOKEN`, `CONSOLE_TOKEN` -- for scripts, and keep them from then on. Without it none is set, and signing in is the only way in |
 | `--no-verify` | Skip the closing retrieval check |
-| `--reset` | Delete the four databases' volumes first and start from the images and the snippet document |
+| `--reset` | Delete the four databases' volumes first -- the retail database, the two RAG stores and the runtime stores -- and start from the images and the snippet document |
 | `-h`, `--help` | The usage |
 
 Each script's `--help` prints the same, with defaults.

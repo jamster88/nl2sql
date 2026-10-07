@@ -31,13 +31,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 #: lockfile holds a dependency's version as well as the project's.
 DECLARATIONS = {
     "agent/nl2sql_agent/__init__.py": r'^__version__ = "([\d.]+)"',
-    "review/nl2sql_review/app.py": r'^__version__ = "([\d.]+)"',
+    "review/nl2sql_review/__init__.py": r'^__version__ = "([\d.]+)"',
+    "auth/nl2sql_auth/__init__.py": r'^__version__ = "([\d.]+)"',
+    # The shared package, released with the images and recorded in each (6.2).
+    "common/nl2sql_common/__init__.py": r'^__version__ = "([\d.]+)"',
+    "common/pyproject.toml": r'^version = "([\d.]+)"',
     "agent/Dockerfile": r"^ARG AGENT_VERSION=([\d.]+)",
     "review/Dockerfile": r"^ARG REVIEW_VERSION=([\d.]+)",
-    "gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "review/gui/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "console/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
-    "curate/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
+    "auth/Dockerfile": r"^ARG AUTH_VERSION=([\d.]+)",
+    "ldap/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
+    # Every page and MLflow's front door, one image since 6.3 (V6-37).
+    "proxy/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "docker/mlflow/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "docker/mlflowdb/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
     "desktop/Dockerfile": r'org\.opencontainers\.image\.version="([\d.]+)"',
@@ -46,6 +50,9 @@ DECLARATIONS = {
     "review/gui/package.json": r'^  "version": "([\d.]+)"',
     "console/package.json": r'^  "version": "([\d.]+)"',
     "curate/package.json": r'^  "version": "([\d.]+)"',
+    "auth/gui/package.json": r'^  "version": "([\d.]+)"',
+    # What every page shares (6.2): source, but a release's, so it says which.
+    "web/package.json": r'^  "version": "([\d.]+)"',
 }
 
 #: The lockfiles, which say it twice and are read as JSON rather than by
@@ -53,7 +60,7 @@ DECLARATIONS = {
 #: there belongs to somebody on npm.
 LOCKFILES = (
     "gui/package-lock.json", "review/gui/package-lock.json", "console/package-lock.json",
-    "curate/package-lock.json",
+    "curate/package-lock.json", "auth/gui/package-lock.json",
 )
 
 
@@ -98,9 +105,14 @@ def test_a_lockfile_is_listed_for_every_npm_project():
     assert _tracked("*package-lock.json") == set(LOCKFILES)
 
 
+_ONES = ["", "-one", "-two", "-three", "-four", "-five", "-six", "-seven", "-eight", "-nine"]
 _NUMBER_WORDS = {
-    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16,
-    "twenty": 20, "twenty-two": 22, "twenty-four": 24, "twenty-six": 26, "twenty-eight": 28,
+    "twelve": 12, "thirteen": 13, "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+    "eighteen": 18, "nineteen": 19,
+    # Every one from twenty to forty-nine: a count is not always even (6.2's
+    # shared web package made it thirty-five).
+    **{f"{tens}{ones}": base + index for tens, base in (("twenty", 20), ("thirty", 30), ("forty", 40))
+       for index, ones in enumerate(_ONES)},
 }
 
 
@@ -128,7 +140,7 @@ def test_the_readme_counts_the_places_a_release_moves_and_the_tags_it_publishes(
 
 
 def test_the_published_tags_are_this_version():
-    """`setup.sh` pins nine tags and they all move together. A tag is the
+    """`setup.sh` pins eight tag families and they all move together. A tag is the
     version with dots turned into underscores, truncated to however many
     components the tag carries -- so `v4_5` is 4.5.x and `v4_5_1` is exactly
     4.5.1, which is what a correction is published as now that a published
@@ -138,8 +150,8 @@ def test_the_published_tags_are_this_version():
     tags = {
         name: re.search(rf'^{name}="v([\d_]+)"', setup_sh, re.MULTILINE).group(1)
         for name in (
-            "AGENT_TAG", "GUI_TAG", "REVIEW_TAG", "REVIEW_GUI_TAG", "CURATE_GUI_TAG", "CONSOLE_GUI_TAG",
-            "DESKTOP_TAG", "MLFLOW_TAG", "MLFLOW_DB_TAG",
+            "AGENT_TAG", "REVIEW_TAG", "PROXY_TAG", "DESKTOP_TAG", "MLFLOW_TAG", "MLFLOW_DB_TAG",
+            "LDAP_TAG", "AUTH_TAG",
         )
     }
 
@@ -154,12 +166,14 @@ def test_the_published_tags_are_this_version():
 #: reason to name an older tag of one. The agent is not here: `v1` is the
 #: baseline the retrieval comparison is measured against, and named on purpose.
 _INTERFACE_IMAGE = re.compile(
-    r"mcfaddja/nl2sql-(?:gui|review|review-gui|curate-gui|console-gui|desktop-build|mlflow|mlflowdb):(v[\d_]+)"
+    r"mcfaddja/nl2sql-(?:gui|review|review-gui|curate-gui|console-gui|desktop-build|mlflow|mlflowdb|ldap|auth"
+    r"|directory-gui|mlflow-proxy|proxy):(v[\d_]+)"
 )
-#: A publish of any of the nine images `setup.sh` moves together. The dataset
+#: A publish of any of the images `setup.sh` moves together. The dataset
 #: and knowledge-base images are versioned on their own and are not among them.
 _PUBLISH = re.compile(
-    r"--push\s+-t\s+mcfaddja/nl2sql-(?:agent|gui|review|review-gui|curate-gui|console-gui|desktop-build|mlflow|mlflowdb):(v[\d_]+)"
+    r"--push\s+-t\s+mcfaddja/nl2sql-(?:agent|gui|review|review-gui|curate-gui|console-gui|desktop-build|mlflow"
+    r"|mlflowdb|ldap|auth|directory-gui|mlflow-proxy|proxy):(v[\d_]+)"
 )
 
 

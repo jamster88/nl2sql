@@ -13,7 +13,9 @@ failing for a reason that has nothing to do with the test. It is reached as
 `nl2sql_review.promote.promote`.
 """
 
-from .app import __version__, create_app
+__version__ = "6.3.0"
+
+from .app import create_app  # noqa: E402 - after the version, which app and routes import
 from .promote import Promotion, PromotionError
 from .render import Draft
 from .settings import ReviewSettings

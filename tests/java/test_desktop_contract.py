@@ -25,10 +25,14 @@ from typing import Literal, get_args, get_origin
 import pytest
 
 from nl2sql_agent.api import models
+from nl2sql_auth import models as auth_models
+from nl2sql_common import envelope
+from pydantic import BaseModel
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MODELS_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "api" / "Models.java"
 CHART_KIND_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "chart" / "ChartKind.java"
+STATUS_BAR_JAVA = REPO_ROOT / "desktop" / "src" / "main" / "java" / "org" / "nl2sql" / "desktop" / "ui" / "StatusBar.java"
 
 #: The two records this client constructs rather than receives. Everything
 #: else below arrives as JSON from a server whose version is not this one's.
@@ -48,15 +52,32 @@ MIRRORED = {
     "JobLinks": models.JobLinks,
     "Job": models.Job,
     "JobList": models.JobList,
+    "Reloaded": models.Reloaded,
     "Limits": models.Limits,
     "Pipeline": models.Pipeline,
     "Meta": models.Meta,
-    "Health": models.Health,
-    "Check": models.Check,
-    "Readiness": models.Readiness,
+    # The health envelope every service shares (`nl2sql_common.envelope`).
+    "Health": envelope.Health,
+    "Check": envelope.Check,
+    "Readiness": envelope.Readiness,
     "AskRequest": models.AskRequest,
     "FeedbackRequest": models.FeedbackRequest,
     "FeedbackModel": models.FeedbackModel,
+}
+
+
+#: The health envelope's models, which the API imports from the shared
+#: package rather than defining.
+_ENVELOPE = {model.__name__: model for model in (envelope.Health, envelope.Check, envelope.Readiness)}
+
+
+#: The auth service's shapes, which this client sends (`SignIn`) or reads
+#: (`Token`) when a person signs in. Mirrored from `auth/nl2sql_auth/models.py`,
+#: a second server with its own models, so held to that file rather than the
+#: API's.
+AUTH_MIRRORED = {
+    "SignIn": auth_models.SignIn,
+    "Token": auth_models.Token,
 }
 
 
@@ -122,10 +143,12 @@ def test_every_wire_model_has_a_java_record():
     """A model the client has no record for is one it cannot read."""
     wire = {
         name
-        for name, value in vars(models).items()
+        for name, value in {**vars(models), **_ENVELOPE}.items()
         if isinstance(value, type)
-        and issubclass(value, models.BaseModel)
-        and value is not models.BaseModel
+        and issubclass(value, BaseModel)
+        and value is not BaseModel
+        # The strict base every model shares, not a shape of its own.
+        and value is not models.Wire
         # ApiError is the error envelope; the client mirrors it as
         # ApiErrorBody with the payload left as a map, because it branches on
         # one key of it and never renders the rest.
@@ -160,6 +183,22 @@ def test_the_field_order_matches(name: str, records: dict[str, list[str]]):
     still compiles and still parses, and puts one field's value in another's
     place for anything constructing one by hand."""
     assert records[name] == list(MIRRORED[name].model_fields)
+
+
+@pytest.mark.parametrize("name", sorted(AUTH_MIRRORED))
+def test_the_sign_in_records_match_the_auth_service(name: str, records: dict[str, list[str]]):
+    assert records[name] == list(AUTH_MIRRORED[name].model_fields)
+
+
+def test_every_way_a_server_can_ask_who_is_asking_is_said_in_the_status_bar():
+    """`authentication` grew `session` with sign-in; a value the status bar
+    does not name falls through to "no token", which is the one thing it
+    must not say about a server that requires sign-in."""
+    annotation = models.Meta.model_fields["authentication"].annotation
+    status_bar = STATUS_BAR_JAVA.read_text()
+    for value in get_args(annotation):
+        if value != "none":
+            assert f'case "{value}" ->' in status_bar, value
 
 
 # ---------------------------------------------------------------------------
@@ -225,12 +264,9 @@ def test_every_list_is_filled_in_rather_than_left_null(models_java: str, records
             # one writing these.
             continue
         body = re.search(rf"public record {name}\(.*?\n    \}}", models_java, re.DOTALL)
-        if body is None:
-            # A record with no compact constructor at all is only correct
-            # when it has no list to fill in.
-            body_text = ""
-        else:
-            body_text = body.group(0)
+        # A record with no compact constructor at all is only correct when it
+        # has no list to fill in.
+        body_text = body.group(0) if body else ""
         for field, info in model.model_fields.items():
             annotation = str(info.annotation)
             if not annotation.startswith(("list[", "dict[")):

@@ -33,10 +33,17 @@ CONSOLE_VARIABLES = {
     "CONSOLE_TLS_CERT_FILE": "tls_cert_file",
     "CONSOLE_TLS_KEY_FILE": "tls_key_file",
     "CONSOLE_TOKEN": "token",
+    "CONSOLE_TOKEN_NAME": "token_name",
+    "CONSOLE_TOKEN_ROLES": "token_roles",
     "CONSOLE_CORS_ORIGINS": "cors_origins",
     "CONSOLE_MAX_ROWS": "max_rows",
     "CONSOLE_DOCS_ENABLED": "docs_enabled",
     "CONSOLE_LOG_LEVEL": "log_level",
+    # Sign-in's: the first three are every service's, the last the console's own.
+    "AUTH_ENABLED": "auth_enabled",
+    "AUTH_PUBLIC_KEY_FILE": "auth_public_key_file",
+    "AUTH_COOKIE_NAME": "auth_cookie_name",
+    "CONSOLE_ALLOWED_ROLES": "allowed_roles",
 }
 
 
@@ -66,6 +73,8 @@ def test_every_variable_is_read(monkeypatch):
         "CONSOLE_TLS_CERT_FILE": "/c.crt",
         "CONSOLE_TLS_KEY_FILE": "/c.key",
         "CONSOLE_TOKEN": "s3cret",
+        "CONSOLE_TOKEN_NAME": "reports",
+        "CONSOLE_TOKEN_ROLES": "nl2sql_curators",
         "CONSOLE_CORS_ORIGINS": "https://a.example, https://b.example,",
         "CONSOLE_MAX_ROWS": "25",
         "CONSOLE_DOCS_ENABLED": "no",
@@ -83,6 +92,8 @@ def test_every_variable_is_read(monkeypatch):
         tls_cert_file="/c.crt",
         tls_key_file="/c.key",
         token="s3cret",
+        token_name="reports",
+        token_roles=("nl2sql_curators",),
         cors_origins=("https://a.example", "https://b.example"),
         max_rows=25,
         docs_enabled=False,
@@ -99,7 +110,7 @@ def test_an_empty_variable_is_unset(monkeypatch):
 
 def test_every_field_has_a_variable_to_set_it_with():
     source = (CONSOLE / "settings.py").read_text()
-    read = set(re.findall(r'_env(?:_str|_bool|_int|_float|_tuple)?\(\s*"([A-Z_]+)"', source))
+    read = set(re.findall(r'(?:_env(?:_str|_bool|_int|_float|_tuple|_url)?|_secret)\(\s*"([A-Z_]+)"', source))
     assert read == set(CONSOLE_VARIABLES)
     assert set(SETTING_FIELDS) == set(CONSOLE_VARIABLES.values())
 
@@ -119,10 +130,11 @@ def test_a_careful_configuration_has_nothing_to_warn_about():
 
 def test_the_three_configurations_worth_a_warning():
     assert any("clear text" in note for note in ConsoleSettings(token="t", tls_enabled=False).warnings())
-    assert ConsoleSettings().warnings() == [
-        "No CONSOLE_TOKEN is set, so anyone who can reach the port can run SQL as the "
-        "agent's database role."
+    assert ConsoleSettings(auth_enabled=False).warnings() == [
+        "This console is OPEN: sign-in is off (AUTH_ENABLED=false) and no CONSOLE_TOKEN "
+        "is set, so anyone who can reach the port can run SQL as the agent's database role."
     ]
+    assert ConsoleSettings().warnings() == [], "sign-in is on by default, and is the control then"
     assert any("wildcard origin" in note for note in ConsoleSettings(token="t", cors_origins=("*",)).warnings())
 
 
@@ -134,7 +146,7 @@ def test_the_three_configurations_worth_a_warning():
 def _agent_field_variables() -> dict[str, str]:
     """`config.Settings` field -> the variable `from_env` reads it from."""
     source = (AGENT / "config.py").read_text()
-    found = dict(re.findall(r'(\w+)=_env(?:_str|_bool|_int|_float)\(\s*"([A-Z_]+)"', source))
+    found = dict(re.findall(r'(\w+)=_env(?:_str|_bool|_int|_float|_url)\(\s*"([A-Z_]+)"', source))
     assert found, "no settings found in config.py -- the regex needs updating"
     return found
 

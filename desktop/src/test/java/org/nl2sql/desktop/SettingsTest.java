@@ -31,6 +31,29 @@ class SettingsTest {
         assertEquals(Settings.DEFAULT_WAIT_SECONDS, settings.waitSeconds());
         assertEquals(Settings.DEFAULT_POLL_INTERVAL_MS, settings.pollIntervalMs());
         assertEquals(Settings.DEFAULT_HISTORY_LIMIT, settings.historyLimit());
+        assertEquals("https://localhost:8446", settings.authUrl().toString());
+        assertEquals("", settings.user());
+    }
+
+    @Test
+    void signing_in_happens_on_the_apis_host_unless_told_otherwise() {
+        assertEquals("https://nl2sql.example.com:8446",
+                Settings.from(NOTHING, "--url", "https://nl2sql.example.com:9443/").authUrl().toString());
+        assertEquals("http://[::1]:8446",
+                Settings.from(NOTHING, "--url", "http://[::1]:8000").authUrl().toString());
+
+        Settings told = Settings.from(
+                Map.of("NL2SQL_AUTH_URL", "https://from-the-environment:1", "NL2SQL_USER", "ada"),
+                "--auth-url", "https://sign-in.example.com/", "--user", "grace");
+
+        assertEquals("https://sign-in.example.com", told.authUrl().toString());
+        assertEquals("grace", told.user());
+        assertEquals("ada", Settings.from(Map.of("NL2SQL_USER", " ada ")).user());
+        assertTrue(assertThrows(IllegalArgumentException.class,
+                () -> Settings.from(NOTHING, "--auth-url", "sign-in")).getMessage()
+                .contains("an address needs a scheme and a host"));
+        assertTrue(Settings.usage().contains("--auth-url URL"));
+        assertTrue(Settings.usage().contains("port 8446"));
     }
 
     @Test
@@ -135,6 +158,17 @@ class SettingsTest {
 
         assertEquals(plain, Settings.from(NOTHING, "--fingerprint", grouped.toUpperCase()).fingerprint());
         assertEquals(plain, Settings.from(NOTHING, "--fingerprint", plain).fingerprint());
+    }
+
+    @Test
+    void several_fingerprints_are_each_normalised_and_kept_in_order() {
+        String api = "3f".repeat(32);
+        String auth = "a1".repeat(32);
+        String grouped = String.join(":", auth.split("(?<=\\G..)")).toUpperCase();
+
+        assertEquals(api + "," + auth, Settings.from(NOTHING, "--fingerprint", api + ", " + grouped).fingerprint());
+        assertThrows(IllegalArgumentException.class,
+                () -> Settings.from(NOTHING, "--fingerprint", api + ",AB:CD"));
     }
 
     @Test

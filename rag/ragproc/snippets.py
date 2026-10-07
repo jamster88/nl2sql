@@ -69,6 +69,8 @@ from pathlib import Path
 
 import psycopg
 from psycopg import sql
+from nl2sql_common.roles import SNIPPETS_READER, limit_role
+from nl2sql_common.vectors import vector_literal
 
 TABLE = "sql_snippets"
 VECTOR_TABLE = "sql_snippet_vectors"
@@ -245,8 +247,9 @@ def parse_document(path: Path) -> list[Snippet]:
 # because this is the one process that ever writes to the store.
 
 
-def connect(url: str) -> psycopg.Connection:
-    return psycopg.connect(url)
+def connect(url: str, *, connect_timeout: int | None = None) -> psycopg.Connection:
+    options = {} if connect_timeout is None else {"connect_timeout": connect_timeout}
+    return psycopg.connect(url, **options)
 
 
 def ensure_tables(conn: psycopg.Connection) -> None:
@@ -404,6 +407,8 @@ def ensure_reader(conn: psycopg.Connection, role: str, password: str) -> None:
             sql.Identifier(role), sql.Literal(password)
         )
     )
+    # What it may cost the store (V6-39): the agent's retriever, one pool.
+    limit_role(conn, role, SNIPPETS_READER)
     database = conn.execute("SELECT current_database()").fetchone()[0]
     conn.execute(
         sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
@@ -487,11 +492,6 @@ def vector_state(conn: psycopg.Connection) -> dict[str, tuple[str, str]]:
         )
     ).fetchall()
     return {r[0]: (r[1], r[2]) for r in rows}
-
-
-def vector_literal(vector) -> str:
-    """pgvector's text input format, so no client-side vector type is needed."""
-    return "[" + ",".join(repr(float(v)) for v in vector) + "]"
 
 
 def upsert_vectors(

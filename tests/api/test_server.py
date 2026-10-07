@@ -74,6 +74,12 @@ def test_self_signed_can_be_refused_from_the_command_line():
     assert api_settings_from_args(parse_args(["--no-allow-self-signed"])).tls_allow_self_signed is False
 
 
+def test_a_development_server_can_show_everyone_a_failure_in_its_own_words(monkeypatch):
+    monkeypatch.delenv("API_DEBUG_DETAIL", raising=False)
+    assert api_settings_from_args(parse_args([])).debug_detail is False
+    assert api_settings_from_args(parse_args(["--debug-detail"])).debug_detail is True
+
+
 def test_repeatable_flags_replace_the_defaults_rather_than_adding_to_them():
     settings = api_settings_from_args(
         parse_args(["--hostname", "api.internal", "--hostname", "10.0.0.5",
@@ -97,7 +103,7 @@ def test_every_flag_names_the_environment_variable_it_overrides():
         parse_args(["--help"])
     text = buffer.getvalue()
     for name in ("API_HOST", "API_PORT", "API_TLS_ENABLED", "API_TOKEN",
-                 "API_TLS_ALLOW_SELF_SIGNED", "API_ALLOW_PRINCIPAL"):
+                 "API_TLS_ALLOW_SELF_SIGNED", "API_ALLOW_PRINCIPAL", "API_DEBUG_DETAIL"):
         assert name in text, f"--help never mentions {name}"
 
 
@@ -141,7 +147,7 @@ def test_the_openapi_document_can_be_printed_without_serving_anything(certs, cap
 
 def test_the_banner_prints_a_url_a_client_can_use(tmp_path):
     info = generate_self_signed(tmp_path / "c", tmp_path / "k", hostnames=("localhost",))
-    text = banner(ApiSettings(host="0.0.0.0", port=8443, token="t",
+    text = banner(ApiSettings(auth_enabled=False, host="0.0.0.0", port=8443, token="t",
                               cors_origins=("https://g",)), info)
     assert "https://localhost:8443/openapi.json" in text
     assert "0.0.0.0:8443" in text, "the bind address is still worth showing"
@@ -152,25 +158,32 @@ def test_the_banner_names_the_certificate_and_its_fingerprint(tmp_path):
     than turning verification off.
     """
     info = generate_self_signed(tmp_path / "c", tmp_path / "k", hostnames=("nl2sql-api",))
-    text = banner(ApiSettings(token="t", cors_origins=("https://g",)), info)
+    text = banner(ApiSettings(auth_enabled=False, token="t", cors_origins=("https://g",)), info)
     assert "self-signed" in text and "nl2sql-api" in text
     assert info.fingerprint_sha256 in text
 
 
 def test_the_banner_warns_about_plain_http():
-    text = banner(ApiSettings(tls_enabled=False, token="t", cors_origins=("https://g",)), None)
+    text = banner(ApiSettings(auth_enabled=False, tls_enabled=False, token="t", cors_origins=("https://g",)), None)
     assert "WARNING" in text and "clear text" in text
 
 
 def test_the_banner_warns_about_an_open_port():
-    text = banner(ApiSettings(token=None), None)
-    assert "auth        none" in text
-    assert "No API_TOKEN" in text
+    text = banner(ApiSettings(auth_enabled=False, token=None), None)
+    assert "auth        NONE -- open to anyone who can reach the port" in text
+    assert "This server is OPEN" in text
+
+
+def test_the_banner_names_sign_in_and_the_token_beside_it():
+    assert "auth        sign-in (a session from the auth service)\n" in banner(ApiSettings(), None) + "\n"
+    both = banner(ApiSettings(token="t"), None)
+    assert "auth        sign-in (a session from the auth service), or the API token" in both
+    assert "auth        bearer token required" in banner(ApiSettings(auth_enabled=False, token="t"), None)
 
 
 def test_the_banner_warns_that_a_self_signed_certificate_must_be_trusted(tmp_path):
     info = generate_self_signed(tmp_path / "c", tmp_path / "k", hostnames=("localhost",))
-    text = banner(ApiSettings(token="t", cors_origins=("https://g",)), info)
+    text = banner(ApiSettings(auth_enabled=False, token="t", cors_origins=("https://g",)), info)
     assert "--cacert" in text
 
 
@@ -188,14 +201,14 @@ def test_a_properly_configured_server_prints_no_warnings(tmp_path):
         self_signed=False,
         fingerprint_sha256="ab" * 32,
     )
-    text = banner(ApiSettings(token="t", cors_origins=("https://gui.example.com",)), real)
+    text = banner(ApiSettings(auth_enabled=False, token="t", cors_origins=("https://gui.example.com",)), real)
     assert "WARNING" not in text
     assert "CA-issued" in text
 
 
 def test_the_banner_follows_the_docs_switch():
-    assert "/docs" in banner(ApiSettings(docs_enabled=True), None)
-    assert "/docs" not in banner(ApiSettings(docs_enabled=False), None)
+    assert "/docs" in banner(ApiSettings(auth_enabled=False, docs_enabled=True), None)
+    assert "/docs" not in banner(ApiSettings(auth_enabled=False, docs_enabled=False), None)
 
 
 # ---------------------------------------------------------------------------
@@ -255,3 +268,38 @@ def test_importing_the_entry_point_starts_no_server(monkeypatch):
     monkeypatch.setattr(server, "main", lambda *a, **k: pytest.fail("importing started the server"))
     namespace = runpy.run_module("nl2sql_agent.api.__main__", run_name="nl2sql_agent.api.__main__")
     assert namespace["main"] is server.main
+
+
+def test_a_session_token_in_a_query_string_never_reaches_the_access_log():
+    """V6-11: the event stream accepts `?access_token=` because EventSource
+    cannot send a header, and uvicorn logs the whole path."""
+    import logging
+
+    from nl2sql_agent.api.server import ScrubTokens
+
+    record = logging.LogRecord(
+        "uvicorn.access", logging.INFO, __file__, 1, '%s - "%s %s HTTP/%s" %d',
+        ("172.18.0.5:41234", "GET", "/v1/questions/abc/events?access_token=eyJ.secret.sig&from=3", "1.1", 200),
+        None,
+    )
+    assert ScrubTokens().filter(record) is True
+    line = record.getMessage()
+    assert "eyJ.secret.sig" not in line
+    assert "access_token=***&from=3" in line
+
+
+def test_a_record_without_arguments_passes_through_untouched():
+    import logging
+
+    from nl2sql_agent.api.server import ScrubTokens
+
+    record = logging.LogRecord("uvicorn.access", logging.INFO, __file__, 1, "started", None, None)
+    assert ScrubTokens().filter(record) and record.getMessage() == "started"
+
+
+def test_the_server_runs_with_the_access_log_scrubbed():
+    from nl2sql_agent.api.server import ScrubTokens, log_config
+
+    config = log_config()
+    assert config["filters"]["scrub_tokens"]["()"] is ScrubTokens
+    assert config["handlers"]["access"]["filters"] == ["scrub_tokens"]

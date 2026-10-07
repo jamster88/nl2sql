@@ -9,6 +9,7 @@ import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
@@ -19,24 +20,27 @@ import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
 
 /**
  * Deciding whether to believe the server.
  *
- * <p>The API writes itself a self-signed certificate on first start, which
- * every client that checks will refuse -- and that refusal is the feature, not
- * the obstacle. What a client owes its user is a way to say <em>which</em>
- * server it meant, and three of them exist here, in the order the API's own
- * documentation recommends:
+ * <p>The stack issues the API and the sign-in service certificates of their
+ * own from a development CA it makes itself, which every client that checks
+ * will refuse -- and that refusal is the feature, not the obstacle. What a
+ * client owes its user is a way to say <em>which</em> server it meant, and
+ * three of them exist here, in the order the API's own documentation
+ * recommends:
  *
  * <ol>
  *   <li><b>A certificate file.</b> The strongest, and no harder than the
- *       others: one {@code docker compose cp} and the connection is verified
- *       against exactly the certificate the API wrote.
- *   <li><b>A fingerprint.</b> For when copying a file around is awkward. The
- *       server prints it at start-up and it is in {@code /v1/meta}.
+ *       others: one {@code docker compose cp} of the CA's certificate and
+ *       both connections are verified against it, by name.
+ *   <li><b>A fingerprint.</b> For when copying a file around is awkward. Each
+ *       server prints its own at start-up, the API's is in {@code /v1/meta},
+ *       and both are given, comma-separated.
  *   <li><b>Nothing at all.</b> For a throwaway experiment, and it says so in
  *       the status bar for as long as it is on, because an application that
  *       stops verifying quietly is how it ends up doing it in production.
@@ -68,13 +72,28 @@ public final class Tls {
             return context(new TrustManager[] {new TrustEverything()}, PROTOCOL);
         }
         if (!settings.fingerprint().isEmpty()) {
-            return context(new TrustManager[] {new TrustOneCertificate(settings.fingerprint())},
-                    PROTOCOL);
+            return context(new TrustManager[] {new TrustPinned(settings.fingerprint())}, PROTOCOL);
         }
         if (settings.caCert() != null) {
             return context(new TrustManager[] {trustManagerFor(settings.caCert())}, PROTOCOL);
         }
         return context(null, PROTOCOL);
+    }
+
+    /**
+     * An HTTP client that checks certificates as the settings say.
+     *
+     * <p>One for the API and one for the sign-in service, built the same way,
+     * because the two present the same certificate and a difference between
+     * them would be a bug in whichever was written second.
+     */
+    public static HttpClient client(Settings settings) {
+        return HttpClient.newBuilder()
+                .sslContext(contextFor(settings))
+                .sslParameters(parametersFor(settings))
+                .connectTimeout(Duration.ofSeconds(10))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
     }
 
     /**
@@ -101,7 +120,9 @@ public final class Tls {
             return "NOT VERIFIED";
         }
         if (!settings.fingerprint().isEmpty()) {
-            return "pinned to " + settings.fingerprint().substring(0, 12);
+            int pins = settings.fingerprint().split(",").length;
+            return "pinned to " + settings.fingerprint().substring(0, 12)
+                    + (pins > 1 ? " and " + (pins - 1) + " more" : "");
         }
         if (settings.caCert() != null) {
             return "verified against " + settings.caCert().getFileName();
@@ -189,7 +210,7 @@ public final class Tls {
             throw new ApiException(0, "tls_unusable",
                     "cannot read the certificate at " + pem + ": " + cause.getMessage()
                             + " -- under compose it is copied out with: docker compose "
-                            + "--profile api cp api:/etc/nl2sql/tls/server.crt ./nl2sql-api.crt");
+                            + "--profile api cp api:/etc/nl2sql/tls/ca.crt ./nl2sql-ca.crt");
         } catch (CertificateException cause) {
             throw new ApiException(0, "tls_unusable",
                     pem + " is not a PEM certificate: " + cause.getMessage());
@@ -216,13 +237,17 @@ public final class Tls {
         }
     }
 
-    /** Accepts exactly one certificate, identified by its SHA-256. */
-    static final class TrustOneCertificate implements X509TrustManager {
+    /**
+     * Accepts exactly the certificates it was given, by SHA-256: the leaf a
+     * server presents must be one of them. Never a CA in the chain -- a
+     * chain is the server's to send, and the CA's certificate is public.
+     */
+    static final class TrustPinned implements X509TrustManager {
 
-        private final String fingerprint;
+        private final java.util.Set<String> fingerprints;
 
-        TrustOneCertificate(String fingerprint) {
-            this.fingerprint = fingerprint;
+        TrustPinned(String fingerprints) {
+            this.fingerprints = java.util.Set.of(fingerprints.split(","));
         }
 
         @Override
@@ -242,11 +267,13 @@ public final class Tls {
                 throw new CertificateException("the server presented no certificate");
             }
             String presented = fingerprintOf(chain[0]);
-            if (!presented.equals(fingerprint)) {
+            if (!fingerprints.contains(presented)) {
                 throw new CertificateException(
-                        "the server presented " + presented + ", which is not the pinned "
-                                + fingerprint + ". The API writes a new certificate when the "
-                                + "names it must cover change, and says so at start-up.");
+                        "the server presented " + presented + ", which is not pinned ("
+                                + String.join(", ", fingerprints) + "). The stack issues a "
+                                + "server a new certificate when the names it must cover "
+                                + "change, and says so at start-up; pinning the CA instead "
+                                + "(--cacert) survives that.");
             }
         }
 

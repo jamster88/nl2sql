@@ -143,7 +143,7 @@ def test_a_narrator_that_fails_still_says_which_model_it_asked():
     state = make_agent(FakeDatabase(tables=TABLES), llm).run("q")
 
     narrate = by_node(state, "narrate")[0]
-    assert "narrator" in state["retrieval_errors"]
+    assert "narrator" in state["node_errors"]
     assert (narrate.model, narrate.rung) == (ANCHOR, "light")
 
 
@@ -151,7 +151,7 @@ class Down:
     """A routed model the host cannot run."""
 
     def invoke(self, messages):
-        raise RuntimeError("model 'broken:7b' not found, try pulling it first")
+        raise ConnectionError("model 'broken:7b' not found, try pulling it first")
 
 
 def test_a_routed_model_that_cannot_answer_hops_to_the_anchor_and_the_trace_says_so():

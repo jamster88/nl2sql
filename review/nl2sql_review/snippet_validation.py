@@ -40,6 +40,8 @@ import psycopg
 from psycopg import sql as pgsql
 
 from .validation import SAMPLE_ROWS, _message, _plan_cost, json_safe
+from nl2sql_common.attribution import APPLICATION_NAME_SQL, application_name
+from nl2sql_common.errors import DATABASE_ERRORS
 
 KINDS = ("join", "filter", "measure", "dimension")
 
@@ -237,6 +239,7 @@ def validate_snippet(
     timeout_ms: int = 30000,
     known_tables: list[str] | None = None,
     sample_rows: int = SAMPLE_ROWS,
+    principal: str | None = None,
     connect: Callable[..., Any] = psycopg.connect,
 ) -> SnippetValidation:
     """Run the snippet inside its probe, and its count, and say whether it may be kept."""
@@ -253,7 +256,7 @@ def validate_snippet(
     started = time.perf_counter()
     try:
         conn = connect(url, connect_timeout=10)
-    except Exception as exc:  # noqa: BLE001 - reported to the curator, not raised
+    except DATABASE_ERRORS as exc:  # reported to the curator, not raised
         result.problems = [f"cannot reach the retail database to validate it: {_message(exc)}"]
         return result
     try:
@@ -261,6 +264,11 @@ def validate_snippet(
         conn.execute(
             pgsql.SQL("SET LOCAL statement_timeout = {}").format(pgsql.Literal(int(timeout_ms)))
         )
+        if principal:
+            # Signed in, a person's SQL runs as them -- the role their
+            # questions run as -- so what they keep is what they can read.
+            conn.execute(APPLICATION_NAME_SQL, {"name": application_name("review", principal)})
+            conn.execute(pgsql.SQL("SET LOCAL ROLE {}").format(pgsql.Identifier(principal)))
         if known_tables is None:
             known_tables = [
                 row[0]
@@ -276,7 +284,7 @@ def validate_snippet(
         if counting is not None:
             counted = conn.execute(counting).fetchone()
             result.rows_before, result.rows_after = int(counted[0]), int(counted[1])
-    except Exception as exc:  # noqa: BLE001 - the database's refusal is the answer
+    except DATABASE_ERRORS as exc:  # the database's refusal is the answer
         result.problems = [f"the database refused it: {_message(exc)}"]
         result.elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
         return result

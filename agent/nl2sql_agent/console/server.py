@@ -23,6 +23,7 @@ from ..api.tls import CertificateInfo, certificate_notes, describe_certificate
 from ..config import Settings
 from .app import create_app
 from .settings import SERVICE_HOSTNAME, ConsoleSettings
+from nl2sql_common.urls import redacted
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -79,18 +80,8 @@ def settings_from_args(args: argparse.Namespace) -> ConsoleSettings:
     )
 
 
-def redacted(url: str) -> str:
-    """A connection URL with its password taken out, for printing."""
-    if "@" not in url:
-        return url
-    scheme, _, rest = url.partition("://")
-    credentials, _, host = rest.rpartition("@")
-    user = credentials.partition(":")[0]
-    return f"{scheme}://{user}:***@{host}" if user else f"{scheme}://{host}"
-
-
 def load_certificate(console: ConsoleSettings) -> CertificateInfo | None:
-    """The API's certificate as this process will present it.
+    """This console's certificate, as this process will present it.
 
     None when TLS is off, or when there is nothing readable to present --
     which `main` refuses to start over rather than serving plain HTTP on a
@@ -104,6 +95,13 @@ def load_certificate(console: ConsoleSettings) -> CertificateInfo | None:
     if SERVICE_HOSTNAME not in info.hostnames:
         info.missing_hostnames = [SERVICE_HOSTNAME]
     return info
+
+
+def describe_auth(console: ConsoleSettings) -> str:
+    """Who may call, in the banner's words. Open is said in capitals."""
+    if console.auth_enabled:
+        return "sign-in" + (", or the console token" if console.token else "")
+    return "bearer token" if console.token else "NONE"
 
 
 def banner(
@@ -120,25 +118,26 @@ def banner(
         f"  agent limits   timeout {agent.statement_timeout_ms} ms, {agent.max_rows} rows, "
         f"plan cost {agent.max_plan_cost:,.0f}",
         f"  rows shown     up to {console.max_rows} per query",
-        f"  auth           {'bearer token' if console.token else 'NONE'}",
+        f"  auth           {describe_auth(console)}",
     ]
     if certificate is not None:
-        kind = "self-signed" if certificate.self_signed else "CA-issued"
         lines.append(
-            f"  certificate    {kind}, written by the agent API, for "
+            f"  certificate    {certificate.kind}, the console's own, for "
             f"{', '.join(certificate.hostnames) or 'no names'}"
         )
     notes = console.warnings()
     if certificate is not None:
-        # The API's notes about its own certificate, less the two that are
-        # the API's to act on: trusting a self-signed one is its clients'
-        # business, and a missing name is said below in this process's terms.
-        notes.extend(certificate_notes(replace(certificate, self_signed=False, missing_hostnames=[])))
+        # The notes about the certificate itself, less the two said here in
+        # this process's terms: trusting a development one is its clients'
+        # business, and a missing name is this console's to fix.
+        notes.extend(
+            certificate_notes(replace(certificate, self_signed=False, development=False, missing_hostnames=[]))
+        )
         if certificate.missing_hostnames:
             notes.append(
                 f"the certificate does not cover {SERVICE_HOSTNAME}, so the console interface's "
-                "proxy will refuse it. Add it to API_TLS_HOSTNAMES and restart the API, which "
-                "reissues a development certificate to cover it."
+                "proxy will refuse it. Add it to CONSOLE_TLS_HOSTNAMES and start again: the "
+                "pki service reissues the console's certificate to cover it."
             )
     for note in notes:
         lines.append(f"  ! {note}")
@@ -170,9 +169,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # operator fixes, distinct from a server that started and failed.
         print(
             f"error: TLS is on but {console.tls_cert_file} and {console.tls_key_file} are not\n"
-            "  both readable. The console presents the certificate the agent API generates:\n"
-            "  start the API once so it writes one, mount its volume here, and make sure\n"
-            f"  API_TLS_HOSTNAMES covers {SERVICE_HOSTNAME}. Or start with --no-tls.",
+            "  both readable. Under compose the pki service issues the console its own\n"
+            "  certificate into the consoletls volume, for names that include\n"
+            f"  {SERVICE_HOSTNAME}; mount it here. Or start with --no-tls.",
             file=sys.stderr,
         )
         return 2

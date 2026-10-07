@@ -80,6 +80,7 @@ def api(tmp_path: Path):
         **kwargs,
     ) -> Api:
         settings = ApiSettings(
+            auth_enabled=False,
             host="127.0.0.1",
             port=free_port(),
             tls_enabled=tls,
@@ -286,8 +287,31 @@ def test_it_presents_the_token_when_one_is_configured(api, tmp_path):
         served.base,
         env={"API_CACERT": str(tmp_path / "server.crt"), "API_TOKEN": "s3cret"},
     )
-    assert "auth    bearer token" in result.stdout
+    assert "auth    bearer token\n" in result.stdout
+    # Until 6.3 the line went on to print the token itself, which this test
+    # read past: "bearer token" is in "bearer tokens3cret".
+    assert "s3cret" not in result.stdout + result.stderr
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_token_is_read_from_the_secret_file_compose_mounts(api, tmp_path):
+    served = api(token="s3cret")
+    token = tmp_path / "api_token"
+    token.write_text("s3cret\n")
+    result = smoke(
+        served.base,
+        env={"API_CACERT": str(tmp_path / "server.crt"), "API_TOKEN_FILE": str(token)},
+    )
+    assert "auth    bearer token\n" in result.stdout and "s3cret" not in result.stdout
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_an_empty_token_file_is_no_token(api, tmp_path):
+    served = api(token=None)
+    empty = tmp_path / "api_token"
+    empty.write_text("")
+    result = smoke(served.base, env={"API_CACERT": str(tmp_path / "server.crt"), "API_TOKEN_FILE": str(empty)})
+    assert "auth    none\n" in result.stdout
 
 
 def test_an_unauthorised_client_is_a_failed_check_not_an_unreachable_service(api, tmp_path):

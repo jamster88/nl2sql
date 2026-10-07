@@ -7,11 +7,148 @@ each version created, updated or fixed.
 Version numbers are the agent's: `__version__` 5.1.2 is the image tag `v5_1_2`.
 The app images -- agent, web interface, review service, review interface, the
 SQL console's interface, the desktop client's jar, since v5_5 MLflow's
-server and store, and since v5_6 the curation interface -- are released together
+server and store, since v5_6 the curation interface, and since v6_0 the
+directory, the auth service, the directory page and MLflow's front door --
+every page and the front door one image, the proxy, since v6_3 -- are released together
 at one number. The three
 dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
+
+## v6_3 (6.3.0) -- 2026-10-05
+
+**Added**
+- Every container is read-only, holds no capability it does not use, cannot gain a privilege, and has a ceiling on its memory and processes.
+- Every password and token is a file in `secrets/`, mounted into only the services that read it; none is in any container's environment.
+- One image, `nl2sql-proxy`, serves every page and MLflow's front door; twelve tags where there were seventeen.
+- Every health check verifies the certificate it is answered with.
+- The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`; the old stores' containers are stopped and removed, and `launch.sh` moves what they held into it.
+- A one-shot, `dbprep`, prepares every database in Python over its own socket; neither script runs SQL.
+- Every role a service connects as has a statement timeout, a memory ceiling and a connection limit.
+- Every base image and stock image is pinned by digest; `tools/pin_images.py` checks and moves them.
+
+**Updated**
+- `.env` holds no password; `setup.sh` and `launch.sh` move the ones an older `.env` holds into `secrets/`.
+- The first sign-in's password is `cat secrets/ldap_admin_password`.
+- `setup.sh --proxy-image`/`--proxy-tag` replace the six pages' flags.
+- `--feedback` is the same as `--api`: verdicts are staged whenever the API is up.
+- `launch.sh --api` replaces `nl2sql-ca.crt` when the stack's CA has changed, and says to trust it again.
+- MLflow's store URL is built from the password file, never on its command line.
+
+**Fixed**
+- The retail database's health check could pass while its entrypoint's socket-only server was still setting passwords; it asks over TCP.
+- An upgrade from 6.2 left the old stores' containers running, one on the runtime stores' port; they are stopped and removed first, their volumes kept.
+
+**Published**
+- All twelve tags as `v6_3`, `nl2sql-proxy` among them for the first time; the dataset images are unchanged. The upgrade was rehearsed on a stack of its own first, then `start.sh` upgraded a running 6.2 stack -- its stores moved, its passwords into `secrets/` -- with 98 checks passing.
+
+**After publishing** (not in the images)
+- The coverage exclusions are the one the README names again; tests run each module's entry point instead.
+- dbprep, MLflow's server and the store migration are checked both ways against what compose gives them.
+- Every page's settings are checked by their `.env` names, and the review and directory pages, the outside client and dbprep have settings tables.
+- The checks every page's template shares are made once, not four times; a handful of duplicate, dead or vacuous tests are gone.
+- The RAG integration test runs as a stack of its own rather than in the running one's project.
+- The proxy's start-up tests need gettext's `envsubst`, and skip without it.
+
+## v6_2 (6.2.0) -- 2026-10-04
+
+**Added**
+- A session can be ended: signing out, a password changed or set, a lock or a removal ends it for every service within a minute.
+- A service token is named and holds only the roles it is given; what it does is recorded under its name, never a header's.
+- An administrator can make the agent read its catalogs again (`POST /v1/admin/reload`).
+- The sign-in throttle believes `X-Forwarded-For` only from the page proxies (`AUTH_TRUSTED_PROXIES`).
+- A person's name in each transaction's `application_name`, where the database's own views and log show it.
+- The code every service shares is one package, installed as one, at the release's version; what every page shares is one source package, `web/`.
+- Every Python image installs a hash-checked lock.
+
+**Updated**
+- Nothing runs as root but the one-shot `pki` service; each key belongs to its service's account, and the review service writes the checkout as the person who owns it.
+- Every route is on a router that carries its guard.
+- The review service loads the stores in its own process, under a lock, with no password on a command line.
+- A failure's own words -- hosts, drivers, configuration -- are an administrator's to see.
+
+**Fixed**
+- A deleted fix's id was given to the next fix; ids come from sequences.
+- The desktop client's sign-out told nobody; it ends the session at the auth service.
+
+**Published**
+- All seventeen tags as `v6_2`; the dataset images are unchanged. The acceptance tier passed first, and `start.sh` then upgraded a stack to them with every check passing, a signed-out session refused everywhere and nothing running as root among them.
+
+## v6_1 (6.1.0) -- 2026-10-04
+
+**Added**
+- A development certificate authority: a one-shot `pki` service gives every server its own key and certificate, and a client trusts `nl2sql-ca.crt` once.
+- `nl2sql-retail-postgres:v1_2`: no password in the image, TLS on, nothing over the network without it, and the superuser not over the network at all.
+- `SECURITY.md`, the threat model and the deployment tiers; `Multi-Agent_NL2SQL_arch6.md`, the architecture as built, with the sign-in design.
+- The acceptance tier (`--run-acceptance`): the whole stack, built from the checkout and started with `setup.sh` and `start.sh` beside any other, used on every page; four of its tests are 6.0's four shipped defects.
+- `NL2SQL_INSTANCE` names a stack, so a second one runs beside the first; `setup.sh --build-all` builds every image from the checkout instead of pulling.
+- `tests/security/`: every route guarded, every wire model strict, the compose posture.
+- The live tests find the databases' passwords where compose does, and fail rather than skip when a database refuses them.
+
+**Fixed**
+- A repair started from the failed attempt's leftovers; it starts clean now.
+- A narrator or supervisor that failed said nothing; `node_errors` says so.
+- Moving the API's, the review service's, the console's or the auth service's port in `.env` left every page asking the old one; they follow it now.
+- `start.sh --desktop` did not tell the window where to sign in, so with `AUTH_PORT` moved it signed in nowhere; it passes the auth service's address now.
+- The review service's banner said `auth NONE` over a service that required sign-in; it says sign-in, and names its own certificate.
+- The sensitive-column redaction promised a policy nothing applied; the claim is gone.
+- The trace over REST dropped the model, rung, route and hops; it carries them, and the interfaces show the model.
+- Every wire model refuses a field it does not know.
+- The benchmark test that failed on every run names the two overlaps the owner kept.
+
+**Updated**
+- The databases answer on this machine only unless `DB_BIND_ADDRESS` opens them, and every store password is generated.
+- Sign-in to the retail database is over TLS, verified; the directory's API answers on its own port, behind its page.
+- Sign-in is on in the code as well as in compose; CORS closed until opened; the job queue bounded (429); `EXPLAIN` time-boxed; tokens scrubbed from the access log.
+- A replica refuses a clear-text primary; the pages honour `X-Forwarded-Proto`.
+- Version 6.1.0 in every declaration; `setup.sh` pins `v6_1` and `nl2sql-retail-postgres:v1_2`.
+
+**Published**
+- All seventeen tags as `v6_1`, and `nl2sql-retail-postgres:v1_2` with `latest` moved onto it; the acceptance tier passed first, and `start.sh` then upgraded a running stack to them with every check passing.
+
+## v6_0_1 (6.0.1) -- 2026-10-04
+
+**Fixed**
+- The directory could not write its certificate when compose made the auth service's container after its own, restarted for ever, and nobody could sign in; it now takes its directories as root and then runs as `ldap`.
+- Five wrong passwords from one address -- everyone on one machine, or behind one proxy -- locked all sign-ins for fifteen minutes; an address now has its own limit of fifty (`AUTH_THROTTLE_ADDRESS_FAILURES`), a name still five.
+- The desktop client said "Not connected." to a server that only wanted to know who it was; it offers to sign in instead.
+- `launch.sh` did not pass `ldap_hba.sh` the directory's host, so the database was never prepared for sign-in.
+
+**Updated**
+- Version 6.0.1 in every declaration; `setup.sh` pins `v6_0_1`.
+
+**Published**
+- All seventeen tags as `v6_0_1`; `start.sh` upgraded a running stack to them and every sign-in check passed.
+
+**After publishing** (the checkout, not the `v6_0_1` images)
+- The container tests ask each page over HTTPS, verified; the least-privilege test says what it protects now that the reader may become people; `auth_roles.sql` no longer grants a second time what the role sync already granted.
+- The usage guide covers upgrading to 6.0 and troubleshooting sign-in; still 100% coverage of the Python, the shell scripts, the desktop client and the five web interfaces.
+- The second adversarial review cycle, `v6_1_review`, at 6.0.1: the five documents and their `_enhanced` editions again, every first-cycle finding given a status (8 resolved, 5 improved, 3 mitigated, 32 unchanged, 18 worse) and 19 new, the plan's 51 items tracked and 20 added, a comparison document, nine new figures; the first cycle's files untouched.
+
+## v6_0 (6.0.0) -- 2026-10-03
+
+**Added**
+- Sign-in, on by default: a person signs in with the password a directory holds, which the retail database checks itself, and what they ask or run, runs as their own database role.
+- Four groups decide what a person may open: `nl2sql-users` ask, `nl2sql-reviewers` review and read MLflow, `nl2sql-curators` curate, reviewers and curators use the SQL console, `nl2sql-admins` manage the directory.
+- The directory (`nl2sql-ldap`): standalone, loaded from a CSV or LDIF file and edited on its page, or a read-only replica of Active Directory or any LDAP server, with each password checked by the primary.
+- The auth service (`nl2sql-auth`, port 8446): sign-in, the session, and the database's roles kept in step with the directory.
+- The directory page (`nl2sql-directory-gui`, port 8084), for administrators.
+- MLflow's front door (`nl2sql-mlflow-proxy`): HTTPS, and sign-in asked about every request; MLflow itself is no longer published.
+- Sign-in in the desktop client (`--auth-url`, `--user`).
+- `--no-auth` for `start.sh`, `launch.sh` and `setup.sh`.
+
+**Updated**
+- Every web interface is HTTPS, asks who you are, and offers a password change and sign-out.
+- The API shows each person only their own questions; a reviewer's name on a decision is the one they signed in as.
+- `setup.sh` generates the directory's and the role sync's passwords into `.env`, which only its owner can read.
+- `--mlflow` brings the API up too: the front door presents its certificate.
+- Version 6.0.0 in every declaration; `setup.sh` pins `v6_0`, seventeen tags with the four new images'.
+
+**Published**
+- All seventeen tags as `v6_0`, the directory, the auth service, the directory page and MLflow's front door for the first time.
+
+**After publishing**
+- The stack run with `start.sh` found that nobody could sign in; corrected in `v6_0_1`.
 
 ## v5_6_1 (5.6.1) -- 2026-10-03
 
@@ -24,6 +161,7 @@ their own and are listed under the release they shipped with. A version marked
 
 **After publishing** (tests and documentation; no image changed)
 - A coverage and relevance audit: still 100% everywhere; the snippet store's and the curation page's compose settings are exercised and documented with their defaults; two review settings documented; a fake switch nobody set and two duplicate tests removed.
+- The first adversarial review (`adversary_reviews/`, tag `v6_x_review`): three reviews, one combined plan of 51 items, a summary of 66 findings, and figures generated as draw.io files, exported and tested.
 
 ## v5_6 (5.6.0) -- 2026-10-03
 

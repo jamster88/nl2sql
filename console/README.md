@@ -6,7 +6,7 @@ why an answer was wrong.
 ```bash
 ./start.sh --console       # everything, and the console in a window of its own
 ./launch.sh --console      # the same containers, without the browser
-open http://localhost:8082
+open https://localhost:8082
 ```
 
 When the agent gets an answer wrong, the useful questions are about the
@@ -21,8 +21,8 @@ planner gate -- and beside every result, what the agent would have made of
 it.
 
 ```
-browser ──▶ nl2sql-console-gui   nginx on 127.0.0.1:8082: the page, and a proxy
-                  │               that adds CONSOLE_TOKEN and verifies TLS
+browser ──▶ nl2sql-console-gui   the proxy image on 127.0.0.1:8082: the page, and
+                  │               a proxy that adds the token and verifies TLS
                   ▼
             nl2sql-console       python -m nl2sql_agent.console, the agent image
                   │               static validator ─▶ planner gate ─▶ executor
@@ -141,10 +141,11 @@ Everything a query here runs inside, from the outside in:
 
 | Layer | What it does |
 |---|---|
-| **The address** | Both ports are published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise -- every other port in the stack is opened the way Docker opens ports, and a page that runs SQL is not one to offer the network by default. `launch.sh` warns when it is opened up with no token. |
-| **The token** | `CONSOLE_TOKEN`, when set, guards every `/v1` route. The interface's nginx holds it and adds it; the browser never has it. |
+| **The address** | Both ports are published on `127.0.0.1` unless `CONSOLE_BIND_ADDRESS` says otherwise -- every other port in the stack is opened the way Docker opens ports, and a page that runs SQL is not one to offer the network by default. `launch.sh` warns when it is opened up with neither sign-in nor a token. |
+| **Sign-in** | On by default (`AUTH_ENABLED`), in the console's own settings as well as in compose: every `/v1` route -- each on a router that carries the guard (6.2) -- needs a signed-in person in `CONSOLE_ALLOWED_ROLES` -- `nl2sql_reviewers` and `nl2sql_curators` by default -- and each statement runs as them, `SET LOCAL ROLE` from the reader, so it can read what they can and nothing more, with their name in the transaction's `application_name` (`nl2sql:console:<person>`). A session signed out, or from before a password change or a lock, is refused within a minute. See [`auth/README.md`](../auth/README.md). |
+| **The token** | `CONSOLE_TOKEN`, when set, is a static service token: with sign-in off it guards every `/v1` route, and the interface's nginx holds it and adds it so the browser never has it; with sign-in on it is accepted beside sessions, and the interface sends none. Since 6.2 it is a caller of its own, named by `CONSOLE_TOKEN_NAME` and holding `CONSOLE_TOKEN_ROLES` -- the console's own allowed roles unless set. |
 | **CORS** | Off unless `CONSOLE_CORS_ORIGINS` names an origin. The page is same-origin behind its proxy, and a SQL runner any site in the browser could call is not something to offer without being asked. |
-| **TLS** | The console presents the certificate the agent API generates (`API_TLS_HOSTNAMES` covers `nl2sql-console`), and the proxy verifies it rather than trusting whatever answers. |
+| **TLS** | The console presents a certificate of its own, which the stack's pki service issues (`CONSOLE_TLS_HOSTNAMES` covers `nl2sql-console`), and the proxy verifies it against the stack's CA rather than trusting whatever answers. |
 | **The role** | `DATABASE_URL` is the agent's own -- compose anchors the one value -- so every query runs as `nl2sql_reader`: `SELECT` on the retail tables and nothing else. A URL pointed at the owner by mistake is shown in the status bar and the readiness check. |
 | **The validator** | The agent's, as above. Nothing it refuses for safety reaches the database. |
 | **The transaction** | `SET TRANSACTION READ ONLY`, then rolled back whatever happened. This is what refuses the write the validator does not know about -- `SELECT lo_create(0)` passes it and is refused here, by the server. |
@@ -210,7 +211,12 @@ Every failure has the API's error shape, `{"error": {"code", "message"}}`:
 
 | Code | Status | When |
 |---|---|---|
-| `unauthorized` | 401 | `CONSOLE_TOKEN` is set and the request did not carry it |
+| `unauthorized` | 401 | Sign-in is off, `CONSOLE_TOKEN` is set and the request did not carry it |
+| `sign_in_required` | 401 | Sign-in is on and there is no session or token |
+| `expired`, `malformed`, `bad_signature`, `wrong_key`, `wrong_audience`, `not_yet_valid`, `account_removed`, `session_revoked` | 401 | A session that is not good any more -- `session_revoked` one that was signed out, or signed in before a password change, a lock or a removal: sign in again |
+| `forbidden` | 403 | Signed in, but in no group `CONSOLE_ALLOWED_ROLES` names |
+| `cross_site` | 403 | A cookie-authenticated request from another site |
+| `sign_in_unavailable`, `roles_unavailable` | 503 | The auth service's key is not there yet, or Postgres could not be asked about groups |
 | `invalid_request` | 422 | The body is not a query: empty, longer than 20,000 characters, an unknown mode, or a field that is not `sql` or `mode` |
 | `unknown_table` | 404 | The prompt of a table that is not in the schema |
 | `not_found` | 404 | A path the console does not serve |
@@ -229,9 +235,15 @@ empty unless set, so the default below stands.
 | `CONSOLE_PORT` | `8445` | The port to serve on, and to publish |
 | `CONSOLE_ROOT_PATH` | *(empty)* | A path prefix, when served under one by a reverse proxy |
 | `CONSOLE_TLS_ENABLED` | `true` | Serve HTTPS. Off only behind something that terminates TLS itself |
-| `CONSOLE_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | The certificate to present -- the one the API writes |
+| `CONSOLE_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` | The certificate to present -- its own, from the pki service |
 | `CONSOLE_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` | Its key |
-| `CONSOLE_TOKEN` | *(unset)* | Require this bearer token (or `X-API-Key`) on every `/v1` route |
+| `AUTH_ENABLED` | `true` | Accept signed-in people, and run each statement as the one who typed it. Only `false`, set by name, turns it off |
+| `AUTH_PUBLIC_KEY_FILE` | `/etc/nl2sql/auth/session.pub` | The auth service's public key, which sessions are checked against |
+| `AUTH_COOKIE_NAME` | `nl2sql_session` | The cookie a browser's session is in |
+| `CONSOLE_ALLOWED_ROLES` | `nl2sql_reviewers,nl2sql_curators` | Who may use it, signed in |
+| `CONSOLE_TOKEN` | *(unset)*; compose gives `CONSOLE_TOKEN_FILE`, `/run/secrets/console_token` | A static service token (or `X-API-Key`): required on every `/v1` route when sign-in is off, accepted beside sessions when it is on. Read from the file `CONSOLE_TOKEN_FILE` names when that is set, which wins (6.3) |
+| `CONSOLE_TOKEN_NAME` | `console-token` | Who the token is |
+| `CONSOLE_TOKEN_ROLES` | *(the allowed roles)* | The roles it holds, and no others; unset, `CONSOLE_ALLOWED_ROLES` |
 | `CONSOLE_CORS_ORIGINS` | *(none)* | Browser origins allowed to call it directly, comma-separated |
 | `CONSOLE_MAX_ROWS` | `1000` | Rows read and sent back for one query |
 | `CONSOLE_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc` |
@@ -257,21 +269,30 @@ documented with the rest of the agent's in
 
 ### The interface
 
-Read by the nginx template and its start-up script, and set by compose from
-the names on the left.
+Served by the proxy image's `console` page since 6.3
+([`proxy/README.md`](../proxy/README.md)), which reads the names on the
+right; compose sets them from the names on the left.
 
 | Variable | Sets | Default |
 |---|---|---|
-| `CONSOLE_GUI_PORT` | `CONSOLE_GUI_PORT` | `8082` |
-| `CONSOLE_GUI_UPSTREAM` | `CONSOLE_UPSTREAM` | `https://nl2sql-console:8445` |
-| `CONSOLE_GUI_SSL_NAME` | `CONSOLE_SSL_NAME` | `nl2sql-console` |
-| `CONSOLE_GUI_CACERT` | `CONSOLE_CACERT` | `/etc/nl2sql/tls/server.crt` |
-| `CONSOLE_GUI_READ_TIMEOUT` | `CONSOLE_READ_TIMEOUT` | `120s` -- longer than the statement timeout, or the proxy cuts off an answer that is coming |
-| `CONSOLE_GUI_RESOLVER` | `CONSOLE_GUI_RESOLVER` | `127.0.0.11`, Docker's DNS |
-| `CONSOLE_TOKEN` | `CONSOLE_TOKEN` | *(unset)*: no `Authorization` header is sent at all |
+| `CONSOLE_GUI_PORT` | `PROXY_PORT` | `8082` |
+| `CONSOLE_GUI_UPSTREAM` | `UPSTREAM` | `https://nl2sql-console:8445` |
+| `CONSOLE_GUI_SSL_NAME` | `UPSTREAM_SSL_NAME` | `nl2sql-console` |
+| `CONSOLE_GUI_CACERT` | `UPSTREAM_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `CONSOLE_GUI_READ_TIMEOUT` | `UPSTREAM_READ_TIMEOUT` | `120s` -- longer than the statement timeout, or the proxy cuts off an answer that is coming |
+| `CONSOLE_GUI_RESOLVER` | `PROXY_RESOLVER` | `127.0.0.11`, Docker's DNS |
+| `secrets/console_token` | `UPSTREAM_TOKEN_FILE` | *(empty)*: no `Authorization` header is sent at all -- nor with sign-in on, whatever it holds |
+| `AUTH_ENABLED` | `AUTH_ENABLED` | `true`: the page asks who you are, and sends the session rather than a token |
+| `GUI_AUTH_UPSTREAM` | `AUTH_UPSTREAM` | `https://nl2sql-auth:8446`, where `/auth/` is proxied: the sign-in form posts there |
+| `GUI_AUTH_SSL_NAME` | `AUTH_SSL_NAME` | `nl2sql-auth` |
+| `GUI_AUTH_CACERT` | `AUTH_CACERT` | `/etc/nl2sql/tls/ca.crt` |
+| `GUI_TLS_ENABLED` | `PROXY_TLS_ENABLED` | `true`: the page is HTTPS, with its own certificate, so a password never crosses in clear |
+| `GUI_TLS_CERT_FILE` | `PROXY_TLS_CERT_FILE` | `/etc/nl2sql/tls/server.crt` |
+| `GUI_TLS_KEY_FILE` | `PROXY_TLS_KEY_FILE` | `/etc/nl2sql/tls/server.key` |
+| `CONSOLE_BIND_ADDRESS` | compose alone | `127.0.0.1`: the host address both the console's ports are published on |
 
-And one for compose alone: `CONSOLE_BIND_ADDRESS` (`127.0.0.1`), the host
-address both ports are published on.
+The `GUI_` ones are shared: one line in `.env` sets them for every
+interface.
 
 ### Flags
 
@@ -317,14 +338,19 @@ console/
 │       ├── PromptView.tsx       the agent's view of a table
 │       ├── History.tsx
 │       └── StatusBar.tsx
-├── nginx.conf.template          the page, and the proxy to the console
-├── 10-nl2sql-console-config.envsh   the token header, and the TLS block
-└── Dockerfile                   node builds it, nginx serves it
+└── package.json                 its own npm project
 ```
 
-A separate npm project and image from the other two interfaces, for the
-review interface's reason: an entry point in the public GUI's project would
-be served by the public GUI's image, to anyone who could reach it.
+Its nginx template is the proxy image's `service` page
+([`proxy/pages/service.conf.template`](../proxy/pages/service.conf.template)),
+shared with the review and curation pages, which differ from it only in
+their upstream; `proxy/Dockerfile` builds this project in a stage of its own.
+
+A separate npm project from the other interfaces, for the review
+interface's reason: an entry point in the public GUI's project would be part
+of the public GUI's build. Since 6.3 the bundles share one image, and each
+container serves only the page `NL2SQL_PAGE` names, from that page's own
+root -- the web interface's container answers nothing with this page's files.
 
 ## Tests
 
@@ -336,4 +362,4 @@ be served by the public GUI's image, to anyone who could reach it.
 | [`test_console_live.py`](../tests/console/test_console_live.py) | The real retail database as the real reader: types, a write the transaction refuses, a timeout, the sales fact read as far as it is shown |
 | [`test_console_compose.py`](../tests/console/test_console_compose.py) | The two services as compose resolves them: the agent's URL and limits, one credential, the certificate's names, loopback ports, and every setting both ways |
 | [`test_console_container.py`](../tests/console/test_console_container.py) | Four real containers on a private network: the proxy verifies the console's certificate, adds the token, and a write is refused by the database |
-| [`test_console_project.py`](../tests/console/test_console_project.py), [`test_console_gui_contract.py`](../tests/console/test_console_gui_contract.py), [`test_console_gui_suite.py`](../tests/console/test_console_gui_suite.py) | The npm project, nginx and the start-up script; the TypeScript types field by field against the models; and the interface's own suite -- console GUI: 130 tests, at 100% of statements, branches, functions and lines |
+| [`test_console_project.py`](../tests/console/test_console_project.py), [`test_console_gui_contract.py`](../tests/console/test_console_gui_contract.py), [`test_console_gui_suite.py`](../tests/console/test_console_gui_suite.py) | The npm project, nginx and the start-up script; the TypeScript types field by field against the models; and the interface's own suite -- console GUI: 157 tests, at 100% of statements, branches, functions and lines |

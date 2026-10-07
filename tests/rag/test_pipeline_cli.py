@@ -144,8 +144,10 @@ def test_the_embedding_model_defaults_to_the_one_the_stores_were_built_with(embe
 
 
 def test_embedding_an_empty_context_store_says_to_run_the_loader_first(embedder, monkeypatch):
-    monkeypatch.setattr(embedder.gp, "connect", lambda url: _FakeConn())
-    monkeypatch.setattr(embedder.gp, "load_pairs", lambda conn: [])
+    from ragproc import golden_pairs as gp
+
+    monkeypatch.setattr(gp, "connect", lambda url, **options: _FakeConn())
+    monkeypatch.setattr(gp, "load_pairs", lambda conn: [])
     with pytest.raises(SystemExit, match="05_load_golden_pairs"):
         embedder.main([])
 

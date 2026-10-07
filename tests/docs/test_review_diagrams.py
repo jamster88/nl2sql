@@ -63,8 +63,13 @@ ENHANCED = [REVIEWS / f"{tag}_{name}_enhanced.md" for tag, name in PAIRS]
 #: first, which embeds a figure of its own and links both cycles' files.
 STANDALONE = [REVIEWS / "v6_1_review_changes_since_v6_x.md"]
 
+#: A document with no figures: what the second cycle's plan had left at
+#: 6.3.0, written for the third cycle to start from. Its links are checked
+#: like every review's; it embeds nothing.
+UNFIGURED = [REVIEWS / "v6_1_review_misses.md"]
+
 #: Every review document, for the link check.
-ALL_DOCS = [REVIEWS / f"{tag}_{name}.md" for tag, name in PAIRS] + ENHANCED + STANDALONE
+ALL_DOCS = [REVIEWS / f"{tag}_{name}.md" for tag, name in PAIRS] + ENHANCED + STANDALONE + UNFIGURED
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 

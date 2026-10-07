@@ -51,7 +51,7 @@ their own and are listed under the release they shipped with. A version marked
 - The proxy's start-up tests need gettext's `envsubst`, and skip without it.
 - The README is a front page -- the quick start, what is new, an index -- and what it held is a document a topic in `docs/`, where the usage guide, the quick start, `SECURITY.md` and the changelogs now live too; the tests follow each fact to the document that holds it.
 - "Twenty-eight of those 656 need the embedding host" re-counted with the host down: 28 of 758; the three DDL-vector tests skip naming the embedding host rather than the vector store; a test holds both numbers.
-- The second review's 71 plan items verified at 6.3.0: 65 done, one superseded, V6-40 and V6-41 partial as the 6.3 spec says, V6-42 (provenance) and V6-47 (one home per fact) open. Fixed: the "fourteen pipeline nodes" comment. Added: the narrative-drift test, the newest spec's blueprint held to the tree, and a test that only the API holds its identity.
+- The second review's 71 plan items verified at 6.3.0: 65 done, one superseded, V6-40 and V6-41 partial as the 6.3 spec says, V6-42 (provenance) and V6-47 (one home per fact) open. Fixed: the "fourteen pipeline nodes" comment. Added: the narrative-drift test, the newest spec's blueprint held to the tree, and a test that only the API holds its identity. `adversary_reviews/v6_1_review_misses.md` lists what was missed, for the third cycle.
 
 ## v6_2 (6.2.0) -- 2026-10-04
 

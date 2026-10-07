@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 4891 tests, no Docker, npm, JDK or network needed
+pytest                                          # 4892 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 5715, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 5716, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -81,7 +81,7 @@ default run. Those three scripts' suites are most of the five minutes: each
 test runs the real script, and each of `start.sh`'s runs the real `setup.sh`
 and `launch.sh` beneath it.
 
-Twenty-eight of those 656 also need the **embedding host**: a local Ollama
+Twenty-eight of those 758 also need the **embedding host**: a local Ollama
 serving `bge-m3`, the model both vector stores were built with. Without it they
 skip with that as the stated reason rather than failing -- the rest of the
 suite still passes, which is the property that matters. Start it with

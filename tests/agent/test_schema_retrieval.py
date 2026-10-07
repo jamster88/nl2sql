@@ -511,13 +511,20 @@ def live_database() -> Database:
 
 @pytest.fixture(scope="module")
 def live_knowledge_base() -> KnowledgeBase:
+    """The store first and the embedder second, each failure named as its
+    own: one `search` did both, and with the embedding host down the skip
+    said the DDL vectors were unreachable when they were answering."""
     knowledge_base = KnowledgeBase(
         VECTOR_DB_URL, build_embedder(_Settings()), collections=[DDL_COLLECTION]
     )
     try:
-        knowledge_base.search("smoke test", top_k=1)
+        knowledge_base.embedding_models()
     except Exception as exc:
         live_stores.unreachable("DDL vectors", VECTOR_DB_URL, exc)
+    try:
+        knowledge_base.search("smoke test", top_k=1)
+    except Exception as exc:
+        pytest.skip(f"embedding model {EMBED_MODEL} unavailable at {EMBED_BASE_URL}: {exc}")
     return knowledge_base
 
 

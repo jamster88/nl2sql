@@ -376,6 +376,11 @@ def test_the_tests_document_quotes_the_real_test_counts():
     assert quoted["acceptance"] == acceptance_only, (
         f"docs/tests.md says {quoted['acceptance']} acceptance tests, there are {acceptance_only}"
     )
+    # "Twenty-eight of those N also need the embedding host": N is the docker
+    # count again, and said 656 for two releases after it was 758.
+    assert quoted["embedding_of"] == docker_only, (
+        f"docs/tests.md says the embedding host's tests are among {quoted['embedding_of']}, there are {docker_only}"
+    )
 
 
 def _quoted_counts() -> dict[str, int]:
@@ -387,6 +392,7 @@ def _quoted_counts() -> dict[str, int]:
         "node": int(re.search(r"The (\d+) behind `--run-node`", tests_doc).group(1)),
         "java": int(re.search(r"The (\d+) behind `--run-java`", tests_doc).group(1)),
         "acceptance": int(re.search(r"The (\d+) behind `--run-acceptance`", tests_doc).group(1)),
+        "embedding_of": int(re.search(r"of those (\d+) also need the \*\*embedding host\*\*", tests_doc).group(1)),
     }
 
 
@@ -394,6 +400,63 @@ def test_the_quoted_counts_are_internally_consistent():
     quoted = _quoted_counts()
     assert (quoted["offline"] + quoted["docker"] + quoted["node"] + quoted["java"]
             + quoted["acceptance"] == quoted["total"])
+
+
+def _embedding_gates() -> dict[str, str]:
+    """Each test file that reads `TEST_EMBED_BASE_URL`, and the one fixture in
+    it that builds an embedder from it. The tests that take that fixture are
+    the ones that need the embedding host, and skip without it."""
+    import ast
+
+    gates = {}
+    for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
+        source = path.read_text()
+        # Read at import, as a module-level name -- not this file, which
+        # only names the variable.
+        if not re.search(r'^EMBED_BASE_URL = os\.environ\.get\("TEST_EMBED_BASE_URL"', source, re.MULTILINE):
+            continue
+        fixtures = [
+            node.name for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+            and any("fixture" in ast.unparse(decorator) for decorator in node.decorator_list)
+            and "build_embedder" in ast.get_source_segment(source, node)
+        ]
+        assert len(fixtures) == 1, f"{path.name} builds its embedder in {fixtures}, not in one fixture"
+        gates[str(path.relative_to(REPO_ROOT))] = fixtures[0]
+    assert gates, "no test reads TEST_EMBED_BASE_URL -- the pattern needs updating"
+    return gates
+
+
+def test_the_tests_document_counts_the_tests_that_need_the_embedding_host():
+    """"Twenty-eight of those N also need the embedding host" was a hand
+    count that nothing read. Run with nothing serving `bge-m3`, the tests
+    that skip are exactly the ones that take the fixture that embeds a
+    question -- 28, with the host stopped and again with `TEST_EMBED_BASE_URL`
+    at a dead port (2026-10-07) -- so that is what is counted here."""
+    import ast
+    from tests.docs.test_versions import _NUMBER_WORDS
+
+    gates = _embedding_gates()
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--run-docker", "-m", "docker", *gates],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
+    )
+    needing = 0
+    for path, gate in gates.items():
+        gated = {
+            node.name for node in ast.walk(ast.parse((REPO_ROOT / path).read_text()))
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test")
+            and gate in {argument.arg for argument in node.args.args}
+        }
+        needing += sum(
+            1 for line in result.stdout.splitlines()
+            if line.startswith(f"{path}::") and line.split("::")[-1].split("[")[0] in gated
+        )
+    said = re.search(r"\b([A-Z][a-z-]+) of those \d+ also need the \*\*embedding host\*\*", _doc("tests.md"))
+    assert said, "docs/tests.md no longer says how many tests need the embedding host"
+    assert _NUMBER_WORDS[said.group(1).lower()] == needing, (
+        f"docs/tests.md says {said.group(1).lower()} tests need the embedding host; the fixtures gate {needing}"
+    )
 
 
 # ---------------------------------------------------------------------------

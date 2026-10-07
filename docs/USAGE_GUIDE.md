@@ -6,8 +6,10 @@ people give on the answers; working out why an answer was wrong; seeing what
 the agent did with a question; and measuring how well it does.
 
 [`QUICKSTART.md`](QUICKSTART.md) is the five-minute version of this guide.
-[`README.md`](README.md) explains how everything works and why it was built
-that way; this guide is about using it.
+The documents beside it -- [`stack.md`](stack.md), [`agent.md`](agent.md)
+and the rest, indexed in [`README.md`](../README.md#documentation) -- explain
+how everything works and why it was built that way; this guide is about
+using it.
 
 ## Contents
 
@@ -174,9 +176,9 @@ To change the host or model later:
 
 | Script | When | What it does |
 |---|---|---|
-| [`./start.sh`](start.sh) | Whenever you want to use it | Starts Docker, and the Ollama on this machine, if they are down; runs `setup.sh` when `.env` is missing or pins older images than this checkout ships; runs `launch.sh`; waits until each page answers; and opens it |
-| [`./launch.sh`](launch.sh) | When you want the stack without the browser step | Starts whatever is down, and checks each database is populated, both models are reachable, and which models calls will be routed to. Pulls nothing, so it takes seconds |
-| [`./setup.sh`](setup.sh) | The first time, after changing host or model, or to pin an older version | Pulls and pins the images, writes `.env`, verifies retrieval end to end |
+| [`./start.sh`](../start.sh) | Whenever you want to use it | Starts Docker, and the Ollama on this machine, if they are down; runs `setup.sh` when `.env` is missing or pins older images than this checkout ships; runs `launch.sh`; waits until each page answers; and opens it |
+| [`./launch.sh`](../launch.sh) | When you want the stack without the browser step | Starts whatever is down, and checks each database is populated, both models are reachable, and which models calls will be routed to. Pulls nothing, so it takes seconds |
+| [`./setup.sh`](../setup.sh) | The first time, after changing host or model, or to pin an older version | Pulls and pins the images, writes `.env`, verifies retrieval end to end |
 
 `start.sh` is the front door and the other two are its parts. Use them
 directly when you want something specific: a terminal session with no API,
@@ -375,7 +377,7 @@ sessions from before it too.
 
 Already have a directory -- Active Directory, or any LDAP server? Make this
 one a read-only copy of it instead: `LDAP_MODE=replica` and where the
-primary is, in `.env` ([`ldap/README.md`](ldap/README.md#replica) has the
+primary is, in `.env` ([`ldap/README.md`](../ldap/README.md#replica) has the
 settings, with Active Directory's). People and groups are then copied every
 minute, a password is checked by the primary itself at each sign-in, and
 there is no directory page: everything is changed on the primary.
@@ -401,7 +403,7 @@ To run without sign-in -- on a machine nothing else can reach ([`SECURITY.md`](S
 ./setup.sh --no-auth           # from now on: AUTH_ENABLED=false in .env
 ```
 
-[`auth/README.md`](auth/README.md) explains how it works.
+[`auth/README.md`](../auth/README.md) explains how it works.
 
 ### Connecting to the retail database directly
 
@@ -487,7 +489,7 @@ java -jar desktop/target/nl2sql-desktop.jar --url https://other-host:8443 --toke
 | `--insecure` | Do not verify the certificate; the status bar says so for as long as it is on |
 | `--wait SECONDS` | How long the server may hold a question open |
 
-Each flag also has an environment variable; [`desktop/README.md`](desktop/README.md)
+Each flag also has an environment variable; [`desktop/README.md`](../desktop/README.md)
 lists them.
 
 ### From a terminal
@@ -558,7 +560,7 @@ the Ollama host or model is wrong -- it checks both before anything else.
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 
-[`agent/USAGE.md`](agent/USAGE.md) goes further: reading the progress
+[`agent/USAGE.md`](../agent/USAGE.md) goes further: reading the progress
 lines, the JSON fields, and what each failure means.
 
 ### Over the REST API
@@ -604,7 +606,7 @@ docker compose --profile api run --rm apitest
 docker compose --profile api run --rm apitest "total net sales for produce in FY2025"
 ```
 
-[`agent/API.md`](agent/API.md) is the full contract: every route, response
+[`agent/API.md`](../agent/API.md) is the full contract: every route, response
 and error code, the settings, and client code for TypeScript, Python and
 Java. Set `API_TOKEN` before anything other than this machine can reach the
 port ([Security](#security)).
@@ -731,7 +733,7 @@ tables and SQL. Fill in what a vote cannot carry -- the **keywords**
 someone would search for, the **reasoning target** (where generated SQL
 typically goes wrong on this question), and the expected **result** -- check
 the preview, and press **Promote to golden set**. The pair is appended to
-[`context_questions/translated_questions.md`](context_questions/translated_questions.md)
+[`context_questions/translated_questions.md`](../context_questions/translated_questions.md)
 in this checkout, the previous version is kept beside it as `.bak`, and both
 retrieval stores are reloaded, so the agent can use it on the next question.
 The change shows up in `git diff`: review it and commit it like any other
@@ -757,7 +759,7 @@ that reaches beyond the staging database asks first.
 
 Anyone who can reach the review service can edit the question set the agent
 is measured against, so set `REVIEW_TOKEN` before it is reachable from
-anywhere but this machine. [`review/README.md`](review/README.md) has the
+anywhere but this machine. [`review/README.md`](../review/README.md) has the
 rules each step enforces.
 
 ---
@@ -799,7 +801,7 @@ would be used -- a join joined, a filter in a `WHERE`, a measure aggregated
 worth knowing: a join that multiplied or dropped rows, a filter that keeps
 nothing or everything. **Add snippet** is enabled once it passes. It is
 written into
-[`context_questions/sql_snippets.md`](context_questions/sql_snippets.md) in
+[`context_questions/sql_snippets.md`](../context_questions/sql_snippets.md) in
 this checkout and loaded into the snippet store, so the agent can use it on
 the next question; the change shows up in `git diff`, to commit like any
 other edit. Pick a snippet in the list to change or remove it.
@@ -817,7 +819,7 @@ Nothing is saved that has not run against the live database, exactly as
 typed: edit the SQL after validating it and it has to be validated again.
 The page uses the review service, so the same `REVIEW_TOKEN` protects it, and
 it can be up with or without the review interface.
-[`curate/README.md`](curate/README.md) has the rules for each kind.
+[`curate/README.md`](../curate/README.md) has the rules for each kind.
 
 ---
 
@@ -848,7 +850,7 @@ on a table shows the block of the prompt the agent was given about it --
 when it picked the wrong column, this is usually why. **Copy CSV** copies the
 rows. The last 25 queries are kept in this browser only.
 
-The console is published on this machine only. [`console/README.md`](console/README.md)
+The console is published on this machine only. [`console/README.md`](../console/README.md)
 has the rest.
 
 ---
@@ -897,7 +899,7 @@ can be started or stopped under a running stack. `MLFLOW_TRACKING_URI=`
 of its own and shows every question's rows, so it is reached only through
 its front door, which asks who you are and lets in `nl2sql-reviewers` and
 `nl2sql-admins`, and is published on this machine only.
-[`README.md`](README.md#tracing) has the server's settings.
+[`tracing.md`](tracing.md#tracing) has the server's settings.
 
 ---
 
@@ -922,7 +924,7 @@ this machine, against the stack's published ports, from the virtualenv in
 It exits non-zero when any answer was wrong, so it can gate a pipeline.
 With MLflow up, each configuration it measures is an MLflow run, holding
 its settings, its scores and timings, its report, and every question's trace
-judged right or wrong. [`benchmarks/README.md`](benchmarks/README.md)
+judged right or wrong. [`benchmarks/README.md`](../benchmarks/README.md)
 explains the scoring.
 
 ---
@@ -942,7 +944,7 @@ nonsense.
 **Model routing.** Each model call can go to the fastest model on your host
 that was measured to be suited to its task, at the question's complexity,
 with `OLLAMA_MODEL` as the fallback. What it routes from is
-[`models/catalog.json`](models/catalog.json), and **a catalog describes one
+[`models/catalog.json`](../models/catalog.json), and **a catalog describes one
 host**: pointed at a host the catalog does not describe, the agent sends
 every call to `OLLAMA_MODEL`, and `launch.sh` says so. To route on your own
 host, describe it and then measure its models:
@@ -963,7 +965,7 @@ MODEL_ROUTING_ENABLED=false docker compose run --rm agent "..."
 ```
 
 The same settings go in `.env` to apply everywhere.
-[`models/README.md`](models/README.md) explains the catalog and the
+[`models/README.md`](../models/README.md) explains the catalog and the
 calibration.
 
 ---
@@ -974,18 +976,18 @@ The agent retrieves from two stores that ship as images, and a third built
 from a document in this checkout:
 
 - **The knowledge base** (`nl2sql-vectordb`): the documents in
-  [`knowledge/`](knowledge) -- a data dictionary, a DDL index and a business
+  [`knowledge/`](../knowledge) -- a data dictionary, a DDL index and a business
   index -- chunked and embedded. It carries what the schema cannot, such as
   which table repeats its totals once per competitor and has to be
   de-duplicated before it is summed.
 - **The golden pairs** (`nl2sql-chunkdb`, with their vectors in the
   knowledge base): questions already answered with SQL that runs, in
-  [`context_questions/translated_questions.md`](context_questions/translated_questions.md).
+  [`context_questions/translated_questions.md`](../context_questions/translated_questions.md).
   The closest are shown to the SQL Generator as worked examples.
 - **The SQL snippets** (the snippets database in `nl2sql-stores`): joins, filters, measures and
   dimensions, each run against the database and written beside what it
   means, in
-  [`context_questions/sql_snippets.md`](context_questions/sql_snippets.md).
+  [`context_questions/sql_snippets.md`](../context_questions/sql_snippets.md).
   This store ships empty: `launch.sh` loads the document into it whenever
   the two differ, so a fresh volume, a pulled change or a save in the
   curation interface all reach the agent on the next start or sooner.
@@ -1013,12 +1015,12 @@ It needs the embedding model, like the agent; when that is down the pairs
 are loaded and their vectors are not, and `launch.sh` says so.
 
 Changing the documents in `knowledge/` means re-chunking and re-embedding
-them with the pipeline in [`rag/`](rag/README.md), which only re-embeds what
+them with the pipeline in [`rag/`](../rag/README.md), which only re-embeds what
 changed.
 
 The retail data itself is synthetic: fictional stores, products and
 vendors over two fiscal years, made by the generator in
-[`data_gen/`](data_gen/README.md) and baked into the database image.
+[`data_gen/`](../data_gen/README.md) and baked into the database image.
 `./setup.sh --build` regenerates it locally instead of pulling the image.
 
 ---
@@ -1052,11 +1054,11 @@ recreates the containers.
 | `MLFLOW_BIND_ADDRESS` | `127.0.0.1` | Where MLflow's port is published |
 
 The ports are in [Where everything is](#where-everything-is). The full lists:
-the agent's settings in [`agent/README.md`](agent/README.md#configuration),
-the API's in [`agent/API.md`](agent/API.md), the review service's in
-[`review/README.md`](review/README.md#configuration), the console's in
-[`console/README.md`](console/README.md#configuration), and MLflow's server
-in [`README.md`](README.md#tracing).
+the agent's settings in [`agent/README.md`](../agent/README.md#configuration),
+the API's in [`agent/API.md`](../agent/API.md), the review service's in
+[`review/README.md`](../review/README.md#configuration), the console's in
+[`console/README.md`](../console/README.md#configuration), and MLflow's server
+in [`tracing.md`](tracing.md#tracing).
 
 ---
 
@@ -1112,7 +1114,7 @@ The defaults are its second, **a team on a trusted network**:
   not use, no privilege it can gain, and a ceiling on its memory and its
   processes. Every database role a service connects as has a statement
   timeout, a memory ceiling and a connection limit. The table is in
-  [`README.md`](README.md#what-each-container-may-use).
+  [`hardening.md`](hardening.md#what-each-container-may-use).
 
 With sign-in off (`--no-auth`) the stack is the first tier, **alone**: keep
 it on a machine nothing else can reach. What none of this does yet is
@@ -1199,7 +1201,7 @@ or not. An agent or a page from before `v6_1` does not know the stack's CA,
 and a dataset image from before `v1_2` serves no TLS, so sign-in fails
 against it: pin them back together or not at all.
 
-[`README.md`](README.md) lists what each tag is, and
+[`images.md`](images.md#pulling-the-images) lists what each tag is, and
 [`CHANGELOG_SIMPLE.md`](CHANGELOG_SIMPLE.md) what each version changed.
 
 ---
@@ -1337,21 +1339,24 @@ Each script's `--help` prints the same, with defaults.
 
 | Document | What it covers |
 |---|---|
-| [`README.md`](README.md) | How it works, the measurements, the images and their versions, the tests |
-| [`agent/USAGE.md`](agent/USAGE.md) | The terminal in depth |
-| [`agent/README.md`](agent/README.md) | The agent's pipeline, every setting, model routing, tracing |
-| [`agent/API.md`](agent/API.md) | The REST API contract, with client code |
-| [`gui/README.md`](gui/README.md) | The web interface |
-| [`desktop/README.md`](desktop/README.md) | The desktop client |
-| [`review/README.md`](review/README.md) | Feedback review: promotion, fixes, taking a judgement back, and the curation routes |
-| [`curate/README.md`](curate/README.md) | The curation interface: SQL snippets, golden pairs and fixes, written directly |
-| [`console/README.md`](console/README.md) | The SQL console |
-| [`benchmarks/README.md`](benchmarks/README.md) | The benchmark and its scoring |
-| [`models/README.md`](models/README.md) | The model catalog and calibration |
-| [`rag/README.md`](rag/README.md) | Building the knowledge base |
-| [`data_gen/README.md`](data_gen/README.md) | The synthetic retail data |
+| [`README.md`](../README.md) | The front page: a quick start, what is new, and the index of every document |
+| [`stack.md`](stack.md) | The three scripts, the containers they start, and every flag |
+| [`images.md`](images.md) | The images and their tags, upgrading a checkout, publishing a release |
+| [`tests.md`](tests.md) | The test suite and the coverage |
+| [`agent/USAGE.md`](../agent/USAGE.md) | The terminal in depth |
+| [`agent/README.md`](../agent/README.md) | The agent's pipeline, every setting, model routing, tracing |
+| [`agent/API.md`](../agent/API.md) | The REST API contract, with client code |
+| [`gui/README.md`](../gui/README.md) | The web interface |
+| [`desktop/README.md`](../desktop/README.md) | The desktop client |
+| [`review/README.md`](../review/README.md) | Feedback review: promotion, fixes, taking a judgement back, and the curation routes |
+| [`curate/README.md`](../curate/README.md) | The curation interface: SQL snippets, golden pairs and fixes, written directly |
+| [`console/README.md`](../console/README.md) | The SQL console |
+| [`benchmarks/README.md`](../benchmarks/README.md) | The benchmark and its scoring |
+| [`models/README.md`](../models/README.md) | The model catalog and calibration |
+| [`rag/README.md`](../rag/README.md) | Building the knowledge base |
+| [`data_gen/README.md`](../data_gen/README.md) | The synthetic retail data |
 
 To run the test suite: `pip install -r tests/requirements.txt`, then
 `pytest` for the tests that need nothing running, and
 `pytest --run-docker --run-node --run-java` for all of them.
-[`README.md`](README.md#tests) explains what each covers.
+[`tests.md`](tests.md#tests) explains what each covers.

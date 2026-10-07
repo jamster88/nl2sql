@@ -89,7 +89,7 @@ def test_the_suite_is_not_empty(suite: subprocess.CompletedProcess):
     assert _test_count(suite) > 100
 
 
-@pytest.mark.parametrize("doc", ["README.md", "gui/README.md"])
+@pytest.mark.parametrize("doc", ["docs/tests.md", "gui/README.md"])
 def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedProcess, doc: str):
     """The Python counts went stale twice before a test pinned them. This one
     is quoted in two places, which is twice as many chances."""
@@ -101,7 +101,7 @@ def test_the_documented_test_count_is_the_real_one(suite: subprocess.CompletedPr
     # pattern wanted the words adjacent.
     #
     # Anchored on the three phrasings rather than on any three-digit number:
-    # the root README also quotes the Python counts, and "356 tests behind
+    # docs/tests.md also quotes the Python counts, and "356 tests behind
     # --run-docker" is not this number.
     quoted = [
         int(number)

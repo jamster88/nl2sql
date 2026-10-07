@@ -2,7 +2,7 @@
  * Asking a question, as a piece of state.
  *
  * A question is a job, and a job has a life: submitted, queued behind
- * whatever else the server is answering, running through fourteen pipeline
+ * whatever else the server is answering, running through the pipeline's
  * nodes, then finished or failed. The UI needs all of that, which is more
  * than one boolean, so it is a reducer rather than five `useState` calls
  * that can disagree with each other.

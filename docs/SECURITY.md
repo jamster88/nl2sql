@@ -4,13 +4,13 @@ What this stack protects, from whom, where its boundaries are, what each
 credential is worth, and which deployments its defaults are built for. As of
 **6.3.0**. The sign-in design these rest on -- why it is built this way, the
 alternatives rejected, the limits chosen -- is section 20 of
-[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md),
+[`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md),
 with what 6.2 added -- revocation, named tokens, the accounts each service
 runs as -- in
-[`Multi-Agent_NL2SQL_arch6_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_2.md),
+[`Multi-Agent_NL2SQL_arch6_2.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_2.md),
 and what 6.3 added -- the containers' limits, the secrets as files, one
 proxy image, the database preparation and the role ceilings -- in
-[`Multi-Agent_NL2SQL_arch6_3.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_3.md);
+[`Multi-Agent_NL2SQL_arch6_3.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6_3.md);
 how to switch each control on and off is in
 [`USAGE_GUIDE.md`](USAGE_GUIDE.md#security).
 
@@ -205,7 +205,7 @@ default, read from the files that decide it.
 ## Known limits
 
 Each is a finding of the latest review
-([`adversary_reviews/v6_1_review_summary.md`](adversary_reviews/v6_1_review_summary.md))
+([`adversary_reviews/v6_1_review_summary.md`](../adversary_reviews/v6_1_review_summary.md))
 with its plan item.
 
 - **A revoked session works for up to a minute more** at a service that

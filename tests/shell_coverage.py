@@ -12,7 +12,7 @@ It is a measurement, not a gate. What is asserted in CI is structural --
 every flag parsed, documented and passed by some test, every `warn` and
 `die` triggered by one (`tests/docker/test_script_coverage.py`) -- because
 a percentage is a number to look at and an unasserted warning is a bug. This
-is how the percentages in README.md are arrived at, so that they can be
+is how the percentages in docs/tests.md are arrived at, so that they can be
 checked rather than believed.
 
 What bash cannot report is excluded rather than counted as missed: it

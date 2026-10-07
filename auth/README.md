@@ -166,7 +166,7 @@ costs, and what 6.1 does about it:
   `127.0.0.1` unless `DB_BIND_ADDRESS` says otherwise; opening it is what
   makes the two points above matter, and `launch.sh` warns when it is.
 
-[`USAGE_GUIDE.md`](../USAGE_GUIDE.md#connecting-to-the-retail-database-directly)
+[`docs/USAGE_GUIDE.md`](../docs/USAGE_GUIDE.md#connecting-to-the-retail-database-directly)
 has the commands.
 
 ## MLflow's front door

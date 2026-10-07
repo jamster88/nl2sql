@@ -46,8 +46,8 @@ means, the phrases a question says it with, then the `FROM` clause it is
 written over and the SQL. *Tables* can be left empty; the service fills it
 from the SQL. The *Note* is shown to the SQL Generator with the snippet,
 so it is the place for the mistake the piece prevents -- a cast, a key, a
-column that looks right and is not. The README's
-[SQL snippets and curation](../README.md#sql-snippets-and-curation) says how
+column that looks right and is not.
+[`docs/snippets.md`](../docs/snippets.md#sql-snippets-and-curation) says how
 the agent finds and uses them.
 
 Keywords are matched as phrases: a phrase matches a question that has every

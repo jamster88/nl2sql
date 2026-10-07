@@ -606,7 +606,7 @@ def _profile_sets() -> list[str]:
     a document, as its profile arguments. Not the changelogs: they are history,
     and quote the commands that were broken."""
     tracked = subprocess.run(
-        ["git", "ls-files", "-z", "*.sh", "*.md", ":!CHANGELOG*.md"],
+        ["git", "ls-files", "-z", "*.sh", "*.md", ":!docs/CHANGELOG*.md"],
         cwd=REPO_ROOT, capture_output=True, text=True, check=True,
     ).stdout.split("\0")
     found = set()
@@ -688,7 +688,7 @@ def test_names_given_to_the_stack_reach_every_identity(tmp_path_factory, identit
 #: what it proxies to). A service listens on its own port setting inside
 #: its container as well as publishing it, so a page whose upstream kept the
 #: default answered 502 to every request once the port was moved -- which
-#: USAGE_GUIDE.md says anyone may do in `.env`.
+#: docs/USAGE_GUIDE.md says anyone may do in `.env`.
 FOLLOWERS = [
     ("gui", "UPSTREAM", "API_PORT"), ("gui", "AUTH_UPSTREAM", "AUTH_PORT"),
     ("reviewgui", "UPSTREAM", "REVIEW_PORT"), ("reviewgui", "AUTH_UPSTREAM", "AUTH_PORT"),

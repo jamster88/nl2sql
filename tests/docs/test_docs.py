@@ -1,7 +1,7 @@
 """Documentation kept honest by the code it documents.
 
-The READMEs and USAGE.md describe flags, environment variables and published
-image tags. Every one of those is a fact about the code or the compose file
+The README, the documents in docs/ and the components' own READMEs describe
+flags, environment variables and published image tags. Every one of those is a fact about the code or the compose file
 that can drift silently: a new setting is added, the table that lists it is
 not, and the docs quietly become wrong. These tests pin the directions that
 actually rot -- code gaining something the docs never mention, and docs
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import functools
 import re
 import subprocess
 import sys
@@ -23,8 +24,12 @@ from tests.route_table import flattened
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 AGENT_DIR = REPO_ROOT / "agent"
 
+#: The README is a front page -- a quick start, what is new, and an index --
+#: and the rest of what it used to hold is a document a topic in docs/.
+TOPICS = tuple(sorted(path.name for path in (REPO_ROOT / "docs").glob("*.md")))
 DOCS = (
     "README.md",
+    *(f"docs/{name}" for name in TOPICS),
     "agent/README.md",
     "agent/USAGE.md",
     "agent/API.md",
@@ -33,14 +38,25 @@ DOCS = (
     "gui/README.md",
     "models/README.md",
     "console/README.md",
-    "USAGE_GUIDE.md",
-    "QUICKSTART.md",
 )
+
+
+@functools.cache
+def _doc(name: str) -> str:
+    """One of the documents in docs/, by its file name."""
+    return (REPO_ROOT / "docs" / name).read_text()
 
 
 @pytest.fixture(scope="module")
 def root_readme() -> str:
     return (REPO_ROOT / "README.md").read_text()
+
+
+@pytest.fixture(scope="module")
+def documentation(root_readme: str) -> str:
+    """The README and every document in docs/: the surface a flag or a tag
+    has to be mentioned on somewhere, as the one README was before."""
+    return root_readme + "".join(_doc(name) for name in TOPICS)
 
 
 @pytest.fixture(scope="module")
@@ -227,30 +243,30 @@ def test_every_error_code_the_server_can_return_is_documented(agent_api_doc: str
         assert f"`{code}`" in agent_api_doc, f"the server returns {code!r}, which API.md never lists"
 
 
-def test_the_api_flag_is_documented_where_someone_would_look(root_readme: str, agent_usage: str):
+def test_the_api_flag_is_documented_where_someone_would_look(agent_usage: str):
     """It opens a port, which is the kind of thing that should not be
     discoverable only by reading the script.
     """
-    for doc in (root_readme, agent_usage):
+    for doc in (_doc("rest_api.md"), _doc("stack.md"), agent_usage):
         assert "./launch.sh --api" in doc
 
 
-def test_the_switch_that_refuses_the_development_certificate_is_documented(
-    agent_api_doc: str, root_readme: str
-):
+def test_the_switch_that_refuses_the_development_certificate_is_documented(agent_api_doc: str):
     """The whole point of shipping a dummy certificate is that it can be
     taken away. Someone deploying this has to be able to find out how.
     """
     assert "API_TLS_ALLOW_SELF_SIGNED=false" in agent_api_doc
-    assert "API_TLS_ALLOW_SELF_SIGNED=false" in root_readme
+    assert "API_TLS_ALLOW_SELF_SIGNED=false" in _doc("rest_api.md")
 
 
 def test_the_documented_version_is_the_packaged_one(agent_readme: str, root_readme: str):
     from nl2sql_agent import __version__
 
-    major = __version__.split(".")[0]
+    major, minor = __version__.split(".")[:2]
     assert f"(v{major}" in agent_readme.splitlines()[0], agent_readme.splitlines()[0]
-    assert f"nl2sql-agent:v{major}" in root_readme
+    assert f"nl2sql-agent:v{major}" in _doc("images.md")
+    # The front page says what is new in the release it describes.
+    assert f"## What's new in {major}.{minor}" in root_readme
 
 
 def test_the_documented_pipeline_matches_the_graph(agent_readme: str):
@@ -294,8 +310,8 @@ def _tool_names() -> set[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_readme: str):
-    """setup.sh pins a tag per image; if the README's tag tables do not list
+def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, documentation: str):
+    """setup.sh pins a tag per image; if the tag tables in docs/ do not list
     it, the default nobody passes is also the one nobody has read about.
     """
     for var in (
@@ -304,21 +320,22 @@ def test_every_image_tag_setup_defaults_to_is_documented(setup_sh: str, root_rea
     ):
         image = re.search(rf'^{var}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
         tag = re.search(rf'^{var.replace("_IMAGE", "_TAG")}="([^"]+)"', setup_sh, re.MULTILINE).group(1)
-        assert f"{image}:{tag}" in root_readme, f"README never shows {image}:{tag}"
+        assert f"{image}:{tag}" in documentation, f"no document shows {image}:{tag}"
 
 
-def test_the_pre_rag_agent_tag_is_documented(root_readme: str):
+def test_the_pre_rag_agent_tag_is_documented():
     """v1 is published alongside v2 so the schema-only agent stays reachable
     (it is what the 107.5% / 21.5% comparison is measured against). A tag
     that exists on Docker Hub but in no document is a tag nobody will find.
     """
-    assert "mcfaddja/nl2sql-agent:v1" in root_readme or re.search(
-        r"\|\s*`v1`\s*\|", root_readme.split("### Pulling the images")[1].split("\n## ")[0]
-    ), "README does not document the published v1 agent tag"
+    images = _doc("images.md")
+    assert "mcfaddja/nl2sql-agent:v1" in images or re.search(r"\|\s*`v1`\s*\|", images), (
+        "docs/images.md does not document the published v1 agent tag"
+    )
 
 
 # ---------------------------------------------------------------------------
-# The test counts the README quotes
+# The test counts docs/tests.md quotes
 # ---------------------------------------------------------------------------
 
 
@@ -337,7 +354,7 @@ def _collected(*args: str) -> int:
     return int(match.group(1))
 
 
-def test_the_readme_quotes_the_real_test_counts(root_readme: str):
+def test_the_tests_document_quotes_the_real_test_counts():
     """These numbers went stale twice before this test existed. They are the
     first thing a contributor checks a run against, so a wrong one reads as a
     broken checkout.
@@ -349,33 +366,97 @@ def test_the_readme_quotes_the_real_test_counts(root_readme: str):
     acceptance_only = _collected("--run-acceptance", "-m", "acceptance")
     offline = total - docker_only - node_only - java_only - acceptance_only
 
-    quoted = _quoted_counts(root_readme)
+    quoted = _quoted_counts()
 
-    assert quoted["offline"] == offline, f"README says {quoted['offline']} offline tests, there are {offline}"
-    assert quoted["total"] == total, f"README says {quoted['total']} total, there are {total}"
-    assert quoted["docker"] == docker_only, f"README says {quoted['docker']} docker tests, there are {docker_only}"
-    assert quoted["node"] == node_only, f"README says {quoted['node']} node tests, there are {node_only}"
-    assert quoted["java"] == java_only, f"README says {quoted['java']} java tests, there are {java_only}"
+    assert quoted["offline"] == offline, f"docs/tests.md says {quoted['offline']} offline tests, there are {offline}"
+    assert quoted["total"] == total, f"docs/tests.md says {quoted['total']} total, there are {total}"
+    assert quoted["docker"] == docker_only, f"docs/tests.md says {quoted['docker']} docker tests, there are {docker_only}"
+    assert quoted["node"] == node_only, f"docs/tests.md says {quoted['node']} node tests, there are {node_only}"
+    assert quoted["java"] == java_only, f"docs/tests.md says {quoted['java']} java tests, there are {java_only}"
     assert quoted["acceptance"] == acceptance_only, (
-        f"README says {quoted['acceptance']} acceptance tests, there are {acceptance_only}"
+        f"docs/tests.md says {quoted['acceptance']} acceptance tests, there are {acceptance_only}"
+    )
+    # "Twenty-eight of those N also need the embedding host": N is the docker
+    # count again, and said 656 for two releases after it was 758.
+    assert quoted["embedding_of"] == docker_only, (
+        f"docs/tests.md says the embedding host's tests are among {quoted['embedding_of']}, there are {docker_only}"
     )
 
 
-def _quoted_counts(root_readme: str) -> dict[str, int]:
+def _quoted_counts() -> dict[str, int]:
+    tests_doc = _doc("tests.md")
     return {
-        "offline": int(re.search(r"pytest\s+#\s*(\d+) tests", root_readme).group(1)),
-        "total": int(re.search(r"--run-acceptance\s+#\s*all (\d+)", root_readme).group(1)),
-        "docker": int(re.search(r"The (\d+) tests behind `--run-docker`", root_readme).group(1)),
-        "node": int(re.search(r"The (\d+) behind `--run-node`", root_readme).group(1)),
-        "java": int(re.search(r"The (\d+) behind `--run-java`", root_readme).group(1)),
-        "acceptance": int(re.search(r"The (\d+) behind `--run-acceptance`", root_readme).group(1)),
+        "offline": int(re.search(r"pytest\s+#\s*(\d+) tests", tests_doc).group(1)),
+        "total": int(re.search(r"--run-acceptance\s+#\s*all (\d+)", tests_doc).group(1)),
+        "docker": int(re.search(r"The (\d+) tests behind `--run-docker`", tests_doc).group(1)),
+        "node": int(re.search(r"The (\d+) behind `--run-node`", tests_doc).group(1)),
+        "java": int(re.search(r"The (\d+) behind `--run-java`", tests_doc).group(1)),
+        "acceptance": int(re.search(r"The (\d+) behind `--run-acceptance`", tests_doc).group(1)),
+        "embedding_of": int(re.search(r"of those (\d+) also need the \*\*embedding host\*\*", tests_doc).group(1)),
     }
 
 
-def test_the_quoted_counts_are_internally_consistent(root_readme: str):
-    quoted = _quoted_counts(root_readme)
+def test_the_quoted_counts_are_internally_consistent():
+    quoted = _quoted_counts()
     assert (quoted["offline"] + quoted["docker"] + quoted["node"] + quoted["java"]
             + quoted["acceptance"] == quoted["total"])
+
+
+def _embedding_gates() -> dict[str, str]:
+    """Each test file that reads `TEST_EMBED_BASE_URL`, and the one fixture in
+    it that builds an embedder from it. The tests that take that fixture are
+    the ones that need the embedding host, and skip without it."""
+    import ast
+
+    gates = {}
+    for path in sorted((REPO_ROOT / "tests").rglob("test_*.py")):
+        source = path.read_text()
+        # Read at import, as a module-level name -- not this file, which
+        # only names the variable.
+        if not re.search(r'^EMBED_BASE_URL = os\.environ\.get\("TEST_EMBED_BASE_URL"', source, re.MULTILINE):
+            continue
+        fixtures = [
+            node.name for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef)
+            and any("fixture" in ast.unparse(decorator) for decorator in node.decorator_list)
+            and "build_embedder" in ast.get_source_segment(source, node)
+        ]
+        assert len(fixtures) == 1, f"{path.name} builds its embedder in {fixtures}, not in one fixture"
+        gates[str(path.relative_to(REPO_ROOT))] = fixtures[0]
+    assert gates, "no test reads TEST_EMBED_BASE_URL -- the pattern needs updating"
+    return gates
+
+
+def test_the_tests_document_counts_the_tests_that_need_the_embedding_host():
+    """"Twenty-eight of those N also need the embedding host" was a hand
+    count that nothing read. Run with nothing serving `bge-m3`, the tests
+    that skip are exactly the ones that take the fixture that embeds a
+    question -- 28, with the host stopped and again with `TEST_EMBED_BASE_URL`
+    at a dead port (2026-10-07) -- so that is what is counted here."""
+    import ast
+    from tests.docs.test_versions import _NUMBER_WORDS
+
+    gates = _embedding_gates()
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "--collect-only", "-q", "--run-docker", "-m", "docker", *gates],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=300,
+    )
+    needing = 0
+    for path, gate in gates.items():
+        gated = {
+            node.name for node in ast.walk(ast.parse((REPO_ROOT / path).read_text()))
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("test")
+            and gate in {argument.arg for argument in node.args.args}
+        }
+        needing += sum(
+            1 for line in result.stdout.splitlines()
+            if line.startswith(f"{path}::") and line.split("::")[-1].split("[")[0] in gated
+        )
+    said = re.search(r"\b([A-Z][a-z-]+) of those \d+ also need the \*\*embedding host\*\*", _doc("tests.md"))
+    assert said, "docs/tests.md no longer says how many tests need the embedding host"
+    assert _NUMBER_WORDS[said.group(1).lower()] == needing, (
+        f"docs/tests.md says {said.group(1).lower()} tests need the embedding host; the fixtures gate {needing}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +479,14 @@ def test_relative_links_point_at_files_that_are_actually_committed(doc: str):
         if not _is_tracked(target):
             missing.append(link)
     assert not missing, f"{doc} links to files not committed to the repo: {missing}"
+
+
+def test_every_document_in_docs_is_indexed_by_the_readme(root_readme: str):
+    """The README is the way in; a document it does not list is one nobody
+    finds without browsing the folder."""
+    index = root_readme.split("## Documentation", 1)[1]
+    unlisted = [name for name in TOPICS if f"](docs/{name})" not in index]
+    assert unlisted == [], f"README.md's index never links {unlisted}"
 
 
 def _is_tracked(path: Path) -> bool:
@@ -467,7 +556,7 @@ def _table_row(text: str, name: str) -> str:
 # does not exist, a port nothing publishes or a section link that goes nowhere
 # is the one mistake they cannot recover from on their own.
 
-GUIDES = ("USAGE_GUIDE.md", "QUICKSTART.md")
+GUIDES = ("docs/USAGE_GUIDE.md", "docs/QUICKSTART.md")
 SCRIPTS = ("start.sh", "launch.sh", "setup.sh")
 
 
@@ -492,7 +581,7 @@ def _mentions(text: str, flag: str) -> bool:
 
 @pytest.mark.parametrize("script", SCRIPTS)
 def test_the_usage_guide_documents_every_script_flag(script: str):
-    guide = _guide("USAGE_GUIDE.md")
+    guide = _guide("docs/USAGE_GUIDE.md")
     for flag in sorted(_script_flags(script)):
         assert _mentions(guide, flag), f"{script} takes {flag}, which USAGE_GUIDE.md never mentions"
 
@@ -500,7 +589,7 @@ def test_the_usage_guide_documents_every_script_flag(script: str):
 def test_the_usage_guide_documents_every_agent_flag():
     from nl2sql_agent.__main__ import parse_args
 
-    guide = _guide("USAGE_GUIDE.md")
+    guide = _guide("docs/USAGE_GUIDE.md")
     for action in _parser_from(parse_args)._actions:
         for flag in action.option_strings:
             if flag not in ("-h", "--help"):
@@ -545,7 +634,7 @@ def test_every_local_address_in_the_guides_is_one_compose_publishes(guide: str):
 
 
 def test_the_usage_guide_names_every_setting_that_moves_a_port():
-    guide = _guide("USAGE_GUIDE.md")
+    guide = _guide("docs/USAGE_GUIDE.md")
     for setting, port in sorted(_published_ports().items()):
         assert f"`{setting}`" in guide, f"{setting} moves port {port}, and USAGE_GUIDE.md never says so"
 
@@ -561,22 +650,25 @@ def _heading_slugs(markdown: str) -> set[str]:
     return slugs
 
 
-@pytest.mark.parametrize("guide", GUIDES)
-def test_every_section_link_in_the_guides_lands_on_a_heading(guide: str):
+@pytest.mark.parametrize("doc", DOCS)
+def test_every_section_link_in_the_documents_lands_on_a_heading(doc: str):
     """The file-link check above stops at the `#`; these documents send
-    readers to sections, in themselves and in the READMEs, by the dozen."""
-    text = _guide(guide)
+    readers to sections, in themselves and in each other, by the dozen --
+    and since the README was split into docs/, across files that used to be
+    one."""
+    text = _guide(doc)
     links = re.findall(r"\]\(([^)#\s]*)#([^)\s]+)\)", text)
-    assert links, f"no section links found in {guide}"
+    if doc in GUIDES:
+        assert links, f"no section links found in {doc}"
     for path, anchor in links:
-        target = (REPO_ROOT / guide).parent / path if path else REPO_ROOT / guide
-        assert anchor in _heading_slugs(target.read_text()), f"{guide} links to {path}#{anchor}, which has no such heading"
+        target = (REPO_ROOT / doc).parent / path if path else REPO_ROOT / doc
+        assert anchor in _heading_slugs(target.read_text()), f"{doc} links to {path}#{anchor}, which has no such heading"
 
 
 def test_the_readme_and_the_quick_start_point_on_to_the_guides(root_readme: str):
-    assert "[`QUICKSTART.md`](QUICKSTART.md)" in root_readme
-    assert "[`USAGE_GUIDE.md`](USAGE_GUIDE.md)" in root_readme
-    assert "](USAGE_GUIDE.md" in _guide("QUICKSTART.md")
+    assert "[`docs/QUICKSTART.md`](docs/QUICKSTART.md)" in root_readme
+    assert "[`docs/USAGE_GUIDE.md`](docs/USAGE_GUIDE.md)" in root_readme
+    assert "](USAGE_GUIDE.md" in _guide("docs/QUICKSTART.md")
 
 
 # ---------------------------------------------------------------------------
@@ -593,7 +685,7 @@ def _compose_service(name: str) -> str:
 
 
 #: Settings every service's block reads that no service does: the stack's
-#: own name, in each container's (USAGE_GUIDE.md documents it once).
+#: own name, in each container's (docs/USAGE_GUIDE.md documents it once).
 STACK_WIDE = {"NL2SQL_INSTANCE"}
 
 
@@ -625,11 +717,12 @@ def _compose_defaults(text: str) -> dict[str, str]:
     return found
 
 
-def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(root_readme: str):
+def test_every_setting_the_mlflow_services_read_is_documented_with_its_default():
     """Image pins aside, which `setup.sh --mlflow` writes, every setting the
     three -- the store, the server and its front door -- take from `.env` has
-    a row in the README's Tracing table -- with
+    a row in docs/tracing.md's table -- with
     the default compose really falls back to, where that is one value."""
+    tracing = _doc("tracing.md")
     block = _compose_service("mlflowdb") + _compose_service("mlflow") + _compose_service("mlflowproxy")
     settings = {
         name: default
@@ -638,10 +731,10 @@ def test_every_setting_the_mlflow_services_read_is_documented_with_its_default(r
     }
     assert "MLFLOW_PORT" in settings, "no settings found in the MLflow services -- the regex needs updating"
     for name, default in sorted(settings.items()):
-        rows = _rows(root_readme, name)
-        assert rows, f"compose's MLflow services read {name}, which README.md never lists"
+        rows = _rows(tracing, name)
+        assert rows, f"compose's MLflow services read {name}, which docs/tracing.md never lists"
         if "," not in default:
-            assert any(f"`{default}`" in row for row in rows), f"README.md never says {name} defaults to {default}"
+            assert any(f"`{default}`" in row for row in rows), f"docs/tracing.md never says {name} defaults to {default}"
 
 
 def _documented_with_defaults(service: str, readme: str, document: str) -> None:
@@ -668,9 +761,9 @@ def _documented_with_defaults(service: str, readme: str, document: str) -> None:
             assert any(f"`{default}`" in row for row in rows), f"{document} never says {name} defaults to {default}"
 
 
-def test_every_setting_the_runtime_stores_read_is_documented_with_their_default(root_readme: str):
+def test_every_setting_the_runtime_stores_read_is_documented_with_their_default():
     """The four runtime stores, one server since 6.3 (V6-40)."""
-    _documented_with_defaults("stores", root_readme, "README.md")
+    _documented_with_defaults("stores", _doc("snippets.md"), "docs/snippets.md")
 
 
 @pytest.mark.parametrize(("service", "document"), [
@@ -679,7 +772,7 @@ def test_every_setting_the_runtime_stores_read_is_documented_with_their_default(
 ])
 def test_every_setting_a_page_reads_is_documented_with_its_default(service: str, document: str):
     """The console's page has its own test, with the rest of the console's
-    surface; MLflow's front door is in the README's Tracing table."""
+    surface; MLflow's front door is in docs/tracing.md's table."""
     _documented_with_defaults(service, (REPO_ROOT / document).read_text(), document)
 
 
@@ -836,10 +929,11 @@ def test_every_console_flag_is_documented(console_readme: str):
 
 
 def test_the_console_is_documented_where_someone_would_look(root_readme: str, agent_usage: str):
-    for doc in (root_readme, agent_usage):
+    for doc in (_doc("stack.md"), agent_usage):
         assert "./launch.sh --console" in doc
-    assert "./start.sh --console" in root_readme
-    assert "[`console/README.md`](console/README.md)" in root_readme
+    for doc in (root_readme, _doc("stack.md")):
+        assert "./start.sh --console" in doc
+    assert "[`console/README.md`](../console/README.md)" in _doc("sql_console.md")
 
 
 # ---------------------------------------------------------------------------
@@ -847,28 +941,28 @@ def test_the_console_is_documented_where_someone_would_look(root_readme: str, ag
 # ---------------------------------------------------------------------------
 
 
-def test_every_launch_flag_is_documented(launch_sh: str, root_readme: str, agent_usage: str):
+def test_every_launch_flag_is_documented(launch_sh: str, documentation: str, agent_usage: str):
     """A flag nobody has read about is a flag nobody uses. The parser is the
     source of truth, so the docs are checked against it rather than the reverse.
     """
     flags = set(re.findall(r"^\s+(--[a-z-]+)\)", launch_sh, re.MULTILINE))
     assert flags, "no flags found in launch.sh -- the pattern needs updating"
-    documented = root_readme + agent_usage
+    documented = documentation + agent_usage
     for flag in flags - {"--help"}:
-        assert flag in documented, f"{flag} is not mentioned in README.md or agent/USAGE.md"
+        assert flag in documented, f"{flag} is not mentioned in README.md, docs/ or agent/USAGE.md"
 
 
-
-def test_the_three_scripts_are_documented_with_when_to_use_each(root_readme: str):
+def test_the_three_scripts_are_documented_with_when_to_use_each():
     """They look interchangeable and are not: one pulls images, one checks the
     databases are populated, one runs both and opens a browser. Someone who
     reaches for the wrong one either waits minutes for nothing or misses the
     problem they came to find.
     """
-    assert "./start.sh" in root_readme
-    assert "./setup.sh" in root_readme
-    assert "./launch.sh" in root_readme
-    assert "First run" in root_readme
+    stack = _doc("stack.md")
+    assert "./start.sh" in stack
+    assert "./setup.sh" in stack
+    assert "./launch.sh" in stack
+    assert "First run" in stack
 
 
 @pytest.fixture(scope="module")
@@ -876,14 +970,15 @@ def start_sh() -> str:
     return (REPO_ROOT / "start.sh").read_text()
 
 
-def test_every_start_flag_is_documented(start_sh: str, root_readme: str):
+def test_every_start_flag_is_documented(start_sh: str):
     """Same rule as launch.sh: the parser is the source of truth, and a flag
-    nobody has read about is a flag nobody uses.
+    nobody has read about is a flag nobody uses. docs/stack.md is where the
+    flags are listed, so that is where each has to be.
     """
     flags = set(re.findall(r"^\s+(?:-\w\|)?(--[a-z-]+)\)", start_sh, re.MULTILINE))
     assert flags, "no flags found in start.sh -- the pattern needs updating"
     for flag in flags - {"--help"}:
-        assert flag in root_readme, f"{flag} is not mentioned in README.md"
+        assert flag in _doc("stack.md"), f"{flag} is not mentioned in docs/stack.md"
 
 
 def test_the_front_door_is_what_the_readme_opens_with(root_readme: str):
@@ -928,17 +1023,18 @@ def test_coverage_is_configured_to_follow_scripts_into_their_own_process():
     assert _coverage_config().getboolean("run", "parallel") is True
 
 
-def test_the_documented_coverage_command_turns_subprocess_measurement_on(root_readme: str):
+def test_the_documented_coverage_command_turns_subprocess_measurement_on():
     """The configuration alone does nothing -- the hook only fires when
     `COVERAGE_PROCESS_START` names the file. A documented command without it
     quietly measures less than it claims to.
     """
-    block = root_readme.split("### Coverage")[1].split("```")[1]
+    coverage = _doc("tests.md").split("## Coverage")[1]
+    block = coverage.split("```")[1]
     assert "COVERAGE_PROCESS_START=$PWD/.coveragerc" in block
     # Absolute, because a subprocess with a different working directory
     # would otherwise scatter its data files through the tree.
     assert "COVERAGE_FILE=$PWD/.coverage" in block
-    assert "coverage combine" in root_readme.split("### Coverage")[1]
+    assert "coverage combine" in coverage
 
 
 def test_every_directory_that_holds_code_is_measured():
@@ -997,11 +1093,11 @@ def test_the_coverage_data_files_cannot_be_committed_by_accident():
     assert ".coverage.*" in ignored
 
 
-def test_the_readme_quotes_the_real_number_of_database_backed_rag_tests(root_readme: str):
+def test_the_tests_document_quotes_the_real_number_of_database_backed_rag_tests():
     """It said 148 for a while, having been written when that was true. The
     three headline counts above are pinned; this one was not, and drifted.
     """
-    quoted = int(re.search(r"The (\d+) database-backed tests", root_readme).group(1))
+    quoted = int(re.search(r"The (\d+) database-backed tests", _doc("tests.md")).group(1))
     assert quoted == _collected("--run-docker", "-m", "docker", "tests/rag")
 
 
@@ -1019,3 +1115,84 @@ def test_the_rag_readme_quotes_the_real_number_of_rag_tests():
 def test_a_nested_default_is_read_as_compose_resolves_it():
     text = "A: ${GUI_AUTH_UPSTREAM:-https://nl2sql-auth:${AUTH_PORT:-8446}}\nB: ${PLAIN:-x}\nC: $${NOT_ONE}\n"
     assert _compose_defaults(text) == {"GUI_AUTH_UPSTREAM": "https://nl2sql-auth:8446", "PLAIN": "x"}
+
+
+# ---------------------------------------------------------------------------
+# Narrative drift (V6-50)
+# ---------------------------------------------------------------------------
+
+#: Sentences the adversarial reviews found still being said after they had
+#: stopped being true, each in the words that outlived the fact. A document
+#: or a comment that says one again is describing a version that is gone.
+FORBIDDEN_PHRASES = (
+    "Designed, not built",               # arch5.2's routing, built in 5.2
+    "fourteen pipeline nodes",           # the pipeline has not had fourteen since v5
+    "connects as `nl2sql`, the owner",   # everything reads as nl2sql_reader since v4
+    "one person on one machine",         # the deployment tiers in SECURITY.md replaced it
+)
+
+#: Where the phrases are history rather than claims: the reviews that found
+#: them, the specs they were found in (never edited in place), the changelogs
+#: that record their retirement, and the tests that list them.
+NARRATIVE_HISTORY = ("adversary_reviews/", "multi-agent_arch_specs/", "docs/CHANGELOG", "tests/")
+
+
+def test_no_document_or_comment_says_what_stopped_being_true():
+    """The reviews found "fourteen pipeline nodes" in a comment twice, a
+    cycle apart; nothing read the comment, so nothing noticed. The phrases
+    are checked everywhere a person reads -- every tracked document, and the
+    comments in every source file -- outside the places that quote them as
+    history."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z", "*.md", "*.py", "*.ts", "*.tsx", "*.java", "*.sh", "*.yml", "*.conf", "*.template"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    paths = {path for path in tracked if path and not path.startswith(NARRATIVE_HISTORY)}
+    paths |= {f"docs/{name}" for name in TOPICS if not name.startswith("CHANGELOG")}
+    said = [
+        f"{path}: {phrase!r}"
+        for path in sorted(paths) if (REPO_ROOT / path).is_file()
+        for phrase in FORBIDDEN_PHRASES
+        if phrase.lower() in (REPO_ROOT / path).read_text(errors="replace").lower()
+    ]
+    assert said == [], "these say something that stopped being true: " + ", ".join(said)
+
+
+# ---------------------------------------------------------------------------
+# The newest specification's blueprint (V6-44, V6-50)
+# ---------------------------------------------------------------------------
+
+
+def _newest_spec() -> Path:
+    """A spec is never edited in place; a higher suffix overrides a lower one
+    (arch6_3 over arch6_2 over arch6), so the newest is the one whose rows
+    describe this tree."""
+    specs = {
+        tuple(int(part) for part in match.group(1).split("_")): path
+        for path in (REPO_ROOT / "multi-agent_arch_specs").glob("Multi-Agent_NL2SQL_arch*.md")
+        if (match := re.search(r"arch(\d+(?:_\d+)*)\.md$", path.name))
+    }
+    return specs[max(specs)]
+
+
+def test_the_newest_specs_blueprint_names_files_and_tests_that_exist():
+    """arch6 made the security blueprint a verified table: every row names
+    where a rule is enforced and the test that holds it. Nothing read the
+    table, so a renamed file or test leaves a row pointing at nothing -- as
+    happened to arch6's rows for `docker/auth_roles.sql` once 6.3 moved that
+    work into dbprep. Only the newest spec is held to the tree: an older one
+    is the record of its own release."""
+    spec = _newest_spec()
+    section = re.search(r"^## 8\..*?(?=^## )", spec.read_text(), re.MULTILINE | re.DOTALL)
+    assert section, f"{spec.name} has no section 8"
+    rows = [line for line in section.group(0).splitlines() if line.startswith("| ") and not line.startswith("| Layer")]
+    assert len(rows) >= 5, f"{spec.name}'s blueprint has {len(rows)} rows -- the table changed shape"
+    missing = []
+    for row in rows:
+        cells = [cell.strip() for cell in row.strip("|").split("|")]
+        for cell in cells[2:4]:  # Enforced in, Held by
+            for ref in re.findall(r"`([^`]+)`", cell):
+                path = ref.split(":")[0].split(" ")[0]
+                if "/" in path and not _is_tracked(REPO_ROOT / path):
+                    missing.append(f"{cells[0]}: {path}")
+    assert missing == [], f"{spec.name}'s blueprint names files this tree does not have: {missing}"

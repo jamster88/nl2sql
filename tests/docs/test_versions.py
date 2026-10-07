@@ -116,27 +116,27 @@ _NUMBER_WORDS = {
 }
 
 
-def _said(pattern: str) -> int:
-    """The number word before `pattern` in README.md, as a number."""
-    readme = " ".join((REPO_ROOT / "README.md").read_text().split())
-    match = re.search(rf"\b([a-z-]+) {pattern}", readme)
-    assert match, f"README.md no longer says how many {pattern}"
-    assert match.group(1) in _NUMBER_WORDS, f"README.md says {match.group(1)!r} {pattern}, which is not a count"
+def _said(document: str, pattern: str) -> int:
+    """The number word before `pattern` in `document`, as a number."""
+    text = " ".join((REPO_ROOT / document).read_text().split())
+    match = re.search(rf"\b([a-z-]+) {pattern}", text)
+    assert match, f"{document} no longer says how many {pattern}"
+    assert match.group(1) in _NUMBER_WORDS, f"{document} says {match.group(1)!r} {pattern}, which is not a count"
     return _NUMBER_WORDS[match.group(1)]
 
 
-def test_the_readme_counts_the_places_a_release_moves_and_the_tags_it_publishes():
+def test_the_documents_count_the_places_a_release_moves_and_the_tags_it_publishes():
     """Two number words that track code and that nothing read: the README
     still said "twenty places" after 5.6's curation interface made it
     twenty-four, and only a read-through noticed. Every lockfile says the
     version twice; the desktop image is a tag per platform."""
-    assert _said("places that say so to the same number") == len(DECLARATIONS) + 2 * len(LOCKFILES)
+    assert _said("docs/images.md", "places that say so to the same number") == len(DECLARATIONS) + 2 * len(LOCKFILES)
     setup_sh = (REPO_ROOT / "setup.sh").read_text()
     release = re.search(r'^AGENT_TAG="([^"]+)"', setup_sh, re.MULTILINE).group(1)
     families = re.findall(rf'^(\w+)_TAG="{release}"', setup_sh, re.MULTILINE)
     platforms = 5  # mac-aarch64, mac, linux, linux-aarch64, win
     assert "DESKTOP" in families
-    assert _said("tags `setup.sh` pins") == len(families) - 1 + platforms
+    assert _said("docs/tests.md", "tags `setup.sh` pins") == len(families) - 1 + platforms
 
 
 def test_the_published_tags_are_this_version():
@@ -205,7 +205,7 @@ def test_the_documents_name_the_tag_this_checkout_publishes():
 #: entry headings -- `## v5_1_2 (5.1.2) -- 2026-09-26` -- because a release
 #: that adds itself to one and not the other, or to neither, is exactly the
 #: drift this file exists to catch.
-CHANGELOGS = ("CHANGELOG.md", "CHANGELOG_SIMPLE.md")
+CHANGELOGS = ("docs/CHANGELOG.md", "docs/CHANGELOG_SIMPLE.md")
 _ENTRY = re.compile(r"^## (v[\d_]+)(?: \(([\d.]+)\))? -- (\d{4}-\d{2}-\d{2})", re.MULTILINE)
 
 
@@ -240,11 +240,11 @@ def test_both_changelogs_tell_the_same_history():
 
 
 @pytest.mark.parametrize("path", CHANGELOGS)
-def test_every_agent_tag_the_readme_lists_has_an_entry(path: str):
-    """The README's agent tag table is the list of what was published; the
-    `latest` row is an alias, not a version."""
-    readme = (REPO_ROOT / "README.md").read_text()
-    table = readme.split("| Tag | Use |", 1)[1].split("\n\n", 1)[0]
+def test_every_agent_tag_the_documents_list_has_an_entry(path: str):
+    """The agent tag table in docs/images.md is the list of what was
+    published; the `latest` row is an alias, not a version."""
+    images = (REPO_ROOT / "docs" / "images.md").read_text()
+    table = images.split("| Tag | Use |", 1)[1].split("\n\n", 1)[0]
     published = set(re.findall(r"^\| `(v[\d_]+)` \|", table, re.MULTILINE))
-    assert published, "the README's agent tag table was not found"
+    assert published, "the agent tag table was not found in docs/images.md"
     assert published <= {tag for tag, _, _ in _entries(path)}

@@ -14,7 +14,7 @@ name: ${NL2SQL_INSTANCE:-nl2sql}
 # (`cap_add`), and nothing else. No new privileges: a setuid binary inside
 # does not raise anyone to root. And a ceiling on processes and on memory,
 # each service's own, set from what it was measured using with headroom to
-# spare (README.md, "What each container may use"), so one runaway is that
+# spare (docs/hardening.md, "What each container may use"), so one runaway is that
 # container's problem rather than the machine's.
 x-hardened: &hardened
   read_only: true

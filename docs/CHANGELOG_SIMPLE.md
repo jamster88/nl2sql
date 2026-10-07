@@ -49,6 +49,7 @@ their own and are listed under the release they shipped with. A version marked
 - The checks every page's template shares are made once, not four times; a handful of duplicate, dead or vacuous tests are gone.
 - The RAG integration test runs as a stack of its own rather than in the running one's project.
 - The proxy's start-up tests need gettext's `envsubst`, and skip without it.
+- The README is a front page -- the quick start, what is new, an index -- and what it held is a document a topic in `docs/`, where the usage guide, the quick start, `SECURITY.md` and the changelogs now live too; the tests follow each fact to the document that holds it.
 
 ## v6_2 (6.2.0) -- 2026-10-04
 

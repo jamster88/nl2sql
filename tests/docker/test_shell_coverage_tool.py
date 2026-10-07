@@ -1,6 +1,6 @@
 """The shell-coverage measurement, checked against shapes it got wrong.
 
-`tests/shell_coverage.py` is where the percentages in README.md come from,
+`tests/shell_coverage.py` is where the percentages in docs/tests.md come from,
 which makes its line classifier load-bearing: every mistake in it is a
 number in a document that nobody can tell is wrong. It has made three
 already, and each is pinned below.

@@ -1,4 +1,4 @@
-"""build_tools(): the four tools from basic_agent_steps.md, exercised
+"""build_tools(): the four tools from docs/basic_agent_steps.md, exercised
 directly against FakeDatabase/ScriptedLLM.
 """
 

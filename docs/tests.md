@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 4839 tests, no Docker, npm, JDK or network needed
+pytest                                          # 4891 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 5663, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 5715, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which

@@ -225,7 +225,7 @@ docker compose pull postgres
 docker compose up -d --no-build
 ```
 
-Everything else in this README still applies -- the volume, the persistence
+Everything else in this document still applies -- the volume, the persistence
 table above, and `down -v` to reset to the pristine dataset.
 
 ### Publishing an update

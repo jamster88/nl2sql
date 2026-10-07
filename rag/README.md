@@ -457,8 +457,8 @@ put back afterwards, what the build is handed -- the kind's Dockerfile and the
 restore, the dump without its bootstrap `CREATE ROLE` -- and which `die` a bad
 argument reaches.
 They were untested until they were not, and writing the tests turned up three
-defects -- see the repository README's
-[coverage section](../README.md#the-parts-a-coverage-report-cannot-see).
+defects -- see the tests document's
+[coverage section](../docs/tests.md#the-parts-a-coverage-report-cannot-see).
 
 The two images, the restore and `docker-compose.yml` are checked too,
 including the one invariant the whole publishing story rests on: `PGDATA` has

@@ -81,7 +81,7 @@ carries every page and is told which one to serve (`NL2SQL_PAGE=gui`);
 and `setup.sh` pulls and pins it whenever a page will be served -- with
 sign-in on, always:
 
-    docker pull mcfaddja/nl2sql-proxy:v6_3
+    docker pull mcfaddja/nl2sql-proxy:v7_0
     ./setup.sh --gui        # pulls it and writes PROXY_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -89,7 +89,7 @@ which works and takes several minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v6_3 .
+      -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v7_0 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from

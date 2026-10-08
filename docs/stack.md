@@ -68,7 +68,7 @@ Every page -- the web interface, the review, curation and SQL console
 interfaces, the directory page and MLflow's front door -- is one published
 image, `nl2sql-proxy`, each container told which page it serves. It, the
 agent, the review service, the desktop client's jar, MLflow's server and
-store, the directory and the auth service are published images (`v6_3`);
+store, the directory and the auth service are published images (`v7_0`);
 the rest are built or pulled by `setup.sh` as well -- the runtime stores are
 a stock pgvector, pinned by digest like every image this project does not
 build. Two one-shot containers run before the rest and exit: `pki`, which

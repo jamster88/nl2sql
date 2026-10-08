@@ -117,4 +117,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD ["/us
 
 LABEL org.opencontainers.image.title="nl2sql proxy" \
       org.opencontainers.image.description="nginx serving one nl2sql page -- the web interface, review, curation, console, directory -- or MLflow's front door, as NL2SQL_PAGE says" \
-      org.opencontainers.image.version="6.3.0"
+      org.opencontainers.image.version="7.0.0"

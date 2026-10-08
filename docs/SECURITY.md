@@ -2,7 +2,7 @@
 
 What this stack protects, from whom, where its boundaries are, what each
 credential is worth, and which deployments its defaults are built for. As of
-**6.3.0**. The sign-in design these rest on -- why it is built this way, the
+**7.0.0**. The sign-in design these rest on -- why it is built this way, the
 alternatives rejected, the limits chosen -- is section 20 of
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md),
 with what 6.2 added -- revocation, named tokens, the accounts each service
@@ -223,7 +223,7 @@ with its plan item.
 - **This project's own images are pinned by tag, and carry no signature or
   provenance.** Every image it does not build is pinned by digest since
   6.3, and every Python dependency installed from a hash-checked lock since
-  6.2; but `.env` names `v6_3`, and nothing proves who built what is behind
+  6.2; but `.env` names `v7_0`, and nothing proves who built what is behind
   it. (M-09; V6-42.)
 - **The dbprep one-shot is every database's superuser while it runs.** It
   holds every socket and most passwords for the seconds before each start,

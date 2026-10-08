@@ -1,4 +1,4 @@
-# NL2SQL Agent (v6, multi-agent)
+# NL2SQL Agent (v7, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from

@@ -7,13 +7,13 @@ What is published, how it is pulled and pinned, and what moves when a checkout i
 ## Pulling the images
 
 ```bash
-docker pull mcfaddja/nl2sql-agent:v6_3     # the agent, the REST API, the SQL console and dbprep
-docker pull mcfaddja/nl2sql-proxy:v6_3     # every page, and MLflow's front door
-docker pull mcfaddja/nl2sql-review:v6_3    # the review service, and the snippet loader
-docker pull mcfaddja/nl2sql-mlflow:v6_3    # MLflow, where every question is traced
-docker pull mcfaddja/nl2sql-mlflowdb:v6_3  # the Postgres MLflow keeps traces in
-docker pull mcfaddja/nl2sql-ldap:v6_3      # the directory
-docker pull mcfaddja/nl2sql-auth:v6_3      # sign-in
+docker pull mcfaddja/nl2sql-agent:v7_0     # the agent, the REST API, the SQL console and dbprep
+docker pull mcfaddja/nl2sql-proxy:v7_0     # every page, and MLflow's front door
+docker pull mcfaddja/nl2sql-review:v7_0    # the review service, and the snippet loader
+docker pull mcfaddja/nl2sql-mlflow:v7_0    # MLflow, where every question is traced
+docker pull mcfaddja/nl2sql-mlflowdb:v7_0  # the Postgres MLflow keeps traces in
+docker pull mcfaddja/nl2sql-ldap:v7_0      # the directory
+docker pull mcfaddja/nl2sql-auth:v7_0      # sign-in
 ```
 
 `nl2sql-proxy` is nginx with every page built into it -- the web interface,
@@ -38,7 +38,7 @@ and published with the release so that a release's images are one set.
 
 The desktop client is published too, but by platform rather than by
 architecture, because a jar carries native code for the machine it will draw
-on: `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64` and the four siblings
+on: `mcfaddja/nl2sql-desktop-build:v7_0-mac-aarch64` and the four siblings
 named in [The desktop client](desktop_client.md#the-desktop-client). The image holds the jar
 and nothing else -- 33 MB, not the gigabyte of Maven that produced it --
 and `./launch.sh --desktop` pulls the one this machine needs, falling back to
@@ -164,19 +164,19 @@ stay multi-arch, as every earlier tag is:
 ```bash
 docker login
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v6_3 .
+  -f agent/Dockerfile --push -t mcfaddja/nl2sql-agent:v7_0 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v6_3 .
+  -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v7_0 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v6_3 .
+  -f review/Dockerfile --push -t mcfaddja/nl2sql-review:v7_0 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v6_3 .
+  -f docker/mlflow/Dockerfile --push -t mcfaddja/nl2sql-mlflow:v7_0 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v6_3 .
+  -f docker/mlflowdb/Dockerfile --push -t mcfaddja/nl2sql-mlflowdb:v7_0 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f ldap/Dockerfile --push -t mcfaddja/nl2sql-ldap:v6_3 .
+  -f ldap/Dockerfile --push -t mcfaddja/nl2sql-ldap:v7_0 .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f auth/Dockerfile --push -t mcfaddja/nl2sql-auth:v6_3 .
+  -f auth/Dockerfile --push -t mcfaddja/nl2sql-auth:v7_0 .
 ```
 
 Every base image those builds start from, and every stock image compose
@@ -196,7 +196,7 @@ one JavaFX platform, so there is a tag per platform:
 for platform in mac-aarch64 mac linux linux-aarch64 win; do
   docker buildx build --platform linux/amd64,linux/arm64 \
     -f desktop/Dockerfile --build-arg JAVAFX_PLATFORM=$platform \
-    --push -t mcfaddja/nl2sql-desktop-build:v6_3-$platform .
+    --push -t mcfaddja/nl2sql-desktop-build:v7_0-$platform .
 done
 ```
 
@@ -246,7 +246,7 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
-| `v6_3` | The second review's phase 5. Every container is read-only, holds no capability it does not use, cannot gain a privilege, and has a ceiling on its memory and its processes. Every password and token is a file in `secrets/`, mounted into only the services that read it, and in no container's environment. Every page and MLflow's front door are one image, `nl2sql-proxy`, whose health check -- like every service's -- verifies the certificate it is answered with. The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`, and `launch.sh` moves a store from before into it. A one-shot, `dbprep`, prepares every database in Python, over each database's own socket, so neither script runs SQL. Each service's database role has a statement timeout, a memory ceiling and a connection limit; every base image is pinned by digest. Twelve tags where `v6_2` had seventeen. Pinned -- what `setup.sh` pulls. |
+| `v6_3` | The second review's phase 5. Every container is read-only, holds no capability it does not use, cannot gain a privilege, and has a ceiling on its memory and its processes. Every password and token is a file in `secrets/`, mounted into only the services that read it, and in no container's environment. Every page and MLflow's front door are one image, `nl2sql-proxy`, whose health check -- like every service's -- verifies the certificate it is answered with. The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`, and `launch.sh` moves a store from before into it. A one-shot, `dbprep`, prepares every database in Python, over each database's own socket, so neither script runs SQL. Each service's database role has a statement timeout, a memory ceiling and a connection limit; every base image is pinned by digest. Twelve tags where `v6_2` had seventeen. Pinned. |
 | `v6_2` | The second review's phases 3 and 4. A session can be ended: signing out, a password changed or set, an account locked or removed ends the sessions it should for every service within a minute, from lists only the auth service writes. A service token is somebody -- named, recorded as `token:<name>`, holding only the roles it is given -- and a header never names who did something. Nothing runs as root but the one-shot `pki`: each service runs as an account of its own, each key is that account's, and the review service writes the checkout's documents as the person who owns them, loading the stores in its own process under a lock. Every route is on a router that carries its guard; a failure's own words are an administrator's; a person's name is in the transaction's `application_name`; the sign-in throttle believes only the page proxies' `X-Forwarded-For`; fix ids come from sequences; an administrator can make the agent read its catalogs again. What the services share is one installed package, `common/`, and what the pages share one source package, `web/`; every Python image installs a hash-checked lock. Pinned. |
 | `v6_1` | Hardening, from the second adversarial review (`v6_1_review`). The databases answer on this machine only unless `DB_BIND_ADDRESS` says otherwise, and `setup.sh` generates every store's password; the retail database is `v1_2`, with no password baked in, TLS on, and sign-in accepted only over TLS, verified by the auth service. Every service has its own certificate, issued by a development CA that a new one-shot service, `pki`, keeps; a client trusts `nl2sql-ca.crt` once. Sign-in is on in the code as well as in compose, CORS is closed until opened, the job queue is bounded and answers 429, `EXPLAIN` is time-boxed, tokens are scrubbed from the access log, and the directory's API answers on its own port, behind its page. A repair starts from a clean attempt, a narrator or supervisor that fails says so in `node_errors`, every wire model refuses a field it does not know, and each trace entry carries its model, rung, route and hops. `SECURITY.md` is the threat model; `Multi-Agent_NL2SQL_arch6.md` the architecture as built. Pinned. |
 | `v6_0_1` | A correction to `v6_0`, found by running the published stack under compose. The directory starts as root just long enough to take its certificate's volume -- which compose creates owned by root when the auth service's container is made after the directory's -- and then runs as `ldap`; under `v6_0` it could not write its certificate, restarted for ever, and nobody could sign in. The sign-in throttle lets an address fail fifty times rather than five, since everyone behind one proxy or one machine's NAT is one address. The desktop client offers to sign in when `/v1/meta` asks who it is, instead of saying it is not connected. The other images are `v6_0`'s under the new version. Pinned. |

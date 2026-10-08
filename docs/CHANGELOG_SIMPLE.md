@@ -15,6 +15,19 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v7_0 (7.0.0) -- 2026-10-08
+
+In progress: arch7, the ensemble -- the question asked several ways, the pipeline run once per wording, the answers voted on -- built phase by phase. Nothing is published yet; `setup.sh` already pins `v7_0`.
+
+**Added**
+- arch7's Phase 0: the fidelity gate's checks in code (`fidelity.py`), three hand-written rewordings of each benchmark question, and `run_benchmark.py --paraphrase-set`, which reports the stability -- 13 of 15 questions right in every wording, 57 of 60 wordings, on the running 6.3 stack. The checks' starting words discarded 8 of the 45 rewordings; four additions fixed that.
+
+**Fixed**
+- `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
+
+**Updated**
+- The version is 7.0.0 everywhere it is declared, and `setup.sh` pins `v7_0`.
+
 ## v6_3 (6.3.0) -- 2026-10-05
 
 **Added**
@@ -53,8 +66,6 @@ their own and are listed under the release they shipped with. A version marked
 - "Twenty-eight of those 656 need the embedding host" re-counted with the host down: 28 of 758; the three DDL-vector tests skip naming the embedding host rather than the vector store; a test holds both numbers.
 - The second review's 71 plan items verified at 6.3.0: 65 done, one superseded, V6-40 and V6-41 partial as the 6.3 spec says, V6-42 (provenance) and V6-47 (one home per fact) open. Fixed: the "fourteen pipeline nodes" comment. Added: the narrative-drift test, the newest spec's blueprint held to the tree, and a test that only the API holds its identity. `adversary_reviews/v6_1_review_misses.md` lists what was missed, for the third cycle.
 - The next architecture designed, not built: `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md` and its diagram -- the question reworded three to ten ways, each held to the original's contract, the arch6 pipeline run once per wording, one after another unless the deployer says the model host serves more calls at once (`OLLAMA_PARALLEL_CALLS`, 1 by default), the results validated against their own question and against each other with the benchmark's scorer, the largest agreeing group chosen and fused -- columns (`ENSEMBLE_FUSE_COLUMNS`, on by default), claims, assumptions and the dissent -- a Judge only when the votes cannot decide; the pipeline a larger tool calls for its hardest questions. `Multi-Agent_NL2SQL_arch7_implementation.md` is its build plan, module by module; `Multi-Agent_NL2SQL_arch7_risks_by_phase.md` places the plan's risks on its phases and lists what the placing surfaced.
-- arch7's Phase 0: the fidelity gate's checks in code (`fidelity.py`), three hand-written rewordings of each benchmark question, and `run_benchmark.py --paraphrase-set`, which reports the stability -- 13 of 15 questions right in every wording, 57 of 60 wordings, on the running 6.3 stack. The checks' starting words discarded 8 of the 45 rewordings; four additions fixed that.
-- `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
 
 ## v6_2 (6.2.0) -- 2026-10-04
 

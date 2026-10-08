@@ -1,6 +1,6 @@
 {
   "name": "nl2sql-curate-gui",
-  "version": "6.3.0",
+  "version": "7.0.0",
   "private": true,
   "type": "module",
   "description": "Web front end for curating what the agent learns from: SQL snippets, golden pairs, corrections and completions, each validated against the retail database before it is written.",

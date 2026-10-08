@@ -1,6 +1,6 @@
 {
   "name": "nl2sql-gui",
-  "version": "6.3.0",
+  "version": "7.0.0",
   "private": true,
   "type": "module",
   "description": "Web front end for the nl2sql agent's REST API.",

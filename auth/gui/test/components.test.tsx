@@ -288,7 +288,7 @@ describe("StatusBar", () => {
     const { rerender } = render(<StatusBar meta={null} error={null} />);
     expect(screen.getByRole("contentinfo")).toHaveTextContent("Connecting…");
     rerender(<StatusBar meta={makeMeta()} error={null} />);
-    expect(screen.getByRole("contentinfo")).toHaveTextContent("standalone directory dc=nl2sql,dc=local · 2 people · nl2sql auth 6.3.0");
+    expect(screen.getByRole("contentinfo")).toHaveTextContent("standalone directory dc=nl2sql,dc=local · 2 people · nl2sql auth 7.0.0");
     rerender(<StatusBar meta={makeMeta()} error="cannot reach the directory service" />);
     expect(screen.getByRole("contentinfo")).toHaveTextContent("cannot reach the directory service");
   });

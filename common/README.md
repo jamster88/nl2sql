@@ -1,6 +1,6 @@
 # The shared Python package
 
-`nl2sql-common` (6.3.0): what the stack's Python services share, installed
+`nl2sql-common` (7.0.0): what the stack's Python services share, installed
 into each image as a package (`pip install --no-deps`) rather than copied
 into it, so `pip show nl2sql-common` in any container says which version it
 carries. Three import packages:

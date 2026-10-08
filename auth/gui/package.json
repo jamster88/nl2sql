@@ -1,6 +1,6 @@
 {
   "name": "nl2sql-directory-gui",
-  "version": "6.3.0",
+  "version": "7.0.0",
   "private": true,
   "type": "module",
   "description": "Web front end for a standalone directory: the people who may sign in to the nl2sql stack, and the groups that decide what each may do.",

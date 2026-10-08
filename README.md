@@ -50,6 +50,24 @@ own:
 docker compose --profile '*' down                 # stop; your data is kept
 ```
 
+## What's new in 7.0
+
+7.0 is being built, and is not published yet. It answers a hard question
+several ways and votes: the question reworded three to ten ways, the
+pipeline run once per wording, and the answers checked against each other
+before one is chosen ([the
+design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md)). So far:
+
+- **How much the wording matters, measured.** `python
+  benchmarks/run_benchmark.py --paraphrase-set` asks each benchmark
+  question its own way and three others, and reports the questions every
+  wording of which came out right -- see [The paraphrase
+  set](docs/benchmark.md#the-paraphrase-set).
+- **The checks a rewording must pass**, in code: the original's numbers,
+  names and directions, kept, and enough changed to be a different draw.
+- **The benchmark and calibration scripts run on a host again**, which
+  they had not since 6.2.
+
 ## What's new in 6.3
 
 - **Every container is hardened.** Read-only, no Linux capability it does

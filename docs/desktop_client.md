@@ -73,11 +73,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v6_3-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v6_3-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v6_3-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v6_3-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v7_0-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v7_0-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v7_0-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v7_0-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v7_0-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.

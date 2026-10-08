@@ -37,7 +37,7 @@ RUN mkdir -p /etc/nl2sql/tls && chown nl2sql:nl2sql /etc/nl2sql/tls
 # `python -m nl2sql_agent.api`; the default entrypoint is still the CLI.
 EXPOSE 8443
 
-ARG AGENT_VERSION=6.3.0
+ARG AGENT_VERSION=7.0.0
 ENV AGENT_VERSION=${AGENT_VERSION}
 
 USER 10001:10001

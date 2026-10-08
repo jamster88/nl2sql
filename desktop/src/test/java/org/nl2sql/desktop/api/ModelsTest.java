@@ -66,6 +66,87 @@ class ModelsTest {
     }
 
     @Test
+    void an_answer_asked_several_ways_parses_with_every_run_recorded() {
+        // 7.0's ensemble: the vote, the delivered run, each run's record, and
+        // the progress event and the server's settings that say how many.
+        Models.Job job = Json.read("""
+                {"id": "7a", "status": "succeeded", "question": "top store?",
+                 "created_at": "2026-10-08T10:00:00Z",
+                 "progress": [{"seq": 3, "step": "generate_sql", "label": "sql", "detail": "",
+                               "at": "2026-10-08T10:00:10Z", "candidate": 1},
+                              {"seq": 9, "step": "deliver", "label": "answer", "detail": "",
+                               "at": "2026-10-08T10:01:00Z", "candidate": null}],
+                 "answer": {"answer": "Store 7.", "sql": "SELECT 7",
+                            "ensemble": {
+                              "agreement": {"admissible": 2, "agreed": 2, "total": 3,
+                                            "level": "unanimous", "why": "2 of 2"},
+                              "chosen": 0, "fused_from": [0, 1], "columns_fused": true,
+                              "joined_columns": [{"column": "brand", "from_candidate": 1,
+                                                  "key": "sku_id", "table": "dim_product"}],
+                              "declined_columns": [{"column": "city", "from_candidate": 1,
+                                                    "why": "key repeats in run 1"}],
+                              "claims_added": 1, "claims_dropped": 0,
+                              "dissent": [{"group": 1, "members": [2], "signature": "1 row",
+                                           "differs": "filters region"}],
+                              "judged": {"group": 0, "why": "asked as written", "model": "m"},
+                              "candidates": [{"index": 1, "wording": "which store tops?",
+                                              "origin": "paraphrase", "wave": 1,
+                                              "changed": "word order", "outcome": "answered",
+                                              "admissible": true, "reasons": [], "sql": "SELECT 7",
+                                              "signature": "7", "attempts": 1, "group": 0,
+                                              "duration_ms": 900.5,
+                                              "trace": [{"node": "finish", "ms": 1.0}]}],
+                              "discarded": [{"index": 4, "text": "lowest store?",
+                                             "changed": "direction", "reason": "F3 polarity"}],
+                              "parallel_calls": 2}},
+                 "links": {"self": "/v1/questions/7a", "events": "/v1/questions/7a/events"}}
+                """, Models.Job.class);
+        Models.Pipeline pipeline = Json.read("""
+                {"supervisor": true, "literals": true, "narrate": true, "audit": true,
+                 "schema_retrieval": "vector", "nodes": ["screen"],
+                 "ensemble": {"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
+                              "parallel_calls": 2, "judge": true, "fuse_columns": true}}
+                """, Models.Pipeline.class);
+
+        Models.Ensemble ensemble = job.answer().ensemble();
+        assertEquals(1, job.progress().get(0).candidate());
+        assertNull(job.progress().get(1).candidate());
+        assertEquals("unanimous", ensemble.agreement().level());
+        assertEquals(List.of(0, 1), ensemble.fused_from());
+        assertEquals("sku_id", ensemble.joined_columns().get(0).key());
+        assertEquals("key repeats in run 1", ensemble.declined_columns().get(0).why());
+        assertEquals(List.of(2), ensemble.dissent().get(0).members());
+        assertEquals(0, ensemble.judged().group());
+        assertEquals("word order", ensemble.candidates().get(0).changed());
+        assertEquals("finish", ensemble.candidates().get(0).trace().get(0).node());
+        assertEquals("F3 polarity", ensemble.discarded().get(0).reason());
+        assertEquals(2, ensemble.parallel_calls());
+        assertEquals(10, pipeline.ensemble().max_paraphrases());
+    }
+
+    @Test
+    void an_ensemble_record_from_a_terser_server_has_no_nulls_in_it() {
+        Models.Ensemble ensemble = Json.read("{}", Models.Ensemble.class);
+        assertEquals(List.of(), ensemble.fused_from());
+        assertEquals(List.of(), ensemble.joined_columns());
+        assertEquals(List.of(), ensemble.declined_columns());
+        assertEquals(List.of(), ensemble.dissent());
+        assertEquals(List.of(), ensemble.candidates());
+        assertEquals(List.of(), ensemble.discarded());
+        assertNull(ensemble.chosen());
+        Models.EnsembleCandidate candidate = Json.read("{}", Models.EnsembleCandidate.class);
+        assertEquals(List.of(), candidate.reasons());
+        assertEquals(List.of(), candidate.trace());
+        assertEquals("", candidate.wording());
+        assertEquals(List.of(), Json.read("{}", Models.EnsembleDissent.class).members());
+        assertEquals("", Json.read("{}", Models.DiscardedRewording.class).text());
+        assertEquals("", Json.read("{}", Models.EnsembleAgreement.class).level());
+        assertEquals("", Json.read("{}", Models.EnsembleJudgement.class).why());
+        // A server older than 7.0 sends neither.
+        assertNull(Json.read("{}", Models.Answer.class).ensemble());
+    }
+
+    @Test
     void a_reload_says_what_was_read_again_and_nothing_is_a_null() {
         // Mirrored for completeness: this client does not reload.
         Models.Reloaded reloaded = Json.read(

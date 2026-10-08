@@ -225,10 +225,13 @@ def test_answer_json_mode_returns_one_on_error(capsys):
 
 
 def test_main_exits_two_and_prints_a_clean_message_when_the_llm_is_unavailable(monkeypatch, capsys):
-    def fake_init(self, settings, on_progress=None):
+    def fake_init(self, settings, **kwargs):
         raise LlmUnavailableError("Cannot reach Ollama at http://bad:11434.")
 
-    monkeypatch.setattr(cli.Nl2SqlAgent, "__init__", fake_init)
+    from nl2sql_agent.graph import Nl2SqlAgent
+
+    # The pipeline's own constructor, which the ensemble builds too.
+    monkeypatch.setattr(Nl2SqlAgent, "__init__", fake_init)
 
     code = cli.main(["irrelevant question"])
 
@@ -243,7 +246,7 @@ def test_main_exits_two_and_prints_a_clean_message_when_the_llm_is_unavailable(m
 
 
 class _StubAgentFactory:
-    """Replaces Nl2SqlAgent so main() can be driven without a model or database."""
+    """Replaces `build_agent` so main() can be driven without a model or database."""
 
     def __init__(self, state: dict | None = None, tracer=None):
         self.state = state or {"result": {"columns": ["n"], "rows": [[1]], "truncated": False}}
@@ -270,7 +273,7 @@ class _StubAgentFactory:
 
 def test_main_joins_argv_words_into_one_question(monkeypatch, capsys):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     code = cli.main(["how", "many", "stores"])
     assert code == 0
     assert factory.questions == ["how many stores"]
@@ -278,13 +281,13 @@ def test_main_joins_argv_words_into_one_question(monkeypatch, capsys):
 
 def test_main_returns_one_when_the_agent_reports_an_error(monkeypatch, capsys):
     factory = _StubAgentFactory({"error": "gave up"})
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     assert cli.main(["q"]) == 1
 
 
 def test_progress_lines_go_to_stderr_with_friendly_labels(monkeypatch, capsys):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     cli.main(["q"])
     factory.on_progress("retrieve_knowledge", "12 chunk(s)")
     factory.on_progress("retrieve_schema", "dim_store")
@@ -298,7 +301,7 @@ def test_progress_lines_go_to_stderr_with_friendly_labels(monkeypatch, capsys):
 @pytest.mark.parametrize("flag", ["--quiet", "--json"])
 def test_progress_is_suppressed_in_quiet_and_json_modes(monkeypatch, capsys, flag):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     cli.main([flag, "q"])
     capsys.readouterr()  # drop the answer itself
     factory.on_progress("retrieve_knowledge", "12 chunk(s)")
@@ -307,7 +310,7 @@ def test_progress_is_suppressed_in_quiet_and_json_modes(monkeypatch, capsys, fla
 
 def test_interactive_mode_announces_the_knowledge_base(monkeypatch, capsys):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
 
     code = cli.main(["--vector-db-url", "postgresql+psycopg://v:v@vhost/vectors"])
@@ -321,7 +324,7 @@ def test_interactive_mode_announces_the_knowledge_base(monkeypatch, capsys):
 
 def test_interactive_mode_omits_the_knowledge_line_when_rag_is_off(monkeypatch, capsys):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
 
     cli.main(["--no-rag"])
@@ -331,7 +334,7 @@ def test_interactive_mode_omits_the_knowledge_line_when_rag_is_off(monkeypatch, 
 
 
 def test_interactive_mode_names_the_example_store_only_when_examples_are_on(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
 
     cli.main([])
@@ -344,7 +347,7 @@ def test_interactive_mode_names_the_example_store_only_when_examples_are_on(monk
 
 
 def test_interactive_mode_names_the_snippet_store_only_when_snippets_are_on(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(EOFError))
 
     cli.main(["--snippets-top-k", "4"])
@@ -358,7 +361,7 @@ def test_interactive_mode_names_the_snippet_store_only_when_snippets_are_on(monk
 
 def test_interactive_mode_answers_each_question_and_skips_blank_input(monkeypatch, capsys):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
 
     answers = iter(["  how many stores ", "   ", "and departments?"])
 
@@ -376,7 +379,7 @@ def test_interactive_mode_answers_each_question_and_skips_blank_input(monkeypatc
 
 def test_interactive_mode_exits_cleanly_on_keyboard_interrupt(monkeypatch, capsys):
     factory = _StubAgentFactory()
-    monkeypatch.setattr(cli, "Nl2SqlAgent", factory)
+    monkeypatch.setattr(cli, "build_agent", factory)
     monkeypatch.setattr("builtins.input", lambda _prompt: (_ for _ in ()).throw(KeyboardInterrupt))
     assert cli.main([]) == 0
 
@@ -455,7 +458,7 @@ def test_no_result_at_all_renders_as_no_rows():
 
 
 def test_one_question_says_in_one_line_which_models_it_may_be_routed_to(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     assert cli.main(["how", "many", "stores"]) == 0
     err = capsys.readouterr().err
     assert "[routing] on: 1 model(s), anchor qwen3.8-256k:latest" in err
@@ -463,13 +466,13 @@ def test_one_question_says_in_one_line_which_models_it_may_be_routed_to(monkeypa
 
 @pytest.mark.parametrize("flag", ["--quiet", "--json"])
 def test_the_routing_line_is_left_out_where_progress_is(monkeypatch, capsys, flag):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     cli.main(["q", flag])
     assert "[routing]" not in capsys.readouterr().err
 
 
 def test_interactive_mode_prints_the_whole_routing_table(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
     assert cli.main([]) == 0
     out = capsys.readouterr().out
@@ -484,7 +487,7 @@ def test_a_routing_configuration_that_cannot_be_used_is_an_error_not_a_traceback
     def refuse(settings, on_progress=None):
         raise RoutingError("the catalog describes http://elsewhere:11434")
 
-    monkeypatch.setattr(cli, "Nl2SqlAgent", refuse)
+    monkeypatch.setattr(cli, "build_agent", refuse)
     assert cli.main(["q"]) == 2
     assert "error: the catalog describes http://elsewhere:11434" in capsys.readouterr().err
 
@@ -510,14 +513,14 @@ def _tracer(*, answers: bool = True):
 
 
 def test_one_question_says_where_its_trace_goes(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer()))
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory(tracer=_tracer()))
     assert cli.main(["q"]) == 0
     err = capsys.readouterr().err
     assert "[tracing] tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent" in err
 
 
 def test_one_question_says_when_it_will_not_be_traced(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer(answers=False)))
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory(tracer=_tracer(answers=False)))
     assert cli.main(["q"]) == 0
     err = capsys.readouterr().err
     assert (
@@ -528,13 +531,13 @@ def test_one_question_says_when_it_will_not_be_traced(monkeypatch, capsys):
 
 @pytest.mark.parametrize("flag", ["--quiet", "--json"])
 def test_the_tracing_line_is_left_out_where_progress_is(monkeypatch, capsys, flag):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer()))
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory(tracer=_tracer()))
     cli.main(["q", flag])
     assert "[tracing]" not in capsys.readouterr().err
 
 
 def test_with_tracing_unset_the_cli_says_nothing_about_it(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory())
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
     cli.main(["q"])
     cli.main([])
@@ -544,7 +547,7 @@ def test_with_tracing_unset_the_cli_says_nothing_about_it(monkeypatch, capsys):
 
 
 def test_interactive_mode_says_where_traces_go(monkeypatch, capsys):
-    monkeypatch.setattr(cli, "Nl2SqlAgent", _StubAgentFactory(tracer=_tracer()))
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory(tracer=_tracer()))
     monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
     assert cli.main([]) == 0
     assert "Traces: tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent" in capsys.readouterr().out
@@ -567,3 +570,89 @@ def test_a_question_asked_here_is_tagged_as_the_clis(capsys):
 def test_json_mode_names_the_trace(capsys):
     cli.answer(StubAgent({"sql": "SELECT 1", "trace_id": "tr-42"}), "q", as_json=True, quiet=False)
     assert json.loads(capsys.readouterr().out)["trace_id"] == "tr-42"
+
+
+# ---------------------------------------------------------------------------
+# The ensemble (arch7): its four flags, its progress and its record
+# ---------------------------------------------------------------------------
+
+
+def test_the_ensembles_flags_reach_the_settings_and_default_to_the_environment(monkeypatch):
+    monkeypatch.setenv("ENSEMBLE_PARAPHRASES", "5")
+    monkeypatch.setenv("OLLAMA_PARALLEL_CALLS", "2")
+    defaults = cli.settings_from_args(cli.parse_args(["q"]))
+    assert (defaults.ensemble_enabled, defaults.ensemble_paraphrases, defaults.ollama_parallel_calls) == (True, 5, 2)
+    assert defaults.ensemble_fuse_columns is True
+
+    flagged = cli.settings_from_args(
+        cli.parse_args(["q", "--no-ensemble", "--paraphrases", "4", "--parallel-calls", "3", "--no-fuse-columns"])
+    )
+    assert (flagged.ensemble_enabled, flagged.ensemble_paraphrases, flagged.ollama_parallel_calls) == (False, 4, 3)
+    assert flagged.ensemble_fuse_columns is False
+
+
+def test_no_ensemble_builds_the_pipeline_alone(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "build_agent", factory)
+    cli.main(["q", "--no-ensemble"])
+    assert factory.settings.ensemble_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("argv", "named"),
+    [(["q", "--paraphrases", "2"], "ENSEMBLE_PARAPHRASES is 2; it must be 3 to 10"),
+     (["q", "--parallel-calls", "0"], "OLLAMA_PARALLEL_CALLS is 0; it must be at least 1")],
+)
+def test_a_flag_out_of_range_is_named_with_its_bound_not_a_traceback(monkeypatch, capsys, argv, named):
+    monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
+    assert cli.main(argv) == 2
+    assert f"error: {named}" in capsys.readouterr().err
+
+
+def test_a_setting_out_of_range_in_the_environment_stops_the_cli_the_same_way(monkeypatch, capsys):
+    monkeypatch.setenv("ENSEMBLE_WAVES", "0")
+    assert cli.main(["q"]) == 2
+    assert "error: ENSEMBLE_WAVES is 0; it must be at least 1" in capsys.readouterr().err
+
+
+def test_a_candidates_progress_lines_say_which_run_and_the_ensembles_own_do_not(monkeypatch, capsys):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "build_agent", factory)
+    cli.main(["q"])
+    factory.on_progress("plan_wave", "wave 1: the original")
+    factory.on_progress("generate_sql", "SELECT 1", candidate=0)
+    factory.on_progress("deliver", "single: the original's run")
+    err = capsys.readouterr().err
+    assert "[wave] wave 1: the original" in err
+    assert "[0] [sql] SELECT 1" in err
+    assert "\n[answer] single: the original's run" in err
+
+
+def test_json_mode_carries_the_ensembles_record_and_the_delivered_runs_own_fields(capsys):
+    from nl2sql_agent.ensemble_state import Agreement, Candidate, Decision, new_ensemble_state
+    from nl2sql_agent.state import TraceEntry, new_state
+
+    run = {**new_state("q"), "attempts": 2, "selected_tables": ["dim_store"], "sql": "SELECT 1",
+           "node_errors": {"narrator": "timed out"}, "trace": [TraceEntry(node="finish")]}
+    state = {
+        **new_ensemble_state("q"),
+        "candidates": [Candidate(index=0, wording="q", origin="original", wave=1, state=run, outcome="answered")],
+        "agreement": Agreement(admissible=1, agreed=1, total=1, level="single"),
+        "decision": Decision(chosen=0, fused_from=[0]),
+        "sql": "SELECT 1",
+        "node_errors": {"supervisor": "down"},
+        "trace": [TraceEntry(node="screen")],
+    }
+    assert cli.answer(StubAgent(state), "q", as_json=True, quiet=False) == 0
+    document = json.loads(capsys.readouterr().out)
+
+    assert document["attempts"] == 2 and document["selected_tables"] == ["dim_store"]
+    assert document["node_errors"] == {"narrator": "timed out", "supervisor": "down"}
+    assert [entry["node"] for entry in document["trace"]] == ["screen", "finish"]
+    assert document["ensemble"]["agreement"]["level"] == "single"
+    assert document["ensemble"]["candidates"][0]["state"]["sql"] == "SELECT 1"
+
+
+def test_json_mode_for_one_run_has_no_ensemble_record(capsys):
+    cli.answer(StubAgent({"sql": "SELECT 1", "trace": []}), "q", as_json=True, quiet=False)
+    assert "ensemble" not in json.loads(capsys.readouterr().out)

@@ -18,14 +18,15 @@ all four against the question's one reference, and reports the stability:
 the fraction of questions every wording of which came out right -- arch7's
 premise, measured.
 
-`--compare` runs the same questions through four configurations that differ
-only in what retrieval is switched on, which is the measurement the whole
-project is for:
+`--compare` runs the same questions through five configurations, each the
+one before it plus one stage -- four of retrieval, which is the measurement
+the whole project is for, then the ensemble:
 
     schema-only   no knowledge, no examples          (v1 behaviour)
     knowledge     knowledge base, no examples        (v2 behaviour)
     multi-shot    knowledge + reranked examples      (v3 behaviour)
-    snippets      all of that + SQL snippets         (v5.6, the default)
+    snippets      all of that + SQL snippets         (v5.6, the default: one run a question)
+    ensemble      snippets, asked several ways       (arch7, the agent as 7.0 ships)
 """
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ from benchmarks.runner import (  # noqa: E402
     routes_from_trace,
     timing_from_trace,
 )
+from nl2sql_agent.ensemble_state import run_state, whole_trace  # noqa: E402
 
 #: How the report marks each outcome: a miss in capitals, so it stands out.
 MARKS = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}
@@ -113,25 +115,31 @@ def host_default(field: str, url: str) -> str:
     return with_password(url, password) if password else url
 
 
-# The four configurations --compare measures. Each is the one before it plus a
-# retrieval stage, so a difference between two rows is attributable to that
-# stage and nothing else. The last is the agent as it ships.
+# The five configurations --compare measures. Each is the one before it plus
+# one stage, so a difference between two rows is attributable to that stage
+# and nothing else: four of retrieval, then the ensemble (arch7). Every one
+# says whether the ensemble is on, so the first four are one run a question
+# whatever ENSEMBLE_ENABLED says. The last is the agent as it ships.
 CONFIGURATIONS = {
     "schema-only": {
         "rag_enabled": False, "examples_enabled": False, "multi_shot_enabled": False,
-        "snippets_enabled": False,
+        "snippets_enabled": False, "ensemble_enabled": False,
     },
     "knowledge": {
         "rag_enabled": True, "examples_enabled": False, "multi_shot_enabled": False,
-        "snippets_enabled": False,
+        "snippets_enabled": False, "ensemble_enabled": False,
     },
     "multi-shot": {
         "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
-        "snippets_enabled": False,
+        "snippets_enabled": False, "ensemble_enabled": False,
     },
     "snippets": {
         "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
-        "snippets_enabled": True,
+        "snippets_enabled": True, "ensemble_enabled": False,
+    },
+    "ensemble": {
+        "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
+        "snippets_enabled": True, "ensemble_enabled": True,
     },
 }
 
@@ -255,19 +263,23 @@ def run_question(
     # progress callbacks, which cannot attribute time across Stage 1's
     # parallel branches -- the four retrievers overlap, so the gap after one
     # of them is not its duration.
-    trace = state.get("trace") or []
+    # Under the ensemble (arch7) the trace is every run's and the ensemble's
+    # own nodes', and what retrieval found and how many attempts it took are
+    # the delivered run's; for one run, both are the state itself.
+    trace = whole_trace(state)
     timing = timing_from_trace(trace) if trace else timer.timing
+    run = run_state(state)
 
     common = dict(
         question_id=question.id, category=question.category, question=asked, wording=wording,
         wall_seconds=wall, timing=timing, sql=state.get("sql"),
-        attempts=state.get("attempts", 0), expected_row_count=len(expected),
-        examples=[p["pair_id"] for p in state.get("example_pairs", [])],
-        knowledge_chunks=len(state.get("knowledge_chunks", [])),
+        attempts=run.get("attempts", 0), expected_row_count=len(expected),
+        examples=[p["pair_id"] for p in run.get("example_pairs", [])],
+        knowledge_chunks=len(run.get("knowledge_chunks", [])),
         model_calls=model_calls_from_trace(trace),
         narrative_score=narrative_score(state),
         routes=routes_from_trace(trace),
-        rung=getattr(state.get("complexity"), "rung", None),
+        rung=getattr(run.get("complexity"), "rung", None),
         trace_id=state.get("trace_id", ""),
     )
 
@@ -298,9 +310,8 @@ def run_question(
 
 
 def run_configuration(args, configuration: str, questions: list[BenchmarkQuestion]) -> BenchmarkReport:
-    from nl2sql_agent import tracing
+    from nl2sql_agent import ensemble, graph, tracing
     from nl2sql_agent.database import Database
-    from nl2sql_agent.graph import Nl2SqlAgent
     from nl2sql_agent.llm import LlmUnavailableError
 
     settings = build_settings(args, configuration)
@@ -315,7 +326,9 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
 
     timer = StageTimer(show)
     try:
-        agent = Nl2SqlAgent(settings, on_progress=timer)
+        agent = graph.Nl2SqlAgent(settings, on_progress=timer)
+        if settings.ensemble_enabled:
+            agent = ensemble.EnsembleAgent(settings, agent=agent, on_progress=timer)
     except LlmUnavailableError as exc:
         raise SystemExit(f"error: {exc}")
 

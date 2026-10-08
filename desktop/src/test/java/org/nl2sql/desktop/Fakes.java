@@ -51,7 +51,7 @@ public final class Fakes {
                 125767.4, 1,
                 List.of(new Models.TraceEntry("generate_sql", 8123.4, 1, "3 tables, 2 examples", "", "", "", List.of()),
                         new Models.TraceEntry("run_sql", 210.0, 0, "", "", "", "", List.of())),
-                Map.of(), Map.of());
+                Map.of(), Map.of(), null);
     }
 
     public static Models.Job job(String id, Models.JobStatus status, Models.Answer answer) {
@@ -77,7 +77,7 @@ public final class Fakes {
     }
 
     public static Models.ProgressEvent step(int seq, String node, String label, String detail) {
-        return new Models.ProgressEvent(seq, node, label, detail, "2026-09-25T10:00:0" + seq + "Z");
+        return new Models.ProgressEvent(seq, node, label, detail, "2026-09-25T10:00:0" + seq + "Z", null);
     }
 
     /**
@@ -115,7 +115,7 @@ public final class Fakes {
                 List.of("aggregate"), TABLES, SCOPE,
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",
-                        List.of("screen", "generate_sql", "run_sql")),
+                        List.of("screen", "generate_sql", "run_sql"), null),
                 Map.of("enabled", true), "bearer", feedback, Map.of());
     }
 

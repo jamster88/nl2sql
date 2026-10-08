@@ -542,6 +542,23 @@ services:
       # runs untraced when it is not. Empty is off.
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
       MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-}
+      # --- arch7: asking it several ways -----------------------------
+      # The question screened once, reworded, run once per wording and the
+      # answers voted on (agent/README.md, "Configuration"); false is arch6
+      # to the answer. OLLAMA_PARALLEL_CALLS is how many model calls the
+      # Ollama host serves at once -- one unless its own OLLAMA_NUM_PARALLEL
+      # is higher -- and every call the agent makes takes one of them.
+      ENSEMBLE_ENABLED: ${ENSEMBLE_ENABLED:-true}
+      ENSEMBLE_PARAPHRASES: ${ENSEMBLE_PARAPHRASES:-3}
+      ENSEMBLE_MAX_PARAPHRASES: ${ENSEMBLE_MAX_PARAPHRASES:-10}
+      ENSEMBLE_WAVES: ${ENSEMBLE_WAVES:-2}
+      ENSEMBLE_DEADLINE_SECONDS: ${ENSEMBLE_DEADLINE_SECONDS:-0}
+      ENSEMBLE_JUDGE_ENABLED: ${ENSEMBLE_JUDGE_ENABLED:-true}
+      ENSEMBLE_MAX_CLAIMS: ${ENSEMBLE_MAX_CLAIMS:-8}
+      ENSEMBLE_FUSE_COLUMNS: ${ENSEMBLE_FUSE_COLUMNS:-true}
+      OLLAMA_PARALLEL_CALLS: ${OLLAMA_PARALLEL_CALLS:-1}
+      MODEL_ROUTE_PARAPHRASER: ${MODEL_ROUTE_PARAPHRASER:-}
+      MODEL_ROUTE_JUDGE: ${MODEL_ROUTE_JUDGE:-}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     secrets: &agent-secrets

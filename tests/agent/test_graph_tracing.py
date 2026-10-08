@@ -161,3 +161,46 @@ def test_the_agent_builds_its_own_tracer_from_its_settings():
     agent = make_agent(FakeDatabase(tables=TABLES), scripted([]), mlflow_tracking_uri="http://elsewhere:5000",
                        mlflow_experiment_name="ablations")
     assert (agent.tracer.uri, agent.tracer.experiment) == ("http://elsewhere:5000", "ablations")
+
+
+# ---------------------------------------------------------------------------
+# One wrapper for both graphs (arch7, R2 of its risks by phase)
+# ---------------------------------------------------------------------------
+
+
+def test_the_wrapper_strips_every_private_key_and_keeps_the_rest():
+    """The pipeline's nodes and the ensemble's outer nodes are wrapped by the
+    same function, so this is the one check for both: a private key that got
+    through would reach the state, the strict wire and the trace."""
+    reports = []
+
+    def node(state):
+        return {
+            "sql": "SELECT 1",
+            graph_module._DETAIL: "wrote it",
+            graph_module._MODEL_CALLS: 2,
+            graph_module._ROUTE: {"model": "m", "rung": "light", "route": "why", "hops": ["a"]},
+        }
+
+    wrapped = graph_module.traced_node(
+        "generate_sql", node, spans=TRACE_SPANS, progress=lambda: lambda step, detail: reports.append((step, detail))
+    )
+    update = wrapped({"question": "q"})
+
+    assert set(update) == {"sql", "trace"}
+    assert not [key for key in update if key.startswith("_")]
+    [entry] = update["trace"]
+    assert (entry.node, entry.detail, entry.model_calls, entry.model, entry.hops) == (
+        "generate_sql", "wrote it", 2, "m", ["a"])
+    assert reports == [("generate_sql", "wrote it")]
+
+
+def test_a_span_can_record_a_summary_of_what_its_node_wrote():
+    tracer, client = traced()
+    wrapped = graph_module.traced_node(
+        "finish", lambda state: {"answer": "long"}, spans=TRACE_SPANS, progress=lambda: lambda *a: None,
+        outputs=lambda update: {"length": len(update["answer"])},
+    )
+    with tracer.run("q"):
+        wrapped({"claims": [], "audit": None, "completeness": None})
+    assert client.only_trace().root.child("Answer").outputs == {"length": 4}

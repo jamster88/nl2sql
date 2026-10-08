@@ -63,8 +63,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Callable
+from typing import Any, Callable, Iterator, Mapping
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
@@ -106,6 +107,7 @@ from .state import (
     QueryResult,
     Shot,
     TraceEntry,
+    SCREENING_FIELDS,
     attempt_reset,
     new_state,
 )
@@ -113,7 +115,11 @@ from .tools import TableSelection, build_tools
 from .validate import validate as validate_sql_statically
 from nl2sql_common.errors import DATABASE_ERRORS, Invalid, MODEL_ERRORS
 
-ProgressFn = Callable[[str, str], None]
+#: `on_progress(step, detail)`, as each node finishes. Under the ensemble
+#: (arch7) a candidate's steps also carry `candidate=k`, the index of the
+#: wording whose run reported them, and an outer node's carry none -- so a
+#: callback an ensemble reports to takes that keyword.
+ProgressFn = Callable[..., None]
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +132,23 @@ log = logging.getLogger(__name__)
 #: LangGraph copies the context into the threads it fans stage 1 out across,
 #: so the concurrent retrievers report to the right run too.
 _progress: ContextVar[ProgressFn | None] = ContextVar("nl2sql_progress", default=None)
+
+
+@contextmanager
+def progress_to(on_progress: ProgressFn | None) -> Iterator[None]:
+    """Report this context's progress to `on_progress` for the block; with
+    None, to whatever it reports to already."""
+    token = _progress.set(on_progress) if on_progress is not None else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _progress.reset(token)
+
+
+def reporter(default: ProgressFn) -> ProgressFn:
+    """The callback this context reports to: its run's own, or `default`."""
+    return _progress.get() or default
 
 #: LangGraph stops a run that exceeds this many supersteps. The loop is up to
 #: nine nodes deep per attempt when an attempt reaches the audit, and there
@@ -142,6 +165,61 @@ MAX_NARRATION_RETRIES = 1
 _DETAIL = "_detail"
 _MODEL_CALLS = "_model_calls"
 _ROUTE = "_route"
+
+
+def traced_node(
+    name: str,
+    fn: Callable[[Any], dict],
+    *,
+    spans: Mapping[str, tuple[str, str, tuple[str, ...]]],
+    progress: Callable[[], ProgressFn],
+    outputs: Callable[[dict], dict] | None = None,
+) -> Callable[[Any], dict]:
+    """Wrap a node so it reports its own cost -- in either graph.
+
+    Per-agent timing is how the architecture's central claim gets tested:
+    that the Supervisor and Narrator together cost less than the table
+    selection and validation calls they replaced. A node reports its
+    progress detail, its model-call count and the model that answered
+    through three private keys, which are stripped here rather than reaching
+    the state: the pipeline's graph and the ensemble's outer graph (arch7)
+    both register their nodes through this one function, so neither can let
+    a private key through to the state, the wire or the trace.
+
+    `spans` is the graph's own table of agent names, span kinds and the
+    state each node reads; `progress` returns the callback to report to,
+    read when the node finishes so a run's own callback wins. `outputs`,
+    when given, is what the span records of the update instead of all of
+    it -- for a node whose update holds whole runs that have spans of their
+    own.
+    """
+    agent, span_type, reads = spans[name]
+
+    def node(state: Any) -> dict:
+        # The same wrapper puts the node in the MLflow trace, so the two
+        # records of a run -- the state's and MLflow's -- cannot disagree
+        # about what ran.
+        with tracing.agent_span(agent, span_type, lambda: {k: state.get(k) for k in reads}) as span:
+            started = time.perf_counter()
+            update = dict(fn(state) or {})
+            detail = str(update.pop(_DETAIL, ""))
+            route = update.pop(_ROUTE, None) or {}
+            entry = TraceEntry(
+                node=name,
+                ms=round((time.perf_counter() - started) * 1000, 2),
+                model_calls=int(update.pop(_MODEL_CALLS, 0)),
+                detail=detail,
+                model=route.get("model", ""),
+                rung=route.get("rung", ""),
+                route=route.get("route", ""),
+                hops=list(route.get("hops", [])),
+            )
+            update["trace"] = [entry]
+            tracing.finish_agent_span(span, entry, outputs(update) if outputs else update)
+        progress()(name, detail)
+        return update
+
+    return node
 
 
 def _skipped(error: str) -> str:
@@ -459,58 +537,31 @@ class Nl2SqlAgent:
         this run only, which is what lets one agent serve several callers at
         once without their progress lines crossing.
         """
-        token = _progress.set(on_progress) if on_progress is not None else None
-        try:
-            with self.tracer.run(question, principal=principal) as trace:
-                state = self._graph.invoke(
-                    new_state(question, principal=principal),
-                    config={"recursion_limit": RECURSION_LIMIT},
-                )
-                if trace is not None:
-                    trace.finish(state)
-                    state["trace_id"] = trace.trace_id
-            return state
-        finally:
-            if token is not None:
-                _progress.reset(token)
+        with self.tracer.run(question, principal=principal) as trace:
+            state = self.answer(new_state(question, principal=principal), on_progress=on_progress)
+            if trace is not None:
+                trace.finish(state)
+                state["trace_id"] = trace.trace_id
+        return state
+
+    def answer(self, state: AgentState, *, on_progress: ProgressFn | None = None) -> AgentState:
+        """Run the pipeline on a state already seeded, and return it finished.
+
+        `run` seeds a fresh state and opens the question's trace around this;
+        the ensemble (arch7) calls it once per wording, inside a span of the
+        trace it opened, with a state seeded with the screening made for
+        that wording. It opens no trace of its own.
+        """
+        with progress_to(on_progress):
+            return self._graph.invoke(state, config={"recursion_limit": RECURSION_LIMIT})
 
     def _traced(self, name: str, fn: Callable[[AgentState], dict]) -> Callable[[AgentState], dict]:
-        """Wrap a node so it reports its own cost.
+        """A node of this pipeline, wrapped by `traced_node`."""
+        return traced_node(name, fn, spans=TRACE_SPANS, progress=self._report)
 
-        Per-agent timing is how the architecture's central claim gets tested:
-        that the Supervisor and Narrator together cost less than the table
-        selection and validation calls they replaced. A node reports its
-        progress detail and model-call count through two private keys, which
-        are stripped here rather than reaching the state.
-        """
-
-        agent, span_type, reads = TRACE_SPANS[name]
-
-        def node(state: AgentState) -> dict:
-            # The same wrapper puts the node in the MLflow trace, so the two
-            # records of a run -- the state's and MLflow's -- cannot disagree
-            # about what ran.
-            with tracing.agent_span(agent, span_type, lambda: {k: state.get(k) for k in reads}) as span:
-                started = time.perf_counter()
-                update = dict(fn(state) or {})
-                detail = str(update.pop(_DETAIL, ""))
-                route = update.pop(_ROUTE, None) or {}
-                entry = TraceEntry(
-                    node=name,
-                    ms=round((time.perf_counter() - started) * 1000, 2),
-                    model_calls=int(update.pop(_MODEL_CALLS, 0)),
-                    detail=detail,
-                    model=route.get("model", ""),
-                    rung=route.get("rung", ""),
-                    route=route.get("route", ""),
-                    hops=list(route.get("hops", [])),
-                )
-                update["trace"] = [entry]
-                tracing.finish_agent_span(span, entry, update)
-            (_progress.get() or self._on_progress)(name, detail)
-            return update
-
-        return node
+    def _report(self) -> ProgressFn:
+        """The run's own progress callback, or the constructor's."""
+        return reporter(self._on_progress)
 
     def _build_graph(self):
         graph = StateGraph(AgentState)
@@ -603,23 +654,57 @@ class Nl2SqlAgent:
         question: deterministic code, no model call, and nothing to wait for.
         With the Supervisor off it is built from the question's own wording,
         which still finds a ranking and its N.
+
+        A run the ensemble screened before it started (arch7 section 22.4)
+        makes no call: its verdict, intent and clarification were seeded,
+        and its contract is built from the seeded reading exactly as it
+        would have been from its own.
         """
         if not self.settings.supervisor_enabled:
-            contract = self._build_contract(state["question"])
+            contract = self.build_contract(state["question"])
             return {
                 "answer_contract": contract,
                 _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
             }
-        routed = self.router.model("supervisor", *complexity.supervisor_rung(state["question"]))
+        if state.get("screened"):
+            fields = state.get("screening_fields") or {}
+            contract = self.build_contract(
+                state["question"],
+                intent=state.get("intent", "aggregate"),
+                entities=fields.get("entities") or [],
+                measure=fields.get("measure") or "",
+                period=fields.get("period") or "",
+            )
+            return {
+                "answer_contract": contract,
+                _DETAIL: f"screened by the ensemble; contract: {answer_contract.describe(contract)}",
+            }
+        update, _ = self.screen(state["question"])
+        return update
+
+    def screen(self, question: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The Supervisor's reading of one question, and the contract built from it.
+
+        Returns the update the Supervisor's node writes -- verdict, intent,
+        clarification, the contract, a `node_errors` entry when the call
+        failed, and the private keys its traced node reads -- and the
+        screening itself, which seeds a run made for it
+        (`new_state(screening=...)`): what the ensemble's anchor screening
+        hands the original's run, so its Supervisor call is not paid twice.
+        """
+        routed = self.router.model("supervisor", *complexity.supervisor_rung(question))
         update = supervisor.screen(
             routed,
-            state["question"],
+            question,
             clarify_enabled=self.settings.clarify_enabled,
             tables=self.db.table_names(),
         )
         _note_route(update, routed)
-        contract = self._build_contract(
-            state["question"],
+        screening = {
+            name: update.get(name) for name in ("verdict", "intent", "clarification", *SCREENING_FIELDS)
+        }
+        contract = self.build_contract(
+            question,
             intent=update["intent"],
             entities=update.pop("entities", []),
             measure=update.pop("measure", ""),
@@ -631,9 +716,10 @@ class Nl2SqlAgent:
             f"{update['verdict']} / {update['intent']}; "
             f"contract: {answer_contract.describe(contract)}"
         )
-        return update
+        return update, screening
 
-    def _build_contract(self, question: str, **fields: Any) -> AnswerContract:
+    def build_contract(self, question: str, **fields: Any) -> AnswerContract:
+        """The answer contract for a question and a Supervisor's reading of it."""
         return answer_contract.build_contract(
             question, resources=self._contract_resources(), **fields
         )
@@ -689,8 +775,9 @@ class Nl2SqlAgent:
         )
         try:
             # Not routed -- this is v3's call, on v3's model -- so it is
-            # traced here rather than by the router.
-            with tracing.model_span(
+            # traced here rather than by the router, and takes its slot of
+            # the host's gate here too (arch7 section 22.9).
+            with self.router.gate.slot(), tracing.model_span(
                 self.settings.ollama_model, messages, task="table selection", schema=TableSelection
             ) as span:
                 selection = self.llm.with_structured_output(TableSelection).invoke(messages)

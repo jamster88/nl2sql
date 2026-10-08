@@ -476,7 +476,7 @@ class MainWindowTest {
                         + "2025, which is an increase of eleven per cent over the previous year "
                         + "across every banner in the group.", 719279.97,
                         List.of(List.of(0, "net_sales")), null)),
-                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of());
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of(), null);
         Models.Job job = Fakes.answered();
         return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
                 job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),

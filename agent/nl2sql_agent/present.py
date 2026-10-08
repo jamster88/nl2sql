@@ -51,6 +51,7 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from .compare import ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE, ROUNDING_DECIMALS
 from .state import AUDIT, AuditReport, ChartSpec, Claim, CompletenessReport, Issue, QueryResult
 from nl2sql_common.errors import Invalid
 
@@ -59,12 +60,11 @@ from nl2sql_common.errors import Invalid
 # sample, so both the formatter and the narrator change behaviour at the line.
 MAX_CHART_ROWS = 30
 
-# Two decimals, matching ROUNDING_DECIMALS in benchmarks/runner.py: the
-# reference queries round for legibility and agents do not, and a claim is
-# graded by the same arithmetic the benchmark grades an answer by.
-ROUNDING_DECIMALS = 2
-_RELATIVE_TOLERANCE = 1e-6
-_ABSOLUTE_TOLERANCE = 1e-9
+# The scorer's own tolerances (`compare.py`): the reference queries round for
+# legibility and agents do not, and a claim is graded by the same arithmetic
+# the benchmark grades an answer by.
+_RELATIVE_TOLERANCE = RELATIVE_TOLERANCE
+_ABSOLUTE_TOLERANCE = ABSOLUTE_TOLERANCE
 
 
 # ---------------------------------------------------------------------------

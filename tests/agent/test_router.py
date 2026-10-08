@@ -20,6 +20,7 @@ import pytest
 from nl2sql_agent.config import Settings
 from nl2sql_agent.router import (
     CATALOG_SCHEMA,
+    PENDING_TASKS,
     RoutingError,
     Router,
     build_table,
@@ -459,3 +460,49 @@ def test_a_chain_names_each_model_once():
     with pytest.raises(ConnectionError):
         routed.invoke([])
     assert clients[ANCHOR].calls == 1 and routed.hops == []
+
+
+# ---------------------------------------------------------------------------
+# arch7: the host gate, and the two tasks the router does not have yet
+# ---------------------------------------------------------------------------
+
+
+def test_every_routed_call_waits_for_a_slot_of_the_hosts_gate():
+    """With one slot, a call another thread is making holds this one back
+    until it is done -- whichever job or candidate either belongs to."""
+    clients = {"light:7b": Client("light:7b")}
+    routed = router(clients)
+    answered = threading.Event()
+
+    def call() -> None:
+        routed.model("generator", "light").invoke([])
+        answered.set()
+
+    with routed.gate.slot():
+        worker = threading.Thread(target=call)
+        worker.start()
+        assert not answered.wait(0.2), "the call went to the host while the only slot was held"
+    assert answered.wait(5)
+    worker.join()
+
+
+def test_a_call_that_hops_gives_its_slot_back_before_the_next_model_is_asked():
+    clients = {"light:7b": Client("light:7b", fail="model 'light:7b' not found"),
+               ANCHOR: Client(ANCHOR, content="SELECT 2")}
+    routed = router(clients)
+    assert routed.model("generator", "light").invoke([]).content == "SELECT 2"
+    assert routed.gate.waiting == 0
+    with routed.gate.slot():
+        pass  # free: neither attempt kept it
+
+
+@pytest.mark.parametrize("variable", ["model_route_paraphraser", "model_route_judge"])
+def test_a_pin_for_the_ensembles_tasks_is_checked_at_startup_and_routes_nothing(variable):
+    """arch7 section 22.10: the Paraphraser and the Judge are not tasks of the
+    router until they are built. Their pins are read and checked as the
+    five's are, so a typo is found at startup, and no cell is made for them."""
+    with pytest.raises(RoutingError, match=variable.upper()):
+        build_table(settings(**{variable: "nonsense=x"}), catalog(entry("middle:14b", p50=1.0)))
+    table = build_table(settings(**{variable: "middle:14b"}), catalog(entry("middle:14b", p50=1.0)))
+    assert {task for task, _ in table.cells} == set(TASKS)
+    assert not set(PENDING_TASKS) & set(TASKS)

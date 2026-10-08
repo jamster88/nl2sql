@@ -4,8 +4,9 @@ Fifteen questions, scored on **accuracy first and speed second**.
 
 ```bash
 ./launch.sh                               # the stack has to be up
-python benchmarks/run_benchmark.py        # the full agent
-python benchmarks/run_benchmark.py --compare   # schema-only vs knowledge vs multi-shot vs snippets
+python benchmarks/run_benchmark.py        # every retrieval stage, one run a question
+python benchmarks/run_benchmark.py --config ensemble   # the same, asked through the ensemble (arch7)
+python benchmarks/run_benchmark.py --compare   # schema-only vs knowledge vs multi-shot vs snippets vs ensemble
 ```
 
 ## What is measured
@@ -224,16 +225,28 @@ at is visible there. `--json` carries both, and each question's routes.
 
 ## Comparing configurations
 
-`--compare` runs the same questions through four configurations that differ
-**only** in what retrieval is switched on, so a difference between two rows is
-attributable to that stage and nothing else:
+`--compare` runs the same questions through five configurations, each the
+one before it plus **one** stage -- four of retrieval, then the ensemble --
+so a difference between two rows is attributable to that stage and nothing
+else:
 
-| | Knowledge base | Worked examples | SQL snippets | Equivalent to |
-|---|---|---|---|---|
-| `schema-only` | off | off | off | v1 |
-| `knowledge` | on | off | off | v2 |
-| `multi-shot` | on | on | off | v3 to v5.5 |
-| `snippets` | on | on | on | v5.6, the agent as it ships, and the default |
+| | Knowledge base | Worked examples | SQL snippets | Ensemble | Equivalent to |
+|---|---|---|---|---|---|
+| `schema-only` | off | off | off | off | v1 |
+| `knowledge` | on | off | off | off | v2 |
+| `multi-shot` | on | on | off | off | v3 to v5.5 |
+| `snippets` | on | on | on | off | v5.6 to 6.3, one run a question, and the default |
+| `ensemble` | on | on | on | on | 7.0, the agent as it ships: the question asked several ways (arch7) |
+
+Every configuration sets the ensemble on or off itself, so the first four
+are one run a question whatever `ENSEMBLE_ENABLED` says. An ensemble answer
+is scored on what it delivered -- its SQL and rows; its attempts, examples
+and rung are the delivered run's; and its time and model calls are every
+run's and the ensemble's own steps', the step that ran the candidates left
+out so its time is not counted twice. As built so far the ensemble asks the
+original alone, so `ensemble` should score as `snippets` does, with the same
+SQL, which is what its first measurement checked
+([`docs/benchmark.md`](../docs/benchmark.md#the-ensemble-configuration)).
 
 The snippet store is found on the runtime stores' published port,
 `localhost:5435` (6.3), unless `SNIPPET_DB_URL` says otherwise; each

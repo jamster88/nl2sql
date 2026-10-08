@@ -143,6 +143,11 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("MODEL_NUM_CTX", settings.model_num_ctx),
         ("OLLAMA_NUM_PREDICT", settings.num_predict),
         ("OLLAMA_TIMEOUT", settings.ollama_timeout),
+        ("ENSEMBLE_PARAPHRASES", settings.ensemble_paraphrases),
+        ("ENSEMBLE_MAX_PARAPHRASES", settings.ensemble_max_paraphrases),
+        ("ENSEMBLE_WAVES", settings.ensemble_waves),
+        ("ENSEMBLE_MAX_CLAIMS", settings.ensemble_max_claims),
+        ("OLLAMA_PARALLEL_CALLS", settings.ollama_parallel_calls),
     ):
         row = _table_row(agent_readme, name)
         assert str(value) in row, f"README says {name} defaults to something other than {value}: {row!r}"

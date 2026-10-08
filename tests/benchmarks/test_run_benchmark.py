@@ -58,26 +58,34 @@ def test_a_category_can_be_run_on_its_own():
 # ---------------------------------------------------------------------------
 
 
-def test_the_four_configurations_differ_only_in_what_retrieval_is_on():
+#: What a configuration may switch: the four retrieval stages, and the ensemble.
+SWITCHES = {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled", "ensemble_enabled"}
+
+
+def test_the_five_configurations_differ_only_in_which_stages_are_on():
     """That is what makes a difference between two rows attributable. If they
     differed in the model or the database too, the comparison would mean nothing.
     """
-    assert set(run_benchmark.CONFIGURATIONS) == {"schema-only", "knowledge", "multi-shot", "snippets"}
-    keys = [set(c) for c in run_benchmark.CONFIGURATIONS.values()]
-    assert all(k == keys[0] for k in keys)
-    assert keys[0] == {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled"}
+    assert list(run_benchmark.CONFIGURATIONS) == ["schema-only", "knowledge", "multi-shot", "snippets", "ensemble"]
+    assert all(set(c) == SWITCHES for c in run_benchmark.CONFIGURATIONS.values())
 
 
 def test_each_configuration_adds_one_stage_to_the_one_before():
-    schema, knowledge, multi, snippets = (
-        run_benchmark.CONFIGURATIONS[name]
-        for name in ("schema-only", "knowledge", "multi-shot", "snippets")
-    )
+    schema, knowledge, multi, snippets, ensemble = run_benchmark.CONFIGURATIONS.values()
     assert not any(schema.values())
     assert knowledge["rag_enabled"] and not knowledge["examples_enabled"]
     assert not knowledge["snippets_enabled"]
     assert multi["examples_enabled"] and multi["multi_shot_enabled"] and not multi["snippets_enabled"]
-    assert all(snippets.values())
+    assert snippets == {**multi, "snippets_enabled": True}
+    assert ensemble == {**snippets, "ensemble_enabled": True}
+
+
+def test_only_the_ensemble_configuration_asks_several_ways():
+    """ENSEMBLE_ENABLED is on by default, so a configuration that left it out
+    would be the ensemble in every row and the retrieval ladder would stop
+    measuring retrieval."""
+    on = [name for name, c in run_benchmark.CONFIGURATIONS.items() if c["ensemble_enabled"]]
+    assert on == ["ensemble"]
 
 
 def test_every_retrieval_switch_the_agent_has_is_set_by_each_configuration():
@@ -86,10 +94,9 @@ def test_every_retrieval_switch_the_agent_has_is_set_by_each_configuration():
     from nl2sql_agent.config import Settings
 
     switches = {name for name in vars(Settings()) if name.endswith("_enabled")}
-    retrieval = {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled"}
-    assert retrieval <= switches
+    assert SWITCHES <= switches
     for configuration in run_benchmark.CONFIGURATIONS.values():
-        assert set(configuration) == retrieval
+        assert set(configuration) == SWITCHES
 
 
 def test_building_settings_applies_the_configuration_and_the_overrides():
@@ -130,9 +137,11 @@ def test_a_host_default_takes_the_password_the_stack_generated(monkeypatch, tmp_
     assert settings.embed_base_url == "http://localhost:11434"
 
 
-def test_the_default_configuration_is_the_full_agent():
+def test_the_default_configuration_is_every_retrieval_stage_asked_once():
+    """One run a question: the measurement every earlier release's numbers
+    are, and a quarter of the ensemble's cost once it asks four ways."""
     assert run_benchmark.parse_args([]).config == "snippets"
-    assert all(run_benchmark.CONFIGURATIONS["snippets"].values())
+    assert run_benchmark.CONFIGURATIONS["snippets"] == {**dict.fromkeys(SWITCHES, True), "ensemble_enabled": False}
 
 
 def test_the_snippet_store_is_found_on_its_published_port(monkeypatch, tmp_path):
@@ -320,6 +329,65 @@ def test_a_rewording_is_asked_in_its_own_words_and_scored_against_its_questions_
     assert (crashed.question, crashed.wording, crashed.outcome) == (text, 2, FAILED)
 
 
+def test_an_ensemble_answer_is_scored_from_what_it_delivered_and_timed_from_every_run():
+    """arch7: the rows and SQL scored are the delivered ones; the attempts,
+    the examples and the rung are the delivered run's; the time and the model
+    calls are every run's and the ensemble's own nodes', the node that ran
+    the candidates left out so its time is not counted twice."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.ensemble_state import Candidate, Decision, new_ensemble_state
+    from nl2sql_agent.state import TraceEntry, new_state
+
+    run = {**new_state("q"), "attempts": 3, "example_pairs": [{"pair_id": "Q07"}], "knowledge_chunks": [{}],
+           "complexity": SimpleNamespace(rung="standard"),
+           "trace": [TraceEntry(node="generate_sql", ms=800.0, model_calls=1, model="m", rung="standard")]}
+    state = {
+        **new_ensemble_state("q"),
+        "candidates": [Candidate(index=0, wording="q", origin="original", wave=1, state=run, outcome="answered")],
+        "decision": Decision(chosen=0),
+        "sql": "SELECT 10", "result": {"rows": [[10]]},
+        "trace": [TraceEntry(node="screen", ms=100.0, model_calls=1, model="m", rung="light"),
+                  TraceEntry(node="answer", ms=900.0), TraceEntry(node="deliver", ms=1.0)],
+    }
+    result = run_benchmark.run_question(FakeAgent(state), _Reference([[10]]), by_id("B01"), StageTimer())
+
+    assert (result.outcome, result.sql, result.attempts) == (CORRECT, "SELECT 10", 3)
+    assert (result.examples, result.knowledge_chunks, result.rung) == (["Q07"], 1, "standard")
+    assert result.timing.as_dict() == {"screen": 0.1, "deliver": 0.001, "generate_sql": 0.8}
+    assert result.model_calls == {"screen": 1, "generate_sql": 1}
+    assert [route["node"] for route in result.routes] == ["screen", "generate_sql"]
+
+
+def test_the_ensemble_configuration_asks_through_the_ensemble(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    import benchmarks.run_benchmark as rb
+    import nl2sql_agent.ensemble as ensemble_module
+
+    built = []
+
+    class _Ensemble:
+        def __init__(self, settings, *, agent, on_progress):
+            built.append((agent, on_progress))
+            self.inner = agent
+
+        def run(self, question, **kwargs):
+            return self.inner.run(question, **kwargs)
+
+        tracer = property(lambda self: self.inner.tracer)
+        settings = property(lambda self: self.inner.settings)
+
+    monkeypatch.setattr(ensemble_module, "EnsembleAgent", _Ensemble)
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: SimpleNamespace(
+        **{**vars(_settings()), "ensemble_enabled": configuration == "ensemble"}))
+    code, agents = _drive(monkeypatch, {"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1},
+                          argv=["--only", "B01", "--config", "ensemble"], keep_settings=True)
+    assert code == 0
+    [(agent, timer)] = built
+    assert agent is agents[0] and isinstance(timer, StageTimer)
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -467,6 +535,7 @@ def _settings():
         db_schema="public",
         statement_timeout_ms=30000,
         max_rows=50,
+        ensemble_enabled=False,
     )
 
 
@@ -494,12 +563,13 @@ class _StubAgent:
         return state
 
 
-def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None, tracer=None):
+def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None, tracer=None, keep_settings=False):
     """Run `main` with the agent, the database and the reference rows faked."""
     import benchmarks.run_benchmark as rb
 
     monkeypatch.setattr(rb, "reference_rows", lambda db, q: expected_rows or [[10]])
-    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    if not keep_settings:
+        monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
 
     class _FakeDatabase:
         def __init__(self, *a, **k) -> None:
@@ -578,9 +648,9 @@ def test_comparing_configurations_runs_each_one_and_prints_the_table(monkeypatch
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert len(agents) == 4, "one agent per configuration"
+    assert len(agents) == 5, "one agent per configuration"
     assert "comparison" in out
-    for configuration in ("schema-only", "knowledge", "multi-shot", "snippets"):
+    for configuration in ("schema-only", "knowledge", "multi-shot", "snippets", "ensemble"):
         assert configuration in out
 
 

@@ -26,6 +26,12 @@ export interface ProgressEvent {
   label: string;
   detail: string;
   at: string;
+  /**
+   * Which wording's run reported the step, under the ensemble (7.0): 0 the
+   * question as asked, 1 and up a rewording; `null` for the ensemble's own
+   * steps. Absent from a server older than 7.0.
+   */
+  candidate?: number | null;
 }
 
 /**
@@ -100,6 +106,88 @@ export interface LiteralMatch {
 }
 
 /** Everything the pipeline produced for one question. */
+/** How the ensemble's vote went: `agreed` of the `admissible` runs agreed, of `total` run. */
+export interface EnsembleAgreement {
+  admissible: number;
+  agreed: number;
+  total: number;
+  level: "unanimous" | "majority" | "judged" | "contested" | "single" | "none";
+  why: string;
+}
+
+/** The Judge's choice among the groups, asked only when the votes could not decide. */
+export interface EnsembleJudgement {
+  group: number | null;
+  why: string;
+  model: string;
+}
+
+/** A column another agreeing run carried, joined onto the delivered rows. */
+export interface JoinedColumn {
+  column: string;
+  from_candidate: number;
+  key: string;
+  table: string;
+}
+
+/** A column another agreeing run carried that would not join cleanly, and why. */
+export interface DeclinedColumn {
+  column: string;
+  from_candidate: number;
+  why: string;
+}
+
+/** A group of runs that lost the vote: its key fact, and how its query differs. */
+export interface EnsembleDissent {
+  group: number;
+  members: number[];
+  signature: string;
+  differs: string;
+}
+
+/** One wording's run: what it was asked, what it wrote, how it ended. */
+export interface EnsembleCandidate {
+  index: number;
+  wording: string;
+  origin: "original" | "paraphrase";
+  wave: number;
+  changed: string;
+  outcome: "answered" | "gave_up" | "refused";
+  admissible: boolean;
+  reasons: string[];
+  sql: string;
+  signature: string;
+  attempts: number;
+  group: number | null;
+  duration_ms: number;
+  trace: TraceEntry[];
+}
+
+/** A rewording the fidelity gate would not run, and the check it failed. */
+export interface DiscardedRewording {
+  index: number;
+  text: string;
+  changed: string;
+  reason: string;
+}
+
+/** The question asked several ways (7.0): the vote, the delivered run, every run's record. */
+export interface Ensemble {
+  agreement: EnsembleAgreement;
+  chosen: number | null;
+  fused_from: number[];
+  columns_fused: boolean;
+  joined_columns: JoinedColumn[];
+  declined_columns: DeclinedColumn[];
+  claims_added: number;
+  claims_dropped: number;
+  dissent: EnsembleDissent[];
+  judged: EnsembleJudgement | null;
+  candidates: EnsembleCandidate[];
+  discarded: DiscardedRewording[];
+  parallel_calls: number;
+}
+
 export interface Answer {
   answer: string;
   narrative: string;
@@ -120,6 +208,8 @@ export interface Answer {
   trace: TraceEntry[];
   retrieval_errors: Record<string, string>;
   node_errors: Record<string, string>;
+  /** `null` with the ensemble off; absent from a server older than 7.0. */
+  ensemble?: Ensemble | null;
 }
 
 export interface JobLinks {
@@ -179,6 +269,17 @@ export interface Limits {
  * Read on start-up and used to decide what to render: `narrate: false` means
  * there is no paragraph to show, `audit: false` means no verification badge.
  */
+/** How this server asks a question several ways (7.0). */
+export interface EnsembleSettings {
+  enabled: boolean;
+  paraphrases: number;
+  max_paraphrases: number;
+  waves: number;
+  parallel_calls: number;
+  judge: boolean;
+  fuse_columns: boolean;
+}
+
 export interface Pipeline {
   supervisor: boolean;
   literals: boolean;
@@ -186,6 +287,8 @@ export interface Pipeline {
   audit: boolean;
   schema_retrieval: string;
   nodes: string[];
+  /** Absent from a server older than 7.0. */
+  ensemble?: EnsembleSettings | null;
 }
 
 /** Everything a client needs to configure itself against this server. */

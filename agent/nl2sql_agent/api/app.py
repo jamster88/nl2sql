@@ -25,7 +25,9 @@ it is not, as it always was.
 
 from __future__ import annotations
 
+import inspect
 import json
+import logging
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -34,16 +36,18 @@ from typing import Any, AsyncIterator, Callable
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.pool import QueuePool
 from starlette.middleware.cors import CORSMiddleware
 
 from .. import __version__
 from ..config import Settings
-from ..graph import Nl2SqlAgent
+from ..ensemble import build_agent
 from ..llm import LlmUnavailableError
 from ..tracing import Tracer
 from nl2sql_common.envelope import FALLBACK_CODES as SHARED_FALLBACK_CODES
 from nl2sql_common.envelope import Check
 from nl2sql_common.errors import DATABASE_ERRORS
+from nl2sql_common.roles import READER
 from nl2sql_identity import Guard, GuardSettings
 from nl2sql_identity.postgres import membership_lookup
 from .feedback import FeedbackSink, build_sink
@@ -58,6 +62,43 @@ from .tls import CertificateInfo
 #: The codes an error gets when the route raising it gave none: the shared
 #: set, which every nl2sql API answers with.
 FALLBACK_CODES = dict(SHARED_FALLBACK_CODES)
+
+log = logging.getLogger(__name__)
+
+#: The agent's connection pool, as `database.py` builds it: SQLAlchemy's
+#: defaults, read from SQLAlchemy rather than written down twice.
+_POOL = inspect.signature(QueuePool.__init__).parameters
+
+
+def connection_warning(settings: Settings, api: ApiSettings) -> str | None:
+    """What to warn of at start when the runs this server may make at once
+    could outgrow the database connections they need (R5 and S3 of arch7's
+    risks by phase).
+
+    Under the ensemble each question runs up to OLLAMA_PARALLEL_CALLS
+    candidates at once, and API_MAX_CONCURRENCY questions run at once, each
+    candidate holding a connection while its query runs. Two bounds meet
+    that product: the agent's pool -- SQLAlchemy's, five connections and ten
+    more on overflow, then up to thirty seconds' wait and an error -- and,
+    across every process that reads as it, the reader role's connection
+    limit, warned of at half. Nothing is changed: the numbers are the
+    deployer's. The CLI answers one question and is not checked.
+    """
+    if not settings.ensemble_enabled:
+        return None
+    runs = settings.ollama_parallel_calls * api.max_concurrency
+    size, overflow, wait = (_POOL[name].default for name in ("pool_size", "max_overflow", "timeout"))
+    pool, limit = size + overflow, READER.connection_limit
+    if runs <= pool and runs <= limit / 2:
+        return None
+    return (
+        f"OLLAMA_PARALLEL_CALLS ({settings.ollama_parallel_calls}) x API_MAX_CONCURRENCY "
+        f"({api.max_concurrency}) = {runs} candidate runs may each hold a database connection at once. "
+        f"The agent's pool holds {pool} ({size}, and {overflow} more on overflow), and a run that finds it "
+        f"full waits up to {wait:g} s for one and then fails; the reader role allows {limit} across every "
+        f"process that reads as it, and this is {'more' if runs > limit / 2 else 'not more'} than half of "
+        "that. Lower one of the two settings."
+    )
 
 
 def default_guard(settings: Settings, api: ApiSettings) -> Guard:
@@ -89,13 +130,14 @@ class AgentHolder:
     `/readyz` is where an orchestrator goes to find out.
     """
 
-    def __init__(self, factory: Callable[[], Nl2SqlAgent]) -> None:
+    def __init__(self, factory: Callable[[], Any]) -> None:
         self._factory = factory
-        self._agent: Nl2SqlAgent | None = None
+        self._agent: Any = None
         self._error: str | None = None
         self._lock = threading.Lock()
 
-    def get(self) -> Nl2SqlAgent:
+    def get(self) -> Any:
+        """The agent -- the ensemble, or the pipeline alone (`ensemble.build_agent`)."""
         with self._lock:
             if self._agent is None:
                 try:
@@ -161,7 +203,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     api_settings: ApiSettings | None = None,
-    agent_factory: Callable[[], Nl2SqlAgent] | None = None,
+    agent_factory: Callable[[], Any] | None = None,
     store: JobStore | None = None,
     certificate: CertificateInfo | None = None,
     feedback: FeedbackSink | None = None,
@@ -181,7 +223,10 @@ def create_app(
     # One connection to MLflow for the server: the agent traces its runs on
     # it, and the feedback routes put verdicts on those traces.
     tracer = tracer or Tracer(settings)
-    holder = AgentHolder(agent_factory or (lambda: Nl2SqlAgent(settings, tracer=tracer)))
+    holder = AgentHolder(agent_factory or (lambda: build_agent(settings, tracer=tracer)))
+    warning = connection_warning(settings, api)
+    if warning:
+        log.warning(warning)
 
     def default_runner(question: str, principal: str | None, on_progress) -> dict:
         # The callback goes to `run`, not to the agent: one agent answers

@@ -49,11 +49,17 @@ from typing import Any, Callable, Sequence
 from . import tracing
 from .complexity import RUNGS
 from .config import Settings
+from .hostgate import HostGate, gate_for
 from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
 
 log = logging.getLogger(__name__)
 
 TASKS = ("supervisor", "generator", "reflection", "narrator", "repair")
+#: The ensemble's two tasks (arch7 section 22.10), not the router's until the
+#: Paraphraser and the Judge are built: their pins are read and checked at
+#: startup as the five's are, and route nothing. Do not route a call as one
+#: of these before it is in TASKS -- the table has no cell for it.
+PENDING_TASKS = ("paraphraser", "judge")
 #: The catalog layout this router reads (models/build_catalog.py SCHEMA_VERSION).
 CATALOG_SCHEMA = 2
 OLLAMA_PORT = 11434
@@ -367,6 +373,8 @@ def build_table(
                 notes.append(f"{setting} pins {model}, which the host does not serve: pin ignored")
                 continue
             cells[(task, rung)] = Cell(model, anchor if model != anchor else None, f"pinned by {setting}")
+    for task in PENDING_TASKS:
+        parse_pin(getattr(settings, f"model_route_{task}"), f"MODEL_ROUTE_{task.upper()}")
 
     table_models = {cell.model for cell in cells.values()} | {anchor}
     if len(table_models) > settings.model_max_loaded:
@@ -426,6 +434,10 @@ class Router:
         self._factory = factory
         self._clients: dict[str, Any] = {}
         self._lock = threading.Lock()
+        # Every call any routed model makes takes a slot of the host's gate
+        # first (arch7 section 22.9) -- one gate for the process, so the
+        # API's workers and a question's candidates share it.
+        self.gate = gate_for(settings)
 
     def route(self, task: str, rung: str, why: str = "") -> ModelChoice:
         cell = self.table.cells[(task, rung)]
@@ -455,7 +467,7 @@ class Router:
         for name in (choice.model, choice.fallback, self.table.anchor):
             if name and name not in chain:
                 chain.append(name)
-        return RoutedModel(choice, chain, self.client)
+        return RoutedModel(choice, chain, self.client, gate=self.gate)
 
 
 class RoutedModel:
@@ -463,10 +475,13 @@ class RoutedModel:
     `with_structured_output`, answered by the routed model or, when that one
     cannot answer at all, by the next in its chain."""
 
-    def __init__(self, choice: ModelChoice, chain: Sequence[str], client: Callable[[str], Any]) -> None:
+    def __init__(
+        self, choice: ModelChoice, chain: Sequence[str], client: Callable[[str], Any], *, gate: HostGate
+    ) -> None:
         self.choice = choice
         self._chain = list(chain)
         self._client = client
+        self._gate = gate
         self.calls = 0
         self.answered_by: str | None = None
         self.hops: list[str] = []
@@ -504,8 +519,14 @@ class RoutedModel:
 
     def _traced_call(self, name: str, call: Callable[[Any], Any], messages: Any, schema: type | None) -> Any:
         """One model's attempt, as its own span in the run's trace: a hop
-        down the chain is then two spans, the first failed or empty."""
-        with tracing.model_span(
+        down the chain is then two spans, the first failed or empty.
+
+        The call holds a slot of the host's gate, and only the call: a hop
+        gives its slot back before the next model is asked, and the span
+        opens once the slot is held, so it times the model and not the queue.
+        """
+        client = self._client(name)
+        with self._gate.slot(), tracing.model_span(
             name,
             messages,
             task=self.choice.task,
@@ -513,7 +534,7 @@ class RoutedModel:
             route=self.choice.reason,
             schema=schema,
         ) as span:
-            answer = call(self._client(name))
+            answer = call(client)
             tracing.finish_model_span(span, answer)
             return answer
 

@@ -352,7 +352,7 @@ def test_the_server_shares_one_tracer_between_its_agent_and_its_verdicts(monkeyp
         built["tracer"] = tracer
         return object()
 
-    monkeypatch.setattr(app_module, "Nl2SqlAgent", agent)
+    monkeypatch.setattr(app_module, "build_agent", agent)
     app = app_module.create_app(settings=Settings(), api_settings=api_settings, feedback=FakeSink())
     try:
         app.state.agent.get()

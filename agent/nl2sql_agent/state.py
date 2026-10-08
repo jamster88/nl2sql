@@ -342,6 +342,14 @@ class AgentState(TypedDict, total=False):
     intent: Intent
     verdict: Verdict
     clarification: str | None  # what to ask back when verdict == "ambiguous"
+    #: The run was screened for it before it started (arch7 section 22.4): the
+    #: ensemble's anchor screening, or a rewording's, seeded by `new_state`.
+    #: The Supervisor then makes no call and builds the contract from
+    #: `screening_fields` -- the screening's entities, measure and period.
+    #: Only the outer graph seeds one, from a screening it made itself; no
+    #: client can, since neither is on the wire.
+    screened: bool
+    screening_fields: dict[str, Any]
     answer_contract: AnswerContract  # what a complete answer carries (arch5)
     #: Defaults the pipeline chose for the user, such as the fiscal year; the
     #: narrator must state every one (arch5 sections 6.6 and 7.2).
@@ -408,19 +416,35 @@ class AgentState(TypedDict, total=False):
     trace_id: str
 
 
-def new_state(question: str, *, principal: str | None = None) -> AgentState:
+#: What a screening carries into a run beyond its verdict, intent and
+#: clarification: the Supervisor's reading that the contract is built from.
+SCREENING_FIELDS = ("entities", "measure", "period")
+
+
+def new_state(
+    question: str, *, principal: str | None = None, screening: dict[str, Any] | None = None
+) -> AgentState:
     """The initial state for a run: everything a node might read, empty.
 
     Seeding the collections here rather than relying on `state.get(...)`
     defaults keeps every node's reads total, which is what makes them
     individually testable.
+
+    `screening` is a Supervisor's reading made for this run before it
+    started -- `supervisor.screen`'s update -- which the run then trusts
+    (arch7 section 22.4). This keyword is the only way a state is marked
+    screened.
     """
     return {
         "question": question,
         "principal": principal,
-        "verdict": "proceed",
-        "intent": "aggregate",
-        "clarification": None,
+        "verdict": (screening or {}).get("verdict") or "proceed",
+        "intent": (screening or {}).get("intent") or "aggregate",
+        "clarification": (screening or {}).get("clarification"),
+        "screened": screening is not None,
+        "screening_fields": (
+            {name: screening.get(name) for name in SCREENING_FIELDS} if screening is not None else {}
+        ),
         "answer_contract": AnswerContract(),
         "assumptions": [],
         "selected_tables": [],
@@ -489,6 +513,8 @@ LIFETIMES: dict[str, str] = {
     "intent": RUN,
     "verdict": RUN,
     "clarification": RUN,
+    "screened": RUN,
+    "screening_fields": RUN,
     "answer_contract": RUN,
     "assumptions": ATTEMPT,
     "selected_tables": RUN,

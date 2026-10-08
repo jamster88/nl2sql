@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..graph import step_label
+from ..ensemble import step_label
+from ..ensemble_state import is_ensemble, run_state
 from ..state import to_jsonable
 from .jobs import Job, ProgressRecord
 from .models import (
@@ -29,8 +30,16 @@ from .models import (
     AuditReport,
     ChartSpec,
     Claim,
+    DeclinedColumn,
+    DiscardedRewording,
+    Ensemble,
+    EnsembleAgreement,
+    EnsembleCandidate,
+    EnsembleDissent,
+    EnsembleJudgement,
     Job as JobModel,
     JobLinks,
+    JoinedColumn,
     LiteralMatch,
     ProgressEvent,
     ResultTable,
@@ -80,13 +89,23 @@ def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> A
     out which from `verdict`, `answer` and the absence of `result`, not from
     a different response shape.
 
+    The ensemble's state (arch7) translates to the same shape, so a client
+    written for 6.3 reads one coherent run: the answer, the rows and the
+    claims are what was delivered; the tables, literals, attempts and
+    retrieval failures are the delivered run's; the trace is the ensemble's
+    own nodes followed by that run's; and `ensemble` holds the vote and
+    every run's record. A single run's state has `ensemble` None.
+
     Without `detail` -- anyone but an operator (V6-32) -- `retrieval_errors`
     and `node_errors` say which part failed and not the driver's words for
     it, which name hosts and ports.
     """
     state = state or {}
+    run = run_state(state)
     audit = to_jsonable(state.get("audit")) or {}
     chart = to_jsonable(state.get("chart"))
+    node_errors = {**(run.get("node_errors") or {}), **(state.get("node_errors") or {})}
+    trace = list(state.get("trace") or []) + (list(run.get("trace") or []) if run is not state else [])
 
     return Answer(
         answer=state.get("answer") or "",
@@ -95,19 +114,70 @@ def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> A
         verdict=state.get("verdict") or "proceed",
         intent=state.get("intent") or "aggregate",
         clarification=state.get("clarification"),
-        tables=list(state.get("selected_tables") or []),
-        literals=[LiteralMatch(**m) for m in _dicts(state.get("literal_map"))],
+        tables=list(run.get("selected_tables") or []),
+        literals=[LiteralMatch(**m) for m in _dicts(run.get("literal_map"))],
         result=result_table(state.get("result")),
         chart=ChartSpec(**chart) if isinstance(chart, dict) else None,
         claims=[Claim(**c) for c in _dicts(state.get("claims"))],
         audit=AuditReport(**audit) if isinstance(audit, dict) else AuditReport(),
-        plan_cost=state.get("plan_cost"),
-        attempts=int(state.get("attempts") or 0),
-        trace=[TraceEntry(**t) for t in _dicts(state.get("trace"))],
+        plan_cost=run.get("plan_cost"),
+        attempts=int(run.get("attempts") or 0),
+        trace=[TraceEntry(**t) for t in _dicts(trace)],
         retrieval_errors=(
-            dict(state.get("retrieval_errors") or {}) if detail else _codes(state.get("retrieval_errors"), "unavailable")
+            dict(run.get("retrieval_errors") or {}) if detail else _codes(run.get("retrieval_errors"), "unavailable")
         ),
-        node_errors=dict(state.get("node_errors") or {}) if detail else _codes(state.get("node_errors"), "failed"),
+        node_errors=node_errors if detail else _codes(node_errors, "failed"),
+        ensemble=ensemble_from_state(state, detail=detail) if is_ensemble(state) else None,
+    )
+
+
+def ensemble_from_state(state: dict[str, Any], *, detail: bool = True) -> Ensemble:
+    """The ensemble's record, as the wire carries it.
+
+    Without `detail` a run's reasons keep their rule's name and lose what
+    follows it, as `_codes` does for the error maps: a reason can quote a
+    driver.
+    """
+    decision = to_jsonable(state.get("decision")) or {}
+    judgement = to_jsonable(state.get("judgement"))
+    paraphrases = {p.index: p for p in state.get("paraphrases") or []}
+    candidates = [
+        EnsembleCandidate(
+            index=c.index,
+            wording=c.wording,
+            origin=c.origin,
+            wave=c.wave,
+            changed=paraphrases[c.index].changed if c.index in paraphrases else "",
+            outcome=c.outcome,
+            admissible=c.admissible,
+            reasons=list(c.reasons) if detail else [reason.split(":", 1)[0] for reason in c.reasons],
+            sql=c.state.get("sql") or "",
+            signature=c.signature,
+            attempts=int(c.state.get("attempts") or 0),
+            group=c.group,
+            duration_ms=c.ms,
+            trace=[TraceEntry(**t) for t in _dicts(c.state.get("trace"))],
+        )
+        for c in sorted(state.get("candidates") or [], key=lambda c: c.index)
+    ]
+    return Ensemble(
+        agreement=EnsembleAgreement(**to_jsonable(state.get("agreement"))),
+        chosen=decision.get("chosen"),
+        fused_from=list(decision.get("fused_from") or []),
+        columns_fused=bool(decision.get("columns_fused", True)),
+        joined_columns=[JoinedColumn(**c) for c in decision.get("joined_columns") or []],
+        declined_columns=[DeclinedColumn(**c) for c in decision.get("declined_columns") or []],
+        claims_added=int(decision.get("claims_added") or 0),
+        claims_dropped=int(decision.get("claims_dropped") or 0),
+        dissent=[EnsembleDissent(**d) for d in decision.get("dissent") or []],
+        judged=EnsembleJudgement(**judgement) if isinstance(judgement, dict) else None,
+        candidates=candidates,
+        discarded=[
+            DiscardedRewording(index=p.index, text=p.text, changed=p.changed, reason=p.reason)
+            for p in paraphrases.values()
+            if p.status == "discarded"
+        ],
+        parallel_calls=int(state.get("parallel_calls") or 1),
     )
 
 
@@ -115,9 +185,10 @@ def progress_event(record: ProgressRecord) -> ProgressEvent:
     return ProgressEvent(
         seq=record.seq,
         step=record.step,
-        label=step_label(record.step),
+        label=step_label(record.step, record.candidate),
         detail=record.detail,
         at=record.at,
+        candidate=record.candidate,
     )
 
 

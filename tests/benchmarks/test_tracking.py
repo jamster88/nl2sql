@@ -94,6 +94,7 @@ def test_compare_files_each_configuration_as_a_run_of_its_own(monkeypatch, capsy
 
     assert [r["name"] for r in mlflow.runs.values()] == [
         "benchmark schema-only", "benchmark knowledge", "benchmark multi-shot", "benchmark snippets",
+        "benchmark ensemble",
     ]
     assert {t.run_id for t in mlflow.traces.values()} == set(mlflow.runs)
 

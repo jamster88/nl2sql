@@ -1388,3 +1388,48 @@ def test_reload_asks_the_schema_retriever_and_the_knowledge_base_to_forget():
     assert agent.reload() == ["schema_edges"]
     agent.schema_retriever, agent.knowledge_base = None, object()
     assert agent.reload() == [], "a part with nothing to forget is skipped"
+
+
+# ---------------------------------------------------------------------------
+# A run seeded by someone else: the ensemble's candidates (arch7)
+# ---------------------------------------------------------------------------
+
+
+def test_a_screened_run_trusts_its_screening_and_makes_no_supervisor_call():
+    from nl2sql_agent.state import new_state
+
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    agent = make_agent(FakeDatabase(tables=TABLES), llm)
+    screening = {"verdict": "proceed", "intent": "lookup", "clarification": None,
+                 "entities": ["store"], "measure": "", "period": ""}
+    state = agent.answer(new_state("how many stores?", screening=screening))
+
+    assert not [schema for schema, _ in llm.structured_invocations if schema is Screening]
+    assert state["intent"] == "lookup"
+    supervise = state["trace"][0]
+    assert (supervise.node, supervise.model_calls) == ("supervise", 0)
+    assert supervise.detail.startswith("screened by the ensemble")
+    assert state["answer_contract"] == agent.build_contract("how many stores?", intent="lookup", entities=["store"])
+
+
+def test_answering_a_seeded_state_opens_no_trace_of_its_own():
+    """`run` opens the question's trace; `answer` runs inside whatever the
+    caller opened -- the ensemble's span for the candidate."""
+    from nl2sql_agent.state import new_state
+
+    from .test_graph_tracing import traced
+
+    tracer, client = traced()
+    make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"]),
+               tracer=tracer).answer(new_state("q"))
+    assert client.traces == {}
+
+
+def test_answering_reports_to_the_callback_it_is_given():
+    from nl2sql_agent.state import new_state
+
+    seen = []
+    make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"])).answer(
+        new_state("q"), on_progress=lambda step, detail: seen.append(step)
+    )
+    assert seen[0] == "supervise" and seen[-1] == "finish"

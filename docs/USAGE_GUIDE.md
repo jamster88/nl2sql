@@ -537,7 +537,14 @@ assumptions the answer made, the audited claims, a cost per step and, with
 MLflow up, the run's `trace_id`.
 
 The exit code is `0` when it answered, `1` when it could not, and `2` when
-the Ollama host or model is wrong -- it checks both before anything else.
+the Ollama host or model is wrong -- it checks both before anything else --
+or a setting is out of range.
+
+Since 7.0 a question goes through the ensemble (arch7), which will ask it
+several ways and vote; as built so far it asks the original alone, screened
+once, so the answer is the same and a run's progress lines carry its index,
+`[0]`. `--no-ensemble` asks the pipeline alone, and `--json` carries the
+record of every run under `ensemble`.
 
 | Flag | What |
 |---|---|
@@ -557,6 +564,10 @@ the Ollama host or model is wrong -- it checks both before anything else.
 | `--max-attempts N` | SQL generations before giving up |
 | `--sample-rows N` | Sample rows per table shown to the model |
 | `--database-url URL`, `--vector-db-url URL`, `--context-db-url URL`, `--snippet-db-url URL` | Point at other databases |
+| `--ensemble`, `--no-ensemble` | Ask through the ensemble, arch7 (on by default) |
+| `--paraphrases N` | Rewordings in the ensemble's first wave, 3 to 10 |
+| `--parallel-calls N` | Model calls in flight to the Ollama host at once: what the host serves, no more (1 by default) |
+| `--fuse-columns`, `--no-fuse-columns` | Widen the chosen rows with columns other agreeing runs carried (on by default) |
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 

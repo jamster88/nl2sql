@@ -4,6 +4,9 @@ different Ollama host/model/database without a rebuild.
 
 from __future__ import annotations
 
+import re
+
+import pytest
 from nl2sql_agent.config import (
     DEFAULT_DATABASE_URL,
     DEFAULT_EMBED_BASE_URL,
@@ -318,3 +321,77 @@ def test_every_snippet_setting_is_read_from_the_environment(monkeypatch):
     assert settings.snippet_db_url == "postgresql+psycopg://r:r@elsewhere/s"
     assert (settings.snippets_top_k, settings.snippets_min_score) == (3, 0.5)
     assert (settings.snippets_min_similarity, settings.snippets_max_context_chars) == (0.7, 999)
+
+
+# ---------------------------------------------------------------------------
+# arch7: the ensemble's settings, and the checks on them
+# ---------------------------------------------------------------------------
+
+ENSEMBLE_VARIABLES = (
+    "ENSEMBLE_ENABLED", "ENSEMBLE_PARAPHRASES", "ENSEMBLE_MAX_PARAPHRASES", "ENSEMBLE_WAVES",
+    "ENSEMBLE_DEADLINE_SECONDS", "ENSEMBLE_JUDGE_ENABLED", "ENSEMBLE_MAX_CLAIMS", "ENSEMBLE_FUSE_COLUMNS",
+    "OLLAMA_PARALLEL_CALLS", "MODEL_ROUTE_PARAPHRASER", "MODEL_ROUTE_JUDGE",
+)
+
+
+def test_the_ensemble_is_on_one_call_at_a_time_by_default(monkeypatch):
+    """arch7 section 22.9 and the owner's word on the host: on by default,
+    three rewordings, two waves, one call in flight to the host."""
+    for var in ENSEMBLE_VARIABLES:
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings.from_env()
+    assert (settings.ensemble_enabled, settings.ensemble_paraphrases, settings.ensemble_max_paraphrases) == (
+        True, 3, 10)
+    assert (settings.ensemble_waves, settings.ensemble_deadline_seconds, settings.ensemble_judge_enabled) == (
+        2, 0.0, True)
+    assert (settings.ensemble_max_claims, settings.ensemble_fuse_columns, settings.ollama_parallel_calls) == (
+        8, True, 1)
+    assert (settings.model_route_paraphraser, settings.model_route_judge) == ("", "")
+
+
+def test_every_ensemble_setting_is_read_from_the_environment(monkeypatch):
+    values = dict(zip(ENSEMBLE_VARIABLES, ("false", "4", "6", "1", "300", "false", "5", "false", "2", "p", "j")))
+    for var, value in values.items():
+        monkeypatch.setenv(var, value)
+    settings = Settings.from_env()
+    assert (settings.ensemble_enabled, settings.ensemble_paraphrases, settings.ensemble_max_paraphrases) == (
+        False, 4, 6)
+    assert (settings.ensemble_waves, settings.ensemble_deadline_seconds, settings.ensemble_judge_enabled) == (
+        1, 300.0, False)
+    assert (settings.ensemble_max_claims, settings.ensemble_fuse_columns, settings.ollama_parallel_calls) == (
+        5, False, 2)
+    assert (settings.model_route_paraphraser, settings.model_route_judge) == ("p", "j")
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"ensemble_paraphrases": 2}, "ENSEMBLE_PARAPHRASES is 2; it must be 3 to 10"),
+        ({"ensemble_paraphrases": 11, "ensemble_max_paraphrases": 11}, "ENSEMBLE_PARAPHRASES is 11; it must be 3 to 10"),
+        ({"ensemble_paraphrases": 5, "ensemble_max_paraphrases": 4},
+         "ENSEMBLE_MAX_PARAPHRASES is 4; it must be at least ENSEMBLE_PARAPHRASES (5) and at most 10"),
+        ({"ensemble_max_paraphrases": 12}, "ENSEMBLE_MAX_PARAPHRASES is 12"),
+        ({"ensemble_waves": 0}, "ENSEMBLE_WAVES is 0; it must be at least 1"),
+        ({"ensemble_deadline_seconds": -1.5}, "ENSEMBLE_DEADLINE_SECONDS is -1.5; it must be at least 0"),
+        ({"ensemble_max_claims": 0}, "ENSEMBLE_MAX_CLAIMS is 0; it must be at least 1"),
+        ({"ollama_parallel_calls": 0}, "OLLAMA_PARALLEL_CALLS is 0; it must be at least 1"),
+    ],
+)
+def test_a_setting_out_of_range_stops_the_agent_naming_it_and_its_bound(fields, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        Settings(**fields)
+
+
+def test_every_problem_is_said_at_once():
+    with pytest.raises(ValueError) as caught:
+        Settings(ensemble_waves=0, ollama_parallel_calls=0)
+    assert "ENSEMBLE_WAVES" in str(caught.value) and "OLLAMA_PARALLEL_CALLS" in str(caught.value)
+
+
+def test_a_field_set_after_construction_is_checked_when_asked():
+    """A dataclass does not check an assignment, so whoever sets one -- the
+    CLI's flags, the benchmark's configurations -- asks again."""
+    settings = Settings()
+    settings.ensemble_paraphrases = 1
+    with pytest.raises(ValueError, match="ENSEMBLE_PARAPHRASES is 1"):
+        settings.validate()

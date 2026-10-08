@@ -292,6 +292,15 @@ about (`tables`, `scope`), what it must respect (`limits.max_rows`), and what
 to render (`pipeline.narrate` false means there is no paragraph to show,
 `pipeline.audit` false means no verification badge).
 
+Since 7.0 `pipeline.ensemble` says how the server asks a question several
+ways (arch7), so a client knows how many runs to expect before the first
+event: `{"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
+"parallel_calls": 1, "judge": true, "fuse_columns": true}`. With it enabled,
+`pipeline.nodes` lists the ensemble's own nodes (`screen`, `refuse`,
+`plan_wave`, `answer`, `deliver`) before the pipeline's. A server older than
+7.0 sends no `ensemble`. The ensemble as built so far asks the original
+question alone, whatever `paraphrases` says.
+
 Two of those limits describe the request rather than the answer:
 
 | Field | Default | What |
@@ -352,7 +361,8 @@ list is a list, so nothing needs a null check before it is rendered.
                    "route": "attempt 1, ...", "hops": []}],
     "retrieval_errors": {},          // a retriever that could not reach its store: "unavailable",
                                      // or the driver's words to an administrator
-    "node_errors": {}                // the supervisor or narrator, failed and survived: "failed"
+    "node_errors": {},               // the supervisor or narrator, failed and survived: "failed"
+    "ensemble":  { /* 7.0: the record of every run; null with the ensemble off, see below */ }
   },
   "error": null,
   "links": {"self": "/v1/questions/3f2c...", "events": "/v1/questions/3f2c.../events"}
@@ -385,6 +395,57 @@ Notes a client author will want:
 * **`trace` is per-node cost.** Useful for a debug panel, and it is what the
   benchmark measures from.
 
+### Asked several ways: `ensemble` (7.0)
+
+With the ensemble on (`ENSEMBLE_ENABLED`, the default), the answer is the
+delivered run's and everything above reads as one coherent run: `answer`,
+`sql`, `result`, `chart`, `claims` and `audit` are what was delivered;
+`tables`, `literals`, `plan_cost`, `attempts` and `retrieval_errors` are the
+delivered run's; `node_errors` is the ensemble's and that run's together; and
+`trace` is the ensemble's own nodes followed by that run's. A client written
+for 6.3 needs nothing new. `ensemble` is the record beside it:
+
+```jsonc
+"ensemble": {
+  "agreement": {"admissible": 1, "agreed": 1, "total": 1,
+                "level": "single",       // unanimous | majority | judged | contested | single | none
+                "why": "asked 1 way"},
+  "chosen": 0,                           // the delivered run; null when none could be (level "none")
+  "fused_from": [0],
+  "columns_fused": true,                 // ENSEMBLE_FUSE_COLUMNS for this run
+  "joined_columns": [], "declined_columns": [],
+  "claims_added": 0, "claims_dropped": 0,
+  "dissent": [],                         // each losing group: its key fact, how its query differs
+  "judged": null,                        // the Judge's choice, when the votes could not decide
+  "candidates": [{
+    "index": 0, "wording": "What was total net sales for Produce in FY2025?",
+    "origin": "original", "wave": 1, "changed": "",
+    "outcome": "answered",               // answered | gave_up | refused
+    "admissible": true, "reasons": [],   // why it could not vote, by rule: "E1 answered: gave_up"
+    "sql": "SELECT ...", "signature": "", "attempts": 1, "group": null,
+    "duration_ms": 61210.0,
+    "trace": [ /* that run's nodes */ ]
+  }],
+  "discarded": [],                       // rewordings the fidelity gate would not run, and why
+  "parallel_calls": 1                    // OLLAMA_PARALLEL_CALLS: runs this server makes at once
+}
+```
+
+As built so far the ensemble asks the original alone, so there is one
+candidate, `level` is `single` when it answered and `none` when it gave up
+-- whose `answer` and `error` are then the run's own give-up -- and the
+fields for rewordings, votes and fusion are empty. A refused question has no
+candidate at all. Without administrator detail, a candidate's `reasons` keep
+the rule's name and lose what follows it, as the error maps do. A client
+reading the agreement:
+
+```python
+answer = job["answer"]
+if answer.get("ensemble"):
+    agreement = answer["ensemble"]["agreement"]
+    print(f"{agreement['agreed']} of {agreement['total']} ({agreement['level']})")
+```
+
 ---
 
 ## Progress events
@@ -394,7 +455,7 @@ Notes a client author will want:
 ```
 id: 4
 event: progress
-data: {"seq":4,"step":"generate_sql","label":"sql","detail":"3 tables, 2 examples","at":"..."}
+data: {"seq":4,"step":"generate_sql","label":"sql","detail":"3 tables, 2 examples","at":"...","candidate":0}
 
 event: status
 data: {"status":"running"}
@@ -407,6 +468,11 @@ data: { ...the whole finished job... }
 
 * `step` is the graph node -- key your UI off it. `label` is the short human
   word for it. The full list is in `/v1/meta` under `pipeline.nodes`.
+* `candidate` (7.0) says which wording's run reported the step: `0` the
+  question as asked, `1` and up a rewording, `null` for a step of the
+  ensemble's own -- and for every step with the ensemble off. A run's steps
+  are the pipeline's nodes, so group them by `candidate` to draw one lane
+  per run.
 * `id:` is the sequence number. Reconnect with `Last-Event-ID: 4` (browsers
   send it automatically) or `?from_seq=4` and the server resumes rather than
   replaying.

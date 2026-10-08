@@ -9,7 +9,8 @@ from typing import Any
 
 from . import tracing
 from .config import Settings
-from .graph import STEP_LABELS, Nl2SqlAgent
+from .ensemble import build_agent, step_label
+from .ensemble_state import is_ensemble, run_state
 from .llm import LlmUnavailableError
 from .router import RoutingError
 from .state import to_jsonable
@@ -71,6 +72,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p.add_argument("--snippet-db-url", default=settings.snippet_db_url, help="snippet store URL")
     p.add_argument("--snippets-top-k", type=int, default=settings.snippets_top_k, help="snippets shown to the model, at most")
+    p.add_argument(
+        "--ensemble",
+        action=argparse.BooleanOptionalAction,
+        default=settings.ensemble_enabled,
+        help=f"ask the question through the ensemble, arch7 {_default(settings.ensemble_enabled)}",
+    )
+    p.add_argument(
+        "--paraphrases",
+        type=int,
+        default=settings.ensemble_paraphrases,
+        help=f"rewordings in the ensemble's first wave, 3 to 10 (default: {settings.ensemble_paraphrases})",
+    )
+    p.add_argument(
+        "--parallel-calls",
+        type=int,
+        default=settings.ollama_parallel_calls,
+        help=f"model calls in flight to the Ollama host at once (default: {settings.ollama_parallel_calls})",
+    )
+    p.add_argument(
+        "--fuse-columns",
+        action=argparse.BooleanOptionalAction,
+        default=settings.ensemble_fuse_columns,
+        help=f"widen the chosen rows with columns other agreeing runs carried {_default(settings.ensemble_fuse_columns)}",
+    )
     p.add_argument("--json", action="store_true", help="emit the full result as JSON")
     p.add_argument("--quiet", action="store_true", help="only print the final answer")
     return p.parse_args(argv)
@@ -97,6 +122,12 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     settings.snippets_enabled = args.snippets
     settings.snippet_db_url = args.snippet_db_url
     settings.snippets_top_k = args.snippets_top_k
+    settings.ensemble_enabled = args.ensemble
+    settings.ensemble_paraphrases = args.paraphrases
+    settings.ollama_parallel_calls = args.parallel_calls
+    settings.ensemble_fuse_columns = args.fuse_columns
+    # A flag is set after the settings were checked; check them again.
+    settings.validate()
     return settings
 
 
@@ -126,46 +157,11 @@ def format_rows(result: Any) -> str:
     return "\n".join(lines)
 
 
-def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> int:
+def answer(agent: Any, question: str, *, as_json: bool, quiet: bool) -> int:
     with tracing.tagged({"nl2sql.entrypoint": "cli"}):
         state = agent.run(question)
     if as_json:
-        print(
-            json.dumps(
-                to_jsonable(
-                    {
-                        "question": question,
-                        "verdict": state.get("verdict"),
-                        "intent": state.get("intent"),
-                        "answer_contract": state.get("answer_contract"),
-                        "knowledge_chunks": state.get("knowledge_chunks", []),
-                        "example_pairs": state.get("example_pairs", []),
-                        "snippet_hits": state.get("snippet_hits", []),
-                        "literal_map": state.get("literal_map", []),
-                        "retrieval_errors": state.get("retrieval_errors", {}),
-                        "node_errors": state.get("node_errors", {}),
-                        "selected_tables": state.get("selected_tables", []),
-                        "sql": state.get("sql"),
-                        "attempts": state.get("attempts"),
-                        "plan_cost": state.get("plan_cost"),
-                        "attempt_history": state.get("attempt_history", []),
-                        "error": state.get("error"),
-                        "result": state.get("result"),
-                        "completeness": state.get("completeness"),
-                        "assumptions": state.get("assumptions", []),
-                        "chart": state.get("chart"),
-                        "claims": state.get("claims", []),
-                        "narrative": state.get("narrative"),
-                        "audit": state.get("audit"),
-                        "answer": state.get("answer"),
-                        "trace": state.get("trace", []),
-                        "trace_id": state.get("trace_id", ""),
-                    }
-                ),
-                indent=2,
-                default=str,
-            )
-        )
+        print(json.dumps(to_jsonable(as_document(question, state)), indent=2, default=str))
         return 1 if state.get("error") else 0
 
     if state.get("error"):
@@ -186,18 +182,74 @@ def answer(agent: Nl2SqlAgent, question: str, *, as_json: bool, quiet: bool) -> 
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    settings = settings_from_args(args)
+def as_document(question: str, state: dict[str, Any]) -> dict[str, Any]:
+    """What `--json` prints: the run, and under the ensemble the record of it.
 
-    def on_progress(step: str, detail: str) -> None:
+    The run's own fields -- what retrieval found, the attempts -- are the
+    delivered run's; the answer's are the question's. Under the ensemble the
+    trace is the outer nodes' followed by the delivered run's, as the REST
+    answer gives it, and `ensemble` carries the vote and every candidate
+    whole, each with its own state.
+    """
+    run = run_state(state)
+    document = {
+        "question": question,
+        "verdict": state.get("verdict"),
+        "intent": state.get("intent"),
+        "answer_contract": state.get("answer_contract"),
+        "knowledge_chunks": run.get("knowledge_chunks", []),
+        "example_pairs": run.get("example_pairs", []),
+        "snippet_hits": run.get("snippet_hits", []),
+        "literal_map": run.get("literal_map", []),
+        "retrieval_errors": run.get("retrieval_errors", {}),
+        "node_errors": {**(run.get("node_errors") or {}), **(state.get("node_errors") or {})},
+        "selected_tables": run.get("selected_tables", []),
+        "sql": state.get("sql"),
+        "attempts": run.get("attempts"),
+        "plan_cost": run.get("plan_cost"),
+        "attempt_history": run.get("attempt_history", []),
+        "error": state.get("error"),
+        "result": state.get("result"),
+        "completeness": run.get("completeness"),
+        "assumptions": state.get("assumptions", []),
+        "chart": state.get("chart"),
+        "claims": state.get("claims", []),
+        "narrative": state.get("narrative"),
+        "audit": state.get("audit"),
+        "answer": state.get("answer"),
+        "trace": list(state.get("trace", [])) + (list(run.get("trace", [])) if run is not state else []),
+        "trace_id": state.get("trace_id", ""),
+    }
+    if is_ensemble(state):
+        document["ensemble"] = {
+            "agreement": state.get("agreement"),
+            "decision": state.get("decision"),
+            "waves": state.get("waves"),
+            "paraphrases": state.get("paraphrases", []),
+            "candidates": state.get("candidates", []),
+        }
+    return document
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = parse_args(argv)
+        settings = settings_from_args(args)
+    except ValueError as exc:
+        # A setting out of range, from the environment or a flag: said by
+        # name, with its bound, rather than as a traceback.
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    def on_progress(step: str, detail: str, candidate: int | None = None) -> None:
         if args.quiet or args.json:
             return
-        label = STEP_LABELS.get(step, step)
-        print(f"[{label}] {detail}", file=sys.stderr)
+        # A candidate's step says which wording's run it was (arch7).
+        which = f"[{candidate}] " if candidate is not None else ""
+        print(f"{which}[{step_label(step, candidate)}] {detail}", file=sys.stderr)
 
     try:
-        agent = Nl2SqlAgent(settings, on_progress=on_progress)
+        agent = build_agent(settings, on_progress=on_progress)
     except (LlmUnavailableError, RoutingError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

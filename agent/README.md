@@ -43,6 +43,13 @@ still connects as its read-only reader, and becomes the person for a
 transaction with `SET LOCAL ROLE`. The command line is unchanged: it is
 whoever runs it. See [`../auth/README.md`](../auth/README.md).
 
+**v7 asks it several ways** (arch7, being built). The question is screened
+once and, as the ensemble is completed, reworded three to ten ways, the
+pipeline run once per wording, and the answers voted on. So far the outer
+graph runs the original alone, screened once and delivered as it ran, so the
+answer is v6's; what is new is the record around it and the host gate every
+model call waits at. See [Asking it several ways (arch7)](#asking-it-several-ways-arch7).
+
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
 
@@ -256,6 +263,68 @@ Re-measure with `python benchmarks/run_benchmark.py`, which now reports
 per-agent timing, model calls per node, and the fraction of the narrative the
 audit could trace back to the result.
 
+## Asking it several ways (arch7)
+
+Temperature is zero everywhere, so the only independent second opinion the
+pipeline can give itself is a different wording of the same question. arch7
+([`Multi-Agent_NL2SQL_arch7.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md))
+builds on that: the question is screened once, reworded three to ten ways,
+each rewording held to the original's answer contract, the pipeline above run
+once per wording, and the largest agreeing group's answer delivered with the
+record of every run. It is built in phases
+([`Multi-Agent_NL2SQL_arch7_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md),
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md)),
+and what is built so far is the plumbing, with nothing riding on it yet --
+[`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
+
+```
+screen ─┬─ refuse                       the Supervisor, once, on the original
+        └─ plan_wave ─► answer ─► deliver
+                       one run of the pipeline per wording -- so far the
+                       original alone -- each in a "Candidate k" span, its
+                       progress lines carrying k
+```
+
+| Node | What it does | LLM |
+|---|---|---|
+| `screen` | The Supervisor on the original: verdict, intent and the answer contract every later wording will be held to. With `SUPERVISOR_ENABLED=false`, nothing is screened anywhere | screens |
+| `refuse` | A refused or ambiguous question is answered as the pipeline answers it, and nothing runs | -- |
+| `plan_wave` | Which wordings run now: the original alone, until the Paraphraser is built | -- |
+| `answer` | The pipeline on each wording, seeded with the screening made for it, so the original's Supervisor makes no second call (`Nl2SqlAgent.answer`) | the pipeline's |
+| `deliver` | The original's run, delivered as it ran: answered is the `single` agreement, gave up is `none` and delivered as the pipeline delivers a give-up | -- |
+
+So the answer is the pipeline's, to the character, at one Supervisor call
+fewer than screening twice. What is added: the outer state
+([`ensemble_state.py`](nl2sql_agent/ensemble_state.py)) keeps each run whole
+as a candidate -- its wording, its outcome, its state with its own trace --
+and the agreement and the decision beside it; `--json` and the REST answer's
+`ensemble` carry that record ([`API.md`](API.md)); progress lines from a
+run's nodes carry the run's index (`[0] [sql] ...` on the CLI, `candidate` on
+the event stream); and the trace is one per question, with each run a
+"Candidate k" span beneath the ensemble's own nodes (see
+[Tracing](#tracing-mlflow)). `ENSEMBLE_ENABLED=false` is the pipeline alone,
+and the answer's `ensemble` is null.
+
+**The host gate.** Every call the agent makes to its chat models -- any
+run's, any job's, the Supervisor's included -- takes a slot of one gate
+first, held around the call and given back when it returns, fails or meets
+`OLLAMA_TIMEOUT` ([`hostgate.py`](nl2sql_agent/hostgate.py)).
+`OLLAMA_PARALLEL_CALLS` is how many slots there are, one by default, because
+the host this was built against serves one call at a time; it is also how
+many runs of one question go at once. It is a statement about the host, not
+something measured, so set it to what the host serves -- Ollama's own
+`OLLAMA_NUM_PARALLEL` -- and no higher, and raise it only for a host with the
+memory for its resident models times the slots: two runs at different rungs
+ask for two models at once, and a host that holds one swaps on every call.
+One consequence for an upgrade: at one slot the REST API's two workers,
+which 6.3 let call the host at once, take turns; a host that serves two
+calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them. And the API warns at
+start when `OLLAMA_PARALLEL_CALLS` times `API_MAX_CONCURRENCY` -- the runs
+that may hold a database connection at once -- is more than the agent's
+connection pool holds (15, SQLAlchemy's defaults) or more than half the
+reader role's connection limit (60, set in
+[`common/nl2sql_common/roles.py`](../common/nl2sql_common/roles.py)).
+
 ## Serving it over HTTP
 
 [`nl2sql_agent/api/`](nl2sql_agent/api) is the REST interface. It is a
@@ -458,7 +527,7 @@ running it:
 [`tracing.py`](nl2sql_agent/tracing.py) writes every run into MLflow when
 `MLFLOW_TRACKING_URI` names a server: one trace per question, filed under
 `MLFLOW_EXPERIMENT_NAME`. The trace is drawn by the same wrapper that writes
-the state's `trace` entries (`Nl2SqlAgent._traced`), so the two records of a
+the state's `trace` entries (`graph.traced_node`), so the two records of a
 run cannot disagree about what ran:
 
 | Span | Type | Holds |
@@ -470,6 +539,18 @@ run cannot disagree about what ran:
 `graph.TRACE_SPANS`, beside `STEP_LABELS`, is the one place a node's name,
 span type and inputs are written down, and a test fails when a node is added
 without one.
+
+**Under the ensemble** (arch7) a question is still one trace. The root span's
+children are the ensemble's own nodes (`ensemble.TRACE_SPANS`: Supervisor,
+Wave Planner, Candidate Runs, Answer), and beneath Candidate Runs is a span
+per run, "Candidate k", holding that run's agents as the table above
+describes them -- its Supervisor with no model call inside, the screening
+having been made once above it. The runs happen on worker threads, each
+started in a copy of the question's context, so their spans land in the
+question's trace whichever thread made them. The trace gains two tags,
+`nl2sql.agreement` (`1/1 single`) and `nl2sql.candidates`, and its
+`nl2sql.attempts` and `nl2sql.model_calls` are read from the runs: the
+delivered run's attempts, and every run's calls with the ensemble's own.
 
 **Verdicts.** The REST API records each verdict -- `yes`, `no`,
 `incomplete` -- on the answer's trace as human feedback named `verdict`,
@@ -962,6 +1043,26 @@ Model routing (arch5.2, [above](#model-routing-arch52)) adds these:
 | `MODEL_MAX_LOADED` | -- | 3 distinct models in the table, `OLLAMA_MODEL` among them |
 | `MODEL_NUM_CTX` | -- | 32768, the window of every routed model but `OLLAMA_MODEL` |
 | `OLLAMA_KEEP_ALIVE` | -- | `30m` with routing on, so a session's models stay loaded; not sent with routing off |
+
+The ensemble ([above](#asking-it-several-ways-arch7)) adds these. A value
+out of range stops the agent at start, naming the variable and its bound. So
+far the original is the only wording asked, so only `ENSEMBLE_ENABLED` and
+`OLLAMA_PARALLEL_CALLS` change what runs; the rest are read, checked and
+carried for the stages that will read them, and published in `/v1/meta`:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | on. Off is the pipeline alone, to the answer |
+| `ENSEMBLE_PARAPHRASES` | `--paraphrases` | 3 rewordings in the first wave; 3 to 10 |
+| `ENSEMBLE_MAX_PARAPHRASES` | -- | 10, the most the Paraphraser writes; at least `ENSEMBLE_PARAPHRASES` |
+| `ENSEMBLE_WAVES` | -- | 2; a second wave only on disagreement |
+| `ENSEMBLE_DEADLINE_SECONDS` | -- | 0, none: set, no wave starts that many seconds after the question arrived |
+| `ENSEMBLE_JUDGE_ENABLED` | -- | on: the Judge, asked only when the votes cannot decide |
+| `ENSEMBLE_MAX_CLAIMS` | -- | 8 claims in the fused narrative |
+| `ENSEMBLE_FUSE_COLUMNS` | `--fuse-columns` / `--no-fuse-columns` | on: columns other agreeing runs carried, joined on the entity's key |
+| `OLLAMA_PARALLEL_CALLS` | `--parallel-calls` | 1 model call in flight to the host at once, and one run of a question at a time |
+| `MODEL_ROUTE_PARAPHRASER` | -- | none. Checked at start as the five pins are; routes nothing until the Paraphraser is built |
+| `MODEL_ROUTE_JUDGE` | -- | none, as above, until the Judge is built |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

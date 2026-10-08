@@ -4,7 +4,8 @@
 
 ```bash
 python benchmarks/run_benchmark.py                   # 15 questions, accuracy then speed
-python benchmarks/run_benchmark.py --compare         # schema-only vs knowledge vs multi-shot
+python benchmarks/run_benchmark.py --config ensemble # the same, through the ensemble (arch7)
+python benchmarks/run_benchmark.py --compare         # schema-only vs ... vs snippets vs ensemble
 python benchmarks/run_benchmark.py --paraphrase-set  # each question four ways: the stability
 ```
 
@@ -188,3 +189,41 @@ came closer than its 0.8 token Jaccard to its question or to another
 rewording. Read the number for what it is: these were written with arch7's
 rules in view, so they are kinder to the checks than a model's rewordings
 will be; Phase 2's fidelity rejections by check are the number for those.
+
+## The ensemble configuration
+
+```bash
+python benchmarks/run_benchmark.py --config ensemble
+```
+
+`snippets` with the ensemble on (arch7): the question screened once by the
+ensemble's own outer graph and run as its first wording. As built so far the
+ensemble asks the original alone and delivers it as it ran, so the claim to
+check is that it changes no answer -- the same SQL, question by question, as
+`snippets` -- while the screening is paid once, not twice.
+
+Measured 2026-10-08 against the running 6.3 stack, `snippets` then
+`ensemble`, the same fifteen questions routed by the committed catalog,
+untraced:
+
+| | Right | Same SQL as `snippets` | Attempts | Model calls | Total | Median |
+|---|---|---|---|---|---|---|
+| `snippets` | 14/15 | -- | 15 | 52 | 417.0s | 28.0s |
+| `ensemble` | 14/15 | 15 of 15 | 15 | 52 | 391.3s | 28.7s |
+
+Every question came out the same way in both -- the same outcome, the same
+SQL, the same attempts, the same rung and the same number of model calls --
+so the original's run made no Supervisor call of its own, the ensemble's
+screening having been made for it. The one miss is B15 in both: its own
+wording, "Print Flyer, Paid Social and so on", read as a filter, as in the
+paraphrase set above, so `snippets` is 14 of 15 on this host today and that
+is the number the ensemble has to match. The difference in total time is
+the first question's: `snippets` ran first and loaded the models (B01 18.1s,
+then 7.6s); the medians are within a second.
+
+A question's state is bigger under the ensemble by what it copies up from
+the delivered run: 40.1 KB rendered as JSON against the pipeline's 37.3 KB
+for B04, and 43.5 KB against 38.2 KB for B09 -- the bulk of either is the run's
+own retrieval context, which the ensemble keeps whole as its candidate. It is
+the baseline a job of several candidates will be measured against.
+

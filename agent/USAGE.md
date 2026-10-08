@@ -231,6 +231,54 @@ works in a shell pipeline. Pull out just the SQL with
 `... --json | jq -r .sql`, or see which knowledge shaped an answer with
 `... --json | jq -r '.knowledge_chunks[].heading_path'`.
 
+### Asked several ways (arch7)
+
+The ensemble is on by default (`ENSEMBLE_ENABLED`). As it is built so far it
+asks the original question alone: screened once, run once, delivered as the
+pipeline would deliver it, so the answer is the same and the progress lines
+gain a few. The ensemble's own steps come unprefixed; a run's steps carry
+its index, `[0]` for the question as asked:
+
+```
+[screen] proceed / aggregate; contract: total net sales, fiscal year 2025   <- once, for every wording
+[wave] wave 1: the original                                                  <- which wordings run now
+[0] [screen] screened by the ensemble; contract: total net sales, fiscal year 2025   <- no second call
+[0] [knowledge] 8 chunk(s) -- business_index:Business overview: ...
+[0] [tables] fact_pos_retail_sales, dim_date, ...
+[0] [sql] SELECT SUM(s.net_sales_amt) AS total_net_sales ...                 <- the pipeline, on wording 0
+...
+[0] [audit] passed
+[0] [answer] 141 characters
+[candidate] 1 run(s): [0] answered
+[answer] single: the original's run
+
+Our total net sales in fiscal year 2025 were 6032194.28.
+```
+
+Four flags, each overriding its setting for the run:
+
+```bash
+docker compose run --rm agent --no-ensemble "..."      # the pipeline alone (ENSEMBLE_ENABLED=false)
+docker compose run --rm agent --paraphrases 5 "..."    # rewordings in the first wave, 3 to 10
+docker compose run --rm agent --parallel-calls 2 "..." # model calls in flight to the host at once
+docker compose run --rm agent --no-fuse-columns "..."  # keep the chosen run's own columns
+```
+
+A value out of range is refused before anything runs, by name:
+`error: ENSEMBLE_PARAPHRASES is 2; it must be 3 to 10`, exit code 2. Set
+`--parallel-calls` to what the Ollama host serves at once (its own
+`OLLAMA_NUM_PARALLEL`), and no higher.
+
+With `--json`, the run's own fields -- what retrieval found, the attempts --
+are the delivered run's, the trace is the ensemble's steps followed by that
+run's, and `ensemble` holds the record: the agreement, the decision, and
+every run whole, each with its own state:
+
+```bash
+docker compose run --rm agent --json "top 10 SKUs" | jq '.ensemble.agreement'
+docker compose run --rm agent --json "top 10 SKUs" | jq '.ensemble.candidates[].state.sql'
+```
+
 ## Asking in a browser instead
 
 Everything above is the terminal. There is also a web interface, and one

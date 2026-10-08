@@ -35,6 +35,7 @@ from starlette.status import (
 
 from .. import __version__
 from ..config import Settings
+from .. import ensemble
 from ..graph import STEP_LABELS
 from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
@@ -46,6 +47,7 @@ from .models import (
     MAX_METADATA_ENTRIES,
     MAX_QUESTION_LENGTH,
     AskRequest,
+    EnsembleSettings,
     FeedbackModel,
     FeedbackRequest,
     Job as JobModel,
@@ -286,7 +288,17 @@ def question_routes(ctx: ApiContext) -> APIRouter:
                 narrate=settings.narrate_enabled,
                 audit=settings.audit_enabled,
                 schema_retrieval=settings.schema_retrieval,
-                nodes=list(STEP_LABELS),
+                # Under the ensemble, its own nodes and then each run's.
+                nodes=(list(ensemble.STEP_LABELS) if settings.ensemble_enabled else []) + list(STEP_LABELS),
+                ensemble=EnsembleSettings(
+                    enabled=settings.ensemble_enabled,
+                    paraphrases=settings.ensemble_paraphrases,
+                    max_paraphrases=settings.ensemble_max_paraphrases,
+                    waves=settings.ensemble_waves,
+                    parallel_calls=settings.ollama_parallel_calls,
+                    judge=settings.ensemble_judge_enabled,
+                    fuse_columns=settings.ensemble_fuse_columns,
+                ),
             ),
             tls=(
                 ctx.certificate.summary()

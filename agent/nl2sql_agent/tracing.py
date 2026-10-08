@@ -350,6 +350,29 @@ class RunTrace:
         )
 
 
+    def finish_ensemble(self, state: Mapping[str, Any]) -> None:
+        """What `finish` cannot read off the ensemble's outer state (arch7).
+
+        The agreement, `k/n level`, and how many wordings ran, as two tags
+        more; and the attempts and model calls read from the runs rather
+        than the outer nodes alone -- the attempts are the delivered run's,
+        the calls every run's and the outer nodes' together.
+        """
+        from .ensemble_state import run_state, whole_trace
+
+        agreement = state.get("agreement")
+        candidates = state.get("candidates") or []
+        self._mlflow.update_current_trace(
+            tags={
+                "nl2sql.agreement": f"{getattr(agreement, 'agreed', 0)}/{len(candidates)} "
+                f"{getattr(agreement, 'level', 'none')}",
+                "nl2sql.candidates": str(len(candidates)),
+                "nl2sql.attempts": str(run_state(state).get("attempts", 0)),
+                "nl2sql.model_calls": str(sum(entry.model_calls for entry in whole_trace(state))),
+            }
+        )
+
+
 def outcome(state: Mapping[str, Any]) -> str:
     """Answered, gave up, or refused: the three ways the graph reaches END."""
     if state.get("verdict", "proceed") != "proceed":
@@ -404,6 +427,15 @@ def finish_agent_span(span: Any, entry: TraceEntry, update: Mapping[str, Any]) -
             "nl2sql.hops": list(entry.hops),
         }
     )
+
+
+def finish_run_span(span: Any, state: Mapping[str, Any]) -> None:
+    """A whole run's span -- one of the ensemble's candidates (arch7) -- given
+    the run's answer as its outputs and how it ended, as the root span is."""
+    if span is None:
+        return
+    span.set_outputs({"answer": state.get("answer", ""), "sql": state.get("sql", ""), "error": state.get("error")})
+    span.set_attributes({"nl2sql.outcome": outcome(state), "nl2sql.attempts": int(state.get("attempts", 0))})
 
 
 @contextmanager

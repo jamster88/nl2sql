@@ -56,6 +56,11 @@ DEFAULT_SNIPPET_DB_URL = "postgresql+psycopg://snippets_reader:snippets_reader@n
 # traces can be compared side by side; the trace's tags say which it was.
 DEFAULT_MLFLOW_EXPERIMENT = "nl2sql-agent"
 
+# How many rewordings the ensemble may ask beside the original: at least three
+# and at most ten, as the architecture was asked for (arch7 section 22.9).
+MIN_PARAPHRASES = 3
+MAX_PARAPHRASES = 10
+
 
 @dataclass
 class Settings:
@@ -261,6 +266,73 @@ class Settings:
     # The experiment the traces are filed under, created if it is missing.
     mlflow_experiment_name: str = DEFAULT_MLFLOW_EXPERIMENT
 
+    # --- arch7: asking it several ways --------------------------------------
+    # The question reworded, the pipeline run once per wording, the results
+    # validated against each other and one chosen (arch7 section 22). Off is
+    # arch6 to the answer. 7.0 is built in phases, and so far the original is
+    # the only wording asked: the outer graph screens it and runs it once, so
+    # ENSEMBLE_ENABLED and OLLAMA_PARALLEL_CALLS act and the rest are read,
+    # checked and carried for the stages that will read them.
+    ensemble_enabled: bool = True
+    # Rewordings in the first wave, beside the original: 3 to 10.
+    ensemble_paraphrases: int = 3
+    # The most the Paraphraser writes, and a second wave spends from.
+    ensemble_max_paraphrases: int = MAX_PARAPHRASES
+    # The one loop counter's limit: a second wave only on disagreement.
+    ensemble_waves: int = 2
+    # No wave starts this many seconds after the question arrived; 0 is none.
+    ensemble_deadline_seconds: float = 0.0
+    # The Judge, asked only when the votes cannot decide; off delivers the
+    # plurality as contested.
+    ensemble_judge_enabled: bool = True
+    # The fused narrative's length, in claims.
+    ensemble_max_claims: int = 8
+    # Columns other agreeing runs carried, joined on the entity's key.
+    ensemble_fuse_columns: bool = True
+    # Model calls in flight to the Ollama host at once, process-wide, and
+    # candidate runs at once per question (`hostgate.py`). One is serial: the
+    # host this was built against serves one call at a time. Set it no higher
+    # than the host's own OLLAMA_NUM_PARALLEL.
+    ollama_parallel_calls: int = 1
+    # Pins for the ensemble's two routing tasks, as the five above. Checked
+    # at startup like them (`router.build_table`) and routed by nothing yet:
+    # the Paraphraser and the Judge are not tasks of the router until they
+    # are built, so a pin here changes no call.
+    model_route_paraphraser: str = ""
+    model_route_judge: str = ""
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        """Stop at start on a setting out of range, naming it and its bound.
+
+        Run on construction, and again by whoever sets a field afterwards --
+        the CLI's flags, the benchmark's configurations -- since a dataclass
+        does not check an assignment.
+        """
+        problems = []
+        if not MIN_PARAPHRASES <= self.ensemble_paraphrases <= MAX_PARAPHRASES:
+            problems.append(
+                f"ENSEMBLE_PARAPHRASES is {self.ensemble_paraphrases}; it must be "
+                f"{MIN_PARAPHRASES} to {MAX_PARAPHRASES}"
+            )
+        if not self.ensemble_paraphrases <= self.ensemble_max_paraphrases <= MAX_PARAPHRASES:
+            problems.append(
+                f"ENSEMBLE_MAX_PARAPHRASES is {self.ensemble_max_paraphrases}; it must be at least "
+                f"ENSEMBLE_PARAPHRASES ({self.ensemble_paraphrases}) and at most {MAX_PARAPHRASES}"
+            )
+        for name, value, least in (
+            ("ENSEMBLE_WAVES", self.ensemble_waves, 1),
+            ("ENSEMBLE_DEADLINE_SECONDS", self.ensemble_deadline_seconds, 0),
+            ("ENSEMBLE_MAX_CLAIMS", self.ensemble_max_claims, 1),
+            ("OLLAMA_PARALLEL_CALLS", self.ollama_parallel_calls, 1),
+        ):
+            if value < least:
+                problems.append(f"{name} is {value:g}; it must be at least {least}")
+        if problems:
+            raise ValueError("; ".join(problems))
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -334,4 +406,15 @@ class Settings:
             ollama_keep_alive=_env_str("OLLAMA_KEEP_ALIVE", "30m"),
             mlflow_tracking_uri=_env_str("MLFLOW_TRACKING_URI", ""),
             mlflow_experiment_name=_env_str("MLFLOW_EXPERIMENT_NAME", DEFAULT_MLFLOW_EXPERIMENT),
+            ensemble_enabled=_env_bool("ENSEMBLE_ENABLED", True),
+            ensemble_paraphrases=_env_int("ENSEMBLE_PARAPHRASES", 3),
+            ensemble_max_paraphrases=_env_int("ENSEMBLE_MAX_PARAPHRASES", MAX_PARAPHRASES),
+            ensemble_waves=_env_int("ENSEMBLE_WAVES", 2),
+            ensemble_deadline_seconds=_env_float("ENSEMBLE_DEADLINE_SECONDS", 0.0),
+            ensemble_judge_enabled=_env_bool("ENSEMBLE_JUDGE_ENABLED", True),
+            ensemble_max_claims=_env_int("ENSEMBLE_MAX_CLAIMS", 8),
+            ensemble_fuse_columns=_env_bool("ENSEMBLE_FUSE_COLUMNS", True),
+            ollama_parallel_calls=_env_int("OLLAMA_PARALLEL_CALLS", 1),
+            model_route_paraphraser=_env_str("MODEL_ROUTE_PARAPHRASER", ""),
+            model_route_judge=_env_str("MODEL_ROUTE_JUDGE", ""),
         )

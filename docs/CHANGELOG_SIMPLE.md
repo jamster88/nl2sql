@@ -21,11 +21,16 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 
 **Added**
 - arch7's Phase 0: the fidelity gate's checks in code (`fidelity.py`), three hand-written rewordings of each benchmark question, and `run_benchmark.py --paraphrase-set`, which reports the stability -- 13 of 15 questions right in every wording, 57 of 60 wordings, on the running 6.3 stack. The checks' starting words discarded 8 of the 45 rewordings; four additions fixed that.
+- arch7's Phase 1: every question goes through the ensemble's outer graph -- screened once, run as candidate 0, delivered as it ran, so the answer is 6.3's -- with the record of the run in `--json` and the REST answer's `ensemble`, progress that names the run, and one trace with the run as a span inside it. `--no-ensemble` is the pipeline alone.
+- One gate on the model host: every model call takes one of `OLLAMA_PARALLEL_CALLS` slots, one by default.
+- Eleven settings for the ensemble, each checked at start and named with its bound when out of range; four CLI flags; the API warns when the runs it may make at once could outgrow the database connections.
+- The benchmark's scorer is the agent's (`compare.py`); `--compare` gains a fifth configuration, `ensemble`.
 
 **Fixed**
 - `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
 
 **Updated**
+- The REST API's two workers take turns at the model host by default; a host that serves two calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them.
 - The version is 7.0.0 everywhere it is declared, and `setup.sh` pins `v7_0`.
 
 ## v6_3 (6.3.0) -- 2026-10-05

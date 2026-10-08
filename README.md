@@ -67,6 +67,18 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md)). So far:
   names and directions, kept, and enough changed to be a different draw.
 - **The benchmark and calibration scripts run on a host again**, which
   they had not since 6.2.
+- **The ensemble's plumbing, with nothing riding on it yet.** Every
+  question now goes through the outer graph: screened once, run as the first
+  of its wordings, and delivered as it ran -- the same answer as 6.3, with
+  the record of the run beside it in `--json` and the REST answer's
+  `ensemble`, progress lines that name the run, and one MLflow trace with
+  the run as a span inside it. `--no-ensemble` (`ENSEMBLE_ENABLED=false`)
+  is the pipeline alone.
+- **One gate on the model host.** Every model call takes a slot first, and
+  there is one slot unless `OLLAMA_PARALLEL_CALLS` says the host serves
+  more. Upgrading from 6.3: the REST API's two workers, which called the
+  host at once, now take turns; a host that serves two calls needs
+  `OLLAMA_PARALLEL_CALLS=2` to keep them.
 
 ## What's new in 6.3
 

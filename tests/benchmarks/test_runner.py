@@ -238,6 +238,38 @@ def test_accuracy_counts_only_correct_answers():
     assert report.accuracy == 0.25
 
 
+def _worded(qid, outcome, wording) -> QuestionResult:
+    worded = result(qid, "schema", outcome, 1.0)
+    worded.wording = wording
+    return worded
+
+
+def test_stability_is_the_fraction_of_questions_right_in_every_wording():
+    """arch7's premise, measured: a question is stable when all four of its
+    wordings came out right. One wrong rewording makes its question
+    unstable however many others were right."""
+    report = BenchmarkReport(results=[
+        *(_worded("B01", CORRECT, wording) for wording in range(4)),
+        _worded("B02", CORRECT, 0), _worded("B02", WRONG, 1), _worded("B02", CORRECT, 2), _worded("B02", CORRECT, 3),
+    ])
+    assert report.paraphrased
+    assert [r.wording for r in report.by_question()["B02"]] == [0, 1, 2, 3]
+    assert (report.stable, report.stability) == (1, 0.5)
+    assert report.accuracy == 7 / 8, "the wordings' accuracy is not the stability"
+
+
+def test_one_wording_a_question_is_not_the_paraphrase_set():
+    report = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0), result("B02", "schema", WRONG, 1.0)])
+    assert not report.paraphrased
+    assert report.stability == report.accuracy == 0.5
+    assert BenchmarkReport().stability == 0.0
+
+
+def test_a_result_is_labelled_by_its_question_and_its_wording():
+    assert result("B07", "grain", CORRECT, 1.0).label == "B07"
+    assert _worded("B07", CORRECT, 2).label == "B07.2"
+
+
 def test_answered_separates_a_wrong_answer_from_no_answer():
     """A pipeline that gives up fails differently from one that confidently
     answers the wrong question, and the fixes are different too.

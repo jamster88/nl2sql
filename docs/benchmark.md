@@ -3,8 +3,9 @@
 *Part of the [nl2sql documentation](../README.md#documentation).*
 
 ```bash
-python benchmarks/run_benchmark.py            # 15 questions, accuracy then speed
-python benchmarks/run_benchmark.py --compare  # schema-only vs knowledge vs multi-shot
+python benchmarks/run_benchmark.py                   # 15 questions, accuracy then speed
+python benchmarks/run_benchmark.py --compare         # schema-only vs knowledge vs multi-shot
+python benchmarks/run_benchmark.py --paraphrase-set  # each question four ways: the stability
 ```
 
 Since v5.2 the report also says which model answered each agent at each
@@ -100,3 +101,90 @@ which is the obvious latency lever -- well ahead of anything in the RAG layer.
 
 See [`benchmarks/README.md`](../benchmarks/README.md) for the scoring rules and
 what they do and do not forgive.
+
+## The paraphrase set
+
+Phase 0 of [arch7](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) --
+the design that asks a question several ways and compares the answers --
+measures the premise it is argued from, before anything is built on it: how
+often the pipeline's answer depends on how a question is worded. Each of the
+fifteen questions is asked as the benchmark asks it and as three hand-written
+rewordings ask it ([`benchmarks/paraphrases.py`](../benchmarks/paraphrases.py)),
+and every answer is scored against the question's one reference. The
+**stability** is the fraction of questions every wording of which came out
+right. [`benchmarks/README.md`](../benchmarks/README.md#the-paraphrase-set)
+has how the rewordings were written and what the report and `--json` carry.
+
+Measured 2026-10-07 against the running 6.3 stack: `--config snippets`, the
+single pipeline as 6.3 ships it -- what arch7 calls `single`, a name that
+waits for Phase 1's `ENSEMBLE_ENABLED` to mean anything -- on the chat host
+`.env` names, routed by the committed catalog
+(`MODEL_CATALOG=models/catalog.json`, as compose mounts it), untraced:
+
+| | right |
+|---|---|
+| **stability** | **13/15** questions right in all four wordings (86.7%) |
+| the benchmark's own wordings | 14/15 |
+| the rewordings | 43/45 |
+| every wording | 57/60, and runnable SQL for all 60 |
+
+Two questions came out differently by wording:
+
+| Question | Wordings right | What the wrong ones did |
+|---|---|---|
+| B07, Dairy & Eggs' gross margin in fiscal month 12 | 3 of 4: its own, 1 and 3 | rewording 2 ("Calculate the gross margin percentage ... for fiscal month 12 of FY2025") joined daily sales to monthly costs on `date_key` -- the grain trap the question was written around, which the other three wordings stepped round |
+| B15, impressions and clicks by channel type | 2 of 4: rewordings 2 and 3 | the benchmark's own wording and rewording 1 read "Print Flyer, Paid Social and so on" as a filter -- `WHERE channel_type IN ('Print Flyer', 'Paid Social')`, two rows of five -- where "such as" and "like" were read as examples |
+
+What it says, for arch7:
+
+**The premise holds, on two questions in fifteen.** On each of them the
+wording decided the answer, and each mistake was made by some wordings and
+not by others: the kind a vote between wordings can see and a single run
+cannot. On the other thirteen every wording agreed, so there the ensemble
+buys a confidence signal -- agreement -- rather than a different answer.
+
+**One miss was the benchmark's own wording.** B15 as the benchmark asks it
+was wrong in this run: a run of the fifteen alone would have reported 14/15,
+with no hint that two other wordings get it right.
+
+**B07 is the case the vote decides; B15 is the case it cannot.** Three
+wordings against one is a majority, and the majority is right. Two against
+two is no majority: arch7 sends it to a second wave, then to the Judge, and
+with neither the tie goes to the group that holds the original -- here, the
+wrong one. Phase 2 should keep that in view when it builds the ranking.
+
+**Four runs cost about four times one.** Sixty wordings took 1,692 s, 28 s
+each, and a rewording cost what its question did (28.3 s against 27.8 s on
+average), as arch7 assumed. One run: read each question's result as one
+sample.
+
+### The fidelity checks against the forty-five
+
+The second number Phase 0 owes
+([risks by phase](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md),
+S1): how many of these rewordings, each judged faithful by a person, the
+fidelity gate's checks in code would have discarded -- the checks the
+ensemble will hold a model's rewordings to before it spends a call on them
+([`fidelity.py`](../agent/nl2sql_agent/fidelity.py)). With the implementation
+specification's starting vocabulary (its section 3.4), **8 of 45**, one in
+six:
+
+| Rewording | Check | Discarded because | What was added |
+|---|---|---|---|
+| B06.3 "the fourth fiscal quarter" | F1 numbers | 4 missing | ordinals count as their numbers, "first" to "twentieth" (and "4th" is no letter-digit literal) |
+| B07.3 "the twelfth fiscal month" | F1 numbers | 12 missing | the same |
+| B09.1 "for each allowance type" | F3 polarity | "broken down by" read as a decline | "break down", "broken down" and their forms are no direction |
+| B09.3 "per allowance type" | F3 polarity | the same | the same |
+| B14.1 "Break down our ... net sales by state" | F3 polarity | a decline added | the same |
+| B13.3 "which competitor is cheapest" | F3 polarity | "lowest" missing | "cheapest" is low |
+| B10.1, B10.2 | F2 literals | "Give the SKU" read as a name | a sentence's first word starts no name |
+
+With those, none of the forty-five is discarded, and
+[`tests/benchmarks/test_paraphrases.py`](../tests/benchmarks/test_paraphrases.py)
+holds it. One rule was added that no discard asked for: a code written with
+an underscore is a literal, since B09's "like SCAN_BACK" names the column its
+answer is reported by and nothing held it. F5 discarded none: no rewording
+came closer than its 0.8 token Jaccard to its question or to another
+rewording. Read the number for what it is: these were written with arch7's
+rules in view, so they are kinder to the checks than a model's rewordings
+will be; Phase 2's fidelity rejections by check are the number for those.

@@ -286,6 +286,15 @@ class QuestionResult:
     rung: str | None = None
     #: The run's MLflow trace, when it was traced (`benchmarks/tracking.py`).
     trace_id: str = ""
+    #: Which wording asked it: 0 the benchmark's own, 1 to 3 the paraphrase
+    #: set's rewordings (`benchmarks/paraphrases.py`), whose words `question`
+    #: then holds.
+    wording: int = 0
+
+    @property
+    def label(self) -> str:
+        """B07 for the benchmark's own wording, B07.2 for the second rewording."""
+        return f"{self.question_id}.{self.wording}" if self.wording else self.question_id
 
     @property
     def correct(self) -> bool:
@@ -330,6 +339,33 @@ class BenchmarkReport:
             bucket[0] += int(result.correct)
             bucket[1] += 1
         return {k: (v[0], v[1]) for k, v in out.items()}
+
+    def by_question(self) -> dict[str, list[QuestionResult]]:
+        """Question id -> its results, in the order they were asked: with the
+        paraphrase set, the benchmark's own wording first, then each rewording."""
+        out: dict[str, list[QuestionResult]] = {}
+        for result in self.results:
+            out.setdefault(result.question_id, []).append(result)
+        return out
+
+    @property
+    def paraphrased(self) -> bool:
+        """Whether a question was asked in words not its own: the paraphrase set."""
+        return any(result.wording for result in self.results)
+
+    @property
+    def stable(self) -> int:
+        """How many questions came out right however they were worded."""
+        return sum(1 for results in self.by_question().values() if all(r.correct for r in results))
+
+    @property
+    def stability(self) -> float:
+        """The fraction of questions every wording of which came out right --
+        arch7 section 11's first measure, the premise the ensemble is argued
+        from. With one wording a question it is the accuracy, and says
+        nothing about wording."""
+        questions = self.by_question()
+        return self.stable / len(questions) if questions else 0.0
 
     def seconds(self) -> list[float]:
         return sorted(r.wall_seconds for r in self.results)

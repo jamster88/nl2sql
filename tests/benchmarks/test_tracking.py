@@ -59,6 +59,7 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
         "model_routing": True,
         "max_attempts": 7,
         "questions": "B01,B02",
+        "paraphrase_set": False,
     }
     assert run["metrics"]["accuracy"] == 1.0
     assert run["metrics"]["questions"] == 2
@@ -79,6 +80,7 @@ def test_each_question_is_a_trace_in_the_run_tagged_and_judged(monkeypatch, caps
     assert trace.tags["benchmark.configuration"] == "snippets"
     assert trace.tags["benchmark.question_id"] == "B01"
     assert trace.tags["benchmark.category"] == by_id("B01").category
+    assert trace.tags["benchmark.wording"] == "0"
     [score] = trace.assessments
     assert (score.name, score.value, score.rationale) == (tracking.SCORE, False, WRONG)
     # Sent before it is scored, or the server has no trace to score.
@@ -96,14 +98,27 @@ def test_compare_files_each_configuration_as_a_run_of_its_own(monkeypatch, capsy
     assert {t.run_id for t in mlflow.traces.values()} == set(mlflow.runs)
 
 
+def test_the_paraphrase_set_is_one_run_whose_traces_say_which_wording_asked(monkeypatch, capsys):
+    mlflow = FakeMlflowWithRuns()
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--paraphrase-set"], tracer=tracer_on(mlflow))
+
+    [run] = mlflow.runs.values()
+    assert run["name"] == "benchmark snippets (paraphrase set)"
+    assert run["params"]["paraphrase_set"] is True
+    assert (run["metrics"]["stability"], run["metrics"]["stable"]) == (1.0, 1)
+    traces = list(mlflow.traces.values())
+    assert sorted(t.tags["benchmark.wording"] for t in traces) == ["0", "1", "2", "3"]
+    assert {t.tags["benchmark.question_id"] for t in traces} == {"B01"}
+
+
 def test_a_configuration_cut_short_keeps_what_it_measured_under_a_status_that_says_so(monkeypatch, capsys):
     mlflow = FakeMlflowWithRuns()
     asked = run_benchmark.run_question
 
-    def interrupted_on_the_second(agent, database, question, timer):
+    def interrupted_on_the_second(agent, database, question, timer, **kwargs):
         if question.id == "B02":
             raise KeyboardInterrupt
-        return asked(agent, database, question, timer)
+        return asked(agent, database, question, timer, **kwargs)
 
     monkeypatch.setattr(run_benchmark, "run_question", interrupted_on_the_second)
     with pytest.raises(KeyboardInterrupt):
@@ -157,6 +172,16 @@ def test_the_metrics_are_the_score_and_where_the_time_went():
         "rung.light": 2,
         "rung.heavy": 1,
     }
+
+
+def test_with_the_paraphrase_set_the_metrics_carry_the_stability():
+    report = BenchmarkReport(results=[
+        result("B01", CORRECT), result("B01", WRONG, wording=1),
+        result("B02", CORRECT), result("B02", CORRECT, wording=1),
+    ])
+    values = tracking.metrics(report)
+    assert (values["stability"], values["stable"]) == (0.5, 1)
+    assert "stability" not in tracking.metrics(BenchmarkReport(results=[result("B01", CORRECT)]))
 
 
 def test_a_question_that_crashed_has_no_trace_to_score():

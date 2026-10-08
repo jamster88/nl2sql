@@ -241,11 +241,61 @@ database's password is the one the stack generated, read from `secrets/`
 when the URL's variable is unset. The measurements below predate the
 `snippets` configuration.
 
+## The paraphrase set
+
+```bash
+python benchmarks/run_benchmark.py --paraphrase-set
+```
+
+Each question asked four ways: as the benchmark asks it, and as each of the
+three rewordings in [`paraphrases.py`](paraphrases.py) asks it -- sixty
+wordings in all, each scored against its question's one reference query,
+since a rewording asks the same question and so has the same answer. The
+accuracy is then over sixty, and the report adds the **stability**: the
+fraction of questions every wording of which came out right, with each
+question's wordings marked in order, its own first:
+
+```
+STABILITY  (the paraphrase set: each question in its own words and three others)
+  stable questions     13/15  (86.7%)  every wording right
+  own wordings         14/15
+  rewordings           43/45
+
+  per question                    wordings 0 1 2 3
+    B06 calendar   4/4  ok ok ok ok
+    B07 grain      3/4  ok ok WRONG ok
+```
+
+It is Phase 0 of the next architecture
+([`Multi-Agent_NL2SQL_arch7.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md),
+section 10), which asks a question several ways and compares the answers --
+worth what that costs only if the pipeline's answer does depend on the
+wording. This measures how often, before anything is built on it; the
+number is in [`docs/benchmark.md`](../docs/benchmark.md#the-paraphrase-set).
+
+The rewordings follow the rules arch7 gives the model that will write them
+(section 22.3): every number, year, name and quoted value kept; the same
+entities, measure, period, direction and row count; no period, filter or
+measure added and none dropped; the words and the shape varied. Each was
+checked by hand against its question's reference SQL, and
+[`tests/benchmarks/test_paraphrases.py`](../tests/benchmarks/test_paraphrases.py)
+holds every one to the fidelity gate's checks in code
+([`fidelity.py`](../agent/nl2sql_agent/fidelity.py): numbers, literals,
+polarity, distinctness) against its question. A rewording a person judged
+faithful that the checks would discard is a failing test, and the checks'
+word lists grow from it, as they first did from these.
+
+`--json` gives each result its `wording` -- 0 the benchmark's own, 1 to 3 a
+rewording -- with the words asked as its `question`, and each configuration
+a `stability` block: the fraction, the stable count, and every question's
+outcomes in wording order; `null` for a run without the set.
+
 ## Options
 
 ```bash
 python benchmarks/run_benchmark.py --only B07 B08      # just these
 python benchmarks/run_benchmark.py --category grain    # just this category
+python benchmarks/run_benchmark.py --paraphrase-set    # each question four ways: the stability
 python benchmarks/run_benchmark.py --json results.json # machine-readable
 python benchmarks/run_benchmark.py --verbose           # every pipeline step
 python benchmarks/run_benchmark.py --model other-model --base-url http://host:11434
@@ -258,6 +308,15 @@ benchmark runs on the host while the agent normally runs inside compose, where
 the same names are service names. Set `DATABASE_URL`, `VECTOR_DB_URL`,
 `CONTEXT_DB_URL`, `SNIPPET_DB_URL` or `EMBED_BASE_URL` to override any of them.
 
+The chat model is the agent's own setting, as everywhere else: `OLLAMA_BASE_URL`
+and `OLLAMA_MODEL`, or `--base-url` and `--model`. Routing needs a catalog,
+which compose mounts for the stack and nothing names on the host: to measure
+the agent as the stack runs it, set `OLLAMA_BASE_URL` to what `.env` says and
+`MODEL_CATALOG=models/catalog.json`; without the catalog every call goes to
+`OLLAMA_MODEL`. The script puts the repository, `agent/` and the shared
+`common/` package on its own path, so nothing needs installing beyond
+`tests/requirements.txt`.
+
 ## MLflow
 
 ```bash
@@ -266,15 +325,16 @@ python benchmarks/run_benchmark.py --compare
 ```
 
 With MLflow answering, each configuration the benchmark measures is an MLflow
-run of its own, named `benchmark <configuration>`, in the agent's experiment
+run of its own, named `benchmark <configuration>` -- with ` (paraphrase set)`
+after it when the set was asked -- in the agent's experiment
 (`nl2sql-agent`, or `MLFLOW_EXPERIMENT_NAME`):
 
 | | |
 |---|---|
-| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids |
-| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had |
+| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`) |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
-| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category` and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
+| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
 
 So a wrong answer is one click from the trace that gave it -- which agent
 read what, which model wrote the SQL, what the repair said -- and two runs
@@ -313,3 +373,7 @@ exist to catch.
 The scorer is tested against both kinds of mistake it could make: too strict
 (rejecting a correct answer whose columns are ordered differently) and too loose
 (accepting the 5x fan-out or the calendar-year read).
+
+The paraphrase set is held offline: every question has three rewordings, no
+wording repeats another, and each rewording passes the fidelity checks
+against its question, all forty-five reported at once when any fails.

@@ -6,14 +6,17 @@ otherwise -- each configuration the benchmark measures becomes one MLflow
 run:
 
 * **parameters**: what was measured -- the configuration, the model, whether
-  calls were routed, the retry budget, the questions;
+  calls were routed, the retry budget, the questions, whether they were
+  asked the paraphrase set's four ways;
 * **metrics**: the score and where the time went -- accuracy overall and per
   category, answered, the total and median seconds, seconds per stage, and
-  how many questions the Aggregator scored at each rung;
+  how many questions the Aggregator scored at each rung; with the
+  paraphrase set, the stability too;
 * **an artifact**: the whole report, as `--json` writes it;
 * **traces**: every question's, filed under the run by MLflow itself, tagged
-  with the question's id and category, and carrying the benchmark's judgement
-  as feedback -- so a wrong answer is one click from the run that gave it.
+  with the question's id, category and wording, and carrying the benchmark's
+  judgement as feedback -- so a wrong answer is one click from the run that
+  gave it.
 
 The runs API is MLflow's `mlflow-skinny`, which tests/requirements.txt
 installs and the agent image does not: the image carries the tracing client
@@ -35,13 +38,19 @@ SCORE = "benchmark_correct"
 SOURCE = "benchmarks/run_benchmark.py"
 
 
-def question_tags(question: BenchmarkQuestion, configuration: str) -> dict[str, str]:
-    """The tags a question's trace is filed with, whether or not it is grouped."""
+def question_tags(question: BenchmarkQuestion, configuration: str, *, wording: int = 0) -> dict[str, str]:
+    """The tags a question's trace is filed with, whether or not it is grouped.
+
+    `wording` is 0 for the question's own words and 1 to 3 for the
+    paraphrase set's rewordings, so the four traces of one question can be
+    told apart -- and found together by its id.
+    """
     return {
         "nl2sql.entrypoint": "benchmark",
         "benchmark.configuration": configuration,
         "benchmark.question_id": question.id,
         "benchmark.category": question.category,
+        "benchmark.wording": str(wording),
     }
 
 
@@ -104,10 +113,15 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
         values[f"seconds.{stage}"] = round(seconds, 3)
     for rung, count in report.rungs().items():
         values[f"rung.{rung}"] = count
+    if report.paraphrased:
+        values["stability"] = report.stability
+        values["stable"] = report.stable
     return values
 
 
-def open_run(agent: Any, configuration: str, questions: list[BenchmarkQuestion]) -> BenchmarkRun | None:
+def open_run(
+    agent: Any, configuration: str, questions: list[BenchmarkQuestion], *, paraphrase_set: bool = False,
+) -> BenchmarkRun | None:
     """The configuration's run, or None when its traces cannot be grouped."""
     if not agent.tracer.ready():
         return None
@@ -123,7 +137,7 @@ def open_run(agent: Any, configuration: str, questions: list[BenchmarkQuestion])
 
     settings = agent.settings
     run = mlflow.start_run(
-        run_name=f"benchmark {configuration}",
+        run_name=f"benchmark {configuration}" + (" (paraphrase set)" if paraphrase_set else ""),
         tags={"nl2sql.entrypoint": "benchmark", "nl2sql.version": __version__},
     )
     mlflow.log_params(
@@ -133,6 +147,7 @@ def open_run(agent: Any, configuration: str, questions: list[BenchmarkQuestion])
             "model_routing": settings.model_routing_enabled,
             "max_attempts": settings.max_attempts,
             "questions": ",".join(q.id for q in questions),
+            "paraphrase_set": paraphrase_set,
         }
     )
     return BenchmarkRun(mlflow, run.info.run_id)

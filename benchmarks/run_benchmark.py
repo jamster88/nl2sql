@@ -5,11 +5,18 @@
     python benchmarks/run_benchmark.py --compare          # v1 vs v2 vs v3 vs v5.6
     python benchmarks/run_benchmark.py --only B07 B08
     python benchmarks/run_benchmark.py --json out.json
+    python benchmarks/run_benchmark.py --paraphrase-set   # each question four ways: the stability
 
 Accuracy is execution accuracy: the agent's SQL is run and its rows compared
 against reference SQL whose answer was verified against the shipped dataset.
 Speed is reported per question and per pipeline stage, because "slow" and "slow
 in generate_sql" call for different fixes.
+
+`--paraphrase-set` asks each question as the benchmark does and as each of
+its three hand-written rewordings does (`benchmarks/paraphrases.py`), scores
+all four against the question's one reference, and reports the stability:
+the fraction of questions every wording of which came out right -- arch7's
+premise, measured.
 
 `--compare` runs the same questions through four configurations that differ
 only in what retrieval is switched on, which is the measurement the whole
@@ -31,12 +38,14 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT / "agent") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "agent"))
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# The repository, the agent, and the shared package the agent imports since
+# 6.2 (`common/`), which the images install and a checkout does not.
+for _path in (REPO_ROOT / "common", REPO_ROOT / "agent", REPO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from benchmarks import tracking  # noqa: E402
+from benchmarks.paraphrases import wordings  # noqa: E402
 from benchmarks.questions import CATEGORIES, QUESTIONS, BenchmarkQuestion  # noqa: E402
 from benchmarks.runner import (  # noqa: E402
     CORRECT,
@@ -51,6 +60,9 @@ from benchmarks.runner import (  # noqa: E402
     routes_from_trace,
     timing_from_trace,
 )
+
+#: How the report marks each outcome: a miss in capitals, so it stands out.
+MARKS = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}
 
 # The agent's own defaults are compose service names -- `postgres`, `vectordb`,
 # `chunkdb`, `host.docker.internal` -- because that is where it normally runs.
@@ -135,6 +147,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run every configuration in CONFIGURATIONS and print them side by side",
     )
     p.add_argument("--config", choices=sorted(CONFIGURATIONS), default="snippets")
+    p.add_argument(
+        "--paraphrase-set", action="store_true",
+        help="ask each question its own way and its three rewordings (benchmarks/paraphrases.py), "
+             "and report the stability",
+    )
     p.add_argument("--json", metavar="PATH", help="also write the full results as JSON")
     p.add_argument("--database-url", help="override the retail database URL")
     p.add_argument("--model", help="override the chat model")
@@ -210,19 +227,27 @@ def narrative_score(state) -> float | None:
     return round((len(claims) - unsupported) / len(claims), 4)
 
 
-def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer) -> QuestionResult:
-    """Ask one question, score it, and record where the time went."""
+def run_question(
+    agent, database, question: BenchmarkQuestion, timer: StageTimer, *, asked: str | None = None, wording: int = 0,
+) -> QuestionResult:
+    """Ask one question, score it, and record where the time went.
+
+    `asked` is the words put to the agent, the question's own unless the
+    paraphrase set gives a rewording -- `wording` its number -- which is
+    scored against the same reference: a rewording asks the same question.
+    """
     expected = reference_rows(database, question)
+    asked = asked or question.question
 
     timer.start()
     started = time.perf_counter()
     try:
-        state = agent.run(question.question)
+        state = agent.run(asked)
     except Exception as exc:  # noqa: BLE001 - a crash is a benchmark result, not a benchmark failure
         return QuestionResult(
-            question_id=question.id, category=question.category, question=question.question,
+            question_id=question.id, category=question.category, question=asked,
             outcome=FAILED, wall_seconds=time.perf_counter() - started, timing=timer.timing,
-            error=str(exc)[:400], expected_row_count=len(expected),
+            error=str(exc)[:400], expected_row_count=len(expected), wording=wording,
         )
     wall = time.perf_counter() - started
 
@@ -234,7 +259,7 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
     timing = timing_from_trace(trace) if trace else timer.timing
 
     common = dict(
-        question_id=question.id, category=question.category, question=question.question,
+        question_id=question.id, category=question.category, question=asked, wording=wording,
         wall_seconds=wall, timing=timing, sql=state.get("sql"),
         attempts=state.get("attempts", 0), expected_row_count=len(expected),
         examples=[p["pair_id"] for p in state.get("example_pairs", [])],
@@ -295,18 +320,20 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
         raise SystemExit(f"error: {exc}")
 
     report = BenchmarkReport(label=configuration)
-    tracked = tracking.open_run(agent, configuration, questions)
+    tracked = tracking.open_run(agent, configuration, questions, paraphrase_set=args.paraphrase_set)
     complete = False
     try:
         for question in questions:
-            print(f"  {question.id} [{question.category}] {question.question[:64]}...", flush=True)
-            with tracing.tagged(tracking.question_tags(question, configuration)):
-                result = run_question(agent, database, question, timer)
-            report.results.append(result)
-            if tracked is not None:
-                tracked.score(result)
-            mark = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}[result.outcome]
-            print(f"       -> {mark} in {result.wall_seconds:.1f}s", flush=True)
+            asked = wordings(question) if args.paraphrase_set else (question.question,)
+            for wording, text in enumerate(asked):
+                label = f"{question.id}.{wording}" if wording else question.id
+                print(f"  {label} [{question.category}] {text[:64]}...", flush=True)
+                with tracing.tagged(tracking.question_tags(question, configuration, wording=wording)):
+                    result = run_question(agent, database, question, timer, asked=text, wording=wording)
+                report.results.append(result)
+                if tracked is not None:
+                    tracked.score(result)
+                print(f"       -> {MARKS[result.outcome]} in {result.wall_seconds:.1f}s", flush=True)
         complete = True
     finally:
         if tracked is not None:
@@ -338,14 +365,18 @@ def print_report(report: BenchmarkReport) -> None:
         print("\n  not correct")
         for result in missed:
             detail = result.error or f"{result.row_count} rows, expected {result.expected_row_count}"
-            print(f"    {result.question_id} {result.outcome:<7} {detail[:60]}")
+            print(f"    {result.label} {result.outcome:<7} {detail[:60]}")
+
+    if report.paraphrased:
+        print_stability(report)
 
     print("\nSPEED")
-    print(f"  total                {report.total_seconds:.1f}s for {report.total} questions")
+    asked = "wordings" if report.paraphrased else "questions"
+    print(f"  total                {report.total_seconds:.1f}s for {report.total} {asked}")
     print(f"  median per question  {report.median_seconds:.1f}s")
     print("\n  slowest")
     for result in report.slowest(3):
-        print(f"    {result.question_id}  {result.wall_seconds:6.1f}s  {result.question[:52]}")
+        print(f"    {result.label}  {result.wall_seconds:6.1f}s  {result.question[:52]}")
 
     calls: dict[str, int] = {}
     for result in report.results:
@@ -384,15 +415,37 @@ def print_report(report: BenchmarkReport) -> None:
             print(f"    {stage:<20} {seconds:7.1f}s  {share:5.1f}%  {'#' * int(share / 3)}")
 
 
+def print_stability(report: BenchmarkReport) -> None:
+    """The paraphrase set's verdict: how many questions were right however
+    they were worded, and per question, which wordings were."""
+    questions = report.by_question()
+    own = [r for r in report.results if not r.wording]
+    reworded = [r for r in report.results if r.wording]
+    print("\nSTABILITY  (the paraphrase set: each question in its own words and three others)")
+    print(f"  stable questions     {report.stable}/{len(questions)}  ({100 * report.stability:.1f}%)  "
+          "every wording right")
+    print(f"  own wordings         {sum(r.correct for r in own)}/{len(own)}")
+    print(f"  rewordings           {sum(r.correct for r in reworded)}/{len(reworded)}")
+    print("\n  per question                    wordings 0 1 2 3")
+    for question_id, results in questions.items():
+        right = sum(r.correct for r in results)
+        marks = " ".join(MARKS[r.outcome] for r in results)
+        print(f"    {question_id} {results[0].category:<10} {right}/{len(results)}  {marks}")
+
+
 def print_comparison(reports: list[BenchmarkReport]) -> None:
+    # The stability column only where a question was asked more than one way.
+    paraphrased = any(report.paraphrased for report in reports)
     print(f"\n{'=' * 72}\ncomparison\n{'=' * 72}\n")
-    print(f"  {'configuration':<14} {'accuracy':>12} {'answered':>10} {'total':>9} {'median':>9}")
-    print(f"  {'-' * 14} {'-' * 12} {'-' * 10} {'-' * 9} {'-' * 9}")
+    print(f"  {'configuration':<14} {'accuracy':>12} {'answered':>10} {'total':>9} {'median':>9}"
+          + (f" {'stable':>8}" if paraphrased else ""))
+    print(f"  {'-' * 14} {'-' * 12} {'-' * 10} {'-' * 9} {'-' * 9}" + (f" {'-' * 8}" if paraphrased else ""))
     for report in reports:
         print(
             f"  {report.label:<14} {report.correct:>4}/{report.total} "
             f"({100 * report.accuracy:>4.0f}%) {report.answered:>10} "
             f"{report.total_seconds:>8.1f}s {report.median_seconds:>8.1f}s"
+            + (f" {report.stable:>5}/{len(report.by_question()):<2}" if paraphrased else "")
         )
 
     categories = sorted({c for r in reports for c in r.by_category()})
@@ -420,9 +473,20 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                 "by_category": {k: list(v) for k, v in report.by_category().items()},
                 "by_model": report.by_model(),
                 "rungs": report.rungs(),
+                # The paraphrase set's: None for a run of each question's own words.
+                "stability": {
+                    "fraction": report.stability,
+                    "stable": report.stable,
+                    "questions": len(report.by_question()),
+                    "by_question": {
+                        question_id: [r.outcome for r in results]
+                        for question_id, results in report.by_question().items()
+                    },
+                } if report.paraphrased else None,
                 "results": [
                     {
                         "id": r.question_id,
+                        "wording": r.wording,
                         "category": r.category,
                         "question": r.question,
                         "outcome": r.outcome,

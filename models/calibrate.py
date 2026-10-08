@@ -63,7 +63,7 @@ from typing import Any, Callable, Sequence
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
-for _path in (HERE, REPO_ROOT, REPO_ROOT / "agent"):
+for _path in (HERE, REPO_ROOT, REPO_ROOT / "agent", REPO_ROOT / "common"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 

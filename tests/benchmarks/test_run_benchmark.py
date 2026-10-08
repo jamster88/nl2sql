@@ -20,6 +20,7 @@ for _path in (REPO_ROOT, REPO_ROOT / "agent"):
         sys.path.insert(0, str(_path))
 
 from benchmarks import run_benchmark  # noqa: E402
+from benchmarks.paraphrases import PARAPHRASES, wordings  # noqa: E402
 from benchmarks.questions import by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
 from tests.benchmarks.test_runner import result  # noqa: E402
@@ -291,6 +292,34 @@ def test_the_agent_is_asked_the_question_text_and_nothing_else(database):
     assert agent.asked == ["How many stores are there?"]
 
 
+class _Reference:
+    """A database that knows one thing: the reference answer."""
+
+    def __init__(self, rows) -> None:
+        self._rows = rows
+
+    def run_select(self, sql: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(rows=self._rows)
+
+
+def test_a_rewording_is_asked_in_its_own_words_and_scored_against_its_questions_reference():
+    """A rewording asks the same question, so it has the same answer: the
+    agent hears the rewording, and the reference is the question's."""
+    text = PARAPHRASES["B01"][1]
+    agent = FakeAgent({"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1})
+    result = run_benchmark.run_question(agent, _Reference([[10]]), by_id("B01"), StageTimer(), asked=text, wording=2)
+    assert agent.asked == [text]
+    assert (result.question, result.wording, result.label, result.outcome) == (text, 2, "B01.2", CORRECT)
+
+    crashed = run_benchmark.run_question(
+        FakeAgent(raises=RuntimeError("connection reset")), _Reference([[10]]), by_id("B01"), StageTimer(),
+        asked=text, wording=2,
+    )
+    assert (crashed.question, crashed.wording, crashed.outcome) == (text, 2, FAILED)
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -362,6 +391,21 @@ def test_the_comparison_table_lists_every_configuration(capsys):
     out = capsys.readouterr().out
     for name in ("schema-only", "knowledge", "multi-shot", "snippets"):
         assert name in out
+    assert "stable" not in out
+
+
+def test_comparing_the_paraphrase_set_adds_the_stable_questions(capsys):
+    reworded = result("B01", "schema", WRONG, 1.0)
+    reworded.wording = 1
+    reports = [
+        BenchmarkReport(label="snippets", results=[result("B01", "schema", CORRECT, 1.0), reworded]),
+        BenchmarkReport(label="knowledge", results=[result("B01", "schema", CORRECT, 1.0)]),
+    ]
+    run_benchmark.print_comparison(reports)
+    lines = capsys.readouterr().out.splitlines()
+    assert "stable" in next(line for line in lines if line.strip().startswith("configuration"))
+    assert next(line for line in lines if line.strip().startswith("snippets")).split()[-1] == "0/1"
+    assert next(line for line in lines if line.strip().startswith("knowledge")).split()[-1] == "1/1"
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +533,7 @@ def test_a_run_where_every_answer_is_right_exits_zero(monkeypatch, capsys):
     assert code == 0
     assert "execution accuracy   1/1" in out
     assert agents[0].asked == ["How many stores are there?"]
+    assert "STABILITY" not in out
 
 
 def test_a_wrong_answer_exits_non_zero_and_is_named(monkeypatch, capsys):
@@ -556,9 +601,63 @@ def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys,
     payload = json.loads(out_path.read_text())
     [result] = payload["configurations"][0]["results"]
     assert result["id"] == "B01"
+    assert result["wording"] == 0
+    assert payload["configurations"][0]["stability"] is None
     assert result["model_calls"] == {"generate_sql": 1}
     assert result["narrative_score"] == 1.0
     assert payload["configurations"][0]["stage_totals"]["generate_sql"] == 1.5
+
+
+RIGHT = {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False}, "attempts": 1}
+
+
+def test_the_paraphrase_set_asks_each_question_its_own_way_then_three_others(monkeypatch, capsys):
+    code, agents = _drive(monkeypatch, RIGHT, argv=["--only", "B01", "B02", "--paraphrase-set"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert agents[0].asked == [*wordings(by_id("B01")), *wordings(by_id("B02"))]
+    assert "  B01.3 [schema] " in out, "each wording is named as it is asked"
+    assert "execution accuracy   8/8" in out
+    assert "stable questions     2/2  (100.0%)" in out
+    assert "s for 8 wordings" in out
+
+
+def test_one_wrong_rewording_makes_its_question_unstable_and_fails_the_run(monkeypatch, capsys, tmp_path):
+    """Every wording scored against the question's one reference; the report
+    names the wording that missed, per question and in the misses."""
+    import benchmarks.run_benchmark as rb
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+
+    missed = PARAPHRASES["B01"][1]
+    wrong = {**RIGHT, "result": {"rows": [[11]], "columns": ["n"], "truncated": False}}
+
+    class _ByWording(_StubAgent):
+        def run(self, question: str, **kwargs) -> dict:
+            self._state = wrong if question == missed else RIGHT
+            return super().run(question, **kwargs)
+
+    monkeypatch.setattr(rb, "reference_rows", lambda db, q: [[10]])
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    monkeypatch.setattr(db_module, "Database", lambda *a, **k: None)
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", lambda settings, **kwargs: _ByWording(RIGHT))
+    out_path = tmp_path / "paraphrase.json"
+
+    code = rb.main(["--only", "B01", "B02", "--paraphrase-set", "--json", str(out_path)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "stable questions     1/2  (50.0%)" in out
+    assert "own wordings         2/2" in out and "rewordings           5/6" in out
+    assert "B01 schema     3/4  ok ok WRONG ok" in out
+    assert "    B01.2 wrong" in out
+
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["stability"] == {
+        "fraction": 0.5, "stable": 1, "questions": 2,
+        "by_question": {"B01": [CORRECT, CORRECT, WRONG, CORRECT], "B02": [CORRECT] * 4},
+    }
+    assert [(r["id"], r["wording"]) for r in payload["results"][:4]] == [("B01", w) for w in range(4)]
+    assert payload["results"][2]["question"] == missed
 
 
 def test_verbose_puts_each_agent_step_on_stderr(monkeypatch, capsys):
@@ -661,16 +760,17 @@ def test_the_database_url_flag_overrides_the_settings(monkeypatch):
 
 def test_the_script_puts_the_repository_on_the_path_for_itself():
     """`python benchmarks/run_benchmark.py` is how this is actually invoked,
-    and then nothing has arranged the imports: `benchmarks` and `agent` are
-    not on `sys.path` and the first import fails. The bootstrap at the top of
-    the file is the fix, and under pytest it never runs -- conftest has
-    already done the same job -- so it is exercised here with the path put
-    back the way a bare interpreter leaves it.
+    and then nothing has arranged the imports: `benchmarks`, `agent` and the
+    `common` package the agent imports are not on `sys.path` and the first
+    import fails. The bootstrap at the top of the file is the fix, and under
+    pytest it never runs -- conftest has already done the same job -- so it
+    is exercised here with the path put back the way a bare interpreter
+    leaves it.
     """
     import runpy
 
     script = REPO_ROOT / "benchmarks" / "run_benchmark.py"
-    stripped = {str(REPO_ROOT), str(REPO_ROOT / "agent")}
+    stripped = {str(REPO_ROOT), str(REPO_ROOT / "agent"), str(REPO_ROOT / "common")}
     # Every occurrence, not the first: pytest inserts the rootdir and so does
     # this module, so removing one entry leaves the bootstrap still satisfied
     # and half of it unexercised.
@@ -685,11 +785,34 @@ def test_the_script_puts_the_repository_on_the_path_for_itself():
         namespace = runpy.run_path(str(script), run_name="not_main")
         assert str(REPO_ROOT) in sys.path
         assert str(REPO_ROOT / "agent") in sys.path
+        assert str(REPO_ROOT / "common") in sys.path
     finally:
         sys.path[:] = saved_path
         sys.modules.update(saved_modules)
 
     assert callable(namespace["main"])
+
+
+@pytest.mark.parametrize("script,then", [
+    ("benchmarks/run_benchmark.py", "import nl2sql_agent.config"),
+    ("models/calibrate.py", "pass"),
+])
+def test_a_bare_interpreter_can_reach_the_agent_through_the_scripts_own_bootstrap(script, then, tmp_path):
+    """Since 6.2 the agent imports `nl2sql_common`, which the images install
+    and a checkout does not, and both scripts that run the agent on the host
+    left `common/` off the path: each stopped at its first import of the
+    agent with "No module named 'nl2sql_common'" -- found by the first live
+    run of the paraphrase set. Every test above runs where conftest has put
+    `common/` on the path already, so only an interpreter of its own sees
+    what a person typing the command gets."""
+    import os
+    import subprocess
+
+    code = f"import runpy; runpy.run_path({str(REPO_ROOT / script)!r}, run_name='bootstrap'); {then}"
+    environment = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
+    ran = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=environment,
+                         capture_output=True, text=True, timeout=300)
+    assert ran.returncode == 0, ran.stderr[-1500:]
 
 
 def test_running_it_as_a_script_calls_main_and_exits_with_its_code():

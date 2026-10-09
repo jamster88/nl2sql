@@ -54,7 +54,7 @@ docker compose --profile '*' down                 # stop; your data is kept
 
 7.0 is being built, and is not published yet. It answers a hard question
 several ways, has a Judge read the answers, and votes ([the
-design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md)). So far:
+design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
 
 - **The question, asked four ways.** Every question is screened once, then
   reworded by a model -- up to ten rewordings, each held to the original's
@@ -105,6 +105,13 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md)). So far:
   `OLLAMA_MODEL`.
 - **The benchmark and calibration scripts run on a host again**, which
   they had not since 6.2.
+- **Still to come in 7.0: the grain check**, on by default. Each table's
+  grain -- daily, weekly, monthly -- measured from its own data, and a
+  query that joins tables of different grains on their dates without
+  rolling the finer up, or on no date at all, sent back to be repaired
+  before it runs, whether the ensemble is on or off ([the
+  design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md), section
+  22.14).
 
 ## What's new in 6.3
 
@@ -174,7 +181,7 @@ Everything that was in this file is in [`docs/`](docs), a document a topic.
 | [`docs/CHANGELOG_SIMPLE.md`](docs/CHANGELOG_SIMPLE.md) | Every version, one line per change |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Every version, with every artifact it created, updated or fixed, and the tags it published |
 | [`docs/basic_agent_steps.md`](docs/basic_agent_steps.md) | The five steps the first agent was built from |
-| [`multi-agent_arch_specs/`](multi-agent_arch_specs) | The architecture as designed and as built; [`Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md) is the current one, with 6.2 and 6.3 beside it, and [`Multi-Agent_NL2SQL_arch7.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) the design of what comes next -- the question asked several ways, the answers validated against each other, one chosen or fused -- with its build plan, module by module, in [`Multi-Agent_NL2SQL_arch7_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch7_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md); [`Multi-Agent_NL2SQL_arch7_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md) is arch7 with the Judge before the vote and what 7.0's build taught it, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md), and supersedes arch7's three where they differ; and [`Multi-Agent_NL2SQL_arch7_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md) is arch7.1 with its Phase 3 as built -- a dissent that reads how each query combines its facts -- and a grain check, a phase of its own, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_risks_by_phase.md), superseding arch7.1's three where they differ |
+| [`multi-agent_arch_specs/`](multi-agent_arch_specs) | The architecture as designed and as built; [`Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md) is the current one, with 6.2 and 6.3 beside it, and [`Multi-Agent_NL2SQL_arch7.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) the design of what comes next -- the question asked several ways, the answers validated against each other, one chosen or fused -- with its build plan, module by module, in [`Multi-Agent_NL2SQL_arch7_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch7_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md); [`Multi-Agent_NL2SQL_arch7_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md) is arch7 with the Judge before the vote and what 7.0's build taught it, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md), and supersedes arch7's three where they differ; and [`Multi-Agent_NL2SQL_arch7_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md) is arch7.1 with its Phase 3 as built -- a dissent that reads how each query combines its facts -- and a grain check, a phase of its own, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_risks_by_phase.md), superseding arch7.1's three where they differ; and [`Multi-Agent_NL2SQL_arch7_3.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md) is arch7.2 with the owner's decisions on the grain check -- in 7.0.0, on by default, its grains measured, a join on no date caught too -- with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md), superseding arch7.2's three where they differ |
 | [`adversary_reviews/`](adversary_reviews) | The adversarial reviews each hardening release answered, and what the second one's plan left open at 6.3.0 ([`v6_1_review_misses.md`](adversary_reviews/v6_1_review_misses.md)) |
 | [`LICENSE`](LICENSE) | The license |
 

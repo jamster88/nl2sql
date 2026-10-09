@@ -275,13 +275,16 @@ vote: every distinct answer is read against the question first, and only
 the runs whose answer it accepts are counted. arch7.2
 ([`Multi-Agent_NL2SQL_arch7_2.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md))
 is arch7.1 as its Phase 3 was built, with a grain check added as a phase
-of its own. It is built in phases
-([`Multi-Agent_NL2SQL_arch7_2_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_implementation.md),
-with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_risks_by_phase.md)),
+of its own, and arch7.3
+([`Multi-Agent_NL2SQL_arch7_3.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md))
+records the owner's decisions on it. It is built in phases
+([`Multi-Agent_NL2SQL_arch7_3_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md),
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md)),
 and Phases 0 to 3 of it are built -- the outer graph, the rewordings, the
 Judge and the vote, the second wave and fusion; the calibration of the two
 new routing tasks, the clients' views of the runs and the grain check
-(Phase 6) are still to come --
+(Phase 6, which 7.0.0 ships on by default, for the pipeline with the
+ensemble off as well) are still to come --
 [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
 
 ```

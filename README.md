@@ -66,15 +66,24 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md)). So far:
   runs gave it -- and sets aside the ones it can name a mistake in; and the
   largest group of accepted answers is delivered, opening with how the runs
   agreed: "Agreed by 4 of 4 independent runs of the question, each worded
-  differently." A second wave on disagreement and fusing what the agreeing
-  runs found are still to come. Measured on the fifteen benchmark
+  differently." When the vote leaves the question unsettled -- no majority,
+  or one run standing alone -- the rewordings not yet run are asked too,
+  and the Judge and the vote go again. The answer is the chosen run's,
+  with what the other agreeing runs found that its rows bear out: a column
+  of the same entities, joined on their key; what they said of rows it
+  did not speak of, where those rows reproduce it; and each answer that
+  lost, with how its query differs. Measured on the fifteen benchmark
   questions, it scores 15 to one run's 14, and on the sixty wordings of the
   paraphrase set 59 to 57, with 14 questions of 15 right in every wording
   to 13. Without the Judge the same runs scored 13 and 55: where rewordings
   shared a mistake the original avoided, they outvoted it. The Judge's
   rules name the kinds of mistake these questions were built around, so
   they are no longer a blind test of it ([the
-  measurement](docs/benchmark.md#the-judge-before-the-vote)).
+  measurement](docs/benchmark.md#the-judge-before-the-vote)). With the
+  second wave and fusion it still scores 15: one question took a second
+  wave, and the answer the Judge accepted went from one run behind it to
+  five ([the second wave and
+  fusion](docs/benchmark.md#the-second-wave-and-fusion)).
 - **The record of every run**, in `--json` and the REST answer's `ensemble`:
   each wording, its SQL and outcome, whether it could vote, and every
   rewording the gate discarded with the check it failed. Progress lines name

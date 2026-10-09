@@ -1,13 +1,24 @@
-"""What the delivered answer says about the runs behind it (arch7 section 22.8).
+"""What the delivered answer is made of, beyond the run chosen (arch7 section 22.8).
 
 Selection -- which run stands for the winning group -- is `agreement.rank`.
-What is built here so far is the sentence every answer the ensemble chooses
-carries first: how many runs there were and how they agreed, so a reader
-knows how much the answer was tested before they read it. The rest of
-fusion -- columns other agreeing runs carried, joined on the entity's key;
-their claims, checked against the delivered rows and re-audited; the
-outvoted groups, named by their key fact -- arrives with the second wave,
-and until it does the delivered answer is the representative's own.
+Fusion then combines, in code and with no model call, what the group's
+other runs found that can be combined without inventing anything:
+
+* **Columns** (`fuse_columns`, `ENSEMBLE_FUSE_COLUMNS`). An attribute of an
+  entity the chosen rows identify, which another run of the group carried
+  and the chosen one did not, joined onto the chosen rows by that entity's
+  key -- only when every chosen row finds exactly one match. The delivered
+  SQL does not return such a column, so the answer names the run it came
+  from. A column that would not join cleanly is left out, and said.
+* **Claims** (`fuse_claims`). The other runs' surviving claims that speak
+  of a row the narrative does not yet speak of, each kept only when the
+  delivered rows reproduce it, up to `ENSEMBLE_MAX_CLAIMS`; then the whole
+  narrative audited again.
+* **Dissent** (`dissent`). Each answer that lost, by its key fact, and how
+  its query differs from the chosen one: the tables only one of them reads
+  and the columns only one filters on, read from the two queries' trees.
+* **The line** (`agreement_line`): how many runs there were and how they
+  agreed, the sentence every answer the ensemble chooses opens with.
 
 The count in every sentence is the runs made, not the rewordings written:
 a rewording the fidelity gate discarded was never asked.
@@ -15,9 +26,197 @@ a rewording the fidelity gate discarded was never asked.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Mapping
+from typing import Any, Sequence
 
-from .ensemble_state import Agreement, Group, Judgement
+from .completeness import _Query, entity_tables, read_query
+from .contract import LabelMap
+from .ensemble_state import Agreement, Candidate, DeclinedColumn, Dissent, Group, JoinedColumn, Judgement
+from .present import audit, check_claim, surviving_claims
+from .state import AuditReport, Claim, QueryResult
+
+
+def fuse_columns(
+    representative: Candidate,
+    members: Sequence[Candidate],
+    label_map: LabelMap,
+    dimensions: Mapping[str, str],
+    *,
+    enabled: bool,
+) -> tuple[QueryResult, list[JoinedColumn], list[DeclinedColumn]]:
+    """The chosen rows, wider by the attributes the group's other runs carried.
+
+    `members` are the group's other runs in `rank` order. For each column
+    of theirs the chosen rows lack, in that order, the join rule's steps:
+    the column is one of a dimension's (`dimensions`) -- a figure under
+    another name, or a column of nothing the label map names, is no
+    attribute and is passed over; the dimension is one the chosen rows
+    identify, by its key or its label (`completeness.entity_tables`); a key
+    of it is in both results; and the member's rows map that key to the
+    column with no key repeated, every chosen row's key among them. A step
+    that fails is a `DeclinedColumn` saying which -- unless another run's
+    copy of the column joined.
+
+    The result is a new `QueryResult`: the representative's own, in its
+    candidate's record, is never changed, so each run's record shows what
+    that run returned. Off (`enabled=False`), the chosen rows as they are.
+    """
+    own = representative.state.get("result") or QueryResult()
+    if not enabled:
+        return own, [], []
+    result = QueryResult(columns=list(own.columns), rows=[list(row) for row in own.rows], truncated=own.truncated)
+    identified = entity_tables(own, read_query(representative.state.get("sql") or "", label_map), label_map)
+    joined: list[JoinedColumn] = []
+    declined: list[DeclinedColumn] = []
+    for member in members:
+        theirs = member.state.get("result") or QueryResult()
+        for column in theirs.columns:
+            table = dimensions.get(column.lower())
+            if table is None or _position(result.columns, column) is not None:
+                continue
+            why, key, values = _lookup(result, theirs, column, table, identified, label_map, member.index)
+            if why:
+                declined.append(DeclinedColumn(column=column, from_candidate=member.index, why=why))
+                continue
+            at = _position(result.columns, key)
+            result.columns.append(column)
+            for row in result.rows:
+                row.append(values[row[at]])
+            joined.append(JoinedColumn(column=column, from_candidate=member.index, key=key, table=table))
+    taken = {column.column.lower() for column in joined}
+    return result, joined, [column for column in declined if column.column.lower() not in taken]
+
+
+def _lookup(
+    result: QueryResult,
+    theirs: QueryResult,
+    column: str,
+    table: str,
+    identified: set[str],
+    label_map: LabelMap,
+    run: int,
+) -> tuple[str, str, dict[Any, Any]]:
+    """Why `column` of a run's rows cannot be joined onto `result`, or "",
+    the key it joins on and each key's value."""
+    if table not in identified:
+        return f"{table} is not a dimension the chosen rows identify", "", {}
+    keys = [label.key for label in label_map.labels() if label.table == table]
+    key = next(
+        (k for k in keys if _position(result.columns, k) is not None and _position(theirs.columns, k) is not None),
+        None,
+    )
+    if key is None:
+        return f"no key of {table} is in both runs' rows", "", {}
+    at, value_at, mine = _position(theirs.columns, key), _position(theirs.columns, column), _position(result.columns, key)
+    values: dict[Any, Any] = {}
+    for row in theirs.rows:
+        if row[at] in values:
+            return f"{key} {row[at]} repeats in run {run}", "", {}
+        values[row[at]] = row[value_at]
+    for number, row in enumerate(result.rows, 1):
+        if row[mine] not in values:
+            return f"row {number} has no match in run {run}", "", {}
+    return "", key, values
+
+
+def _position(columns: Sequence[str], name: str) -> int | None:
+    lowered = name.lower()
+    return next((i for i, column in enumerate(columns) if column.lower() == lowered), None)
+
+
+def fuse_claims(
+    representative: Candidate,
+    members: Sequence[Candidate],
+    result: QueryResult,
+    *,
+    question: str,
+    assumptions: Sequence[str],
+    cap: int,
+) -> tuple[list[Claim], AuditReport, int, int]:
+    """The chosen run's narrative, with what the group's other runs said that
+    the delivered rows bear out.
+
+    The representative's surviving claims first; then each member's, in
+    `rank` order, kept when it speaks of a row the narrative does not yet
+    speak of and `present.check_claim` finds every cell it cites in the
+    delivered rows and its value in them, until the narrative holds `cap`.
+    A claim every row of which a kept claim already cites is a repeat,
+    however it is worded and whichever columns it cites: four narrators of
+    one top five each say the first row sold the most, and the answer
+    should say it once. A claim that cites no cell has nothing the rows
+    could bear out, and is dropped. The whole is audited again against the
+    rows and the assumptions; the representative's own dropped claims stay
+    dropped, so the answer still says how many there were.
+
+    Returns the claims -- the representative's as narrated, then those
+    added -- the audit, how many were added, and how many of the members'
+    the rows did not bear out.
+    """
+    own = list(representative.state.get("claims") or [])
+    own_report = representative.state.get("audit") or AuditReport()
+    kept = surviving_claims(own, own_report)
+    spoken = {row for claim in kept for row in _rows(claim)}
+    added: list[Claim] = []
+    dropped = 0
+    for member in members:
+        for claim in surviving_claims(member.state.get("claims") or [], member.state.get("audit") or AuditReport()):
+            if len(kept) + len(added) >= cap:
+                break
+            rows = _rows(claim)
+            if rows and rows <= spoken:
+                continue
+            if not rows or check_claim(claim, result, question=question, assumptions=assumptions):
+                dropped += 1
+                continue
+            added.append(claim)
+            spoken |= rows
+    report = audit(kept + added, result, question=question, assumptions=assumptions)
+    report.unsupported_claims[:0] = own_report.unsupported_claims
+    report.drop_reasons[:0] = own_report.drop_reasons
+    report.passed = report.passed and not own_report.unsupported_claims
+    return own + added, report, len(added), dropped
+
+
+def _rows(claim: Claim) -> set[int]:
+    """The rows a claim speaks of, whichever of their columns it cites."""
+    return {row for row, _ in claim.cells}
+
+
+def dissent(chosen: Candidate, losing: Sequence[Group], candidates: Sequence[Candidate]) -> list[Dissent]:
+    """Each answer that lost, by its key fact, and how its query differs
+    from the chosen one -- in code, from the two queries' trees: the tables
+    only one of them reads, and the columns only one filters on."""
+    runs = {candidate.index: candidate for candidate in candidates}
+    mine = read_query(chosen.state.get("sql") or "")
+    said = []
+    for group in losing:
+        theirs = read_query(runs[group.representative].state.get("sql") or "")
+        clauses = [
+            f"{whose} {difference}"
+            for whose, difference in (
+                (f"run {group.representative}'s query", _has(theirs, mine)),
+                ("the chosen one", _has(mine, theirs)),
+            )
+            if difference
+        ]
+        said.append(Dissent(group=group.index, members=list(group.members), signature=group.signature,
+                            differs="; ".join(clauses)))
+    return said
+
+
+def _has(query: _Query, other: _Query) -> str:
+    """What `query` reads that `other` does not: its tables, and the columns
+    it filters on -- compared by name, so `dim_date.fiscal_year` and an
+    unqualified `fiscal_year` are one filter."""
+    tables = sorted(query.relations - other.relations)
+    filtered = {name.rsplit(".", 1)[-1] for name in other.filters}
+    filters = sorted(name for name in query.filters if name.rsplit(".", 1)[-1] not in filtered)
+    parts = []
+    if tables:
+        parts.append("uses " + ", ".join(tables))
+    if filters:
+        parts.append("filters on " + ", ".join(filters))
+    return " and ".join(parts)
 
 
 def agreement_line(agreement: Agreement, judgement: Judgement | None = None, groups: Sequence[Group] = ()) -> str:

@@ -256,7 +256,7 @@ as asked. From a real run, the middle of each run's steps left out:
 [agreement] 4 run, 4 admissible, 1 group(s)                   <- all four the same answer
 [judge] group 0 accepted                                      <- the Judge, one call
 [vote] 4 run, 4 voted, 4 agree (unanimous)
-[fusion] [0] of [0, 1, 2, 3] (unanimous)                      <- the original's run chosen
+[fusion] [0] of [0, 1, 2, 3] (unanimous): 0 column(s) joined, 0 declined; 0 claim(s) added, 0 dropped; 0 dissenting   <- the original's run; the others added nothing
 [answer] unanimous: [0]
 
 Agreed by 4 of 4 independent runs of the question, each worded differently.
@@ -273,6 +273,19 @@ When the Judge set aside the answer most runs gave, the line says so and
 why: "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and
 accepted this one, which 1 gave." Four runs take about four times one -- on a
 host that serves one call at a time, a minute or two a question.
+
+When the vote does not settle it -- no majority among the runs the Judge
+accepted, or one run left standing -- the rewordings that passed the gate
+and have not run are asked too, as a second wave (`[wave] wave 2:
+rewording(s) 4, 5, 6`), and the Judge and the vote go again over every run.
+That costs the wave's runs and one more Judge call. Then the answer takes in
+what the other agreeing runs found that its rows bear out, and says so in
+notes at its end: a column another run carried, joined on the entity's key
+("*region_name is from run 2, which agreed, joined on store_key; this
+answer's query does not return it.*"), a sentence about a row the chosen
+run's narrative left out, and each answer that lost ("*Run 2 answered
+differently (34.65).*", with the tables and filtered columns its query has
+that the chosen one's has not, when they differ).
 
 Four flags, each overriding its setting for the run:
 

@@ -13,7 +13,8 @@ run:
   how many questions the Aggregator scored at each rung; with the
   paraphrase set, the stability too; through the ensemble, how its runs
   agreed, which checks discarded rewordings, what the Judge did and how
-  often its overruling turned a wrong answer right or a right one wrong;
+  often its overruling turned a wrong answer right or a right one wrong,
+  how often a second wave ran, and what fusion joined, added and dropped;
 * **an artifact**: the whole report, as `--json` writes it;
 * **traces**: every question's, filed under the run by MLflow itself, tagged
   with the question's id, category and wording, and carrying the benchmark's
@@ -130,6 +131,9 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
         effect = report.judge_effect()
         values["judge_fixed"] = effect["fixed"]
         values["judge_broke"] = effect["broke"]
+        values["second_waves"] = report.second_waves
+        for measure, count in report.fusion().items():
+            values[measure.replace(" ", "_")] = count
     return values
 
 

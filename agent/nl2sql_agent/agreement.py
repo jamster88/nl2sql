@@ -21,6 +21,9 @@ module decides, in code and with no model call, what they amount to:
   (`judge.py`), and `decide` counts only the runs whose answer it accepted:
   `judged` when that sets aside the answer the runs alone would have chosen,
   and the runs' own choice, `contested`, when it accepted none.
+* **Is it settled?** A majority among the runs that voted settles the
+  question; no majority, or one run standing alone, is worth a second wave
+  when one is left (`settled`).
 * **Which run stands for the group?** The representative, by a ranking of
   what makes one result the stronger of several that agree: complete over a
   gap, audited over dropped claims, the original's wording over a
@@ -36,7 +39,7 @@ from typing import Any, Sequence
 from .compare import result_matches
 from .completeness import NO_ROWS, check_rules, measure_columns, read_query
 from .contract import LabelMap
-from .ensemble_state import ORIGINAL, Agreement, Candidate, Group, Judgement
+from .ensemble_state import ORIGINAL, Agreement, Candidate, Group, Judgement, judged
 from .state import AnswerContract, AuditReport, CompletenessReport, QueryResult
 from .tracing import ANSWERED
 
@@ -245,6 +248,18 @@ def decide(
     return agreement, winner, judgement
 
 
+def settled(agreement: Agreement, judgement: Judgement | None) -> bool:
+    """Whether the vote decided the question (arch7.1 section 22.7): two or
+    more of the runs that voted agree, and they are more than half of them.
+    No majority among them, or one run standing alone, is not -- a second
+    wave is taken first, when one is left. When the Judge accepted none of
+    the answers it is settled whatever the count, as the table has it: the
+    runs' own choice is delivered, flagged with the Judge's objection."""
+    if judged(judgement) == "accepted none":
+        return True
+    return agreement.agreed >= 2 and agreement.agreed > agreement.admissible / 2
+
+
 # ---------------------------------------------------------------------------
 # Selection: which run stands for the group
 # ---------------------------------------------------------------------------
@@ -255,6 +270,12 @@ def rank(candidates: Sequence[Candidate]) -> Candidate:
     accepted, audited before claims were dropped, the original's own wording
     before a rewording's, fewer attempts, the cheaper plan, the lower index."""
     return min(candidates, key=_merit)
+
+
+def ranked(candidates: Sequence[Candidate]) -> list[Candidate]:
+    """The candidates in `rank`'s order, the representative first: the
+    order fusion takes the other members' columns and claims in."""
+    return sorted(candidates, key=_merit)
 
 
 def _merit(candidate: Candidate) -> tuple[Any, ...]:

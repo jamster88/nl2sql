@@ -25,6 +25,7 @@ from nl2sql_agent.contract import (
     contract_tables,
     default_period_assumption,
     describe,
+    dimensions,
     is_ranked,
     load_resources,
     render_contract,
@@ -349,11 +350,33 @@ def test_resources_are_read_from_the_catalog_and_the_calendar():
     assert (loaded.fiscal_year, loaded.fiscal_year_start) == (2025, date(2024, 4, 1))
 
 
+def test_the_dimensions_columns_are_read_with_the_label_map(labels):
+    """What fusion may join onto rows that identify a dimension: every
+    column of every labelled one, and nothing of a fact's or of a table
+    with no label."""
+    columns = dimensions(CATALOG, labels)
+    assert columns["brand_name"] == "dim_product" and columns["store_key"] == "dim_store"
+    assert columns["region_name"] == "dim_geography"
+    assert "net_sales_amt" not in columns and "channel_type" not in columns, "a fact's; an unlabelled table's"
+    loaded = load_resources(_Database(catalog=CATALOG, latest=None))
+    assert loaded.dimensions == columns
+
+
+def test_a_column_two_dimensions_share_is_left_out_rather_than_guessed():
+    shared = [
+        table("dim_a", ["a_key", "a_name", "updated_at"], ["PRIMARY KEY (a_key)"]),
+        table("dim_b", ["b_key", "b_name", "updated_at"], ["PRIMARY KEY (b_key)"]),
+    ]
+    assert dimensions(shared, build_label_map(shared)) == {
+        "a_key": "dim_a", "a_name": "dim_a", "b_key": "dim_b", "b_name": "dim_b",
+    }
+
+
 def test_each_half_of_the_resources_fails_on_its_own():
     loaded = load_resources(_Database(catalog_error=psycopg.OperationalError("no catalog"),
                                       latest=(2025, date(2024, 4, 1), date(2025, 3, 31))))
     assert loaded.errors == {"label_map": "no catalog"}
-    assert len(loaded.label_map) == 0 and loaded.fiscal_year == 2025
+    assert len(loaded.label_map) == 0 and loaded.dimensions == {} and loaded.fiscal_year == 2025
 
     loaded = load_resources(_Database(catalog=CATALOG, calendar_error=psycopg.errors.UndefinedTable("no dim_date")))
     assert loaded.errors == {"fiscal_calendar": "no dim_date"}

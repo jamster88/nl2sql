@@ -444,3 +444,68 @@ behind them.
 took 16.2s at the median. As on the fifteen, its rules name these mistakes,
 so this is no blind test of it: where it overruled the runs, scored both
 ways, four fixed and none broken.
+
+### The second wave and fusion
+
+Phase 3 of arch7.1's build adds a second wave -- when the vote does not
+settle a question, no majority among the runs the Judge accepted or one run
+left standing, every faithful rewording not yet run is asked too, and the
+Judge and the vote go again over both waves -- and fusion: what the
+winning group's other runs found, taken onto the chosen run's answer when
+its rows bear it out. Measured 2026-10-09 on the same stack, the fifteen
+questions through `ensemble`, twice -- the second time after the first had
+shown the claims fused restating each other:
+
+| | Right | Agreement | Second wave | Total | Median |
+|---|---|---|---|---|---|
+| the Judge before the vote (2026-10-08) | 15/15 | 11 unanimous, 2 judged, 2 single | -- | 2507.7s | 152.2s |
+| with the second wave and fusion | **15/15** | 11 unanimous, 2 judged, 2 single | 1 of 15 | 2590.6s | 146.7s |
+
+**The first wave's runs were the same runs**, the rewordings, the 46
+discards, the SQL and the rows as before, and both of this phase's runs
+made the same second wave with the same SQL. 15 of 15 held.
+
+**One question took a second wave: B15.** Its first wave left one run
+standing -- the Judge set aside the three that kept only the two channels
+the question names as examples. Six of its rewordings were faithful and not
+yet run; the second wave ran them, four answered with every channel and two
+with the two. The Judge read both answers again and gave the same
+verdicts, and the answer it accepted now had five runs behind it instead of
+one: "The Judge set aside the answer 5 of 10 runs gave ... and accepted
+this one, which 5 gave". Counted without the Judge, the five and five would
+have tied and gone to the original's group, which was wrong. B07, B08 and
+B13 were unsettled too, one run standing, but had no faithful rewording
+left: the gate kept three of B07's nine rewordings, one of B08's twelve and
+three of B13's ten, and the first wave ran them all.
+
+**The widest job measured.** B15's ten runs made a state of 376.4 KB as
+JSON, against 155.0 KB at the median at four runs -- the size arch7.1's
+risks document asked to be recorded once a second wave ran.
+
+**What fusion added.** No columns: every agreeing run returned the columns
+the chosen one did, so there was nothing to join and nothing to decline.
+Four claims, one each on B02, B09, B10 and B15, each about a row the chosen
+run's narrative had not spoken of -- asked the same way from the command
+line, B10's was the fifth product's sales, which the chosen narrator had
+left out, and B15's the one channel its narrative had not named. Three
+dropped: on B03 a narrator's fragment, "Corner Fresh Grocers has", which
+cited no cell; on B15 two claims of runs that returned the same five
+channels in another order, so the cells they cited held other figures in
+the delivered rows. The dissent named what it could: B15's losing answer
+as "run 0's query filters on dim_ad_channel.channel_type" -- the filter
+the Judge set it aside for -- while B07's, whose mistake is the grain of a
+join, reads the same tables and filters the same columns as the chosen
+one, and was named by its figure alone.
+
+**The claims rule was set by this run.** The specification counts a claim
+as a repeat when it has the same value from the same cells, or the same
+words. On B10, three of the four narrators said the top product sold the
+most, one citing its sales and the others its name, SKU and sales, and that
+rule added five claims where one said something new; a rule by the exact
+set of rows cited then restated, on B03, two banners the chosen narrator had
+named in one sentence. A claim is now added only when it speaks of a row
+the narrative does not yet speak of (the changelog's departures, Phase 3).
+
+**What it cost.** B15's second wave: six runs and a second Judge call,
+373.6s for the question against 173.5s. The fifteen made 340 model calls,
+22.7 a question against 21.7; fusion is code and took no measurable time.

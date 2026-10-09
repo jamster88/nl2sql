@@ -67,9 +67,13 @@ nl2sql                      AGENT       the question in, the delivered answer ou
   Judge                     EVALUATOR   every group's answer, accepted or set aside
     <model>                 CHAT_MODEL  heavy, always: one call, before the vote
   Vote                      EVALUATOR   the accepted runs counted, the winner
-  Fusion                    TASK        the run chosen
+  Fusion                    TASK        the run chosen, and what the others added
   Answer                    TASK        what was delivered
 ```
+
+When the vote does not settle the question, a second wave follows the first
+Vote in the same trace -- Wave Planner, Candidate Runs with that wave's
+runs, Agreement, Judge and Vote again -- before Fusion.
 
 The trace gains three tags, `nl2sql.agreement` (`3/4 majority`: agreed of
 run, and the level), `nl2sql.candidates` and `nl2sql.judge` -- what the

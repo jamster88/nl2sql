@@ -250,8 +250,12 @@ how often a question's runs were scored at different rungs; the state's
 size; what the Judge did, question by question; and, where it overruled the
 runs, the runs' own choice scored as the delivered answer is -- "wrong ->
 right" and "right -> wrong" counted apart, so the Judge's effect shows both
-ways. `--json` carries each question's runs, rewordings, the Judge's
-verdicts and that second score (`without_judge`)
+ways; how many questions took a second wave; and fusion's yield -- the
+columns joined from other agreeing runs and those declined, the claims they
+added and those of theirs the delivered rows did not bear out. `--json`
+carries each question's runs, rewordings, the Judge's verdicts, that second
+score (`without_judge`), whether a second wave ran (`wave2`) and what fusion
+joined, declined, added and dropped
 ([`docs/benchmark.md`](../docs/benchmark.md#the-ensemble-configuration)).
 
 The snippet store is found on the runtime stores' published port,
@@ -351,7 +355,7 @@ after it when the set was asked -- in the agent's experiment
 | | |
 |---|---|
 | Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`) |
-| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable` |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
 | Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
 

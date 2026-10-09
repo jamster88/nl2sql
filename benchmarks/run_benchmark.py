@@ -36,6 +36,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -332,7 +333,8 @@ def without_judge(state, expected, ordered: bool, outcome: str) -> str:
 def ensemble_measures(state) -> dict:
     """What the ensemble did with the question (arch7 section 11): how its
     runs agreed, the rewordings its gate discarded by check, the rung each
-    run's generator was scored at, and the state's size. Nothing for one run."""
+    run's generator was scored at, the state's size, whether a second wave
+    ran and what fusion did. Nothing for one run."""
     if not is_ensemble(state):
         return {}
     agreement = state.get("agreement")
@@ -343,8 +345,15 @@ def ensemble_measures(state) -> dict:
             rejections[check] = rejections.get(check, 0) + 1
     candidates = state.get("candidates") or []
     judgement = state.get("judgement")
+    decision = state.get("decision")
     verdicts = {v.group: v.accepted for v in getattr(judgement, "verdicts", None) or []}
     return {
+        "wave2": state.get("waves", 0) > 1,
+        "columns_fused": getattr(decision, "columns_fused", False),
+        "joined": [asdict(column) for column in getattr(decision, "joined_columns", None) or []],
+        "declined": [asdict(column) for column in getattr(decision, "declined_columns", None) or []],
+        "claims_added": getattr(decision, "claims_added", 0),
+        "claims_dropped": getattr(decision, "claims_dropped", 0),
         "judged": judged(judgement),
         "verdicts": [
             {"group": v.group, "accepted": v.accepted, "why": v.why} for v in getattr(judgement, "verdicts", None) or []
@@ -496,8 +505,9 @@ def print_report(report: BenchmarkReport) -> None:
 def print_ensemble(report: BenchmarkReport) -> None:
     """What the ensemble did (arch7 section 11): how the runs agreed, how often
     they agreed on a wrong answer, which checks discarded rewordings, how
-    often a question's runs were scored at different rungs, and how large a
-    question's state grew."""
+    often a question's runs were scored at different rungs, how large a
+    question's state grew, what the Judge did, how often a second wave ran
+    and what fusion added."""
     print("\nENSEMBLE")
     levels = report.agreement_levels()
     print(f"  agreement            {', '.join(f'{level} {n}' for level, n in sorted(levels.items()))}")
@@ -517,6 +527,10 @@ def print_ensemble(report: BenchmarkReport) -> None:
         effect = report.judge_effect()
         print(f"  overruled the runs   {effect['overruled']}: wrong -> right {effect['fixed']}, "
               f"right -> wrong {effect['broke']}")
+    print(f"  second wave          {report.second_waves} of {report.total} question(s)")
+    fusion = report.fusion()
+    print(f"  fusion               columns joined {fusion['columns joined']}, declined {fusion['columns declined']}; "
+          f"claims added {fusion['claims added']}, dropped {fusion['claims dropped']}")
 
 
 def print_stability(report: BenchmarkReport) -> None:
@@ -595,6 +609,8 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                     "rung_spread": report.rung_spread,
                     "state_bytes": report.state_sizes(),
                     "judge": {**report.judge_actions(), **report.judge_effect()},
+                    "second_waves": report.second_waves,
+                    "fusion": report.fusion(),
                 } if report.ensembled else None,
                 "results": [
                     {
@@ -628,6 +644,12 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "judged": r.judged,
                         "verdicts": r.verdicts,
                         "without_judge": r.without_judge,
+                        "wave2": r.wave2,
+                        "columns_fused": r.columns_fused,
+                        "joined": r.joined,
+                        "declined": r.declined,
+                        "claims_added": r.claims_added,
+                        "claims_dropped": r.claims_dropped,
                     }
                     for r in report.results
                 ],

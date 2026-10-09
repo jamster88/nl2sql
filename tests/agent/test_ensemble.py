@@ -1,6 +1,7 @@
-"""The ensemble's outer graph (arch7.1 section 22), as built so far: rewordings,
-the fidelity gate, one wave of runs, the Judge, the vote, and the chosen run
-delivered.
+"""The ensemble's outer graph (arch7.1 section 22): rewordings, the fidelity
+gate, the runs, the Judge, the vote, a second wave when the vote does not
+settle the question, and the chosen run delivered with what the group's
+other runs found fused into it.
 
 Most tests here script the Paraphraser, the Supervisor's readings, the SQL
 and the rows each run gets, and read back what the ensemble made of them:
@@ -448,6 +449,182 @@ def test_when_the_judge_accepts_none_the_runs_own_choice_is_delivered_as_contest
         "*The Judge accepted none of the answers -- It keeps only two channels -- "
         "so this is the runs' own choice, which 4 of 4 gave.*"
     )
+
+
+# ---------------------------------------------------------------------------
+# A second wave (arch7.1 section 22.7)
+# ---------------------------------------------------------------------------
+
+#: Two faithful rewordings more than the first wave runs: a second wave's.
+MORE = ("give me the total store count", "how many stores do we run")
+
+
+def _waves(values, *, rulings=None, **settings) -> tuple[ScriptedLLM, dict]:
+    llm = model(written=rewordings(*FAITHFUL, *MORE), sql=[SQL] * 6, claims=[])
+    llm.rulings = rulings
+    db = FakeDatabase(tables=TABLES, run_select_result=rows(*values))
+    return llm, ask(llm, db=db, **settings)
+
+
+def test_a_two_two_split_runs_the_rewordings_left_and_the_judge_and_the_vote_again_over_every_run():
+    llm, state = _waves([10, 99, 10, 99, 10, 10])
+
+    assert state["waves"] == 2
+    assert [(c.index, c.wave) for c in state["candidates"]] == [(0, 1), (1, 1), (2, 1), (3, 1), (4, 2), (5, 2)]
+    assert [g.members for g in state["groups"]] == [[0, 2, 4, 5], [1, 3]], "recounted over both waves"
+    assert (state["agreement"].level, state["agreement"].agreed, state["agreement"].total) == ("majority", 4, 6)
+    assert calls(llm, Rulings) == 2, "the Judge once a wave"
+    nodes = [entry.node for entry in state["trace"]]
+    assert nodes == [
+        "screen", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "judge", "vote",
+        "plan_wave", "answer", "validate", "judge", "vote", "fuse", "deliver",
+    ]
+    first_vote, second_plan = state["trace"][7], state["trace"][8]
+    assert first_vote.detail.endswith("unsettled: a second wave")
+    assert second_plan.detail == "wave 2: rewording(s) 4, 5"
+    assert state["another_wave"] is False
+    assert state["answer"].startswith("*4 of 6 runs agreed; 2 answered differently.*")
+
+
+def test_one_run_left_standing_by_the_judge_is_given_a_second_wave_and_the_judge_reads_every_group_again():
+    llm, state = _waves([*B07, 34.20, 34.20], rulings=[SETS_ASIDE_B, SETS_ASIDE_B])
+
+    assert state["waves"] == 2 and calls(llm, Rulings) == 2
+    agreement = state["agreement"]
+    assert (agreement.level, agreement.agreed, agreement.admissible, agreement.set_aside) == ("unanimous", 3, 3, 3)
+    assert state["decision"].chosen == 0 and state["result"].rows == [[34.2]]
+    assert state["answer"].startswith(
+        "*Agreed by 3 of 6 independent runs of the question, each worded differently; the Judge set aside the "
+        "answer of 3 others.*"
+    )
+
+
+def test_a_settled_vote_runs_no_second_wave_though_rewordings_are_left():
+    llm, state = _waves([10, 10, 10, 10])
+    assert state["waves"] == 1 and calls(llm, Rulings) == 1
+    assert [p.index for p in state["paraphrases"] if p.status == "faithful"] == [1, 2, 3, 4, 5]
+
+
+def test_when_the_judge_accepts_none_no_second_wave_is_taken():
+    rulings = Rulings(rulings=[Ruling(answer="A", accepted=False, why="It keeps only two channels.")])
+    llm, state = _waves([10, 10, 10, 10], rulings=rulings)
+    assert (state["waves"], state["agreement"].level, calls(llm, Rulings)) == (1, "contested", 1)
+
+
+def test_one_wave_allowed_is_one_wave():
+    llm, state = _waves([10, 99, 10, 99], ensemble_waves=1)
+    assert (state["waves"], state["agreement"].level, calls(llm, Rulings)) == (1, "contested", 1)
+    assert "deadline" not in state["agreement"].why
+
+
+def test_a_deadline_passed_starts_no_second_wave_and_the_vote_says_so():
+    llm, state = _waves([10, 99, 10, 99], ensemble_deadline_seconds=1e-6)
+    assert (state["waves"], state["agreement"].level, calls(llm, Rulings)) == (1, "contested", 1)
+    assert state["agreement"].why.endswith("; the deadline passed before a second wave")
+
+
+def test_a_second_wave_plans_only_faithful_rewordings_not_yet_run_and_empties_the_vote_before_it():
+    """R7, widened: a rewording the gate discarded in the first wave is never
+    picked up in the second."""
+    agent = ensemble(FakeDatabase(tables=TABLES), model())
+    state = {
+        **new_ensemble_state(QUESTION),
+        "waves": 1,
+        "paraphrases": [
+            Paraphrase(index=1, text="a", changed="", status="faithful"),
+            Paraphrase(index=2, text="b", changed="", status="discarded", reason="F2 literals"),
+            Paraphrase(index=3, text="c", changed="", status="faithful"),
+            Paraphrase(index=4, text="d", changed="", status="pending"),
+            Paraphrase(index=5, text="e", changed="", status="faithful"),
+        ],
+        "candidates": [_ran(0), _ran(1)],
+        "another_wave": True,
+    }
+    update = agent._plan_wave(state)
+    assert (update["waves"], update["wave_plan"]) == (2, [3, 5])
+    assert (update["groups"], update["judgement"], update["another_wave"]) == ([], None, False)
+
+
+def _ran(index: int):
+    from nl2sql_agent.ensemble_state import Candidate
+
+    return Candidate(index=index, wording=str(index), origin="paraphrase", wave=1, state={}, outcome="answered")
+
+
+# ---------------------------------------------------------------------------
+# Fusion (arch7 section 22.8), through the graph
+# ---------------------------------------------------------------------------
+
+LISTED = ("list the stores we have", "show me every store we have", "name all of our stores")
+
+
+def test_a_column_another_agreeing_run_carried_is_joined_onto_the_chosen_rows_and_its_run_named():
+    from nl2sql_agent.contract import ContractResources, Label, LabelMap
+
+    resources = ContractResources(
+        label_map=LabelMap([Label(table="dim_store", key="store_key", label="store_name")]),
+        dimensions={"store_key": "dim_store", "store_name": "dim_store", "region_name": "dim_store"},
+    )
+    plain = DbRows(columns=["store_key", "store_name"], rows=[(1, "North"), (2, "South")], truncated=False)
+    wider = DbRows(columns=["store_key", "store_name", "region_name"],
+                   rows=[(2, "South", "Coast"), (1, "North", "Hills")], truncated=False)
+    db = FakeDatabase(tables=TABLES, run_select_result=[plain, wider, plain, plain])
+    state = ask(model(written=rewordings(*LISTED), claims=[]), db=db, question="which stores do we have?",
+                contract_resources=resources)
+
+    assert (state["agreement"].level, state["decision"].chosen) == ("unanimous", 0)
+    assert state["result"].columns == ["store_key", "store_name", "region_name"]
+    assert state["result"].rows == [[1, "North", "Hills"], [2, "South", "Coast"]]
+    assert [(c.column, c.from_candidate) for c in state["decision"].joined_columns] == [("region_name", 1)]
+    assert state["candidates"][0].state["result"].columns == ["store_key", "store_name"], "its own record, unwidened"
+    assert state["sql"] == state["candidates"][0].state["sql"], "no SQL is fused"
+    assert "region_name is from run 1, which agreed, joined on store_key" in state["answer"]
+    assert "| Hills |" in state["answer"]
+
+
+def test_with_column_fusion_off_the_chosen_rows_are_delivered_as_they_ran():
+    plain = DbRows(columns=["n"], rows=[(10,)], truncated=False)
+    state = ask(model(written=rewordings(*FAITHFUL), claims=[]), db=FakeDatabase(tables=TABLES,
+                run_select_result=[plain] * 4), ensemble_fuse_columns=False)
+    assert state["decision"].columns_fused is False and state["decision"].joined_columns == []
+
+
+def test_each_answer_that_lost_is_named_in_the_answer():
+    state = _vote([10, 10, 99, 10])
+    [lost] = state["decision"].dissent
+    assert (lost.group, lost.members, lost.signature, lost.differs) == (1, [2], "99", "")
+    assert state["answer"].endswith("*Run 2 answered differently (99).*")
+
+
+def test_the_same_claim_from_every_run_is_said_once():
+    state = ask(model(written=rewordings(*FAITHFUL)))
+    assert (state["decision"].claims_added, state["decision"].claims_dropped) == (0, 0)
+    assert [c.text for c in state["claims"]] == ["The count is 1."]
+    fuse = next(entry for entry in state["trace"] if entry.node == "fuse")
+    assert fuse.detail == (
+        "[0] of [0, 1, 2, 3] (unanimous): 0 column(s) joined, 0 declined; 0 claim(s) added, 0 dropped; 0 dissenting"
+    )
+
+
+def test_the_assumptions_every_run_made_are_stated_once_in_the_order_first_made():
+    from nl2sql_agent.ensemble_state import Agreement, Candidate, Decision, Group
+    from nl2sql_agent.state import QueryResult, new_state
+
+    def made(index: int, assumptions: list[str]) -> Candidate:
+        state = {**new_state(QUESTION), "sql": SQL, "result": QueryResult(columns=["n"], rows=[[1]]),
+                 "assumptions": assumptions}
+        return Candidate(index=index, wording=QUESTION, origin="original" if index == 0 else "paraphrase", wave=1,
+                         state=state, outcome="answered", admissible=True, group=0)
+
+    agent = ensemble(FakeDatabase(tables=TABLES), model())
+    state = {
+        **new_ensemble_state(QUESTION),
+        "candidates": [made(0, ["fiscal year 2025"]), made(1, ["fiscal year 2025", "net of returns"])],
+        "groups": [Group(index=0, members=[0, 1], representative=0, signature="1")],
+        "agreement": Agreement(2, 2, 2, "unanimous"),
+        "decision": Decision(chosen=0, fused_from=[0, 1]),
+    }
+    assert agent._fuse(state)["assumptions"] == ["fiscal year 2025", "net of returns"]
 
 
 # ---------------------------------------------------------------------------

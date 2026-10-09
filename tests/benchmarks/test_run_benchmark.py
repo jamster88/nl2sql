@@ -935,7 +935,29 @@ def test_what_the_ensemble_did_with_a_question_is_measured():
     assert measured["candidate_rungs"] == ["light", "light", "standard"]
     assert measured["state_bytes"] > 0
     assert (measured["judged"], measured["verdicts"]) == ("not asked", [])
+    assert (measured["wave2"], measured["columns_fused"], measured["joined"], measured["declined"]) == (
+        False, True, [], [])
+    assert (measured["claims_added"], measured["claims_dropped"]) == (0, 0)
     assert run_benchmark.ensemble_measures(new_state("q")) == {}
+
+
+def test_a_second_wave_and_what_fusion_did_are_measured():
+    from nl2sql_agent.ensemble_state import Decision, DeclinedColumn, JoinedColumn, new_ensemble_state
+
+    state = {
+        **new_ensemble_state("q"),
+        "waves": 2,
+        "decision": Decision(
+            chosen=0, columns_fused=False, claims_added=2, claims_dropped=1,
+            joined_columns=[JoinedColumn(column="region_name", from_candidate=1, key="store_key", table="dim_store")],
+            declined_columns=[DeclinedColumn(column="brand_name", from_candidate=3, why="row 2 has no match in run 3")],
+        ),
+    }
+    measured = run_benchmark.ensemble_measures(state)
+    assert (measured["wave2"], measured["columns_fused"]) == (True, False)
+    assert measured["joined"] == [{"column": "region_name", "from_candidate": 1, "key": "store_key", "table": "dim_store"}]
+    assert measured["declined"] == [{"column": "brand_name", "from_candidate": 3, "why": "row 2 has no match in run 3"}]
+    assert (measured["claims_added"], measured["claims_dropped"]) == (2, 1)
 
 
 def test_the_judges_verdicts_are_measured_beside_each_run():
@@ -983,7 +1005,8 @@ def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
 
     report = BenchmarkReport(label="ensemble", results=[
         _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard"), size=2048),
-        _ensembled("B02", WRONG, "majority", size=1024, runs=3, judged="overruled", without=CORRECT),
+        _ensembled("B02", WRONG, "majority", size=1024, runs=3, judged="overruled", without=CORRECT, wave2=True,
+                   joined=("region_name",), declined=("brand_name",), added=2, dropped=1),
     ])
     run_benchmark.print_report(report)
     out = capsys.readouterr().out
@@ -996,11 +1019,21 @@ def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
     assert "state, as JSON       2.0 KB median, 2.0 KB largest" in out
     assert "the Judge            accepted 1, overruled 1" in out
     assert "overruled the runs   1: wrong -> right 0, right -> wrong 1" in out
+    assert "second wave          1 of 2 question(s)" in out
+    assert "fusion               columns joined 1, declined 1; claims added 2, dropped 1" in out
     [config] = run_benchmark.as_json([report])["configurations"]
     assert config["ensemble"]["agreement"] == {"unanimous": 1, "majority": 1}
     assert config["ensemble"]["judge"] == {"accepted": 1, "overruled": 1, "fixed": 0, "broke": 1}
     assert config["results"][0]["candidate_rungs"] == ["light", "standard"]
     assert (config["results"][1]["judged"], config["results"][1]["without_judge"]) == ("overruled", CORRECT)
+    assert config["ensemble"]["second_waves"] == 1
+    assert config["ensemble"]["fusion"] == {"columns joined": 1, "columns declined": 1, "claims added": 2,
+                                            "claims dropped": 1}
+    second = config["results"][1]
+    assert (second["wave2"], second["columns_fused"], second["claims_added"], second["claims_dropped"]) == (
+        True, True, 2, 1)
+    assert [c["column"] for c in second["joined"]] == ["region_name"]
+    assert [c["column"] for c in second["declined"]] == ["brand_name"]
     plain = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0, [])])
     assert run_benchmark.as_json([plain])["configurations"][0]["ensemble"] is None
 

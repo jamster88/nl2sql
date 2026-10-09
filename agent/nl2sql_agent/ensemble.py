@@ -5,20 +5,21 @@ independent second draw the pipeline has. The question is screened once,
 reworded, each rewording held to the original's answer contract by a
 fidelity gate, the pipeline run once per wording, the results checked
 against their own question and grouped by agreement, every distinct answer
-judged, and the largest group of accepted answers delivered with the record
-of every run:
+judged, the largest group of accepted answers chosen -- a second wave run
+first when the vote leaves the question unsettled -- and what the group's
+runs found fused into the chosen one's answer, with the record of every run:
 
     screen ─┬─ refuse                          the Supervisor, once, on the original
             └─ paraphrase                      up to 10 rewordings, most different first
                └─ screen_paraphrase            F1-F3 and F5 in code, then F4: the
                   │                            Supervisor's reading of each
-                  └─ plan_wave                 the original + the first 3 faithful
-                     └─ answer                 the pipeline once per wording
-                        └─ validate            E1-E5, agreement, the groups
-                           └─ judge            every group's answer, accepted or set aside
-                              └─ vote ─┬─ fuse ─┐  the accepted runs vote;
-                                       └────────┴─ deliver   the representative's
-                                                             answer, its agreement first
+                  └─ plan_wave <───────────┐  the original + the first 3 faithful;
+                     └─ answer             │  then every faithful one not yet run
+                        └─ validate        │  E1-E5, agreement, the groups
+                           └─ judge        │  every group's answer, accepted or set aside
+                              └─ vote ─┬───┘  the accepted runs vote; unsettled, a second wave
+                                       ├─ fuse ─┐  columns, claims, dissent onto the chosen
+                                       └────────┴─ deliver   its answer, its agreement first
 
 * **The anchor is screened first, and only the anchor.** An injection or an
   ambiguity stops the question before anything is reworded.
@@ -41,16 +42,23 @@ of every run:
   host than the deployer said it serves.
 
 * **The Judge reads before the vote counts** (arch7.1). One heavy call a
-  question sees each distinct answer -- not how many runs gave it -- and
+  wave sees each distinct answer -- not how many runs gave it -- and
   sets aside those it can name a mistake in; only the runs whose answer it
   accepted vote. Off, or failed, the runs vote alone; when it accepts none,
   their own choice is delivered as `contested`, with its objection.
 
-Built so far: one wave -- a vote with no majority delivers the largest
-accepted group's answer as `contested`. The second wave on disagreement and
-the fusion of the agreeing runs' columns and claims come with the later
-phases of the build; until then the delivered answer is the chosen run's
-own, opened by its agreement line.
+* **A second wave when the vote does not settle it.** No majority among the
+  runs that voted, or one run standing alone, and the faithful rewordings
+  not yet run are run, once (`ENSEMBLE_WAVES`, at most two in effect, since
+  the second runs every one left), unless `ENSEMBLE_DEADLINE_SECONDS` has
+  passed; then the Judge reads every group again and the vote is recounted
+  over every run of both waves.
+* **Fusion, in code** (`fuse.py`). The chosen rows widened by the
+  attributes the group's other runs carried, joined on the entity's key
+  only when every row matches once (`ENSEMBLE_FUSE_COLUMNS`); their claims
+  the delivered rows bear out, up to `ENSEMBLE_MAX_CLAIMS`; the assumptions
+  every run made, once; and each losing answer named with how its query
+  differs. No SQL is ever fused: the delivered SQL is the chosen run's.
 
 `ENSEMBLE_ENABLED=false` is arch6 to the answer: `build_agent` hands back the
 pipeline itself, and nothing here runs.
@@ -68,7 +76,7 @@ from typing import Any, Callable, Sequence, TypeVar
 from langgraph.graph import END, START, StateGraph
 
 from . import agreement as votes
-from . import complexity, fidelity, judge as judges, paraphrase as paraphraser, present, supervisor, tracing
+from . import complexity, fidelity, fuse, judge as judges, paraphrase as paraphraser, present, supervisor, tracing
 from . import contract as answer_contract
 from .config import Settings
 from .ensemble_state import (
@@ -81,6 +89,7 @@ from .ensemble_state import (
     Judgement,
     Paraphrase,
     new_ensemble_state,
+    wave_reset,
 )
 from .fuse import agreement_line
 from .graph import _DETAIL, _MODEL_CALLS, _ROUTE, Nl2SqlAgent, ProgressFn, progress_to, reporter, traced_node
@@ -88,8 +97,9 @@ from .graph import step_label as pipeline_label
 from .state import AuditReport, QueryResult, new_state
 from nl2sql_common.errors import MODEL_ERRORS
 
-#: The outer graph's own bound on supersteps: eleven nodes, one pass. Its own
-#: constant, not the pipeline's: each candidate's run is bounded by that.
+#: The outer graph's own bound on supersteps: eleven nodes, two waves -- fifteen
+#: steps at the most -- with room. Its own constant, not the pipeline's: each
+#: candidate's run is bounded by that.
 RECURSION_LIMIT = 40
 
 FAITHFUL = "faithful"
@@ -265,7 +275,7 @@ class EnsembleAgent:
         graph.add_edge("answer", "validate")
         graph.add_conditional_edges("validate", self._route_after_validate, ["judge", "vote"])
         graph.add_edge("judge", "vote")
-        graph.add_conditional_edges("vote", self._route_after_vote, ["fuse", "deliver"])
+        graph.add_conditional_edges("vote", self._route_after_vote, ["fuse", "plan_wave", "deliver"])
         graph.add_edge("fuse", "deliver")
         graph.add_edge("refuse", END)
         graph.add_edge("deliver", END)
@@ -426,15 +436,22 @@ class EnsembleAgent:
         return update
 
     def _plan_wave(self, state: EnsembleState) -> dict:
-        """Which wordings run now: the original and the first
-        `ENSEMBLE_PARAPHRASES` faithful rewordings, in the order written."""
+        """Which wordings run now. The first wave: the original and the first
+        `ENSEMBLE_PARAPHRASES` faithful rewordings, in the order written. A
+        second: every faithful rewording not yet run -- never one the gate
+        discarded -- with the vote before it emptied, since it describes
+        runs that are no longer all the runs."""
         waves = state.get("waves", 0) + 1
         faithful = [p.index for p in state.get("paraphrases") or [] if p.status == FAITHFUL]
-        plan = [0, *faithful[: self.settings.ensemble_paraphrases]]
-        detail = f"wave {waves}: the original" + (
-            f" and rewording(s) {', '.join(map(str, plan[1:]))}" if plan[1:] else " alone"
-        )
-        return {"waves": waves, "wave_plan": plan, _DETAIL: detail}
+        if waves == 1:
+            plan = [0, *faithful[: self.settings.ensemble_paraphrases]]
+            detail = "wave 1: the original" + (
+                f" and rewording(s) {', '.join(map(str, plan[1:]))}" if plan[1:] else " alone"
+            )
+            return {"waves": waves, "wave_plan": plan, _DETAIL: detail}
+        plan = _unrun(state)
+        return {**wave_reset(), "waves": waves, "wave_plan": plan,
+                _DETAIL: f"wave {waves}: rewording(s) {', '.join(map(str, plan))}"}
 
     # --- the candidate runs -------------------------------------------------
 
@@ -544,12 +561,28 @@ class EnsembleAgent:
     def _vote(self, state: EnsembleState) -> dict:
         """Tier 3 (arch7.1 section 22.7): the runs whose answer the Judge
         accepted vote, and the winning group's representative is chosen
-        (section 22.8). In code; no model call."""
+        (section 22.8). In code; no model call.
+
+        A vote that does not settle the question -- no majority among the
+        runs that voted, or one run alone -- sends it to a second wave when
+        one is left: fewer waves run than `ENSEMBLE_WAVES`, a faithful
+        rewording not yet run, and the deadline, if one is set, not passed.
+        Decided here, once, so the deadline is read once; a deadline that
+        stopped a wave is said in the agreement's `why`.
+        """
         candidates = state.get("candidates") or []
         groups = state.get("groups") or []
         agreement, winner, judgement = votes.decide(
             groups, sum(1 for c in candidates if c.admissible), len(candidates), state.get("judgement")
         )
+        another = False
+        if winner is not None and not votes.settled(agreement, judgement):
+            if state.get("waves", 1) < self.settings.ensemble_waves and _unrun(state):
+                deadline = state.get("deadline") or 0.0
+                if deadline and time.monotonic() >= deadline:
+                    agreement = replace(agreement, why=f"{agreement.why}; the deadline passed before a second wave")
+                else:
+                    another = True
         decision = Decision(columns_fused=self.settings.ensemble_fuse_columns)
         if winner is not None:
             decision = replace(
@@ -561,29 +594,60 @@ class EnsembleAgent:
         detail = (
             f"{agreement.total} run, {agreement.admissible} voted, {agreement.agreed} agree ({agreement.level})"
             + (f"; {agreement.set_aside} set aside by the Judge" if agreement.set_aside else "")
+            + ("; unsettled: a second wave" if another else "")
         )
-        return {"agreement": agreement, "judgement": judgement, "decision": decision, _DETAIL: detail}
+        return {
+            "agreement": agreement, "judgement": judgement, "decision": decision, "another_wave": another,
+            _DETAIL: detail,
+        }
 
     def _route_after_vote(self, state: EnsembleState) -> str:
-        """A run to deliver, or none (built so far: one wave)."""
-        return "deliver" if state["decision"].chosen is None else "fuse"
+        """Nothing to deliver but the original's give-up, a second wave, or
+        the chosen run to fuse."""
+        if state["decision"].chosen is None:
+            return "deliver"
+        return "plan_wave" if state.get("another_wave") else "fuse"
 
     def _fuse(self, state: EnsembleState) -> dict:
-        """Selection (arch7 section 22.8): the winning group's representative,
-        whose rows, SQL, chart and claims are the answer's. Fusion of the
-        agreeing runs' columns and claims comes with the later phases."""
+        """Select, then fuse (arch7 section 22.8): the winning group's
+        representative, whose SQL and chart are the answer's, and, in code,
+        what the group's other runs found -- in `rank` order -- that the
+        representative's rows bear out: the columns that join onto them on
+        the entity's key, the claims those rows reproduce, the assumptions
+        each run made, once. Then each losing answer, named with how its
+        query differs. No SQL is fused."""
         decision = state["decision"]
         chosen = _candidate(state, decision.chosen)
-        run = chosen.state
+        others = [c for c in votes.ranked([_candidate(state, i) for i in decision.fused_from]) if c is not chosen]
+        result, joined, declined = fuse.fuse_columns(
+            chosen, others, self.agent.label_map(), self.agent.dimensions(),
+            enabled=self.settings.ensemble_fuse_columns,
+        )
+        assumptions = list(dict.fromkeys(a for c in [chosen, *others] for a in c.state.get("assumptions") or []))
+        claims, report, added, dropped = fuse.fuse_claims(
+            chosen, others, result, question=state["question"], assumptions=assumptions,
+            cap=self.settings.ensemble_max_claims,
+        )
+        losing = [g for g in state.get("groups") or [] if decision.chosen not in g.members]
+        dissent = fuse.dissent(chosen, losing, state.get("candidates") or [])
+        decision = replace(
+            decision, joined_columns=joined, declined_columns=declined, claims_added=added, claims_dropped=dropped,
+            dissent=dissent,
+        )
         return {
-            "sql": run.get("sql") or "",
-            "result": run.get("result"),
-            "chart": run.get("chart"),
-            "claims": list(run.get("claims") or []),
-            "audit": run.get("audit") or AuditReport(),
-            "assumptions": list(run.get("assumptions") or []),
-            "node_errors": dict(run.get("node_errors") or {}),
-            _DETAIL: f"[{chosen.index}] of {decision.fused_from} ({state['agreement'].level})",
+            "decision": decision,
+            "sql": chosen.state.get("sql") or "",
+            "result": result,
+            "chart": chosen.state.get("chart"),
+            "claims": claims,
+            "audit": report,
+            "assumptions": assumptions,
+            "node_errors": dict(chosen.state.get("node_errors") or {}),
+            _DETAIL: (
+                f"[{chosen.index}] of {decision.fused_from} ({state['agreement'].level}): "
+                f"{len(joined)} column(s) joined, {len(declined)} declined; "
+                f"{added} claim(s) added, {dropped} dropped; {len(dissent)} dissenting"
+            ),
         }
 
     def _deliver(self, state: EnsembleState) -> dict:
@@ -666,6 +730,12 @@ def _wording(state: EnsembleState, index: int) -> tuple[str, str, dict[str, Any]
         return state["question"], ORIGINAL, state.get("screening")
     paraphrase = next(p for p in state.get("paraphrases") or [] if p.index == index)
     return paraphrase.text, PARAPHRASE, paraphrase.screening
+
+
+def _unrun(state: EnsembleState) -> list[int]:
+    """The faithful rewordings no wave has run yet, in the order written."""
+    ran = {candidate.index for candidate in state.get("candidates") or []}
+    return [p.index for p in state.get("paraphrases") or [] if p.status == FAITHFUL and p.index not in ran]
 
 
 def _candidate(state: EnsembleState, index: int) -> Candidate:

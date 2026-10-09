@@ -153,6 +153,27 @@ def test_the_outermost_select_list_is_read_for_outputs_and_the_columns_they_read
     assert not query.star
 
 
+def test_the_columns_a_query_filters_on_are_read_with_each_alias_as_its_table():
+    """For the ensemble's dissent (arch7 section 22.8): every WHERE and
+    HAVING, in a CTE and a subquery too, so two queries that alias a table
+    differently filter on the same columns."""
+    query = read_query(
+        "WITH m AS (SELECT d.fiscal_year, s.product_key FROM fact_pos_retail_sales s "
+        "JOIN dim_date d ON d.date_key = s.sales_date_key WHERE d.fiscal_year = 2025 "
+        "AND s.store_key IN (SELECT store_key FROM dim_store ds WHERE ds.region_name = 'West') "
+        "GROUP BY 1, 2 HAVING SUM(s.net_sales_amt) > 0) "
+        "SELECT * FROM m WHERE m.product_key > 3 AND channel = 'x'"
+    )
+    assert query.filters == {
+        "dim_date.fiscal_year", "dim_store.region_name", "fact_pos_retail_sales.store_key",
+        "fact_pos_retail_sales.net_sales_amt", "m.product_key", "channel",
+        "store_key",  # the IN subquery's own select list: under the WHERE, so part of the filter
+    }
+    assert read_query("SELECT 1 UNION SELECT 2 FROM t WHERE t.a = 1").filters == {"t.a"}
+    assert read_query("SELECT store_name FROM dim_store").filters == set()
+    assert read_query("SELEC nothing").filters == set()
+
+
 def test_a_query_that_does_not_parse_or_is_not_one_select_is_read_as_text_only():
     assert read_query("SELEC nothing").select is None
     assert read_query("SELECT 1; SELECT 2").select is None

@@ -45,8 +45,9 @@ whoever runs it. See [`../auth/README.md`](../auth/README.md).
 
 **v7 asks it several ways** (arch7.1, being built). The question is
 screened once, reworded, the pipeline run once per wording, every distinct
-answer read by a Judge, and the answers it accepts voted on. So far there is
-one wave and no fusion. See [Asking it several ways (arch7)](#asking-it-several-ways-arch7).
+answer read by a Judge, and the answers it accepts voted on -- a second wave
+when the vote does not settle it -- and what the agreeing runs found fused
+into the chosen one's answer. See [Asking it several ways (arch7)](#asking-it-several-ways-arch7).
 
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
@@ -276,19 +277,22 @@ against the question first, and only the runs whose answer it accepts are
 counted. It is built in phases
 ([`Multi-Agent_NL2SQL_arch7_1_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md),
 with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md)),
-and what is built so far is one wave of it, with no fusion yet --
+and Phases 0 to 3 of it are built -- the outer graph, the rewordings, the
+Judge and the vote, the second wave and fusion; the calibration of the two
+new routing tasks and the clients' views of the runs are still to come --
 [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
 
 ```
 screen ─┬─ refuse                    the Supervisor, once, on the original
         └─ paraphrase                up to 10 rewordings, most different first
            └─ screen_paraphrase      F1-F3 and F5 in code; F4, the Supervisor's reading
-              └─ plan_wave           the original + the first 3 faithful
-                 └─ answer           the pipeline once per wording, each a "Candidate k"
-                    └─ validate      E1-E5, agreement, the groups
-                       └─ judge      every group's answer, accepted or set aside
-                          └─ vote ─┬─ fuse ─┐     the accepted runs vote; the
-                                   └────────┴─ deliver     representative, its line first
+              └─ plan_wave <──────────┐  the original + the first 3 faithful;
+                 └─ answer            │  then every faithful one not yet run
+                    └─ validate       │  E1-E5, agreement, the groups
+                       └─ judge       │  every group's answer, accepted or set aside
+                          └─ vote ─┬──┘  the accepted runs vote; unsettled, a second wave
+                                   ├─ fuse ─┐   columns, claims, dissent onto the chosen
+                                   └────────┴─ deliver   the answer, its line first
 ```
 
 | Node | What it does | LLM |
@@ -297,13 +301,13 @@ screen ─┬─ refuse                    the Supervisor, once, on the original
 | `refuse` | A refused or ambiguous question is answered as the pipeline answers it, and nothing runs | -- |
 | `paraphrase` | The Paraphraser ([`paraphrase.py`](nl2sql_agent/paraphrase.py)): `ENSEMBLE_MAX_PARAPHRASES` rewordings in one structured call, from the question and what its answer may not change, named in everyday words and nothing else, each with a few words on what it varied. A failure costs the rewordings: the original runs alone | writes rewordings |
 | `screen_paraphrase` | The fidelity gate: each rewording held to F1 numbers, F2 literals, F3 polarity and F5 distinct in code ([`fidelity.py`](nl2sql_agent/fidelity.py)) -- so one that visibly changed the question costs no call -- then read by the Supervisor, and kept only when that reading proceeds and builds the original's contract (F4, `contract.same_contract`): the same entities, measure and period, the contract built in the original's shape, since its numbers and direction are F1's and F3's. Fewer than `ENSEMBLE_PARAPHRASES` kept, the Paraphraser is asked once more, told which failed and why | screens, light |
-| `plan_wave` | The original and the first `ENSEMBLE_PARAPHRASES` faithful rewordings, in the order written | -- |
+| `plan_wave` | The first wave: the original and the first `ENSEMBLE_PARAPHRASES` faithful rewordings, in the order written. A second: every faithful rewording not yet run, with the vote before it emptied | -- |
 | `answer` | The pipeline on each wording, seeded with the screening made for those exact words and the anchor contract -- every run is held to the contract read from the question as asked -- so no run makes a Supervisor call of its own (`Nl2SqlAgent.answer`) | the pipeline's |
 | `validate` | Each run checked against its own question ([`agreement.py`](nl2sql_agent/agreement.py)): E1 answered, E2 faithful, E3 rows when the question implies some, E4 the audit did not judge the rows wrong, E5 not a sample -- only what makes a run's rows no answer keeps it from voting. Then every pair compared with the benchmark's scorer ([`compare.py`](nl2sql_agent/compare.py)) and the runs grouped by agreement | -- |
 | `judge` | The Judge ([`judge.py`](nl2sql_agent/judge.py)), on every question with an answer to judge, before anything is counted: each group's representative query and first five rows, lettered in the order the runs were asked -- never how many runs gave it -- read against the question, what every answer was held to, and the knowledge the original's run retrieved. A verdict per letter, accepted or set aside with the mistake in the query named; an answer it says nothing about stands. A failure costs the verdicts: the runs vote alone | judges, heavy |
-| `vote` | Only the runs whose answer the Judge accepted vote: a strict majority of them, the largest accepted group winning, ties to the original's. `judged` when that is not the group the runs alone would have chosen; when the Judge accepted none, the runs' own choice, `contested`, with its objection | -- |
-| `fuse` | The representative of the winning group: complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan. Its rows, SQL, chart and claims are the answer's. With no majority among the accepted, the largest accepted group is delivered as `contested` | -- |
-| `deliver` | The answer, rendered for the question as asked, opening with its agreement line: "Agreed by 4 of 4 independent runs of the question, each worded differently.", or, when the Judge overruled the runs, "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and accepted this one, which 1 gave." When no run could vote, the original's give-up, as the pipeline delivers one | -- |
+| `vote` | Only the runs whose answer the Judge accepted vote: a strict majority of them, the largest accepted group winning, ties to the original's. `judged` when that is not the group the runs alone would have chosen; when the Judge accepted none, the runs' own choice, `contested`, with its objection. A vote that does not settle the question -- no majority among the runs that voted, or one run standing alone -- goes back to `plan_wave` while a wave is left (`ENSEMBLE_WAVES`), a faithful rewording has not run and `ENSEMBLE_DEADLINE_SECONDS`, if set, has not passed; the Judge then reads every group again and the vote is recounted over both waves. With no wave left, the largest accepted group is delivered as `contested` | -- |
+| `fuse` | The representative of the winning group -- complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan -- whose SQL and chart are the answer's ([`fuse.py`](nl2sql_agent/fuse.py)). Then, in code: a column of a dimension the rows identify that another run of the group carried, joined on that dimension's key only when every row matches exactly once (`ENSEMBLE_FUSE_COLUMNS`); the other runs' claims that speak of a row the narrative does not yet speak of, each kept only when the delivered rows reproduce it, up to `ENSEMBLE_MAX_CLAIMS`, and the whole re-audited; the assumptions every run made, once; and each losing answer with the tables and filtered columns its query has that the chosen one's has not. No SQL is fused | -- |
+| `deliver` | The answer, rendered for the question as asked, opening with its agreement line: "Agreed by 4 of 4 independent runs of the question, each worded differently.", or, when the Judge overruled the runs, "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and accepted this one, which 1 gave." Its notes name each joined column's run, each column left out and why, and each answer that lost. When no run could vote, the original's give-up, as the pipeline delivers one | -- |
 
 The outer state ([`ensemble_state.py`](nl2sql_agent/ensemble_state.py))
 keeps each run whole as a candidate -- its wording, its outcome, whether it
@@ -597,7 +601,9 @@ Supervisor, Paraphraser, Fidelity Gate, Wave Planner, Candidate Runs,
 Agreement, Judge, Vote, Fusion, Answer), and beneath Candidate Runs is a
 span per run, "Candidate k", holding that run's agents as the table above
 describes them -- its Supervisor with no model call inside, the screening
-having been made once above it. The runs happen on worker threads, each
+having been made once above it. A second wave repeats Wave Planner,
+Candidate Runs, Agreement, Judge and Vote in the same trace, its runs
+beneath its own Candidate Runs. The runs happen on worker threads, each
 started in a copy of the question's context, so their spans land in the
 question's trace whichever thread made them. The trace gains three tags,
 `nl2sql.agreement` (`4/4 unanimous`), `nl2sql.candidates` and
@@ -1099,18 +1105,15 @@ Model routing (arch5.2, [above](#model-routing-arch52)) adds these:
 | `OLLAMA_KEEP_ALIVE` | -- | `30m` with routing on, so a session's models stay loaded; not sent with routing off |
 
 The ensemble ([above](#asking-it-several-ways-arch7)) adds these. A value
-out of range stops the agent at start, naming the variable and its bound. So
-far there is one wave and no fusion, so `ENSEMBLE_WAVES`,
-`ENSEMBLE_DEADLINE_SECONDS` and `ENSEMBLE_MAX_CLAIMS` are read, checked and
-carried for the stages that will read them; all but the pins are published
-in `/v1/meta`:
+out of range stops the agent at start, naming the variable and its bound;
+all but the pins are published in `/v1/meta`:
 
 | Variable | Flag | Default |
 |---|---|---|
 | `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | on. Off is the pipeline alone, to the answer |
 | `ENSEMBLE_PARAPHRASES` | `--paraphrases` | 3 rewordings in the first wave; 3 to 10 |
 | `ENSEMBLE_MAX_PARAPHRASES` | -- | 10, the most the Paraphraser writes; at least `ENSEMBLE_PARAPHRASES` |
-| `ENSEMBLE_WAVES` | -- | 2; a second wave only on disagreement |
+| `ENSEMBLE_WAVES` | -- | 2; a second wave only when the vote does not settle the question. It runs every faithful rewording left, so more than 2 is 2 |
 | `ENSEMBLE_DEADLINE_SECONDS` | -- | 0, none: set, no wave starts that many seconds after the question arrived |
 | `ENSEMBLE_JUDGE_ENABLED` | -- | on: the Judge reads every question's answers before the vote, which counts only those it accepts. Off, the runs vote alone |
 | `ENSEMBLE_MAX_CLAIMS` | -- | 8 claims in the fused narrative |

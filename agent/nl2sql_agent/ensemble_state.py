@@ -215,14 +215,15 @@ def upsert_candidates(left: list[Candidate], right: list[Candidate]) -> list[Can
 
 
 class EnsembleState(TypedDict, total=False):
-    """arch7 section 22.2, field for field, and four fields more.
+    """arch7 section 22.2, field for field, and five fields more.
 
     `screening` is the anchor screening's reading, kept to seed the
     original's run, `wave_plan` the candidates the current wave runs and
     `paraphrase_retried` the Paraphraser's one retry spent (the
     implementation specification's sections 3.8.1, 3.8.5 and 3.8.4);
     `parallel_calls` is how many runs the question was allowed at once,
-    which its record on the wire states.
+    which its record on the wire states; `another_wave` is the vote's word
+    that a second wave runs, decided once, where the deadline is read.
     """
 
     # --- input -----------------------------------------------------------
@@ -242,6 +243,9 @@ class EnsembleState(TypedDict, total=False):
     waves: int
     deadline: float  # monotonic; 0.0 when none
     wave_plan: list[int]
+    #: The vote left the question unsettled, a wave is left and the deadline
+    #: has not passed: the wave planner runs again (arch7.1 section 22.7).
+    another_wave: bool
 
     # --- the candidate runs ------------------------------------------------
     candidates: Annotated[list[Candidate], upsert_candidates]
@@ -285,6 +289,7 @@ def new_ensemble_state(
         "waves": 0,
         "deadline": deadline,
         "wave_plan": [],
+        "another_wave": False,
         "candidates": [],
         "groups": [],
         "agreement": Agreement(),
@@ -308,7 +313,7 @@ def new_ensemble_state(
 #: Every field of `EnsembleState` and how long it is true for: the vote and
 #: what was decided from it are one wave's; everything else is the run's.
 LIFETIMES: dict[str, str] = {
-    name: WAVE if name in ("wave_plan", "groups", "agreement", "judgement", "decision") else RUN
+    name: WAVE if name in ("wave_plan", "another_wave", "groups", "agreement", "judgement", "decision") else RUN
     for name in EnsembleState.__annotations__
 }
 
@@ -316,7 +321,10 @@ LIFETIMES: dict[str, str] = {
 def wave_reset() -> dict[str, Any]:
     """Every `wave` field, empty: what the wave planner's update carries
     when a second wave starts. Fresh objects on every call."""
-    return {"wave_plan": [], "groups": [], "agreement": Agreement(), "judgement": None, "decision": Decision()}
+    return {
+        "wave_plan": [], "another_wave": False, "groups": [], "agreement": Agreement(), "judgement": None,
+        "decision": Decision(),
+    }
 
 
 def ensemble_fields() -> tuple[str, ...]:

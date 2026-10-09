@@ -226,6 +226,16 @@ class QuestionResult:
     judged: str = ""
     verdicts: list[dict[str, Any]] = field(default_factory=list)
     without_judge: str = ""
+    #: Whether a second wave ran (arch7.1 section 22.7), and what fusion did
+    #: (section 22.8): whether it joined columns at all, the columns joined
+    #: from the group's other runs and those declined, with why, the claims
+    #: they added and those of theirs the delivered rows did not bear out.
+    wave2: bool = False
+    columns_fused: bool = False
+    joined: list[dict[str, Any]] = field(default_factory=list)
+    declined: list[dict[str, Any]] = field(default_factory=list)
+    claims_added: int = 0
+    claims_dropped: int = 0
 
     @property
     def label(self) -> str:
@@ -416,6 +426,22 @@ class BenchmarkReport:
         fixed = sum(1 for r in overruled if r.correct and r.without_judge == WRONG)
         broke = sum(1 for r in overruled if not r.correct and r.without_judge == CORRECT)
         return {"overruled": len(overruled), "fixed": fixed, "broke": broke}
+
+    @property
+    def second_waves(self) -> int:
+        """Questions the first wave's vote did not settle, so a second ran."""
+        return sum(1 for r in self.results if r.wave2)
+
+    def fusion(self) -> dict[str, int]:
+        """Fusion's yield across the run (arch7 section 11, item 8): columns
+        joined onto the chosen rows and declined, claims added from the
+        other runs and claims of theirs the delivered rows did not bear out."""
+        return {
+            "columns joined": sum(len(r.joined) for r in self.results),
+            "columns declined": sum(len(r.declined) for r in self.results),
+            "claims added": sum(r.claims_added for r in self.results),
+            "claims dropped": sum(r.claims_dropped for r in self.results),
+        }
 
     def stage_totals(self) -> dict[str, float]:
         """Seconds spent in each pipeline stage across the whole run."""

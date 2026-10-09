@@ -977,6 +977,13 @@ def _scalar_sentence(question: str, result: QueryResult) -> str:
     return f"{asked}: {answer}" if asked else answer
 
 
+def _runs(members: Sequence[int]) -> str:
+    """"Run 2", "Runs 1 and 3", "Runs 1, 2 and 3"."""
+    if len(members) == 1:
+        return f"Run {members[0]}"
+    return f"Runs {', '.join(map(str, members[:-1]))} and {members[-1]}"
+
+
 def render_answer(
     question: str,
     result: QueryResult,
@@ -1001,7 +1008,10 @@ def render_answer(
 
     Under the ensemble (arch7), `ensemble` is its decision, and the answer
     opens with its agreement line: how many runs there were and how they
-    agreed, before anything they say.
+    agreed, before anything they say. Its notes close it: each column
+    joined from another run that agreed, named with that run, since this
+    answer's query does not return it; each column that would not join, and
+    why; and each answer that lost, with how its query differs.
     """
     report = audit_report if audit_report is not None else AuditReport()
     kept = surviving_claims(claims, report)
@@ -1033,5 +1043,18 @@ def render_answer(
     if report.semantic_issue:
         why = _escape_text(report.semantic_issue)
         notes.append(f"*This result may not answer the question -- {why}.*")
+    for joined in getattr(ensemble, "joined_columns", None) or []:
+        notes.append(
+            f"*{_escape_text(joined.column)} is from run {joined.from_candidate}, which agreed, joined on "
+            f"{_escape_text(joined.key)}; this answer's query does not return it.*"
+        )
+    for declined in getattr(ensemble, "declined_columns", None) or []:
+        notes.append(
+            f"*{_escape_text(declined.column)}, which run {declined.from_candidate} also returned, was left out: "
+            f"{_escape_text(declined.why)}.*"
+        )
+    for dissent in getattr(ensemble, "dissent", None) or []:
+        differs = f": {_escape_text(dissent.differs)}" if dissent.differs else ""
+        notes.append(f"*{_runs(dissent.members)} answered differently ({_escape_text(dissent.signature)}){differs}.*")
     blocks.extend(notes)
     return "\n\n".join(block for block in blocks if block)

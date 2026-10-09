@@ -55,7 +55,8 @@ def test_the_vote_and_what_was_decided_from_it_are_one_waves():
     that is about to be taken again."""
     assert {name for name, lifetime in LIFETIMES.items() if lifetime == WAVE} == set(wave_reset())
     assert wave_reset() == {
-        "wave_plan": [], "groups": [], "agreement": Agreement(), "judgement": None, "decision": Decision(),
+        "wave_plan": [], "another_wave": False, "groups": [], "agreement": Agreement(), "judgement": None,
+        "decision": Decision(),
     }
     assert wave_reset()["agreement"] is not wave_reset()["agreement"]
 

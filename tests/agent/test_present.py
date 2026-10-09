@@ -1246,3 +1246,30 @@ def test_an_answer_the_ensemble_chose_opens_with_its_agreement_line():
     chosen = render_answer("how many stores?", result, [], ensemble=decision)
     assert chosen == "*3 of 4 runs agreed; 1 answered &lt;differently&gt;.*\n\n" + plain
     assert render_answer("how many stores?", result, [], ensemble=SimpleNamespace(line="")) == plain
+
+
+def test_the_ensembles_notes_name_each_joined_column_each_declined_one_and_each_answer_that_lost():
+    """arch7 section 22.8: the delivered SQL does not return a joined
+    column, so the run it came from is named; a column left out is said with
+    why; and each losing answer with how its query differs."""
+    from nl2sql_agent.ensemble_state import Decision, DeclinedColumn, Dissent, JoinedColumn
+
+    result = QueryResult(columns=["store_key", "sales", "region_name"], rows=[[1, 10.0, "Hills"]])
+    decision = Decision(
+        line="3 of 4 runs agreed; 1 answered differently.",
+        joined_columns=[JoinedColumn(column="region_name", from_candidate=2, key="store_key", table="dim_store")],
+        declined_columns=[DeclinedColumn(column="brand_name", from_candidate=3, why="row 2 has no match in run 3")],
+        dissent=[
+            Dissent(group=1, members=[1], signature="12.5", differs="run 1's query filters on dim_date.calendar_year"),
+            Dissent(group=2, members=[4, 5], signature="1 rows; first: <b>", differs=""),
+            Dissent(group=3, members=[6, 7, 8], signature="0", differs=""),
+        ],
+    )
+    answer = render_answer("sales by store", result, [], ensemble=decision)
+    assert answer.endswith(
+        "*region_name is from run 2, which agreed, joined on store_key; this answer's query does not return it.*\n\n"
+        "*brand_name, which run 3 also returned, was left out: row 2 has no match in run 3.*\n\n"
+        "*Run 1 answered differently (12.5): run 1's query filters on dim_date.calendar_year.*\n\n"
+        "*Runs 4 and 5 answered differently (1 rows; first: &lt;b&gt;).*\n\n"
+        "*Runs 6, 7 and 8 answered differently (0).*"
+    )

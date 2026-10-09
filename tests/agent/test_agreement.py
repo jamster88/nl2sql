@@ -15,7 +15,7 @@ from dataclasses import replace
 from nl2sql_agent import agreement
 from nl2sql_agent import agreement as agreement_module
 from nl2sql_agent.contract import Label, LabelMap
-from nl2sql_agent.ensemble_state import Candidate, Group, GroupVerdict, Judgement
+from nl2sql_agent.ensemble_state import Agreement, Candidate, Group, GroupVerdict, Judgement
 from nl2sql_agent.state import (
     AnswerContract,
     AuditReport,
@@ -305,3 +305,33 @@ def test_the_criteria_in_order():
     assert agreement.rank([original_with_gap, complete_rewording]).index == 2
     assert agreement.rank([run(0, attempts=3), run(1, attempts=1)]).index == 0, "the original before fewer attempts"
     assert agreement.rank([run(3), run(2)]).index == 2, "the lower index, last"
+
+
+# ---------------------------------------------------------------------------
+# Is it settled? (arch7.1 section 22.7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("vote", "judgement", "settled"), [
+    (Agreement(4, 4, 4, "unanimous"), None, True),
+    (Agreement(4, 3, 4, "majority"), None, True),
+    (Agreement(4, 2, 4, "contested"), None, False),
+    (Agreement(3, 1, 3, "contested"), None, False),
+    (Agreement(1, 1, 4, "single"), None, False),
+    (Agreement(1, 1, 4, "judged", set_aside=3), Judgement(verdicts=[GroupVerdict(0, False), GroupVerdict(1, True)]),
+     False),
+    (Agreement(3, 2, 4, "judged", set_aside=1), Judgement(verdicts=[GroupVerdict(0, False), GroupVerdict(1, True)]),
+     True),
+    (Agreement(4, 2, 4, "contested"), Judgement(verdicts=[GroupVerdict(0, False), GroupVerdict(1, False)]), True),
+])
+def test_a_majority_of_those_that_voted_settles_it_and_one_run_alone_does_not(vote, judgement, settled):
+    """No majority among the runs that voted, or one run standing alone, is
+    worth a second wave; the Judge accepting none is settled whatever the
+    count -- the runs' own choice is delivered, flagged."""
+    assert agreement.settled(vote, judgement) is settled
+
+
+def test_the_members_are_ranked_as_the_representative_is_chosen():
+    members = [run(3), run(2, attempts=2), run(1)]
+    assert [c.index for c in agreement.ranked(members)] == [1, 3, 2]
+    assert agreement.ranked(members)[0] is agreement.rank(members)

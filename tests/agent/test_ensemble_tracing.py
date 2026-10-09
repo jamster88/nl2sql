@@ -21,7 +21,7 @@ from nl2sql_agent.ensemble import STEP_LABELS, TRACE_SPANS, run_pool
 from nl2sql_agent.ensemble_state import EnsembleState, whole_trace
 
 from .conftest import FakeDatabase
-from .test_ensemble import SQL, ensemble
+from .test_ensemble import FAITHFUL, MORE, SQL, ensemble, model, rewordings, rows
 from .test_graph import TABLES, scripted
 from .test_graph_tracing import traced
 
@@ -82,6 +82,28 @@ def test_the_trace_is_tagged_with_the_agreement_and_the_whole_questions_cost():
     assert tags["nl2sql.attempts"] == "1", "the delivered run's, not the outer nodes' zero"
     assert tags["nl2sql.model_calls"] == str(sum(entry.model_calls for entry in whole_trace(state)))
     assert int(tags["nl2sql.model_calls"]) >= 3
+
+
+def test_a_second_wave_is_in_the_same_trace_its_runs_beneath_its_own_candidate_runs():
+    """R1, widened: the second wave's runs are submitted to the pool after
+    the vote, at two workers, and land in the question's one trace beneath
+    the second "Candidate Runs" -- with the Judge's and the vote's spans
+    twice, once a wave."""
+    tracer, client = traced()
+    llm = model(written=rewordings(*FAITHFUL, *MORE), sql=[SQL] * 6, claims=[])
+    db = FakeDatabase(tables=TABLES, run_select_result=rows(10, 99, 10, 99, 10, 10))
+    state = ensemble(db, llm, tracer=tracer, ollama_parallel_calls=2).run("how many stores are there?")
+
+    assert len(client.traces) == 1 and state["waves"] == 2
+    root = client.only_trace().root
+    assert [span.name for span in root.children] == [
+        "Supervisor", "Paraphraser", "Fidelity Gate", "Wave Planner", "Candidate Runs", "Agreement", "Judge", "Vote",
+        "Wave Planner", "Candidate Runs", "Agreement", "Judge", "Vote", "Fusion", "Answer",
+    ]
+    first, second = [span for span in root.children if span.name == "Candidate Runs"]
+    assert sorted(span.name for span in first.children) == [f"Candidate {i}" for i in range(4)]
+    assert sorted(span.name for span in second.children) == ["Candidate 4", "Candidate 5"]
+    assert all(span.parent is second for span in second.children)
 
 
 def test_a_refused_question_is_one_trace_with_no_run_in_it():

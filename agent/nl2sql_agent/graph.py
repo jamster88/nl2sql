@@ -515,6 +515,12 @@ class Nl2SqlAgent:
         the ensemble's vote reads a result's key fact by."""
         return self._contract_resources().label_map
 
+    def dimensions(self) -> dict[str, str]:
+        """Column -> table for every column of a labelled dimension, read
+        with the label map: what the ensemble's fusion may join onto rows
+        that identify one."""
+        return self._contract_resources().dimensions
+
     def _contract_resources(self) -> ContractResources:
         """The label map and the fiscal calendar, read once on first use.
 

@@ -209,6 +209,24 @@ def build_label_map(tables: Iterable[Any]) -> LabelMap:
     return LabelMap(labels, names)
 
 
+def dimensions(tables: Iterable[Any], label_map: LabelMap) -> dict[str, str]:
+    """Column -> table for every column of every dimension the label map
+    names: what fusion may join onto the rows that identify one (arch7
+    section 22.8). A column two dimensions share is left out rather than
+    guessed, as a key two tables label differently is."""
+    named = set(label_map.tables)
+    found: dict[str, str] = {}
+    shared: set[str] = set()
+    for table in tables:
+        if table.name not in named:
+            continue
+        for column in table.columns:
+            name = column.name.lower()
+            if found.setdefault(name, table.name) != table.name:
+                shared.add(name)
+    return {name: table for name, table in found.items() if name not in shared}
+
+
 def _choose_label(table: str, keys: Sequence[str], columns: Sequence[str]) -> str | None:
     candidates = [c for c in columns if c.lower().endswith(("_name", "_desc"))]
     if not keys or not candidates:
@@ -286,6 +304,8 @@ class ContractResources:
     """The label map and the fiscal calendar, read once per process."""
 
     label_map: LabelMap = field(default_factory=LabelMap)
+    #: Column -> table for every column of a labelled dimension (`dimensions`).
+    dimensions: dict[str, str] = field(default_factory=dict)
     fiscal_year: int | None = None
     fiscal_year_start: date | None = None
     fiscal_year_end: date | None = None
@@ -302,7 +322,9 @@ def load_resources(database: Any) -> ContractResources:
     """
     resources = ContractResources()
     try:
-        resources.label_map = build_label_map(database.catalog())
+        tables = database.catalog()
+        resources.label_map = build_label_map(tables)
+        resources.dimensions = dimensions(tables, resources.label_map)
     except DATABASE_ERRORS as exc:
         resources.errors["label_map"] = str(exc)
     try:

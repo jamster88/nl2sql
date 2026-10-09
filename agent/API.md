@@ -415,9 +415,11 @@ for 6.3 needs nothing new. `ensemble` is the record beside it:
   "chosen": 0,                           // the delivered run; null when none could be (level "none")
   "fused_from": [0, 1, 3],               // the winning group
   "columns_fused": true,                 // ENSEMBLE_FUSE_COLUMNS for this run
-  "joined_columns": [], "declined_columns": [],
-  "claims_added": 0, "claims_dropped": 0,
-  "dissent": [],                         // each losing group: its key fact, how its query differs
+  "joined_columns": [{"column": "region_name", "from_candidate": 3, "key": "store_key", "table": "dim_store"}],
+  "declined_columns": [],                // {"column", "from_candidate", "why"}: one that would not join
+  "claims_added": 1, "claims_dropped": 0,
+  "dissent": [{"group": 1, "members": [2], "signature": "1495000.11",
+               "differs": "run 2's query filters on dim_date.calendar_year; the chosen one filters on dim_date.fiscal_year"}],
   "judged": {                            // the Judge, before the vote; null when it was not asked
     "verdicts": [{"group": 0, "accepted": true, "why": "It rolls sales up to the fiscal year."},
                  {"group": 1, "accepted": false, "why": "It filters the calendar year."}],
@@ -464,11 +466,23 @@ would have chosen (`overruled`, that answer's run `instead_of`), and
 with the Judge's objection in the answer's first line. `judged` is null
 when the Judge was not asked -- `ENSEMBLE_JUDGE_ENABLED=false`, or no run
 could vote -- and carries `error` when it could not be reached. `chosen` is
-the run whose rows, SQL and claims were delivered; the answer opens with a
-sentence saying how the runs agreed and what the Judge set aside. As built
-so far there is one wave and no fusion: `joined_columns`,
-`declined_columns` and `dissent` are empty, and a vote with no majority is
-delivered as `contested`. When no run could vote, `level` is `none`, `chosen` is null and
+the run whose SQL was delivered, and whose rows and claims the answer's
+start from; the answer opens with a sentence saying how the runs agreed and
+what the Judge set aside. A vote with no majority among the runs that voted,
+or one run standing alone, runs a second wave first when one is left --
+each candidate's `wave` says which it ran in -- and with none left is
+delivered as `contested`. `fused_from` is the winning group, from whose
+other runs, in code: `joined_columns`, each a column another run carried
+and the chosen rows did not, joined on the dimension's `key` (`result` has
+it; `sql` does not return it, so `from_candidate` names the run that did);
+`declined_columns`, each that would not join cleanly and `why`;
+`claims_added`, the other runs' claims about rows the chosen narrative
+did not speak of that the delivered rows bear out, and `claims_dropped`,
+those they did not; `columns_fused` false when
+`ENSEMBLE_FUSE_COLUMNS` is off. `dissent` is each losing group: its runs,
+its key fact (`signature`) and `differs`, the tables and filtered columns
+its query has that the chosen one's has not, and the reverse -- empty when
+the two read the same. When no run could vote, `level` is `none`, `chosen` is null and
 the answer and `error` are the original's own give-up. A refused question
 has no candidate at all. Without administrator detail, a candidate's
 `reasons` keep the rule's name and lose what follows it, as the error maps

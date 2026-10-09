@@ -156,6 +156,9 @@ class _Query:
     #: `COUNT(DISTINCT store_id)` reads `store_id` and shows no store.
     selected: set[str] = field(default_factory=set)
     star: bool = False
+    #: Every column a WHERE or HAVING reads, anywhere in the statement, as
+    #: `table.column` when its qualifier is a table or an alias of one.
+    filters: set[str] = field(default_factory=set)
 
 
 def _walk(node: object) -> Iterator[ast.Node]:
@@ -207,6 +210,7 @@ def read_query(sql: str, label_map: LabelMap | None = None) -> _Query:
         for node in _walk(statement)
         if isinstance(node, ast.FuncCall) and node.funcname and isinstance(node.funcname[-1], ast.String)
     }
+    query.filters = _filters(statement)
     if not isinstance(statement, ast.SelectStmt) or statement.targetList is None:
         return query
     query.select = statement
@@ -230,6 +234,27 @@ def read_query(sql: str, label_map: LabelMap | None = None) -> _Query:
                 if name:
                     query.reads.add(name)
     return query
+
+
+def _filters(statement: ast.Node) -> set[str]:
+    """The columns the statement filters on -- under every WHERE and HAVING,
+    in a CTE or a subquery too -- with an alias read as its table, so two
+    queries that alias `dim_date` differently filter on the same columns."""
+    aliases = {
+        node.alias.aliasname.lower(): node.relname.lower()
+        for node in _walk(statement)
+        if isinstance(node, ast.RangeVar) and node.alias is not None
+    }
+    filters: set[str] = set()
+    for node in _walk(statement):
+        if not isinstance(node, ast.SelectStmt):
+            continue
+        for ref in _walk([node.whereClause, node.havingClause]):
+            if isinstance(ref, ast.ColumnRef) and _column_name(ref):
+                qualifiers = [f.sval.lower() for f in ref.fields[:-1] if isinstance(f, ast.String)]
+                column = _column_name(ref)
+                filters.add(f"{aliases.get(qualifiers[-1], qualifiers[-1])}.{column}" if qualifiers else column)
+    return filters
 
 
 def _shows(column: str, result: QueryResult, query: _Query) -> bool:

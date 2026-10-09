@@ -373,12 +373,17 @@ def test_a_candidates_step_is_timed_like_any_other_and_forwarded_without_its_ind
 
 def _ensembled(
     qid, outcome, level, *, rejections=None, rungs=("light",), size=1000, runs=4, judged="accepted", without=None,
+    wave2=False, joined=(), declined=(), added=0, dropped=0,
 ) -> QuestionResult:
     asked = result(qid, "schema", outcome, 1.0)
     asked.agreement, asked.candidates, asked.agreed = level, runs, 3
     asked.rejections = dict(rejections or {})
     asked.candidate_rungs, asked.state_bytes = list(rungs), size
     asked.judged, asked.without_judge = judged, without or outcome
+    asked.wave2, asked.columns_fused = wave2, True
+    asked.joined = [{"column": c, "from_candidate": 1, "key": "store_key", "table": "dim_store"} for c in joined]
+    asked.declined = [{"column": c, "from_candidate": 2, "why": "row 1 has no match in run 2"} for c in declined]
+    asked.claims_added, asked.claims_dropped = added, dropped
     return asked
 
 
@@ -418,3 +423,15 @@ def test_what_the_judge_did_and_where_it_changed_the_score():
     assert report.judge_actions() == {"accepted": 1, "accepted none": 1, "overruled": 3, "set aside": 1}
     assert report.judge_effect() == {"overruled": 3, "fixed": 1, "broke": 1}
     assert BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)]).judge_actions() == {}
+
+
+def test_how_often_a_second_wave_ran_and_what_fusion_joined_added_and_dropped():
+    """arch7 section 11, items 3 and 8: the second-wave rate, and fusion's
+    yield -- columns joined and declined, claims added and dropped."""
+    report = BenchmarkReport(results=[
+        _ensembled("B01", CORRECT, "unanimous", joined=("region_name",), added=2),
+        _ensembled("B02", CORRECT, "majority", wave2=True, declined=("brand_name", "store_key"), dropped=1),
+        _ensembled("B03", WRONG, "contested", wave2=True, added=1),
+    ])
+    assert report.second_waves == 2
+    assert report.fusion() == {"columns joined": 1, "columns declined": 2, "claims added": 3, "claims dropped": 1}

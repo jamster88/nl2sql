@@ -353,12 +353,12 @@ class RunTrace:
     def finish_ensemble(self, state: Mapping[str, Any]) -> None:
         """What `finish` cannot read off the ensemble's outer state (arch7).
 
-        The agreement, `k/n level`, and how many wordings ran, as two tags
-        more; and the attempts and model calls read from the runs rather
-        than the outer nodes alone -- the attempts are the delivered run's,
-        the calls every run's and the outer nodes' together.
+        The agreement, `k/n level`, how many wordings ran and what the Judge
+        did, as three tags more; and the attempts and model calls read from
+        the runs rather than the outer nodes alone -- the attempts are the
+        delivered run's, the calls every run's and the outer nodes' together.
         """
-        from .ensemble_state import run_state, whole_trace
+        from .ensemble_state import judged, run_state, whole_trace
 
         agreement = state.get("agreement")
         candidates = state.get("candidates") or []
@@ -367,6 +367,7 @@ class RunTrace:
                 "nl2sql.agreement": f"{getattr(agreement, 'agreed', 0)}/{len(candidates)} "
                 f"{getattr(agreement, 'level', 'none')}",
                 "nl2sql.candidates": str(len(candidates)),
+                "nl2sql.judge": judged(state.get("judgement")),
                 "nl2sql.attempts": str(run_state(state).get("attempts", 0)),
                 "nl2sql.model_calls": str(sum(entry.model_calls for entry in whole_trace(state))),
             }

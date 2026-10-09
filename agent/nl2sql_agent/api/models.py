@@ -228,21 +228,34 @@ class LiteralMatch(Wire):
 
 class EnsembleAgreement(Wire):
     """How the ensemble's vote went: `agreed` of the `admissible` runs agreed,
-    of `total` run."""
+    of `total` run. `admissible` counts the runs that voted -- the Judge set
+    aside `set_aside` more before the vote."""
 
     admissible: int
     agreed: int
     total: int
     level: Literal["unanimous", "majority", "judged", "contested", "single", "none"]
     why: str = ""
+    set_aside: int = 0
+
+
+class EnsembleVerdict(Wire):
+    """The Judge's verdict on one group's answer."""
+
+    group: int
+    accepted: bool
+    why: str = ""
 
 
 class EnsembleJudgement(Wire):
-    """The Judge's choice among the groups, asked only when the votes could not decide."""
+    """The Judge's verdicts on the answers, given on every question before the vote."""
 
-    group: int | None
-    why: str
+    verdicts: list[EnsembleVerdict] = Field(default_factory=list)
+    set_aside: list[int] = Field(default_factory=list, description="The runs whose answer it set aside.")
+    overruled: bool = Field(default=False, description="It set aside the answer the runs alone would have chosen.")
+    instead_of: int | None = Field(default=None, description="That answer's run, when it did.")
     model: str = ""
+    error: str = Field(default="", description="Why it could not be asked; the runs then voted alone.")
 
 
 class JoinedColumn(Wire):

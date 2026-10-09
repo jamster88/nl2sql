@@ -243,9 +243,15 @@ are one run a question whatever `ENSEMBLE_ENABLED` says. An ensemble answer
 is scored on what it delivered -- its SQL and rows; its attempts, examples
 and rung are the delivered run's; and its time and model calls are every
 run's and the ensemble's own steps', the step that ran the candidates left
-out so its time is not counted twice. As built so far the ensemble asks the
-original alone, so `ensemble` should score as `snippets` does, with the same
-SQL, which is what its first measurement checked
+out so its time is not counted twice. The report gains an ENSEMBLE block:
+how the runs agreed, by level; how often they agreed on a wrong answer; the
+runs per question; the rewordings the fidelity gate discarded, by check;
+how often a question's runs were scored at different rungs; the state's
+size; what the Judge did, question by question; and, where it overruled the
+runs, the runs' own choice scored as the delivered answer is -- "wrong ->
+right" and "right -> wrong" counted apart, so the Judge's effect shows both
+ways. `--json` carries each question's runs, rewordings, the Judge's
+verdicts and that second score (`without_judge`)
 ([`docs/benchmark.md`](../docs/benchmark.md#the-ensemble-configuration)).
 
 The snippet store is found on the runtime stores' published port,

@@ -61,7 +61,7 @@ from benchmarks.runner import (  # noqa: E402
     routes_from_trace,
     timing_from_trace,
 )
-from nl2sql_agent.ensemble_state import is_ensemble, run_state, whole_trace  # noqa: E402
+from nl2sql_agent.ensemble_state import is_ensemble, judged, run_state, whole_trace  # noqa: E402
 from nl2sql_agent.state import to_jsonable  # noqa: E402
 
 #: How the report marks each outcome: a miss in capitals, so it stands out.
@@ -306,9 +306,27 @@ def run_question(
         )
     rows = result["rows"] if isinstance(result, dict) else result.rows
     matched = result_matches(expected, rows, ordered=question.ordered)
+    outcome = CORRECT if matched else WRONG
     return QuestionResult(
-        outcome=CORRECT if matched else WRONG, row_count=len(rows), **common
+        outcome=outcome, row_count=len(rows),
+        without_judge=without_judge(state, expected, question.ordered, outcome), **common
     )
+
+
+def without_judge(state, expected, ordered: bool, outcome: str) -> str:
+    """How the answer the runs alone would have chosen scores: the delivered
+    one's outcome, unless the Judge overruled them (arch7.1) -- then the run
+    it set aside, scored as the delivered one is. Empty for one run."""
+    if not is_ensemble(state):
+        return ""
+    judgement = state.get("judgement")
+    if not getattr(judgement, "overruled", False):
+        return outcome
+    run = next((c for c in state.get("candidates") or [] if c.index == judgement.instead_of), None)
+    result = run.state.get("result") if run is not None else None
+    if result is None:
+        return FAILED
+    return CORRECT if result_matches(expected, result.rows, ordered=ordered) else WRONG
 
 
 def ensemble_measures(state) -> dict:
@@ -324,7 +342,13 @@ def ensemble_measures(state) -> dict:
             check = paraphrase.reason.split(" ", 1)[0]
             rejections[check] = rejections.get(check, 0) + 1
     candidates = state.get("candidates") or []
+    judgement = state.get("judgement")
+    verdicts = {v.group: v.accepted for v in getattr(judgement, "verdicts", None) or []}
     return {
+        "judged": judged(judgement),
+        "verdicts": [
+            {"group": v.group, "accepted": v.accepted, "why": v.why} for v in getattr(judgement, "verdicts", None) or []
+        ],
         "agreement": getattr(agreement, "level", ""),
         "agreed": getattr(agreement, "agreed", 0),
         "candidates": len(candidates),
@@ -340,6 +364,7 @@ def ensemble_measures(state) -> dict:
         "runs": [
             {"index": c.index, "wording": c.wording, "outcome": c.outcome, "admissible": c.admissible,
              "reasons": list(c.reasons), "group": c.group, "signature": c.signature,
+             "accepted": verdicts.get(c.group),
              "chosen": c.index == getattr(state.get("decision"), "chosen", None), "sql": c.state.get("sql", "")}
             for c in sorted(candidates, key=lambda c: c.index)
         ],
@@ -486,6 +511,12 @@ def print_ensemble(report: BenchmarkReport) -> None:
     sizes = report.state_sizes()
     if sizes:
         print(f"  state, as JSON       {sizes[len(sizes) // 2] / 1024:.1f} KB median, {sizes[-1] / 1024:.1f} KB largest")
+    actions = report.judge_actions()
+    if actions:
+        print(f"  the Judge            {', '.join(f'{action} {n}' for action, n in actions.items())}")
+        effect = report.judge_effect()
+        print(f"  overruled the runs   {effect['overruled']}: wrong -> right {effect['fixed']}, "
+              f"right -> wrong {effect['broke']}")
 
 
 def print_stability(report: BenchmarkReport) -> None:
@@ -563,6 +594,7 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                     "fidelity_rejections": report.fidelity_rejections(),
                     "rung_spread": report.rung_spread,
                     "state_bytes": report.state_sizes(),
+                    "judge": {**report.judge_actions(), **report.judge_effect()},
                 } if report.ensembled else None,
                 "results": [
                     {
@@ -593,6 +625,9 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "state_bytes": r.state_bytes,
                         "rewordings": r.rewordings,
                         "runs": r.runs,
+                        "judged": r.judged,
+                        "verdicts": r.verdicts,
+                        "without_judge": r.without_judge,
                     }
                     for r in report.results
                 ],

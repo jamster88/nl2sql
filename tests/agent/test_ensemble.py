@@ -1,5 +1,6 @@
-"""The ensemble's outer graph (arch7 section 22), as built so far: rewordings,
-the fidelity gate, one wave of runs, the vote, and the chosen run delivered.
+"""The ensemble's outer graph (arch7.1 section 22), as built so far: rewordings,
+the fidelity gate, one wave of runs, the Judge, the vote, and the chosen run
+delivered.
 
 Most tests here script the Paraphraser, the Supervisor's readings, the SQL
 and the rows each run gets, and read back what the ensemble made of them:
@@ -23,11 +24,12 @@ from nl2sql_agent.database import QueryResult as DbRows
 from nl2sql_agent.ensemble import STEP_LABELS, EnsembleAgent, build_agent, run_pool, step_label
 from nl2sql_agent.ensemble_state import Paraphrase, new_ensemble_state
 from nl2sql_agent.graph import Nl2SqlAgent
+from nl2sql_agent.judge import Ruling, Rulings
 from nl2sql_agent.paraphrase import Rewording, Rewordings
 from nl2sql_agent.present import Narrative
 from nl2sql_agent.supervisor import Screening
 
-from .conftest import FakeDatabase, ScriptedLLM, _StructuredBinding
+from .conftest import FakeDatabase, FakeKnowledgeBase, ScriptedLLM, _StructuredBinding, make_chunk
 from .test_graph import TABLES, make_agent, scripted
 
 SQL = "SELECT count(*) AS n FROM dim_store"
@@ -105,7 +107,8 @@ def test_the_originals_run_makes_no_supervisor_call_of_its_own():
     supervise = next(entry for entry in state["candidates"][0].state["trace"] if entry.node == "supervise")
     assert (supervise.model_calls, supervise.detail.startswith("screened by the ensemble")) == (0, True)
     assert [entry.node for entry in state["trace"]] == [
-        "screen", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "fuse", "deliver",
+        "screen", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "judge", "vote", "fuse",
+        "deliver",
     ]
     assert state["answer_contract"] == state["candidates"][0].state["answer_contract"]
 
@@ -334,7 +337,7 @@ def test_when_no_run_can_vote_the_original_is_delivered_as_it_gave_up():
 
     assert state["agreement"].level == "none" and state["decision"].chosen is None
     assert state["error"] == plain["error"] and state["answer"] == plain["answer"]
-    assert [entry.node for entry in state["trace"]][-2:] == ["validate", "deliver"], "nothing to fuse"
+    assert [entry.node for entry in state["trace"]][-3:] == ["validate", "vote", "deliver"], "nothing to judge or fuse"
 
 
 def test_the_originals_own_run_is_chosen_over_a_rewordings_even_after_a_repair():
@@ -363,6 +366,91 @@ def test_among_rewordings_fewer_attempts_and_then_the_lower_index_decide():
 
 
 # ---------------------------------------------------------------------------
+# The Judge, before the vote (arch7.1 section 22.7)
+# ---------------------------------------------------------------------------
+
+#: B07, as the paraphrase set found it: the original right, three rewordings
+#: agreeing on the grain trap's figure.
+B07 = (34.20, 34.65, 34.65, 34.65)
+SETS_ASIDE_B = Rulings(rulings=[
+    Ruling(answer="A", accepted=True, why="It rolls both facts up to the month first."),
+    Ruling(answer="B", accepted=False, why="It joins daily sales to monthly costs on the date."),
+])
+
+
+def _judged(values, rulings, **settings) -> tuple[ScriptedLLM, dict]:
+    llm = model(written=rewordings(*FAITHFUL), claims=[])
+    llm.rulings = rulings
+    db = FakeDatabase(tables=TABLES, run_select_result=rows(*values))
+    return llm, ask(llm, db=db, **settings)
+
+
+def _shown(llm: ScriptedLLM) -> str:
+    [messages] = [messages for schema, messages in llm.structured_invocations if schema is Rulings]
+    return "\n".join(message.content for message in messages)
+
+
+def test_the_judge_is_asked_once_at_the_heavy_rung_with_every_answer_and_the_originals_knowledge():
+    knowledge = FakeKnowledgeBase(chunks=[make_chunk(content="fact_item_cogs is recorded once a month.")])
+    llm, state = _judged([10, 10, 99, 10], None, knowledge_base=knowledge)
+
+    assert calls(llm, Rulings) == 1
+    entry = next(entry for entry in state["trace"] if entry.node == "judge")
+    assert (entry.model_calls, entry.rung) == (1, "heavy")
+    shown = _shown(llm)
+    assert "Answer A" in shown and "Answer B" in shown and "Answer C" not in shown
+    assert "fact_item_cogs is recorded once a month." in shown
+    assert [(v.group, v.accepted) for v in state["judgement"].verdicts] == [(0, True), (1, True)]
+    assert state["agreement"].level == "majority", "nothing set aside: the vote as the runs cast it"
+
+
+def test_a_majority_the_judge_sets_aside_loses_to_the_answer_it_accepts():
+    llm, state = _judged(B07, SETS_ASIDE_B)
+
+    assert [g.members for g in state["groups"]] == [[1, 2, 3], [0]]
+    agreement = state["agreement"]
+    assert (agreement.level, agreement.agreed, agreement.admissible, agreement.set_aside) == ("judged", 1, 1, 3)
+    assert state["decision"].chosen == 0 and state["result"].rows == [[34.2]]
+    judgement = state["judgement"]
+    assert (judgement.set_aside, judgement.overruled, judgement.instead_of) == ([1, 2, 3], True, 1)
+    assert state["answer"].startswith(
+        "*The Judge set aside the answer 3 of 4 runs gave -- It joins daily sales to monthly costs on the date -- "
+        "and accepted this one, which 1 gave.*"
+    )
+
+
+def test_with_the_judge_off_it_is_never_asked_and_the_runs_vote_alone():
+    llm, state = _judged(B07, SETS_ASIDE_B, ensemble_judge_enabled=False)
+
+    assert calls(llm, Rulings) == 0 and state["judgement"] is None
+    assert "judge" not in [entry.node for entry in state["trace"]]
+    assert (state["agreement"].level, state["decision"].chosen) == ("majority", 1)
+
+
+def test_a_judge_that_fails_lets_the_runs_vote_alone_and_the_answer_says_so():
+    llm, state = _judged([10, 10, 10, 10], ConnectionError("refused"))
+
+    assert state["agreement"].level == "unanimous"
+    assert state["judgement"].error == "ConnectionError: refused" and state["node_errors"]["judge"] == "refused"
+    assert next(entry for entry in state["trace"] if entry.node == "judge").model_calls == 0
+    assert state["answer"].startswith(
+        "*Agreed by 4 of 4 independent runs of the question, each worded differently. The Judge could not be asked.*"
+    )
+
+
+def test_when_the_judge_accepts_none_the_runs_own_choice_is_delivered_as_contested():
+    rulings = Rulings(rulings=[Ruling(answer="A", accepted=False, why="It keeps only two channels.")])
+    _, state = _judged([10, 10, 10, 10], rulings)
+
+    assert (state["agreement"].level, state["decision"].chosen) == ("contested", 0)
+    assert state["judgement"].set_aside == [0, 1, 2, 3] and not state["judgement"].overruled
+    assert state["answer"].startswith(
+        "*The Judge accepted none of the answers -- It keeps only two channels -- "
+        "so this is the runs' own choice, which 4 of 4 gave.*"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Progress, the pool, and the surface the API and the CLI hold
 # ---------------------------------------------------------------------------
 
@@ -373,7 +461,9 @@ def test_progress_names_each_runs_steps_and_none_for_the_ensembles_own():
         QUESTION, on_progress=lambda step, detail, candidate=None: seen.append((candidate, step))
     )
     outer = [step for candidate, step in seen if candidate is None]
-    assert outer == ["screen", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "fuse", "deliver"]
+    assert outer == [
+        "screen", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "judge", "vote", "fuse", "deliver",
+    ]
     for index in range(4):
         steps = [step for candidate, step in seen if candidate == index]
         assert steps[0] == "supervise" and steps[-1] == "finish"

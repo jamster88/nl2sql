@@ -49,6 +49,7 @@ MIRRORED = {
     "TraceEntry": models.TraceEntry,
     "LiteralMatch": models.LiteralMatch,
     "EnsembleAgreement": models.EnsembleAgreement,
+    "EnsembleVerdict": models.EnsembleVerdict,
     "EnsembleJudgement": models.EnsembleJudgement,
     "JoinedColumn": models.JoinedColumn,
     "DeclinedColumn": models.DeclinedColumn,

@@ -1,11 +1,12 @@
-"""Asking it several ways: the outer graph around the pipeline (arch7 section 22).
+"""Asking it several ways: the outer graph around the pipeline (arch7.1 section 22).
 
 Temperature is zero everywhere, so a different wording is the only
 independent second draw the pipeline has. The question is screened once,
 reworded, each rewording held to the original's answer contract by a
 fidelity gate, the pipeline run once per wording, the results checked
-against their own question and against each other, and the largest agreeing
-group's answer delivered with the record of every run:
+against their own question and grouped by agreement, every distinct answer
+judged, and the largest group of accepted answers delivered with the record
+of every run:
 
     screen ─┬─ refuse                          the Supervisor, once, on the original
             └─ paraphrase                      up to 10 rewordings, most different first
@@ -13,9 +14,11 @@ group's answer delivered with the record of every run:
                   │                            Supervisor's reading of each
                   └─ plan_wave                 the original + the first 3 faithful
                      └─ answer                 the pipeline once per wording
-                        └─ validate ─┬─ fuse ─┐ E1-E5, agreement, the vote;
-                                     └────────┴─ deliver   the representative's
-                                                           answer, its agreement first
+                        └─ validate            E1-E5, agreement, the groups
+                           └─ judge            every group's answer, accepted or set aside
+                              └─ vote ─┬─ fuse ─┐  the accepted runs vote;
+                                       └────────┴─ deliver   the representative's
+                                                             answer, its agreement first
 
 * **The anchor is screened first, and only the anchor.** An injection or an
   ambiguity stops the question before anything is reworded.
@@ -37,11 +40,17 @@ group's answer delivered with the record of every run:
   first (`hostgate.py`), so the width of the pool is never more calls on the
   host than the deployer said it serves.
 
-Built so far: one wave, and no Judge -- a vote with no majority delivers the
-largest group's answer as `contested`. The second wave on disagreement, the
-Judge, and the fusion of the agreeing runs' columns and claims come with the
-later phases of the build; until then the delivered answer is the chosen
-run's own, opened by its agreement line.
+* **The Judge reads before the vote counts** (arch7.1). One heavy call a
+  question sees each distinct answer -- not how many runs gave it -- and
+  sets aside those it can name a mistake in; only the runs whose answer it
+  accepted vote. Off, or failed, the runs vote alone; when it accepts none,
+  their own choice is delivered as `contested`, with its objection.
+
+Built so far: one wave -- a vote with no majority delivers the largest
+accepted group's answer as `contested`. The second wave on disagreement and
+the fusion of the agreeing runs' columns and claims come with the later
+phases of the build; until then the delivered answer is the chosen run's
+own, opened by its agreement line.
 
 `ENSEMBLE_ENABLED=false` is arch6 to the answer: `build_agent` hands back the
 pipeline itself, and nothing here runs.
@@ -59,7 +68,7 @@ from typing import Any, Callable, Sequence, TypeVar
 from langgraph.graph import END, START, StateGraph
 
 from . import agreement as votes
-from . import complexity, fidelity, paraphrase as paraphraser, present, supervisor, tracing
+from . import complexity, fidelity, judge as judges, paraphrase as paraphraser, present, supervisor, tracing
 from . import contract as answer_contract
 from .config import Settings
 from .ensemble_state import (
@@ -69,6 +78,7 @@ from .ensemble_state import (
     Candidate,
     Decision,
     EnsembleState,
+    Judgement,
     Paraphrase,
     new_ensemble_state,
 )
@@ -78,7 +88,7 @@ from .graph import step_label as pipeline_label
 from .state import AuditReport, QueryResult, new_state
 from nl2sql_common.errors import MODEL_ERRORS
 
-#: The outer graph's own bound on supersteps: nine nodes, one pass. Its own
+#: The outer graph's own bound on supersteps: eleven nodes, one pass. Its own
 #: constant, not the pipeline's: each candidate's run is bounded by that.
 RECURSION_LIMIT = 40
 
@@ -96,6 +106,8 @@ STEP_LABELS = {
     "plan_wave": "wave",
     "answer": "candidate",
     "validate": "agreement",
+    "judge": "judge",
+    "vote": "vote",
     "fuse": "fusion",
     "deliver": "answer",
 }
@@ -112,7 +124,9 @@ TRACE_SPANS = {
     "plan_wave": ("Wave Planner", "TASK", ("paraphrases", "waves")),
     "answer": ("Candidate Runs", "CHAIN", ("wave_plan", "waves")),
     "validate": ("Agreement", "EVALUATOR", ("answer_contract",)),
-    "fuse": ("Fusion", "TASK", ("groups", "agreement")),
+    "judge": ("Judge", "EVALUATOR", ("question", "groups")),
+    "vote": ("Vote", "EVALUATOR", ("groups", "judgement")),
+    "fuse": ("Fusion", "TASK", ("decision", "agreement")),
     "deliver": ("Answer", "TASK", ("decision",)),
 }
 
@@ -236,6 +250,8 @@ class EnsembleAgent:
         graph.add_node("plan_wave", self._traced("plan_wave", self._plan_wave))
         graph.add_node("answer", self._traced("answer", self._answer, outputs=_runs))
         graph.add_node("validate", self._traced("validate", self._validate, outputs=_runs))
+        graph.add_node("judge", self._traced("judge", self._judge))
+        graph.add_node("vote", self._traced("vote", self._vote))
         graph.add_node("fuse", self._traced("fuse", self._fuse))
         graph.add_node("deliver", self._traced("deliver", self._deliver))
 
@@ -247,7 +263,9 @@ class EnsembleAgent:
         graph.add_edge("screen_paraphrase", "plan_wave")
         graph.add_edge("plan_wave", "answer")
         graph.add_edge("answer", "validate")
-        graph.add_conditional_edges("validate", self._route_after_validate, ["fuse", "deliver"])
+        graph.add_conditional_edges("validate", self._route_after_validate, ["judge", "vote"])
+        graph.add_edge("judge", "vote")
+        graph.add_conditional_edges("vote", self._route_after_vote, ["fuse", "deliver"])
         graph.add_edge("fuse", "deliver")
         graph.add_edge("refuse", END)
         graph.add_edge("deliver", END)
@@ -464,9 +482,9 @@ class EnsembleAgent:
     # --- stage 6 ------------------------------------------------------------
 
     def _validate(self, state: EnsembleState) -> dict:
-        """Tier 1, then tier 2 (arch7 sections 22.5 and 22.6): which runs are
-        answers to their own question, which agree, and the vote. In code;
-        no model call."""
+        """Tier 1, then the groups (arch7.1 sections 22.5 and 22.6): which
+        runs are answers to their own question, and which agree. In code; no
+        model call. The vote waits for the Judge."""
         question = state["question"]
         contract = state["answer_contract"]
         label_map = self.agent.label_map()
@@ -483,37 +501,81 @@ class EnsembleAgent:
         groups = votes.group(candidates, contract, label_map)
         member_of = {member: g.index for g in groups for member in g.members}
         candidates = [replace(c, group=member_of.get(c.index)) for c in candidates]
-        agreement = votes.vote(groups, sum(1 for c in candidates if c.admissible), len(candidates))
-        detail = (
-            f"{agreement.total} run, {agreement.admissible} admissible, "
-            f"{agreement.agreed} agree ({agreement.level})"
-        )
-        return {"candidates": candidates, "groups": groups, "agreement": agreement, _DETAIL: detail}
+        admissible = sum(1 for c in candidates if c.admissible)
+        detail = f"{len(candidates)} run, {admissible} admissible, {len(groups)} group(s)"
+        return {"candidates": candidates, "groups": groups, _DETAIL: detail}
 
     def _route_after_validate(self, state: EnsembleState) -> str:
-        """A run to deliver, or none (built so far: one wave, no Judge)."""
-        return "deliver" if state["agreement"].level == votes.NONE else "fuse"
+        """The Judge, when there is an answer to judge and it is on."""
+        return "judge" if state.get("groups") and self.settings.ensemble_judge_enabled else "vote"
+
+    def _judge(self, state: EnsembleState) -> dict:
+        """The Judge (arch7.1 section 22.7): one call, a verdict on every
+        group's answer, before the vote counts them. A failure costs the
+        verdicts and nothing else -- the runs vote alone, and the answer says
+        the Judge could not be asked."""
+        routed = self.router.model("judge", *complexity.judge_rung())
+        original = next((c for c in state.get("candidates") or [] if c.index == 0), None)
+        run = original.state if original is not None else {}
+        update: dict[str, Any] = {}
+        try:
+            verdicts = judges.judge(
+                routed,
+                state["question"],
+                state["answer_contract"],
+                state["groups"],
+                state["candidates"],
+                knowledge=run.get("knowledge") or "",
+                assumptions=run.get("assumptions") or [],
+            )
+        except MODEL_ERRORS as exc:
+            update["judgement"] = Judgement(error=f"{type(exc).__name__}: {exc}")
+            update["node_errors"] = {"judge": str(exc)}
+            update[_DETAIL] = f"failed: {type(exc).__name__}"
+        else:
+            update["judgement"] = Judgement(verdicts=verdicts, model=routed.record()["model"])
+            update[_MODEL_CALLS] = 1
+            update[_DETAIL] = ", ".join(
+                f"group {v.group} {'accepted' if v.accepted else 'set aside'}" for v in verdicts
+            )
+        update[_ROUTE] = routed.record()
+        return update
+
+    def _vote(self, state: EnsembleState) -> dict:
+        """Tier 3 (arch7.1 section 22.7): the runs whose answer the Judge
+        accepted vote, and the winning group's representative is chosen
+        (section 22.8). In code; no model call."""
+        candidates = state.get("candidates") or []
+        groups = state.get("groups") or []
+        agreement, winner, judgement = votes.decide(
+            groups, sum(1 for c in candidates if c.admissible), len(candidates), state.get("judgement")
+        )
+        decision = Decision(columns_fused=self.settings.ensemble_fuse_columns)
+        if winner is not None:
+            decision = replace(
+                decision,
+                chosen=winner.representative,
+                fused_from=list(winner.members),
+                line=agreement_line(agreement, judgement, groups),
+            )
+        detail = (
+            f"{agreement.total} run, {agreement.admissible} voted, {agreement.agreed} agree ({agreement.level})"
+            + (f"; {agreement.set_aside} set aside by the Judge" if agreement.set_aside else "")
+        )
+        return {"agreement": agreement, "judgement": judgement, "decision": decision, _DETAIL: detail}
+
+    def _route_after_vote(self, state: EnsembleState) -> str:
+        """A run to deliver, or none (built so far: one wave)."""
+        return "deliver" if state["decision"].chosen is None else "fuse"
 
     def _fuse(self, state: EnsembleState) -> dict:
         """Selection (arch7 section 22.8): the winning group's representative,
-        whose rows, SQL, chart and claims are the answer's. The winning group
-        is the largest -- ties already broken toward the original's -- and,
-        with no majority and no Judge yet, it is delivered as `contested`."""
-        agreement = state["agreement"]
-        if agreement.level == votes.OPEN:
-            agreement = replace(agreement, level="contested", why=f"{agreement.why}; the largest group delivered")
-        winning = state["groups"][0]
-        chosen = _candidate(state, winning.representative)
+        whose rows, SQL, chart and claims are the answer's. Fusion of the
+        agreeing runs' columns and claims comes with the later phases."""
+        decision = state["decision"]
+        chosen = _candidate(state, decision.chosen)
         run = chosen.state
-        decision = Decision(
-            chosen=chosen.index,
-            fused_from=list(winning.members),
-            columns_fused=self.settings.ensemble_fuse_columns,
-            line=agreement_line(agreement),
-        )
         return {
-            "agreement": agreement,
-            "decision": decision,
             "sql": run.get("sql") or "",
             "result": run.get("result"),
             "chart": run.get("chart"),
@@ -521,7 +583,7 @@ class EnsembleAgent:
             "audit": run.get("audit") or AuditReport(),
             "assumptions": list(run.get("assumptions") or []),
             "node_errors": dict(run.get("node_errors") or {}),
-            _DETAIL: f"[{chosen.index}] of {winning.members} ({agreement.level})",
+            _DETAIL: f"[{chosen.index}] of {decision.fused_from} ({state['agreement'].level})",
         }
 
     def _deliver(self, state: EnsembleState) -> dict:

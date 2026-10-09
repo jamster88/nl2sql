@@ -1,4 +1,4 @@
-"""Which runs are answers, which agree, and which one stands for them (arch7 sections 22.5, 22.6, 22.8).
+"""Which runs are answers, which agree, how they vote, and which one stands for them (arch7.1 sections 22.5-22.8).
 
 The ensemble asks one question several ways and gets several runs back. This
 module decides, in code and with no model call, what they amount to:
@@ -15,8 +15,12 @@ module decides, in code and with no model call, what they amount to:
   lets a match b and b match c puts the three together.
 * **Who won?** The vote: a strict majority of the admissible runs, never of
   all of them, and two is the smallest group that agrees. When no group has
-  one, the level is `open` -- a marker for the graph to route on, never
-  delivered: the Judge, or the plurality as `contested`, settles it.
+  one, the level is `open` -- a marker, never delivered: the largest group
+  is, as `contested`.
+* **After the Judge.** The Judge reads every group's answer before the vote
+  (`judge.py`), and `decide` counts only the runs whose answer it accepted:
+  `judged` when that sets aside the answer the runs alone would have chosen,
+  and the runs' own choice, `contested`, when it accepted none.
 * **Which run stands for the group?** The representative, by a ranking of
   what makes one result the stronger of several that agree: complete over a
   gap, audited over dropped claims, the original's wording over a
@@ -26,22 +30,26 @@ module decides, in code and with no model call, what they amount to:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any, Sequence
 
 from .compare import result_matches
 from .completeness import NO_ROWS, check_rules, measure_columns, read_query
 from .contract import LabelMap
-from .ensemble_state import ORIGINAL, Agreement, Candidate, Group
+from .ensemble_state import ORIGINAL, Agreement, Candidate, Group, Judgement
 from .state import AnswerContract, AuditReport, CompletenessReport, QueryResult
 from .tracing import ANSWERED
 
-#: The levels a vote can end at, before any Judge. `open` is the router's:
-#: no group holds a majority and something else must decide.
+#: The levels a vote can end at. `open` is `vote`'s marker for no group
+#: holding a majority; `decide` delivers it as `contested`. `judged` is the
+#: Judge setting aside the answer the runs alone would have chosen.
 UNANIMOUS = "unanimous"
 MAJORITY = "majority"
 SINGLE = "single"
 NONE = "none"
 OPEN = "open"
+JUDGED = "judged"
+CONTESTED = "contested"
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +180,7 @@ def signature(result: QueryResult, label_map: LabelMap) -> str:
 
 
 def vote(groups: Sequence[Group], admissible_count: int, total: int) -> Agreement:
-    """arch7 section 22.6's table. The quorum is a strict majority of the
+    """arch7.1 section 22.7's table, over the groups given. The quorum is a strict majority of the
     admissible, never of all the runs: a run that gave up neither agrees nor
     dissents. Two is the smallest group that agrees, so a 1-1-1 split is
     three dissenters and no majority."""
@@ -188,6 +196,53 @@ def vote(groups: Sequence[Group], admissible_count: int, total: int) -> Agreemen
     else:
         level, why = OPEN, f"no majority among {admissible_count}: the largest group is {largest}"
     return Agreement(admissible=admissible_count, agreed=largest, total=total, level=level, why=why)
+
+
+def decide(
+    groups: Sequence[Group], admissible_count: int, total: int, judgement: Judgement | None = None
+) -> tuple[Agreement, Group | None, Judgement | None]:
+    """The vote after the Judge (arch7.1 section 22.7): the agreement, the
+    winning group, and the judgement with what it set aside filled in.
+
+    Only the runs whose answer the Judge accepted vote; a group it gave no
+    verdict on is accepted. The winner is the largest accepted group, ties
+    to the original's, as `group` ordered them. The level is `judged` when
+    that winner is not the group the runs alone would have chosen, and a
+    vote with no majority is delivered as `contested`. With no verdicts --
+    the Judge off, or not asked, or failed -- and when it accepted none, the
+    runs' own vote decides; the second is `contested` whatever the vote was,
+    since the Judge objected to its answer.
+    """
+    alone = vote(groups, admissible_count, total)
+    if alone.level == NONE:
+        return alone, None, judgement
+    verdicts = {verdict.group: verdict for verdict in judgement.verdicts} if judgement else {}
+    accepted = [g for g in groups if g.index not in verdicts or verdicts[g.index].accepted]
+    set_aside = sorted(member for g in groups if g not in accepted for member in g.members)
+    if not verdicts or not accepted:
+        agreement = alone
+        if not accepted:
+            agreement = replace(alone, level=CONTESTED, why=f"the Judge accepted none of the answers; the runs' own vote: {alone.why}")
+        elif alone.level == OPEN:
+            agreement = replace(alone, level=CONTESTED, why=f"{alone.why}; the largest group delivered")
+        if judgement is not None:
+            judgement = replace(judgement, set_aside=set_aside)
+        return agreement, groups[0], judgement
+    kept = vote(accepted, admissible_count - len(set_aside), total)
+    winner = accepted[0]
+    overruled = winner.index != groups[0].index
+    if overruled:
+        level, why = JUDGED, f"the Judge set aside the answer the runs alone chose ({alone.why}); {kept.why}"
+    elif kept.level == OPEN:
+        level, why = CONTESTED, f"{kept.why}; the largest group delivered"
+    else:
+        level, why = kept.level, kept.why
+    agreement = replace(kept, level=level, why=why, set_aside=len(set_aside))
+    judgement = replace(
+        judgement, set_aside=set_aside, overruled=overruled,
+        instead_of=groups[0].representative if overruled else None,
+    )
+    return agreement, winner, judgement
 
 
 # ---------------------------------------------------------------------------

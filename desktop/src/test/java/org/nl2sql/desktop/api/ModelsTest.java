@@ -79,7 +79,7 @@ class ModelsTest {
                  "answer": {"answer": "Store 7.", "sql": "SELECT 7",
                             "ensemble": {
                               "agreement": {"admissible": 2, "agreed": 2, "total": 3,
-                                            "level": "unanimous", "why": "2 of 2"},
+                                            "level": "unanimous", "why": "2 of 2", "set_aside": 1},
                               "chosen": 0, "fused_from": [0, 1], "columns_fused": true,
                               "joined_columns": [{"column": "brand", "from_candidate": 1,
                                                   "key": "sku_id", "table": "dim_product"}],
@@ -88,7 +88,10 @@ class ModelsTest {
                               "claims_added": 1, "claims_dropped": 0,
                               "dissent": [{"group": 1, "members": [2], "signature": "1 row",
                                            "differs": "filters region"}],
-                              "judged": {"group": 0, "why": "asked as written", "model": "m"},
+                              "judged": {"verdicts": [{"group": 0, "accepted": true, "why": "asked as written"},
+                                                      {"group": 1, "accepted": false, "why": "filters region"}],
+                                         "set_aside": [2], "overruled": false, "instead_of": null,
+                                         "model": "m", "error": ""},
                               "candidates": [{"index": 1, "wording": "which store tops?",
                                               "origin": "paraphrase", "wave": 1,
                                               "changed": "word order", "outcome": "answered",
@@ -116,7 +119,10 @@ class ModelsTest {
         assertEquals("sku_id", ensemble.joined_columns().get(0).key());
         assertEquals("key repeats in run 1", ensemble.declined_columns().get(0).why());
         assertEquals(List.of(2), ensemble.dissent().get(0).members());
-        assertEquals(0, ensemble.judged().group());
+        assertEquals(1, ensemble.agreement().set_aside());
+        assertEquals("filters region", ensemble.judged().verdicts().get(1).why());
+        assertEquals(List.of(2), ensemble.judged().set_aside());
+        assertNull(ensemble.judged().instead_of());
         assertEquals("word order", ensemble.candidates().get(0).changed());
         assertEquals("finish", ensemble.candidates().get(0).trace().get(0).node());
         assertEquals("F3 polarity", ensemble.discarded().get(0).reason());
@@ -141,7 +147,11 @@ class ModelsTest {
         assertEquals(List.of(), Json.read("{}", Models.EnsembleDissent.class).members());
         assertEquals("", Json.read("{}", Models.DiscardedRewording.class).text());
         assertEquals("", Json.read("{}", Models.EnsembleAgreement.class).level());
-        assertEquals("", Json.read("{}", Models.EnsembleJudgement.class).why());
+        Models.EnsembleJudgement judgement = Json.read("{}", Models.EnsembleJudgement.class);
+        assertEquals(List.of(), judgement.verdicts());
+        assertEquals(List.of(), judgement.set_aside());
+        assertEquals("", judgement.error());
+        assertEquals("", Json.read("{}", Models.EnsembleVerdict.class).why());
         // A server older than 7.0 sends neither.
         assertNull(Json.read("{}", Models.Answer.class).ensemble());
     }

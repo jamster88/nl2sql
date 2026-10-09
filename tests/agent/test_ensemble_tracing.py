@@ -48,7 +48,8 @@ def test_a_question_is_one_trace_with_a_span_for_each_run_beneath_its_own_nodes(
     trace = client.only_trace()
     assert state["trace_id"] == trace.root.trace_id
     assert [span.name for span in trace.root.children] == [
-        "Supervisor", "Paraphraser", "Fidelity Gate", "Wave Planner", "Candidate Runs", "Agreement", "Fusion", "Answer",
+        "Supervisor", "Paraphraser", "Fidelity Gate", "Wave Planner", "Candidate Runs", "Agreement", "Judge", "Vote",
+        "Fusion", "Answer",
     ]
     [run] = trace.root.child("Candidate Runs").children
     assert run.name == "Candidate 0" and run.inputs == {"question": "How many stores are there?"}
@@ -76,6 +77,7 @@ def test_the_trace_is_tagged_with_the_agreement_and_the_whole_questions_cost():
     tags = client.only_trace().tags
     assert tags["nl2sql.agreement"] == "1/1 single"
     assert tags["nl2sql.candidates"] == "1"
+    assert tags["nl2sql.judge"] == "accepted"
     assert tags["nl2sql.outcome"] == "answered"
     assert tags["nl2sql.attempts"] == "1", "the delivered run's, not the outer nodes' zero"
     assert tags["nl2sql.model_calls"] == str(sum(entry.model_calls for entry in whole_trace(state)))
@@ -93,6 +95,7 @@ def test_a_refused_question_is_one_trace_with_no_run_in_it():
     trace = client.only_trace()
     assert [span.name for span in trace.root.children] == ["Supervisor", "Refusal"]
     assert trace.tags["nl2sql.agreement"] == "0/0 none"
+    assert trace.tags["nl2sql.judge"] == "not asked"
     assert trace.tags["nl2sql.outcome"] == "refused"
 
 

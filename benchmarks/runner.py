@@ -215,8 +215,17 @@ class QuestionResult:
     #: shows, and so where the gate's vocabulary grows from.
     rewordings: list[dict[str, Any]] = field(default_factory=list)
     #: Every run, in a line: its wording, how it ended, whether it could
-    #: vote and why not, its group, its SQL, and which was delivered.
+    #: vote and why not, its group, the Judge's verdict on its answer, its
+    #: SQL, and which was delivered.
     runs: list[dict[str, Any]] = field(default_factory=list)
+    #: What the Judge did (arch7.1): `accepted` every answer, `set aside`
+    #: some, `overruled` the runs' own choice, `accepted none`, `failed` or
+    #: `not asked`; its verdict on each group; and how the answer the runs
+    #: alone would have chosen scores -- the delivered one's outcome unless
+    #: the Judge overruled them.
+    judged: str = ""
+    verdicts: list[dict[str, Any]] = field(default_factory=list)
+    without_judge: str = ""
 
     @property
     def label(self) -> str:
@@ -388,6 +397,25 @@ class BenchmarkReport:
 
     def state_sizes(self) -> list[int]:
         return sorted(r.state_bytes for r in self.results if r.state_bytes)
+
+    def judge_actions(self) -> dict[str, int]:
+        """What the Judge did, question by question: how often it accepted
+        every answer, set some aside, overruled the runs, accepted none,
+        failed, or was not asked."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            if result.judged:
+                counts[result.judged] = counts.get(result.judged, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def judge_effect(self) -> dict[str, int]:
+        """Where the Judge changed the answer, scored both ways: `fixed` a
+        wrong answer the runs would have delivered, `broke` a right one, and
+        overruled them with no change to the score."""
+        overruled = [r for r in self.results if r.judged == "overruled"]
+        fixed = sum(1 for r in overruled if r.correct and r.without_judge == WRONG)
+        broke = sum(1 for r in overruled if not r.correct and r.without_judge == CORRECT)
+        return {"overruled": len(overruled), "fixed": fixed, "broke": broke}
 
     def stage_totals(self) -> dict[str, float]:
         """Seconds spent in each pipeline stage across the whole run."""

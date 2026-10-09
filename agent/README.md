@@ -43,12 +43,10 @@ still connects as its read-only reader, and becomes the person for a
 transaction with `SET LOCAL ROLE`. The command line is unchanged: it is
 whoever runs it. See [`../auth/README.md`](../auth/README.md).
 
-**v7 asks it several ways** (arch7, being built). The question is screened
-once and, as the ensemble is completed, reworded three to ten ways, the
-pipeline run once per wording, and the answers voted on. So far the outer
-graph runs the original alone, screened once and delivered as it ran, so the
-answer is v6's; what is new is the record around it and the host gate every
-model call waits at. See [Asking it several ways (arch7)](#asking-it-several-ways-arch7).
+**v7 asks it several ways** (arch7.1, being built). The question is
+screened once, reworded, the pipeline run once per wording, every distinct
+answer read by a Judge, and the answers it accepts voted on. So far there is
+one wave and no fusion. See [Asking it several ways (arch7)](#asking-it-several-ways-arch7).
 
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
@@ -271,11 +269,15 @@ pipeline can give itself is a different wording of the same question. arch7
 builds on that: the question is screened once, reworded three to ten ways,
 each rewording held to the original's answer contract, the pipeline above run
 once per wording, and the largest agreeing group's answer delivered with the
-record of every run. It is built in phases
-([`Multi-Agent_NL2SQL_arch7_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md),
-with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md)),
-and what is built so far is one wave of it, with no Judge and no fusion
-yet -- [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
+record of every run. arch7.1
+([`Multi-Agent_NL2SQL_arch7_1.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md))
+is arch7 with the Judge moved before the vote: every distinct answer is read
+against the question first, and only the runs whose answer it accepts are
+counted. It is built in phases
+([`Multi-Agent_NL2SQL_arch7_1_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md),
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md)),
+and what is built so far is one wave of it, with no fusion yet --
+[`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
 
 ```
 screen ─┬─ refuse                    the Supervisor, once, on the original
@@ -283,8 +285,10 @@ screen ─┬─ refuse                    the Supervisor, once, on the original
            └─ screen_paraphrase      F1-F3 and F5 in code; F4, the Supervisor's reading
               └─ plan_wave           the original + the first 3 faithful
                  └─ answer           the pipeline once per wording, each a "Candidate k"
-                    └─ validate ─┬─ fuse ─┐     E1-E5, agreement, the vote; the
-                                 └────────┴─ deliver     representative, its line first
+                    └─ validate      E1-E5, agreement, the groups
+                       └─ judge      every group's answer, accepted or set aside
+                          └─ vote ─┬─ fuse ─┐     the accepted runs vote; the
+                                   └────────┴─ deliver     representative, its line first
 ```
 
 | Node | What it does | LLM |
@@ -295,14 +299,17 @@ screen ─┬─ refuse                    the Supervisor, once, on the original
 | `screen_paraphrase` | The fidelity gate: each rewording held to F1 numbers, F2 literals, F3 polarity and F5 distinct in code ([`fidelity.py`](nl2sql_agent/fidelity.py)) -- so one that visibly changed the question costs no call -- then read by the Supervisor, and kept only when that reading proceeds and builds the original's contract (F4, `contract.same_contract`): the same entities, measure and period, the contract built in the original's shape, since its numbers and direction are F1's and F3's. Fewer than `ENSEMBLE_PARAPHRASES` kept, the Paraphraser is asked once more, told which failed and why | screens, light |
 | `plan_wave` | The original and the first `ENSEMBLE_PARAPHRASES` faithful rewordings, in the order written | -- |
 | `answer` | The pipeline on each wording, seeded with the screening made for those exact words and the anchor contract -- every run is held to the contract read from the question as asked -- so no run makes a Supervisor call of its own (`Nl2SqlAgent.answer`) | the pipeline's |
-| `validate` | Each run checked against its own question ([`agreement.py`](nl2sql_agent/agreement.py)): E1 answered, E2 faithful, E3 rows when the question implies some, E4 the audit did not judge the rows wrong, E5 not a sample -- only what makes a run's rows no answer keeps it from voting. Then every pair compared with the benchmark's scorer ([`compare.py`](nl2sql_agent/compare.py)), the runs grouped by agreement, and the vote: a strict majority of those that could vote | -- |
-| `fuse` | The representative of the largest group: complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan. Its rows, SQL, chart and claims are the answer's. With no majority -- and no Judge yet -- the largest group is delivered as `contested` | -- |
-| `deliver` | The answer, rendered for the question as asked, opening with its agreement line: "Agreed by 4 of 4 independent runs of the question, each worded differently." When no run could vote, the original's give-up, as the pipeline delivers one | -- |
+| `validate` | Each run checked against its own question ([`agreement.py`](nl2sql_agent/agreement.py)): E1 answered, E2 faithful, E3 rows when the question implies some, E4 the audit did not judge the rows wrong, E5 not a sample -- only what makes a run's rows no answer keeps it from voting. Then every pair compared with the benchmark's scorer ([`compare.py`](nl2sql_agent/compare.py)) and the runs grouped by agreement | -- |
+| `judge` | The Judge ([`judge.py`](nl2sql_agent/judge.py)), on every question with an answer to judge, before anything is counted: each group's representative query and first five rows, lettered in the order the runs were asked -- never how many runs gave it -- read against the question, what every answer was held to, and the knowledge the original's run retrieved. A verdict per letter, accepted or set aside with the mistake in the query named; an answer it says nothing about stands. A failure costs the verdicts: the runs vote alone | judges, heavy |
+| `vote` | Only the runs whose answer the Judge accepted vote: a strict majority of them, the largest accepted group winning, ties to the original's. `judged` when that is not the group the runs alone would have chosen; when the Judge accepted none, the runs' own choice, `contested`, with its objection | -- |
+| `fuse` | The representative of the winning group: complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan. Its rows, SQL, chart and claims are the answer's. With no majority among the accepted, the largest accepted group is delivered as `contested` | -- |
+| `deliver` | The answer, rendered for the question as asked, opening with its agreement line: "Agreed by 4 of 4 independent runs of the question, each worded differently.", or, when the Judge overruled the runs, "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and accepted this one, which 1 gave." When no run could vote, the original's give-up, as the pipeline delivers one | -- |
 
 The outer state ([`ensemble_state.py`](nl2sql_agent/ensemble_state.py))
 keeps each run whole as a candidate -- its wording, its outcome, whether it
-could vote and why not, its group, its state with its own trace -- and every
-rewording with the check that discarded it; `--json` and the REST answer's
+could vote and why not, its group, its state with its own trace -- the
+Judge's verdict on each group, and every rewording with the check that
+discarded it; `--json` and the REST answer's
 `ensemble` carry that record ([`API.md`](API.md)). Progress lines from a
 run's nodes carry the run's index (`[2] [sql] ...` on the CLI, `candidate`
 on the event stream), and the trace is one per question, each run a
@@ -324,6 +331,21 @@ however they are spelled, and builds the rewording's contract in the
 original's shape -- the numbers and the direction are F1's and F3's to hold
 -- so what it compares is what the Supervisor read: the entities, the
 measure, the period. The 45 lose 3, each where it read a different entity.
+
+**Why the Judge reads before the vote counts.** arch7 voted first and
+asked a Judge only when the vote could not decide. Measured on the
+paraphrase set, the runs' mistakes were shared: runs that fell into the
+same trap got the same number, so they agreed and outvoted the run that did
+not, and every wrong answer the vote delivered had a majority behind it --
+which a Judge asked only on a split never sees
+([`docs/benchmark.md`](../docs/benchmark.md)). So the Judge reads every
+answer first, without the count, and the vote counts what it accepts. It
+cannot take the answer away: with none accepted, the runs' own choice is
+still delivered, marked contested. Its rules name the kinds of mistake the
+benchmark's runs made -- a filter the question does not state, a join off
+the knowledge's grain, other units than asked -- so the benchmark is no
+longer blind to them, and the report scores the runs' own choice wherever
+the Judge overruled them, so its effect shows both ways.
 
 **The host gate.** Every call the agent makes to its chat models -- any
 run's, any job's, the Supervisor's included -- takes a slot of one gate
@@ -450,7 +472,7 @@ from state the pipeline already holds; nothing in routing calls a model.
 | Insight Narrator | light for at most 5 rows of at most 3 numbers, else standard | an audit send-back |
 | Repair diagnosis | one above the generator's, standard at least | with the generator |
 | Paraphraser (arch7) | the Supervisor's: light, standard when the pre-screen flags the question | never: one call, and one retry |
-| Judge (arch7) | heavy, always | never: one call a question, when built |
+| Judge (arch7.1) | heavy, always | never: one call a question, before the vote |
 
 The two arch7 tasks are new in 7.0, and a catalog built before it -- schema
 2, every calibrated host's, the committed one included -- knows nothing of
@@ -569,17 +591,20 @@ run cannot disagree about what ran:
 span type and inputs are written down, and a test fails when a node is added
 without one.
 
-**Under the ensemble** (arch7) a question is still one trace. The root span's
-children are the ensemble's own nodes (`ensemble.TRACE_SPANS`: Supervisor,
-Wave Planner, Candidate Runs, Answer), and beneath Candidate Runs is a span
-per run, "Candidate k", holding that run's agents as the table above
+**Under the ensemble** (arch7.1) a question is still one trace. The root
+span's children are the ensemble's own nodes (`ensemble.TRACE_SPANS`:
+Supervisor, Paraphraser, Fidelity Gate, Wave Planner, Candidate Runs,
+Agreement, Judge, Vote, Fusion, Answer), and beneath Candidate Runs is a
+span per run, "Candidate k", holding that run's agents as the table above
 describes them -- its Supervisor with no model call inside, the screening
 having been made once above it. The runs happen on worker threads, each
 started in a copy of the question's context, so their spans land in the
-question's trace whichever thread made them. The trace gains two tags,
-`nl2sql.agreement` (`1/1 single`) and `nl2sql.candidates`, and its
-`nl2sql.attempts` and `nl2sql.model_calls` are read from the runs: the
-delivered run's attempts, and every run's calls with the ensemble's own.
+question's trace whichever thread made them. The trace gains three tags,
+`nl2sql.agreement` (`4/4 unanimous`), `nl2sql.candidates` and
+`nl2sql.judge` -- what the Judge did: `accepted`, `set aside`, `overruled`,
+`accepted none`, `failed` or `not asked` -- and its `nl2sql.attempts` and
+`nl2sql.model_calls` are read from the runs: the delivered run's attempts,
+and every run's calls with the ensemble's own.
 
 **Verdicts.** The REST API records each verdict -- `yes`, `no`,
 `incomplete` -- on the answer's trace as human feedback named `verdict`,
@@ -1075,10 +1100,10 @@ Model routing (arch5.2, [above](#model-routing-arch52)) adds these:
 
 The ensemble ([above](#asking-it-several-ways-arch7)) adds these. A value
 out of range stops the agent at start, naming the variable and its bound. So
-far there is one wave and no Judge or fusion, so `ENSEMBLE_WAVES`,
-`ENSEMBLE_DEADLINE_SECONDS`, `ENSEMBLE_JUDGE_ENABLED` and
-`ENSEMBLE_MAX_CLAIMS` are read, checked and carried for the stages that will
-read them; all but the pins are published in `/v1/meta`:
+far there is one wave and no fusion, so `ENSEMBLE_WAVES`,
+`ENSEMBLE_DEADLINE_SECONDS` and `ENSEMBLE_MAX_CLAIMS` are read, checked and
+carried for the stages that will read them; all but the pins are published
+in `/v1/meta`:
 
 | Variable | Flag | Default |
 |---|---|---|
@@ -1087,12 +1112,12 @@ read them; all but the pins are published in `/v1/meta`:
 | `ENSEMBLE_MAX_PARAPHRASES` | -- | 10, the most the Paraphraser writes; at least `ENSEMBLE_PARAPHRASES` |
 | `ENSEMBLE_WAVES` | -- | 2; a second wave only on disagreement |
 | `ENSEMBLE_DEADLINE_SECONDS` | -- | 0, none: set, no wave starts that many seconds after the question arrived |
-| `ENSEMBLE_JUDGE_ENABLED` | -- | on: the Judge, asked only when the votes cannot decide |
+| `ENSEMBLE_JUDGE_ENABLED` | -- | on: the Judge reads every question's answers before the vote, which counts only those it accepts. Off, the runs vote alone |
 | `ENSEMBLE_MAX_CLAIMS` | -- | 8 claims in the fused narrative |
 | `ENSEMBLE_FUSE_COLUMNS` | `--fuse-columns` / `--no-fuse-columns` | on: columns other agreeing runs carried, joined on the entity's key |
 | `OLLAMA_PARALLEL_CALLS` | `--parallel-calls` | 1 model call in flight to the host at once, and one run of a question at a time |
 | `MODEL_ROUTE_PARAPHRASER` | -- | none. A model for every rung, or `light=a,standard=b,heavy=c`, as the five pins |
-| `MODEL_ROUTE_JUDGE` | -- | none, as above; the Judge is not built yet |
+| `MODEL_ROUTE_JUDGE` | -- | none, as above |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

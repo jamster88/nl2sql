@@ -196,14 +196,17 @@ will be; Phase 2's fidelity rejections by check are the number for those.
 python benchmarks/run_benchmark.py --config ensemble
 ```
 
-`snippets` with the ensemble on (arch7): each question screened once,
+`snippets` with the ensemble on (arch7.1): each question screened once,
 reworded, the rewordings held to it by the fidelity gate, the pipeline run
-on the original and the first three kept, the runs voted on, and the
-strongest run of the largest agreeing group delivered. The report gains an
-ENSEMBLE block: how the runs agreed, how often they agreed on a wrong
-answer, the rewordings the gate discarded by check, how often a question's
-runs were scored at different rungs, and how large a question's state grew;
-`--json` carries each question's runs and rewordings with their fates.
+on the original and the first three kept, every distinct answer read by the
+Judge, the runs it accepted voted on, and the strongest run of the largest
+accepted group delivered. The report gains an ENSEMBLE block: how the runs
+agreed, how often they agreed on a wrong answer, the rewordings the gate
+discarded by check, how often a question's runs were scored at different
+rungs, how large a question's state grew, what the Judge did, and -- where
+it overruled the runs -- how often that turned a wrong answer right or a
+right one wrong; `--json` carries each question's runs, rewordings and the
+Judge's verdicts.
 
 ### One wording: the plumbing changes no answer
 
@@ -280,7 +283,8 @@ question -- 13 of 15 three times, against 14 of 15 -- and the two questions
 it loses are the two the paraphrase set found unstable. Agreement is the
 evidence the vote rests on, and where the rewordings share a failure the
 original avoids, it is evidence for the failure; the second wave and the
-Judge, still to come, are where a split vote is weighed rather than counted.
+Judge, as arch7 placed them, are where a split vote is weighed rather than
+counted ([the Judge, moved before the vote](#the-judge-before-the-vote)).
 
 **The other measures** (the third run). The gate discarded 46 of the 151
 rewordings written (one a retry's): F4 26 -- 11 of them B08's, read by the Supervisor as
@@ -339,8 +343,9 @@ right; of the 9 majorities, 5; of the 4 contested, all 4 -- B08's two and
 B13's two, each delivering the original's group, the largest or tied for
 it. B08's splits were one share computed two ways, 21.51 as a percentage
 and 0.22 as a fraction. A majority is final in arch7 (section 22.6): the
-second wave and the Judge, still to come, see only a vote without one, so
-neither would have seen B07's.
+second wave and the Judge, as arch7 placed them, see only a vote without
+one, so neither would have seen B07's -- which is why arch7.1 moved the
+Judge before the vote ([below](#the-paraphrase-set-through-the-judge)).
 
 **The other measures.** The gate discarded 196 of the 611 rewordings
 written: F4 106, F5 46, F3 37, F2 5, F1 2. Fifty-six wordings ran four
@@ -350,3 +355,92 @@ at more than one rung for 13 of the 60, and its state was 152.3 KB at the
 median and 165.5 KB at the largest. The run made 1,253 model calls, 20.9 a
 wording, and took 9,028.6s, 138.1s a wording at the median, against Phase
 0's 1,692s in all.
+
+### The Judge before the vote
+
+arch7.1 moved the Judge before the vote (the owner's decision, 2026-10-08):
+it reads every distinct answer -- a group's query and first five rows, by
+letter, never with how many runs gave it -- against the question and the
+knowledge the original's run retrieved, and sets aside the answers it can
+name a mistake in; only the runs it accepted vote. Measured 2026-10-08 on
+the same stack, the fifteen questions through `ensemble`:
+
+| | Right | Agreement | Total | Median |
+|---|---|---|---|---|
+| Phase 2's third run, no Judge | 13/15 | 11 unanimous, 2 majority, 2 contested | 2265.0s | 135.7s |
+| the Judge before the vote | **15/15** | 11 unanimous, 2 judged, 2 single | 2507.7s | 152.2s |
+
+**The runs were the same runs.** Temperature is zero, so the Paraphraser
+wrote the same rewordings, the gate discarded the same 46, and every run
+wrote the same SQL and returned the same rows as in Phase 2's third run.
+Every difference is the Judge's. It accepted every answer on eleven
+questions, set some aside on two, and overruled the runs on two.
+
+**It overruled the runs twice, both from wrong to right.**
+
+- **B07** -- it set aside the 34.65 three runs agreed on, "Incorrectly joins
+  daily sales to monthly costs on the date key", and accepted the original's
+  34.20, which "aggregates sales and costs to the fiscal month grain before
+  joining, as required by the knowledge base".
+- **B15** -- it set aside the two rows three runs agreed on, a query that
+  "filters to only 'Print Flyer' and 'Paid Social', excluding the other
+  channel types ... that the question asks for", and accepted the one run's
+  five.
+
+**It settled the two splits by reading them.** B08's 21.51 against 0.22 --
+one share as a percentage and as a fraction -- it judged by the question's
+"as a percentage". Of B13's four answers it accepted one, setting aside a
+filter to the rows where the competitor was cheaper, a price difference where a
+ratio was asked, and a single week where the question names none. Both were
+right before, because a tie went to the original's group; now they are
+right because the other answers were read and found wrong.
+
+**What it cost.** One heavy call a question, 16.2 s at the median: 21.7
+model calls a question against 20.7, and 152.2 s at the median against
+135.7 s.
+
+**What it does not show.** The Judge's rules name the kinds of mistake these
+runs made -- a filter the question does not state, a join off the
+knowledge's grain, other units than asked -- so these fifteen questions are
+no longer a blind test of it (arch7.1, open decision 31). What is worth
+reading beside the score is where it overruled the runs, scored both ways:
+here two fixed and none broken.
+
+#### The paraphrase set, through the Judge
+
+The sixty wordings of [the run without it](#the-paraphrase-set-through-the-ensemble),
+measured 2026-10-08 on the same stack:
+
+| | `snippets` (Phase 0) | `ensemble`, no Judge | `ensemble`, the Judge first |
+|---|---|---|---|
+| **stability** | 13/15 | 13/15 | **14/15** |
+| the benchmark's own wordings | 14/15 | 13/15 | 15/15 |
+| the rewordings | 43/45 | 42/45 | 44/45 |
+| every wording | 57/60 | 55/60 | 59/60 |
+
+**Again the same runs.** Every wording was reworded, gated and run exactly
+as without the Judge -- the same 196 rewordings discarded, the same SQL, the
+same rows -- so the four answers that changed are the Judge's.
+
+**It overruled the runs four times, each from wrong to right**, and set
+answers aside on seven wordings more without changing what was delivered.
+Three were B07's: its own wording and rewording 3, where the original's
+34.20 had been outvoted, and rewording 2, where the one run that was right
+had been -- each time setting aside the 34.65 that "joins daily sales
+directly to monthly cost rows on the date key". The fourth was B15's own
+wording, where one run in four had kept every channel. B07 is now stable.
+
+**Its one miss went out flagged.** On B15's rewording 1 every run read the
+channels it names as a filter, so there was one answer to judge. The Judge
+set it aside -- "omitting the 'rest' of the channel types requested by the
+question" -- and with nothing accepted the runs' own choice was delivered
+as `contested`, with that objection. No wrong answer went out with
+agreement behind it: 51 unanimous, 1 majority and 4 judged, all right,
+where without the Judge five wrong answers had a majority or every run
+behind them.
+
+**What it cost.** 1,313 model calls, 21.9 a wording against 20.9, and
+9,759.4s, 152.4s a wording at the median against 138.1s; the Judge's call
+took 16.2s at the median. As on the fifteen, its rules name these mistakes,
+so this is no blind test of it: where it overruled the runs, scored both
+ways, four fixed and none broken.

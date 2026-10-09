@@ -210,6 +210,45 @@ def paraphrase_retry_block(failed: list[tuple[str, str]]) -> str:
     return PARAPHRASE_RETRY_BLOCK.format(failed=lines)
 
 
+#: The Judge (arch7.1 section 22.7): every distinct answer the runs gave,
+#: judged against the question before the vote counts them. It is not told
+#: how many runs gave each answer -- the vote counts; the Judge reads -- and
+#: it writes no SQL: it returns a verdict per answer, by letter. What may be
+#: wrong with a query is said in general terms; the knowledge block is what
+#: tells it this database's grains.
+JUDGE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You check answers to a question about a retail database before they "
+            "are counted. Each answer is a SQL query and the first rows it returned. "
+            "Judge each one on its own against the question as asked and the "
+            "knowledge given: you are not told how many runs gave each answer, and "
+            "one answer, several, or none may be right. Accept an answer whose query "
+            "computes what the question asks for: the measure it names, in the units "
+            "it names (a percentage as a percentage); for the entities and the period "
+            "it names; with no filter the question does not state -- names given as "
+            "examples, with \"such as\", \"like\" or \"and so on\", are examples, not "
+            "a list to keep -- and with every join at the grain the knowledge gives, "
+            "so that no row is counted twice or matched to the wrong period. Answers "
+            "that differ only in column names, column order or rounding are equally "
+            "right. Set an answer aside only for a mistake you can point to in its "
+            "query, and say what it is in one sentence. Do not write SQL. Give a "
+            "verdict for every answer, by its letter.",
+        ),
+        (
+            "human",
+            "Question: {question}\n"
+            "Every answer was held to: {held}\n"
+            "{assumptions}"
+            "{knowledge}"
+            "Answers:\n\n{answers}\n\n"
+            "Give a verdict for each of {letters}.",
+        ),
+    ]
+)
+
+
 KNOWLEDGE_BLOCK = (
     "Knowledge base (retrieved for this question -- authoritative on business "
     "rules, grains, and join traps):\n{knowledge}\n\n"

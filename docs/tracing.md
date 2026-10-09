@@ -64,14 +64,20 @@ nl2sql                      AGENT       the question in, the delivered answer ou
     Candidate 1             AGENT       the first rewording, the same again
     ...
   Agreement                 EVALUATOR   each run marked: could it vote, its group
+  Judge                     EVALUATOR   every group's answer, accepted or set aside
+    <model>                 CHAT_MODEL  heavy, always: one call, before the vote
+  Vote                      EVALUATOR   the accepted runs counted, the winner
   Fusion                    TASK        the run chosen
   Answer                    TASK        what was delivered
 ```
 
-The trace gains two tags, `nl2sql.agreement` (`3/4 majority`: agreed of
-run, and the level) and `nl2sql.candidates`, and its attempts and model
-calls are read from the runs -- the delivered run's attempts, every run's
-calls with the ensemble's own.
+The trace gains three tags, `nl2sql.agreement` (`3/4 majority`: agreed of
+run, and the level), `nl2sql.candidates` and `nl2sql.judge` -- what the
+Judge did: `accepted`, `set aside`, `overruled`, `accepted none`, `failed`
+or `not asked` -- and its attempts and model calls are read from the runs
+-- the delivered run's attempts, every run's calls with the ensemble's own.
+Searching ``tags.`nl2sql.judge` = 'overruled'`` finds the questions where the
+Judge changed what the runs would have delivered.
 
 **A verdict lands on the trace it judges.** *Correct*, *Wrong* or *Correct
 but incomplete*, given in the web or desktop interface, is staged for review

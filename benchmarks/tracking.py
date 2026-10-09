@@ -12,7 +12,8 @@ run:
   category, answered, the total and median seconds, seconds per stage, and
   how many questions the Aggregator scored at each rung; with the
   paraphrase set, the stability too; through the ensemble, how its runs
-  agreed and which checks discarded rewordings;
+  agreed, which checks discarded rewordings, what the Judge did and how
+  often its overruling turned a wrong answer right or a right one wrong;
 * **an artifact**: the whole report, as `--json` writes it;
 * **traces**: every question's, filed under the run by MLflow itself, tagged
   with the question's id, category and wording, and carrying the benchmark's
@@ -124,6 +125,11 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
             values[f"rejected.{check}"] = count
         values["agreed_on_wrong"] = report.agreed_on_wrong
         values["rung_spread"] = report.rung_spread
+        for action, count in report.judge_actions().items():
+            values[f"judge.{action.replace(' ', '_')}"] = count
+        effect = report.judge_effect()
+        values["judge_fixed"] = effect["fixed"]
+        values["judge_broke"] = effect["broke"]
     return values
 
 

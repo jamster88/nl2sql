@@ -934,7 +934,48 @@ def test_what_the_ensemble_did_with_a_question_is_measured():
         (0, "answered", False), (1, "answered", False), (2, "answered", False)]
     assert measured["candidate_rungs"] == ["light", "light", "standard"]
     assert measured["state_bytes"] > 0
+    assert (measured["judged"], measured["verdicts"]) == ("not asked", [])
     assert run_benchmark.ensemble_measures(new_state("q")) == {}
+
+
+def test_the_judges_verdicts_are_measured_beside_each_run():
+    from nl2sql_agent.ensemble_state import Candidate, GroupVerdict, Judgement, new_ensemble_state
+    from nl2sql_agent.state import new_state
+
+    def run(index, group):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state=new_state("w"), group=group)
+
+    state = {
+        **new_ensemble_state("q"),
+        "candidates": [run(0, 1), run(1, 0), run(2, None)],
+        "judgement": Judgement(verdicts=[GroupVerdict(0, False, "wrong grain"), GroupVerdict(1, True, "right")],
+                               set_aside=[1], overruled=True, instead_of=1),
+    }
+    measured = run_benchmark.ensemble_measures(state)
+    assert measured["judged"] == "overruled"
+    assert measured["verdicts"] == [{"group": 0, "accepted": False, "why": "wrong grain"},
+                                    {"group": 1, "accepted": True, "why": "right"}]
+    assert [run["accepted"] for run in measured["runs"]] == [True, False, None]
+
+
+def test_the_answer_the_runs_alone_would_have_chosen_is_scored_when_the_judge_overrules_them():
+    from nl2sql_agent.ensemble_state import Candidate, Judgement, new_ensemble_state
+    from nl2sql_agent.state import QueryResult, new_state
+
+    def run(index, value):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state={**new_state("w"), "result": QueryResult(columns=["n"], rows=[[value]])})
+
+    state = {**new_ensemble_state("q"), "candidates": [run(0, 10), run(1, 99)],
+             "judgement": Judgement(overruled=True, instead_of=1)}
+    assert run_benchmark.without_judge(state, [[10]], False, CORRECT) == WRONG
+    assert run_benchmark.without_judge(state, [[99]], False, WRONG) == CORRECT
+    gone = {**state, "judgement": Judgement(overruled=True, instead_of=7)}
+    assert run_benchmark.without_judge(gone, [[10]], False, CORRECT) == FAILED
+    kept = {**state, "judgement": Judgement()}
+    assert run_benchmark.without_judge(kept, [[10]], False, CORRECT) == CORRECT
+    assert run_benchmark.without_judge(new_state("q"), [[10]], False, CORRECT) == ""
 
 
 def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
@@ -942,7 +983,7 @@ def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
 
     report = BenchmarkReport(label="ensemble", results=[
         _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard"), size=2048),
-        _ensembled("B02", WRONG, "majority", size=1024, runs=3),
+        _ensembled("B02", WRONG, "majority", size=1024, runs=3, judged="overruled", without=CORRECT),
     ])
     run_benchmark.print_report(report)
     out = capsys.readouterr().out
@@ -953,9 +994,13 @@ def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
     assert "rewordings discarded 2: F4 2" in out
     assert "runs at mixed rungs  1 of 2 question(s)" in out
     assert "state, as JSON       2.0 KB median, 2.0 KB largest" in out
+    assert "the Judge            accepted 1, overruled 1" in out
+    assert "overruled the runs   1: wrong -> right 0, right -> wrong 1" in out
     [config] = run_benchmark.as_json([report])["configurations"]
     assert config["ensemble"]["agreement"] == {"unanimous": 1, "majority": 1}
+    assert config["ensemble"]["judge"] == {"accepted": 1, "overruled": 1, "fixed": 0, "broke": 1}
     assert config["results"][0]["candidate_rungs"] == ["light", "standard"]
+    assert (config["results"][1]["judged"], config["results"][1]["without_judge"]) == ("overruled", CORRECT)
     plain = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0, [])])
     assert run_benchmark.as_json([plain])["configurations"][0]["ensemble"] is None
 
@@ -963,6 +1008,9 @@ def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
 def test_a_report_with_no_state_measured_says_nothing_of_its_size(capsys):
     from tests.benchmarks.test_runner import _ensembled
 
-    run_benchmark.print_report(BenchmarkReport(label="ensemble", results=[_ensembled("B01", CORRECT, "single", size=0)]))
+    run_benchmark.print_report(
+        BenchmarkReport(label="ensemble", results=[_ensembled("B01", CORRECT, "single", size=0, judged="")])
+    )
     out = capsys.readouterr().out
     assert "ENSEMBLE" in out and "state, as JSON" not in out
+    assert "the Judge" not in out, "a run with no Judge says nothing of one"

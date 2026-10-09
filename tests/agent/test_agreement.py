@@ -1,17 +1,21 @@
 """Admissibility, agreement, the vote and the representative (`agreement.py`;
-arch7 sections 22.5, 22.6, 22.8).
+arch7.1 sections 22.5-22.8).
 
 All on hand-built candidates: what a run must be to vote, when two runs agree,
-how they group, what the vote is for every row of arch7's table, and which
-run stands for a group -- each ranking criterion on its own.
+how they group, what the vote is for every row of arch7's table, how the
+Judge's verdicts change it, and which run stands for a group -- each ranking
+criterion on its own.
 """
 
 from __future__ import annotations
 
 import pytest
+from dataclasses import replace
+
 from nl2sql_agent import agreement
+from nl2sql_agent import agreement as agreement_module
 from nl2sql_agent.contract import Label, LabelMap
-from nl2sql_agent.ensemble_state import Candidate, Group
+from nl2sql_agent.ensemble_state import Candidate, Group, GroupVerdict, Judgement
 from nl2sql_agent.state import (
     AnswerContract,
     AuditReport,
@@ -201,6 +205,79 @@ def test_the_quorum_is_of_the_admissible_not_of_every_run():
     """Two of four agreeing is a majority when the other two gave up."""
     assert agreement.vote(_groups(2), 2, 4).level == "unanimous"
     assert agreement.vote(_groups(2, 1), 3, 4).level == "majority"
+
+
+# ---------------------------------------------------------------------------
+# After the Judge: only the accepted vote (arch7.1 section 22.7)
+# ---------------------------------------------------------------------------
+
+
+def _judged(*accepted: bool) -> Judgement:
+    return Judgement(verdicts=[GroupVerdict(i, ok, "ok" if ok else f"group {i} is wrong") for i, ok in enumerate(accepted)])
+
+
+def test_with_no_verdicts_the_runs_vote_alone():
+    for judgement in (None, Judgement(error="ConnectionError: refused")):
+        agreement, winner, after = agreement_module.decide(_groups(3, 1), 4, 4, judgement)
+        assert (agreement.level, agreement.agreed, agreement.set_aside, winner.index) == ("majority", 3, 0, 0)
+        assert after == (None if judgement is None else replace(judgement, set_aside=[]))
+
+
+def test_a_vote_with_no_majority_is_delivered_as_contested():
+    agreement, winner, _ = agreement_module.decide(_groups(2, 2), 4, 4)
+    assert (agreement.level, winner.index) == ("contested", 0)
+    assert agreement.why.endswith("the largest group delivered")
+
+
+def test_the_judge_accepting_every_answer_changes_nothing():
+    agreement, winner, after = agreement_module.decide(_groups(3, 1), 4, 4, _judged(True, True))
+    assert (agreement.level, agreement.agreed, agreement.admissible, winner.index) == ("majority", 3, 4, 0)
+    assert (after.set_aside, after.overruled, after.instead_of) == ([], False, None)
+
+
+def test_an_answer_set_aside_does_not_vote_and_the_rest_may_be_unanimous():
+    agreement, winner, after = agreement_module.decide(_groups(3, 1), 4, 4, _judged(True, False))
+    assert (agreement.level, agreement.agreed, agreement.admissible, agreement.set_aside) == ("unanimous", 3, 3, 1)
+    assert winner.index == 0 and (after.set_aside, after.overruled) == ([3], False)
+
+
+def test_the_judge_setting_aside_the_runs_choice_is_judged_and_names_it():
+    """B07: three runs agree on the grain trap's figure, the original does not."""
+    groups = [Group(index=0, members=[1, 2, 3], representative=2, signature="34.65"),
+              Group(index=1, members=[0], representative=0, signature="34.20")]
+    agreement, winner, after = agreement_module.decide(groups, 4, 4, _judged(False, True))
+    assert (agreement.level, agreement.agreed, agreement.admissible, agreement.set_aside) == ("judged", 1, 1, 3)
+    assert winner.index == 1 and winner.representative == 0
+    assert (after.set_aside, after.overruled, after.instead_of) == ([1, 2, 3], True, 2)
+    assert agreement.why.startswith("the Judge set aside the answer the runs alone chose (3 of the 4")
+
+
+def test_a_split_the_judge_settles_is_judged_or_unanimous_by_whose_group_it_keeps():
+    agreement, winner, after = agreement_module.decide(_groups(2, 2), 4, 4, _judged(True, False))
+    assert (agreement.level, winner.index, after.overruled) == ("unanimous", 0, False)
+    agreement, winner, after = agreement_module.decide(_groups(2, 2), 4, 4, _judged(False, True))
+    assert (agreement.level, winner.index, after.overruled) == ("judged", 1, True)
+
+
+def test_accepted_answers_with_no_majority_among_them_are_contested():
+    agreement, winner, after = agreement_module.decide(_groups(2, 2, 1), 5, 5, _judged(True, True, False))
+    assert (agreement.level, agreement.agreed, agreement.admissible, winner.index) == ("contested", 2, 4, 0)
+    assert after.set_aside == [4]
+    # Two of the three it accepted is a majority of those that vote.
+    agreement, _, _ = agreement_module.decide(_groups(2, 1, 1), 4, 4, _judged(True, True, False))
+    assert (agreement.level, agreement.agreed, agreement.admissible) == ("majority", 2, 3)
+
+
+def test_the_judge_accepting_none_delivers_the_runs_own_choice_as_contested():
+    agreement, winner, after = agreement_module.decide(_groups(4), 4, 4, _judged(False))
+    assert (agreement.level, agreement.agreed, agreement.admissible, agreement.set_aside) == ("contested", 4, 4, 0)
+    assert agreement.why.startswith("the Judge accepted none of the answers; the runs' own vote: all 4")
+    assert winner.index == 0 and (after.set_aside, after.overruled) == ([0, 1, 2, 3], False)
+
+
+def test_with_no_run_to_vote_nothing_is_decided():
+    agreement, winner, after = agreement_module.decide([], 0, 4, None)
+    assert (agreement.level, winner, after) == ("none", None, None)
 
 
 # ---------------------------------------------------------------------------

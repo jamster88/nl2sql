@@ -540,11 +540,13 @@ The exit code is `0` when it answered, `1` when it could not, and `2` when
 the Ollama host or model is wrong -- it checks both before anything else --
 or a setting is out of range.
 
-Since 7.0 a question goes through the ensemble (arch7): it is reworded,
-the original and three rewordings that keep what it asks are each run, and
-the answer is the strongest run of the largest group that agree, printed
-under a line saying how they agreed ("Agreed by 4 of 4 independent runs of
-the question, each worded differently."). A run's progress lines carry its
+Since 7.0 a question goes through the ensemble (arch7.1): it is
+reworded, the original and three rewordings that keep what it asks are each
+run, a Judge reads every distinct answer and sets aside those it can name a
+mistake in, and the answer is the strongest run of the largest group it
+accepted, printed under a line saying how they agreed ("Agreed by 4 of 4
+independent runs of the question, each worded differently.", or what the
+Judge set aside and why). A run's progress lines carry its
 index, `[0]` for the question as asked. It takes about four times as long.
 `--no-ensemble` asks the pipeline alone, and `--json` carries the record of
 every run and every rewording under `ensemble`.

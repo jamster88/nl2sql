@@ -53,23 +53,28 @@ docker compose --profile '*' down                 # stop; your data is kept
 ## What's new in 7.0
 
 7.0 is being built, and is not published yet. It answers a hard question
-several ways and votes ([the
-design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md)). So far:
+several ways, has a Judge read the answers, and votes ([the
+design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md)). So far:
 
 - **The question, asked four ways.** Every question is screened once, then
   reworded by a model -- up to ten rewordings, each held to the original's
   numbers, names, direction and answer contract by a fidelity gate, the
   Supervisor reading each one -- and the pipeline runs on the original and
   the first three that pass. The runs are checked against their own
-  question and against each other with the benchmark's scorer, and the
-  largest agreeing group's answer is delivered, opening with how the runs
+  question and grouped by agreement with the benchmark's scorer; a Judge
+  reads every distinct answer -- its query and first rows, never how many
+  runs gave it -- and sets aside the ones it can name a mistake in; and the
+  largest group of accepted answers is delivered, opening with how the runs
   agreed: "Agreed by 4 of 4 independent runs of the question, each worded
-  differently." A second wave on disagreement, a Judge, and fusing what the
-  agreeing runs found are still to come. Measured on the fifteen benchmark
-  questions, it scores 13 to one run's 14 so far, and on the sixty wordings
-  of the paraphrase set 55 to 57: where rewordings share a failure the
-  original avoids, they outvote it ([the
-  measurement](docs/benchmark.md#four-wordings-and-a-vote)).
+  differently." A second wave on disagreement and fusing what the agreeing
+  runs found are still to come. Measured on the fifteen benchmark
+  questions, it scores 15 to one run's 14, and on the sixty wordings of the
+  paraphrase set 59 to 57, with 14 questions of 15 right in every wording
+  to 13. Without the Judge the same runs scored 13 and 55: where rewordings
+  shared a mistake the original avoided, they outvoted it. The Judge's
+  rules name the kinds of mistake these questions were built around, so
+  they are no longer a blind test of it ([the
+  measurement](docs/benchmark.md#the-judge-before-the-vote)).
 - **The record of every run**, in `--json` and the REST answer's `ensemble`:
   each wording, its SQL and outcome, whether it could vote, and every
   rewording the gate discarded with the check it failed. Progress lines name
@@ -160,7 +165,7 @@ Everything that was in this file is in [`docs/`](docs), a document a topic.
 | [`docs/CHANGELOG_SIMPLE.md`](docs/CHANGELOG_SIMPLE.md) | Every version, one line per change |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Every version, with every artifact it created, updated or fixed, and the tags it published |
 | [`docs/basic_agent_steps.md`](docs/basic_agent_steps.md) | The five steps the first agent was built from |
-| [`multi-agent_arch_specs/`](multi-agent_arch_specs) | The architecture as designed and as built; [`Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md) is the current one, with 6.2 and 6.3 beside it, and [`Multi-Agent_NL2SQL_arch7.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) the design of what comes next -- the question asked several ways, the answers validated against each other, one chosen or fused -- with its build plan, module by module, in [`Multi-Agent_NL2SQL_arch7_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch7_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md) |
+| [`multi-agent_arch_specs/`](multi-agent_arch_specs) | The architecture as designed and as built; [`Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md) is the current one, with 6.2 and 6.3 beside it, and [`Multi-Agent_NL2SQL_arch7.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) the design of what comes next -- the question asked several ways, the answers validated against each other, one chosen or fused -- with its build plan, module by module, in [`Multi-Agent_NL2SQL_arch7_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch7_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md); [`Multi-Agent_NL2SQL_arch7_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md) is arch7 with the Judge before the vote and what 7.0's build taught it, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md), and supersedes arch7's three where they differ |
 | [`adversary_reviews/`](adversary_reviews) | The adversarial reviews each hardening release answered, and what the second one's plan left open at 6.3.0 ([`v6_1_review_misses.md`](adversary_reviews/v6_1_review_misses.md)) |
 | [`LICENSE`](LICENSE) | The license |
 

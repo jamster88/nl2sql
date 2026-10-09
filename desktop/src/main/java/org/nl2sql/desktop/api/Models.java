@@ -202,18 +202,29 @@ public final class Models {
     }
 
     /** How the ensemble's vote went: {@code agreed} of the {@code admissible} runs, of {@code total}. */
-    public record EnsembleAgreement(int admissible, int agreed, int total, String level, String why) {
+    public record EnsembleAgreement(int admissible, int agreed, int total, String level, String why,
+                                    int set_aside) {
         public EnsembleAgreement {
             level = text(level);
             why = text(why);
         }
     }
 
-    /** The Judge's choice among the groups, asked only when the votes could not decide. */
-    public record EnsembleJudgement(Integer group, String why, String model) {
-        public EnsembleJudgement {
+    /** The Judge's verdict on one group's answer. */
+    public record EnsembleVerdict(int group, boolean accepted, String why) {
+        public EnsembleVerdict {
             why = text(why);
+        }
+    }
+
+    /** The Judge's verdicts on the answers, given on every question before the vote. */
+    public record EnsembleJudgement(List<EnsembleVerdict> verdicts, List<Integer> set_aside, boolean overruled,
+                                    Integer instead_of, String model, String error) {
+        public EnsembleJudgement {
+            verdicts = list(verdicts);
+            set_aside = list(set_aside);
             model = text(model);
+            error = text(error);
         }
     }
 

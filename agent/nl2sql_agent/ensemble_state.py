@@ -90,22 +90,49 @@ class Group:
 
 @dataclass
 class Agreement:
-    """How the vote went: `agreed` of the `admissible` agreed, of `total` run."""
+    """How the vote went: `agreed` of the `admissible` agreed, of `total` run.
+
+    `admissible` counts the runs that voted: those that passed E1-E5 and
+    whose answer the Judge did not set aside. `set_aside` is how many the
+    Judge kept from voting, so `total - admissible - set_aside` could not
+    answer. When the Judge accepted no answer at all the runs vote anyway,
+    and `set_aside` is 0 (arch7.1 section 22.7).
+    """
 
     admissible: int = 0
     agreed: int = 0
     total: int = 0
     level: str = "none"  # unanimous | majority | judged | contested | single | none
     why: str = ""
+    set_aside: int = 0
+
+
+@dataclass
+class GroupVerdict:
+    """The Judge's verdict on one group's answer."""
+
+    group: int
+    accepted: bool
+    why: str = ""
 
 
 @dataclass
 class Judgement:
-    """The Judge's choice among the groups, when the votes could not decide."""
+    """The Judge's verdicts on the answers, given before the vote (arch7.1 section 22.7).
 
-    group: int | None
-    why: str
+    `verdicts` is one per group, in group order; `set_aside` the runs whose
+    answer it rejected; `overruled` whether it set aside the answer the vote
+    alone would have delivered, and `instead_of` that answer's run. `error`
+    is why it could not be asked, when it could not -- and then the vote is
+    the runs' own.
+    """
+
+    verdicts: list[GroupVerdict] = field(default_factory=list)
+    set_aside: list[int] = field(default_factory=list)
+    overruled: bool = False
+    instead_of: int | None = None
     model: str = ""
+    error: str = ""
 
 
 @dataclass
@@ -150,6 +177,22 @@ class Decision:
     claims_dropped: int = 0
     dissent: list[Dissent] = field(default_factory=list)
     line: str = ""  # the agreement line, as rendered
+
+
+def judged(judgement: Judgement | None) -> str:
+    """What the Judge did, in a word or two, for a trace's tag and the
+    benchmark's record: `not asked` (off, or no answer to judge), `failed`,
+    `accepted` every answer, `set aside` some, `overruled` the runs' own
+    choice, or `accepted none`."""
+    if judgement is None:
+        return "not asked"
+    if judgement.error:
+        return "failed"
+    if judgement.verdicts and not any(verdict.accepted for verdict in judgement.verdicts):
+        return "accepted none"
+    if judgement.overruled:
+        return "overruled"
+    return "set aside" if judgement.set_aside else "accepted"
 
 
 def upsert_candidates(left: list[Candidate], right: list[Candidate]) -> list[Candidate]:

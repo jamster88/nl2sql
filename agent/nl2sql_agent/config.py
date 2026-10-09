@@ -268,11 +268,10 @@ class Settings:
 
     # --- arch7: asking it several ways --------------------------------------
     # The question reworded, the pipeline run once per wording, the results
-    # validated against each other and one chosen (arch7 section 22). Off is
-    # arch6 to the answer. 7.0 is built in phases, and so far there is one
-    # wave and no Judge or fusion: ENSEMBLE_WAVES, ENSEMBLE_DEADLINE_SECONDS,
-    # ENSEMBLE_JUDGE_ENABLED and ENSEMBLE_MAX_CLAIMS are read, checked and
-    # carried for the stages that will read them.
+    # judged, voted on and one chosen (arch7.1 section 22). Off is arch6 to
+    # the answer. 7.0 is built in phases, and so far there is one wave and no
+    # fusion: ENSEMBLE_WAVES, ENSEMBLE_DEADLINE_SECONDS and ENSEMBLE_MAX_CLAIMS
+    # are read, checked and carried for the stages that will read them.
     ensemble_enabled: bool = True
     # Rewordings in the first wave, beside the original: 3 to 10.
     ensemble_paraphrases: int = 3
@@ -282,8 +281,8 @@ class Settings:
     ensemble_waves: int = 2
     # No wave starts this many seconds after the question arrived; 0 is none.
     ensemble_deadline_seconds: float = 0.0
-    # The Judge, asked only when the votes cannot decide; off delivers the
-    # plurality as contested.
+    # The Judge, asked on every question before the vote, which counts only
+    # the answers it accepts; off, the runs vote alone.
     ensemble_judge_enabled: bool = True
     # The fused narrative's length, in claims.
     ensemble_max_claims: int = 8

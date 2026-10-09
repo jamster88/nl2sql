@@ -235,8 +235,9 @@ works in a shell pipeline. Pull out just the SQL with
 
 The ensemble is on by default (`ENSEMBLE_ENABLED`). The question is screened
 once, reworded, and each rewording that keeps what the question asks is run
-beside it -- four runs, the original and three rewordings -- and the answer
-is the strongest run of the largest group that agree. The ensemble's own
+beside it -- four runs, the original and three rewordings. A Judge then reads
+every distinct answer and sets aside the ones it can name a mistake in, and
+the answer is the strongest run of the largest group it accepted. The ensemble's own
 steps come unprefixed; a run's steps carry its index, `[0]` for the question
 as asked. From a real run, the middle of each run's steps left out:
 
@@ -252,7 +253,9 @@ as asked. From a real run, the middle of each run's steps left out:
 ...
 [3] [answer] 156 characters
 [candidate] 4 run(s): [0] answered, [1] answered, [2] answered, [3] answered
-[agreement] 4 run, 4 admissible, 4 agree (unanimous)
+[agreement] 4 run, 4 admissible, 1 group(s)                   <- all four the same answer
+[judge] group 0 accepted                                      <- the Judge, one call
+[vote] 4 run, 4 voted, 4 agree (unanimous)
 [fusion] [0] of [0, 1, 2, 3] (unanimous)                      <- the original's run chosen
 [answer] unanimous: [0]
 
@@ -265,7 +268,10 @@ The first line of the answer is how the runs agreed: all of them, a
 majority ("3 of 4 runs agreed; 1 answered differently."), no majority ("The
 runs disagreed and no answer had a majority; this is the largest group's (2
 of 4 runs)."), or one wording only ("Asked 1 way; one run answered.") when
-no rewording passed the gate. Four runs take about four times one -- on a
+no rewording passed the gate -- with what the Judge set aside beside it.
+When the Judge set aside the answer most runs gave, the line says so and
+why: "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and
+accepted this one, which 1 gave." Four runs take about four times one -- on a
 host that serves one call at a time, a minute or two a question.
 
 Four flags, each overriding its setting for the run:

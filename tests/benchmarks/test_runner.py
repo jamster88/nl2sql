@@ -371,11 +371,14 @@ def test_a_candidates_step_is_timed_like_any_other_and_forwarded_without_its_ind
 # ---------------------------------------------------------------------------
 
 
-def _ensembled(qid, outcome, level, *, rejections=None, rungs=("light",), size=1000, runs=4) -> QuestionResult:
+def _ensembled(
+    qid, outcome, level, *, rejections=None, rungs=("light",), size=1000, runs=4, judged="accepted", without=None,
+) -> QuestionResult:
     asked = result(qid, "schema", outcome, 1.0)
     asked.agreement, asked.candidates, asked.agreed = level, runs, 3
     asked.rejections = dict(rejections or {})
     asked.candidate_rungs, asked.state_bytes = list(rungs), size
+    asked.judged, asked.without_judge = judged, without or outcome
     return asked
 
 
@@ -398,3 +401,20 @@ def test_the_ensembles_agreement_rejections_spread_and_size():
     assert report.fidelity_rejections() == {"F2": 1, "F4": 3}
     assert report.rung_spread == 1
     assert report.state_sizes() == [300, 600, 900, 1000]
+
+
+def test_what_the_judge_did_and_where_it_changed_the_score():
+    """arch7.1: the Judge's effect, scored both ways -- the answer delivered
+    against the one the runs alone would have chosen."""
+    report = BenchmarkReport(results=[
+        _ensembled("B01", CORRECT, "unanimous"),
+        _ensembled("B02", CORRECT, "judged", judged="overruled", without=WRONG),
+        _ensembled("B03", WRONG, "judged", judged="overruled", without=CORRECT),
+        _ensembled("B04", WRONG, "judged", judged="overruled", without=WRONG),
+        _ensembled("B05", WRONG, "contested", judged="accepted none"),
+        _ensembled("B06", CORRECT, "majority", judged="set aside"),
+        _ensembled("B07", CORRECT, "unanimous", judged=""),
+    ])
+    assert report.judge_actions() == {"accepted": 1, "accepted none": 1, "overruled": 3, "set aside": 1}
+    assert report.judge_effect() == {"overruled": 3, "fixed": 1, "broke": 1}
+    assert BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)]).judge_actions() == {}

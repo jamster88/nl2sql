@@ -182,7 +182,10 @@ def test_a_question_through_the_ensemble_is_answered_with_its_record(ensemble_cl
     assert answer["answer"].startswith("*Agreed by 4 of 4 independent runs")
     record = answer["ensemble"]
     assert record["agreement"] == {"admissible": 4, "agreed": 4, "total": 4, "level": "unanimous",
-                                   "why": "all 4 that could vote agree"}
+                                   "why": "all 4 that could vote agree", "set_aside": 0}
+    judged = record["judged"]
+    assert judged["verdicts"] == [{"group": 0, "accepted": True, "why": "no verdict given"}]
+    assert (judged["set_aside"], judged["overruled"], judged["instead_of"], judged["error"]) == ([], False, None, "")
     assert (record["chosen"], record["fused_from"]) == (0, [0, 1, 2, 3])
     assert [(c["index"], c["origin"], c["outcome"], c["admissible"], c["group"]) for c in record["candidates"]] == [
         (0, "original", "answered", True, 0), (1, "paraphrase", "answered", True, 0),
@@ -197,17 +200,18 @@ def test_a_question_through_the_ensemble_is_answered_with_its_record(ensemble_cl
     assert steps[0] == ("screen", None) and steps[-1] == ("deliver", None)
     assert {candidate for step, candidate in steps if step == "generate_sql"} == {0, 1, 2, 3}
     labels = {event["step"]: event["label"] for event in job["progress"] if event["candidate"] is None}
-    assert (labels["paraphrase"], labels["screen_paraphrase"], labels["validate"], labels["fuse"]) == (
-        "rewordings", "fidelity", "agreement", "fusion")
+    assert (labels["paraphrase"], labels["screen_paraphrase"], labels["validate"], labels["judge"], labels["vote"],
+            labels["fuse"]) == ("rewordings", "fidelity", "agreement", "judge", "vote", "fusion")
 
 
 def test_meta_names_the_ensembles_nodes_first_and_its_settings(make_client):
     meta = make_client(settings=Settings(ensemble_paraphrases=4, ollama_parallel_calls=2)).get("/v1/meta").json()
     pipeline = meta["pipeline"]
-    assert pipeline["nodes"][:9] == [
-        "screen", "refuse", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "fuse", "deliver",
+    assert pipeline["nodes"][:11] == [
+        "screen", "refuse", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "judge", "vote",
+        "fuse", "deliver",
     ]
-    assert pipeline["nodes"][9:] == list(STEP_LABELS)
+    assert pipeline["nodes"][11:] == list(STEP_LABELS)
     assert pipeline["ensemble"] == {"enabled": True, "paraphrases": 4, "max_paraphrases": 10, "waves": 2,
                                     "parallel_calls": 2, "judge": True, "fuse_columns": True}
 

@@ -13,7 +13,11 @@ import operator
 from dataclasses import replace
 from typing import Annotated, get_args, get_origin, get_type_hints
 
+import pytest
 from nl2sql_agent.ensemble_state import (
+    GroupVerdict,
+    Judgement,
+    judged,
     LIFETIMES,
     WAVE,
     Agreement,
@@ -125,3 +129,15 @@ def test_a_candidate_with_a_real_run_inside_renders_whole():
     assert rendered["state"]["result"] == to_jsonable(QueryResult(columns=["n"], rows=[[1]]))
     assert rendered["state"]["trace"][0]["node"] == "supervise"
     assert json.loads(json.dumps(rendered)) == rendered
+
+
+@pytest.mark.parametrize(("judgement", "said"), [
+    (None, "not asked"),
+    (Judgement(error="ConnectionError: refused"), "failed"),
+    (Judgement(verdicts=[GroupVerdict(0, False)], set_aside=[0, 1]), "accepted none"),
+    (Judgement(verdicts=[GroupVerdict(0, False), GroupVerdict(1, True)], set_aside=[1], overruled=True), "overruled"),
+    (Judgement(verdicts=[GroupVerdict(0, True), GroupVerdict(1, False)], set_aside=[3]), "set aside"),
+    (Judgement(verdicts=[GroupVerdict(0, True)]), "accepted"),
+])
+def test_what_the_judge_did_in_a_word(judgement, said):
+    assert judged(judgement) == said

@@ -243,9 +243,12 @@ def test_through_the_ensemble_the_metrics_say_how_the_runs_agreed():
 
     report = BenchmarkReport(label="ensemble", results=[
         _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard")),
-        _ensembled("B02", WRONG, "majority"),
+        _ensembled("B02", WRONG, "majority", judged="accepted none"),
+        _ensembled("B03", CORRECT, "judged", judged="overruled", without=WRONG),
     ])
     metrics = tracking.metrics(report)
     assert (metrics["agreement.unanimous"], metrics["agreement.majority"]) == (1, 1)
     assert (metrics["rejected.F4"], metrics["agreed_on_wrong"], metrics["rung_spread"]) == (2, 1, 1)
+    assert (metrics["judge.accepted"], metrics["judge.accepted_none"], metrics["judge.overruled"]) == (1, 1, 1)
+    assert (metrics["judge_fixed"], metrics["judge_broke"]) == (1, 0)
     assert "agreement.unanimous" not in tracking.metrics(BenchmarkReport(results=report.results[:0]))

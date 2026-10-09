@@ -222,8 +222,9 @@ def paraphraser_rung(question: str) -> tuple[str, str]:
 
 
 def judge_rung() -> tuple[str, str]:
-    """Heavy, always: the Judge runs rarely, once a question, and decides the
-    answer, so it is where the strongest model costs least per decision."""
+    """Heavy, always: the Judge runs once a question, before the vote, and
+    decides which answers are counted at all (arch7.1), so it is where the
+    strongest model costs least per decision."""
     return HEAVY, "the Judge: heavy, always"
 
 

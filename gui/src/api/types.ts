@@ -106,20 +106,35 @@ export interface LiteralMatch {
 }
 
 /** Everything the pipeline produced for one question. */
-/** How the ensemble's vote went: `agreed` of the `admissible` runs agreed, of `total` run. */
+/** How the ensemble's vote went: `agreed` of the `admissible` runs agreed, of `total` run;
+ * the Judge set aside `set_aside` more before the vote. */
 export interface EnsembleAgreement {
   admissible: number;
   agreed: number;
   total: number;
   level: "unanimous" | "majority" | "judged" | "contested" | "single" | "none";
   why: string;
+  set_aside: number;
 }
 
-/** The Judge's choice among the groups, asked only when the votes could not decide. */
-export interface EnsembleJudgement {
-  group: number | null;
+/** The Judge's verdict on one group's answer. */
+export interface EnsembleVerdict {
+  group: number;
+  accepted: boolean;
   why: string;
+}
+
+/** The Judge's verdicts on the answers, given on every question before the vote. */
+export interface EnsembleJudgement {
+  verdicts: EnsembleVerdict[];
+  /** The runs whose answer it set aside. */
+  set_aside: number[];
+  /** It set aside the answer the runs alone would have chosen: `instead_of`'s. */
+  overruled: boolean;
+  instead_of: number | null;
   model: string;
+  /** Why it could not be asked; the runs then voted alone. */
+  error: string;
 }
 
 /** A column another agreeing run carried, joined onto the delivered rows. */

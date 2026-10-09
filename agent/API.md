@@ -297,7 +297,8 @@ ways (arch7), so a client knows how many runs to expect before the first
 event: `{"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
 "parallel_calls": 1, "judge": true, "fuse_columns": true}`. With it enabled,
 `pipeline.nodes` lists the ensemble's own nodes (`screen`, `refuse`,
-`plan_wave`, `answer`, `deliver`) before the pipeline's. A server older than
+`paraphrase`, `screen_paraphrase`, `plan_wave`, `answer`, `validate`,
+`judge`, `vote`, `fuse`, `deliver`) before the pipeline's. A server older than
 7.0 sends no `ensemble`. As built so far the ensemble runs one wave --
 the original and `paraphrases` rewordings -- whatever `waves` says.
 
@@ -407,16 +408,24 @@ for 6.3 needs nothing new. `ensemble` is the record beside it:
 
 ```jsonc
 "ensemble": {
-  "agreement": {"admissible": 4, "agreed": 3, "total": 4,
-                "level": "majority",     // unanimous | majority | judged | contested | single | none
-                "why": "3 of the 4 that could vote agree"},
+  "agreement": {"admissible": 3, "agreed": 3, "total": 4,
+                "level": "unanimous",    // unanimous | majority | judged | contested | single | none
+                "why": "all 3 that could vote agree",
+                "set_aside": 1},         // runs the Judge kept from voting
   "chosen": 0,                           // the delivered run; null when none could be (level "none")
   "fused_from": [0, 1, 3],               // the winning group
   "columns_fused": true,                 // ENSEMBLE_FUSE_COLUMNS for this run
   "joined_columns": [], "declined_columns": [],
   "claims_added": 0, "claims_dropped": 0,
   "dissent": [],                         // each losing group: its key fact, how its query differs
-  "judged": null,                        // the Judge's choice, when the votes could not decide
+  "judged": {                            // the Judge, before the vote; null when it was not asked
+    "verdicts": [{"group": 0, "accepted": true, "why": "It rolls sales up to the fiscal year."},
+                 {"group": 1, "accepted": false, "why": "It filters the calendar year."}],
+    "set_aside": [2],                    // runs whose answer it rejected
+    "overruled": false,                  // it set aside the answer the runs alone would have chosen...
+    "instead_of": null,                  // ...that answer's run, when it did
+    "model": "...", "error": ""          // error: why it could not be asked; the runs then voted alone
+  },
   "candidates": [{
     "index": 0, "wording": "What was total net sales for Produce in FY2025?",
     "origin": "original", "wave": 1, "changed": "",
@@ -445,12 +454,21 @@ Supervisor's reading of it: a verdict other than `proceed`, or another
 contract than the question's). `admissible` is whether the run could vote,
 and `reasons` why not, by rule (E1 answered, E2 faithful, E3 rows, E4
 audited, E5 comparable); `group` is the agreeing group it fell in, `0` the
-largest, and `signature` its result's key fact. `chosen` is the run whose
-rows, SQL and claims were delivered; the answer opens with a sentence
-saying how the runs agreed. As built so far there is one wave and no Judge
-or fusion: `judged` is null, `joined_columns`, `declined_columns` and
-`dissent` are empty, and a vote with no majority is delivered as
-`contested`. When no run could vote, `level` is `none`, `chosen` is null and
+largest, and `signature` its result's key fact. `judged` is the Judge's
+reading of every group's answer, made before the vote (arch7.1): a verdict
+per group, and only the runs of the groups it accepted vote --
+`agreement.admissible` counts them, and `agreement.set_aside` the runs it
+kept out. `level` is `judged` when it set aside the answer the runs alone
+would have chosen (`overruled`, that answer's run `instead_of`), and
+`contested` when it accepted none -- the runs' own choice is then delivered,
+with the Judge's objection in the answer's first line. `judged` is null
+when the Judge was not asked -- `ENSEMBLE_JUDGE_ENABLED=false`, or no run
+could vote -- and carries `error` when it could not be reached. `chosen` is
+the run whose rows, SQL and claims were delivered; the answer opens with a
+sentence saying how the runs agreed and what the Judge set aside. As built
+so far there is one wave and no fusion: `joined_columns`,
+`declined_columns` and `dissent` are empty, and a vote with no majority is
+delivered as `contested`. When no run could vote, `level` is `none`, `chosen` is null and
 the answer and `error` are the original's own give-up. A refused question
 has no candidate at all. Without administrator detail, a candidate's
 `reasons` keep the rule's name and lose what follows it, as the error maps

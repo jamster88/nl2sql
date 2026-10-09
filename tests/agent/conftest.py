@@ -12,6 +12,7 @@ import pytest
 from nl2sql_agent.completeness import Reflection
 from nl2sql_agent.database import QueryResult
 from nl2sql_agent.examples import ExamplesUnavailableError, GoldenPair
+from nl2sql_agent.judge import Rulings
 from nl2sql_agent.paraphrase import Rewordings
 from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
 from nl2sql_agent.snippets import Found, Snippet, SnippetsUnavailableError
@@ -140,6 +141,16 @@ class _StructuredBinding:
             if isinstance(rewordings, list):
                 return rewordings.pop(0) if rewordings else Rewordings()
             return rewordings if rewordings is not None else Rewordings()
+        if self._schema is Rulings:
+            # The Judge (arch7.1). None gives no verdict, which accepts every
+            # answer; an exception is raised as a model host's would be; a
+            # list scripts one answer per call.
+            rulings = self._llm.rulings
+            if isinstance(rulings, Exception):
+                raise rulings
+            if isinstance(rulings, list):
+                return rulings.pop(0) if rulings else Rulings()
+            return rulings if rulings is not None else Rulings()
         if self._schema is Reflection:
             # The default finds the result complete, which is the happy path.
             reflection = self._llm.reflection
@@ -172,6 +183,8 @@ class ScriptedLLM:
     - The narrator's claims model returns `narration`.
     - The Completeness Reviewer's reflection returns `reflection`, or
       "complete" when none is scripted.
+    - The Paraphraser returns `rewordings`, and the Judge `rulings` -- none
+      by default, which accepts every answer.
     """
 
     def __init__(
@@ -183,9 +196,11 @@ class ScriptedLLM:
         narration: Any = None,
         reflection: Any = None,
         rewordings: Any = None,
+        rulings: Any = None,
     ) -> None:
         self.sql_responses = list(sql_responses or [])
         self.rewordings = rewordings
+        self.rulings = rulings
         self.table_selection = table_selection if table_selection is not None else TableSelection(tables=[])
         self.screening = screening
         self.narration = narration

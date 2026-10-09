@@ -15,8 +15,10 @@ other runs found that can be combined without inventing anything:
   delivered rows reproduce it, up to `ENSEMBLE_MAX_CLAIMS`; then the whole
   narrative audited again.
 * **Dissent** (`dissent`). Each answer that lost, by its key fact, and how
-  its query differs from the chosen one: the tables only one of them reads
-  and the columns only one filters on, read from the two queries' trees.
+  its query differs from the chosen one, read from the two queries' trees:
+  the tables only one of them reads, the columns only one filters on, and
+  how each combines the tables it adds up -- rolled up to what before a
+  join, and joined on what -- which is where a mistake of grain shows.
 * **The line** (`agreement_line`): how many runs there were and how they
   agreed, the sentence every answer the ensemble chooses opens with.
 
@@ -185,7 +187,13 @@ def _rows(claim: Claim) -> set[int]:
 def dissent(chosen: Candidate, losing: Sequence[Group], candidates: Sequence[Candidate]) -> list[Dissent]:
     """Each answer that lost, by its key fact, and how its query differs
     from the chosen one -- in code, from the two queries' trees: the tables
-    only one of them reads, and the columns only one filters on."""
+    only one of them reads, the columns only one filters on, and, for each
+    table whose values one of them aggregates, how the two combine it where
+    they differ: what a nested grouping rolls it up to, and the columns it
+    is joined on to the other tables they aggregate (`completeness._shapes`).
+    B07's wrong answer reads the tables and filters on the columns the
+    right one does; it joins daily sales to monthly costs on the date, row
+    by row, where the right one rolls both up to the fiscal month first."""
     runs = {candidate.index: candidate for candidate in candidates}
     mine = read_query(chosen.state.get("sql") or "")
     said = []
@@ -205,9 +213,10 @@ def dissent(chosen: Candidate, losing: Sequence[Group], candidates: Sequence[Can
 
 
 def _has(query: _Query, other: _Query) -> str:
-    """What `query` reads that `other` does not: its tables, and the columns
-    it filters on -- compared by name, so `dim_date.fiscal_year` and an
-    unqualified `fiscal_year` are one filter."""
+    """What `query` does that `other` does not: the tables it reads, the
+    columns it filters on -- compared by name, so `dim_date.fiscal_year` and
+    an unqualified `fiscal_year` are one filter -- and how it combines each
+    table it aggregates, where the two differ."""
     tables = sorted(query.relations - other.relations)
     filtered = {name.rsplit(".", 1)[-1] for name in other.filters}
     filters = sorted(name for name in query.filters if name.rsplit(".", 1)[-1] not in filtered)
@@ -216,7 +225,36 @@ def _has(query: _Query, other: _Query) -> str:
         parts.append("uses " + ", ".join(tables))
     if filters:
         parts.append("filters on " + ", ".join(filters))
-    return " and ".join(parts)
+    parts.extend(_combines(query, other))
+    return _listed(parts)
+
+
+def _combines(query: _Query, other: _Query) -> list[str]:
+    """How `query` combines each table it aggregates, where `other` does it
+    otherwise or not at all: rolled up to which columns before a join, and
+    joined on which -- row by row when nothing rolled it up. Tables combined
+    alike are said together."""
+    shapes: dict[tuple[tuple[str, ...] | None, tuple[str, ...] | None], list[str]] = {}
+    for table in sorted(set(query.rolled_up) | set(query.joined_on)):
+        shape = (query.rolled_up.get(table), query.joined_on.get(table))
+        if shape != (other.rolled_up.get(table), other.joined_on.get(table)):
+            shapes.setdefault(shape, []).append(table)
+    said = []
+    for (rolled, joined), tables in shapes.items():
+        named, them = _listed(tables), "them" if len(tables) > 1 else "it"
+        if rolled and joined:
+            on = "those" if set(joined) == set(rolled) else ", ".join(joined)
+            said.append(f"rolls {named} up to {', '.join(rolled)} and joins {them} on {on}")
+        elif rolled:
+            said.append(f"rolls {named} up to {', '.join(rolled)}")
+        else:
+            said.append(f"joins {named} on {', '.join(joined or ())}, row by row")
+    return said
+
+
+def _listed(items: Sequence[str]) -> str:
+    """"a", "a and b", "a, b and c"."""
+    return f"{', '.join(items[:-1])} and {items[-1]}" if len(items) > 1 else "".join(items)
 
 
 def agreement_line(agreement: Agreement, judgement: Judgement | None = None, groups: Sequence[Group] = ()) -> str:

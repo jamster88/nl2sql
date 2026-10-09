@@ -481,8 +481,10 @@ did not speak of that the delivered rows bear out, and `claims_dropped`,
 those they did not; `columns_fused` false when
 `ENSEMBLE_FUSE_COLUMNS` is off. `dissent` is each losing group: its runs,
 its key fact (`signature`) and `differs`, the tables and filtered columns
-its query has that the chosen one's has not, and the reverse -- empty when
-the two read the same. When no run could vote, `level` is `none`, `chosen` is null and
+its query has that the chosen one's has not, how it rolls up and joins the
+tables it aggregates where the two differ ("joins fact_item_cogs on
+date_key, product_key, row by row"), and the reverse -- empty when the two
+read the same. When no run could vote, `level` is `none`, `chosen` is null and
 the answer and `error` are the original's own give-up. A refused question
 has no candidate at all. Without administrator detail, a candidate's
 `reasons` keep the rule's name and lose what follows it, as the error maps

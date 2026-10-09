@@ -284,8 +284,12 @@ notes at its end: a column another run carried, joined on the entity's key
 ("*region_name is from run 2, which agreed, joined on store_key; this
 answer's query does not return it.*"), a sentence about a row the chosen
 run's narrative left out, and each answer that lost ("*Run 2 answered
-differently (34.65).*", with the tables and filtered columns its query has
-that the chosen one's has not, when they differ).
+differently (34.65).*", with what its query does that the chosen one's does
+not -- other tables, other filters, or the facts combined at another grain:
+"run 1's query joins fact_item_cogs on date_key, product_key, row by row
+...; the chosen one rolls fact_item_cogs and fact_pos_retail_sales up to
+fiscal_year, fiscal_month_num, product_key, store_key and joins them on
+those").
 
 Four flags, each overriding its setting for the run:
 

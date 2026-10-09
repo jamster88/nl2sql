@@ -63,7 +63,7 @@ from decimal import Decimal
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from pglast import ast, parse_sql
+from pglast import ast, enums, parse_sql
 from pglast.stream import RawStream
 from pglast.visitors import referenced_relations
 from pydantic import BaseModel, Field
@@ -159,6 +159,13 @@ class _Query:
     #: Every column a WHERE or HAVING reads, anywhere in the statement, as
     #: `table.column` when its qualifier is a table or an alias of one.
     filters: set[str] = field(default_factory=set)
+    #: How the tables whose values the query aggregates meet each other
+    #: (`_shapes`): each one a nested grouped SELECT rolls up before anything
+    #: else reads it, with the columns it is rolled up to; and each one joined
+    #: to another such table -- itself or through the CTE or subquery that
+    #: holds it -- with the columns on its side of those joins.
+    rolled_up: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    joined_on: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def _walk(node: object) -> Iterator[ast.Node]:
@@ -211,6 +218,7 @@ def read_query(sql: str, label_map: LabelMap | None = None) -> _Query:
         if isinstance(node, ast.FuncCall) and node.funcname and isinstance(node.funcname[-1], ast.String)
     }
     query.filters = _filters(statement)
+    query.rolled_up, query.joined_on = _shapes(statement)
     if not isinstance(statement, ast.SelectStmt) or statement.targetList is None:
         return query
     query.select = statement
@@ -255,6 +263,213 @@ def _filters(statement: ast.Node) -> set[str]:
                 column = _column_name(ref)
                 filters.add(f"{aliases.get(qualifiers[-1], qualifiers[-1])}.{column}" if qualifiers else column)
     return filters
+
+
+#: Functions that fold many rows into one value: a column inside one is a
+#: measure the query adds up, counts or averages.
+_AGGREGATES = frozenset({
+    "sum", "avg", "count", "min", "max", "stddev", "stddev_pop", "stddev_samp", "variance", "var_pop",
+    "var_samp", "string_agg", "array_agg", "bool_and", "bool_or", "percentile_cont", "percentile_disc", "mode",
+})
+
+
+def _shapes(statement: ast.Node) -> tuple[dict[str, tuple[str, ...]], dict[str, tuple[str, ...]]]:
+    """How the measures meet: the grain at which a query combines the tables
+    whose values it aggregates (arch7.2 section 22.8).
+
+    Two queries can read the same tables and filter on the same columns and
+    still differ in what they compute: one joins daily sales to monthly costs
+    on the date, row by row; the other rolls both up to the fiscal month
+    first and joins them on that. That difference is here: for each table a
+    SELECT aggregates, the columns of the nested grouped SELECT that rolls it
+    up -- a CTE's or a subquery's, never the outermost, whose grouping is the
+    answer's own -- and the columns it is joined on to another aggregated
+    table, on its own side of the join, directly or through the CTE or
+    subquery that holds it. Only equalities between qualified columns are
+    read, and `USING` only between two single tables, CTEs or subqueries:
+    a join whose sides cannot be told apart is left out, not guessed.
+    """
+    ctes = {node.ctename.lower(): node.ctequery for node in _walk(statement) if isinstance(node, ast.CommonTableExpr)}
+    selects = [node for node in _walk(statement) if isinstance(node, ast.SelectStmt) and node.larg is None]
+    top = _outermost(statement)
+    scopes = {id(select): _scope(select, ctes) for select in selects}
+
+    aggregated: list[tuple[ast.SelectStmt, str]] = []
+    for select in selects:
+        scope = scopes[id(select)]
+        for call in _walk([select.targetList, select.havingClause]):
+            if isinstance(call, ast.FuncCall) and call.funcname[-1].sval.lower() in _AGGREGATES:
+                for ref in _walk(call.args):
+                    if isinstance(ref, ast.ColumnRef):
+                        aggregated.extend((select, table) for table in _ref_tables(ref, scope, own=True))
+    measures = {table for _, table in aggregated}
+
+    rolled_up: dict[str, tuple[str, ...]] = {}
+    for select, table in aggregated:
+        if id(select) not in top and select.groupClause:
+            rolled_up.setdefault(table, _group_names(select))
+
+    joined_on: dict[str, set[str]] = {}
+    for select in selects:
+        scope = scopes[id(select)]
+        for linked in _linked_columns(_join_pairs(select)):
+            held = {(qualifier, column): measures & _ref_tables(_ref(qualifier, column), scope, ctes=ctes)
+                    for qualifier, column in linked}
+            if len({qualifier for (qualifier, _), tables in held.items() if tables}) < 2:
+                continue
+            for (_, column), tables in held.items():
+                for table in tables:
+                    joined_on.setdefault(table, set()).add(column)
+    return rolled_up, {table: tuple(sorted(columns)) for table, columns in joined_on.items()}
+
+
+def _linked_columns(pairs: list[tuple[ast.ColumnRef, ast.ColumnRef]]) -> list[set[tuple[str, str]]]:
+    """The columns a SELECT's join equalities make equal, in classes: costs
+    joined to the date dimension, and the dimension to the sales, join the
+    costs to the sales on the date."""
+    parent: dict[tuple[str, str], tuple[str, str]] = {}
+
+    def root(key: tuple[str, str]) -> tuple[str, str]:
+        while parent.setdefault(key, key) != key:
+            key = parent[key]
+        return key
+
+    for left, right in pairs:
+        parent[root((_qualifier(left), _column_name(left) or ""))] = root((_qualifier(right), _column_name(right) or ""))
+    classes: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for key in list(parent):
+        classes.setdefault(root(key), set()).add(key)
+    return list(classes.values())
+
+
+def _outermost(statement: ast.Node) -> set[int]:
+    """The SELECTs whose rows are the answer's: the statement's own, and each
+    arm of a UNION, INTERSECT or EXCEPT at its top."""
+    found: set[int] = set()
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.SelectStmt):
+            found.add(id(node))
+            pending.extend([node.larg, node.rarg])
+    return found
+
+
+def _scope(select: ast.SelectStmt, ctes: dict[str, ast.Node]) -> dict[str, ast.Node | str]:
+    """What each name in a SELECT's FROM stands for: a table's name, or the
+    CTE's or subquery's own SELECT."""
+    scope: dict[str, ast.Node | str] = {}
+    pending = list(select.fromClause or [])
+    while pending:
+        item = pending.pop()
+        if isinstance(item, ast.JoinExpr):
+            pending.extend([item.larg, item.rarg])
+        elif isinstance(item, ast.RangeVar):
+            name = item.relname.lower()
+            scope[(item.alias.aliasname if item.alias else item.relname).lower()] = ctes.get(name, name)
+        elif isinstance(item, ast.RangeSubselect) and item.alias is not None:
+            scope[item.alias.aliasname.lower()] = item.subquery
+    return scope
+
+
+def _qualifier(ref: ast.ColumnRef) -> str:
+    names = [f.sval.lower() for f in ref.fields[:-1] if isinstance(f, ast.String)]
+    return names[-1] if names else ""
+
+
+def _ref_tables(ref: ast.ColumnRef, scope: dict[str, ast.Node | str], *, own: bool = False,
+                ctes: dict[str, ast.Node] | None = None) -> set[str]:
+    """The tables a column reference reads. `own`: only a table named in this
+    SELECT's own FROM -- a column of a CTE or subquery was aggregated there,
+    not here. Otherwise, through a CTE or subquery to every table it reads.
+    An unqualified column belongs to the one table a FROM names, or to none."""
+    qualifier = _qualifier(ref)
+    if not qualifier:
+        tables = [source for source in scope.values() if isinstance(source, str)]
+        return set(tables) if len(scope) == 1 and len(tables) == 1 else set()
+    source = scope.get(qualifier)
+    if isinstance(source, str):
+        return {source}
+    if source is None or own:
+        return set()
+    return _tables_under(source, ctes or {}, set())
+
+
+def _tables_under(select: ast.Node, ctes: dict[str, ast.Node], seen: set[int]) -> set[str]:
+    """Every table a CTE's or subquery's SELECT reads, through the CTEs and
+    subqueries it reads in turn; a recursive CTE's reference to itself once."""
+    if id(select) in seen:
+        return set()
+    seen.add(id(select))
+    if select.larg is not None:
+        return _tables_under(select.larg, ctes, seen) | _tables_under(select.rarg, ctes, seen)
+    tables: set[str] = set()
+    for source in _scope(select, ctes).values():
+        tables |= {source} if isinstance(source, str) else _tables_under(source, ctes, seen)
+    return tables
+
+
+def _join_pairs(select: ast.SelectStmt) -> list[tuple[ast.ColumnRef, ast.ColumnRef]]:
+    """The column equalities that join one name of a SELECT's FROM to
+    another: each `a.x = b.y` of a join's ON or of the WHERE (a join written
+    the old way), and each column of a `USING` between two single names."""
+    pairs: list[tuple[ast.ColumnRef, ast.ColumnRef]] = []
+    pending = list(select.fromClause or [])
+    conditions = [select.whereClause]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, ast.JoinExpr):
+            pending.extend([item.larg, item.rarg])
+            conditions.append(item.quals)
+            names = [_range_name(side) for side in (item.larg, item.rarg)]
+            if item.usingClause and all(names):
+                pairs.extend(
+                    (_ref(names[0], column.sval), _ref(names[1], column.sval)) for column in item.usingClause
+                )
+    for condition in conditions:
+        for node in _conjuncts(condition):
+            if (
+                isinstance(node, ast.A_Expr) and node.name[-1].sval == "="
+                and isinstance(node.lexpr, ast.ColumnRef) and isinstance(node.rexpr, ast.ColumnRef)
+                and _qualifier(node.lexpr) and _qualifier(node.rexpr)
+            ):
+                pairs.append((node.lexpr, node.rexpr))
+    return pairs
+
+
+def _conjuncts(condition: ast.Node | None) -> list[ast.Node]:
+    """The terms a condition ANDs together, never looking inside a subquery."""
+    if isinstance(condition, ast.BoolExpr) and condition.boolop == enums.BoolExprType.AND_EXPR:
+        return [term for arg in condition.args for term in _conjuncts(arg)]
+    return [condition] if condition is not None else []
+
+
+def _range_name(item: ast.Node) -> str:
+    """The name a single FROM item answers to; "" for a join of several."""
+    if isinstance(item, ast.RangeVar):
+        return (item.alias.aliasname if item.alias else item.relname).lower()
+    if isinstance(item, ast.RangeSubselect) and item.alias is not None:
+        return item.alias.aliasname.lower()
+    return ""
+
+
+def _ref(qualifier: str, column: str) -> ast.ColumnRef:
+    return ast.ColumnRef(fields=(ast.String(sval=qualifier), ast.String(sval=column)))
+
+
+def _group_names(select: ast.SelectStmt) -> tuple[str, ...]:
+    """A GROUP BY as the columns it names: a position read as the select
+    list's column there, a column by its name, anything else as written."""
+    names = []
+    for item in select.groupClause:
+        if isinstance(item, ast.A_Const) and isinstance(item.val, ast.Integer):
+            item = select.targetList[item.val.ival - 1]
+            if item.name:
+                names.append(item.name.lower())
+                continue
+            item = item.val
+        names.append(_column_name(item) or "" if isinstance(item, ast.ColumnRef) else _normalise(_deparse(item)))
+    return tuple(names)
 
 
 def _shows(column: str, result: QueryResult, query: _Query) -> bool:

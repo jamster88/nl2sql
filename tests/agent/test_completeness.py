@@ -174,6 +174,95 @@ def test_the_columns_a_query_filters_on_are_read_with_each_alias_as_its_table():
     assert read_query("SELEC nothing").filters == set()
 
 
+#: B07, as the paraphrase set found it: the right answer rolls both facts up
+#: to the fiscal month first; the wrong one joins them on the date, row by
+#: row -- once directly, once through the date dimension.
+B07_RIGHT = """
+WITH monthly_sales AS (
+    SELECT d.fiscal_year, d.fiscal_month_num, s.product_key, s.store_key,
+           SUM(s.net_sales_amt) AS net_sales, SUM(s.quantity_sold) AS units
+    FROM fact_pos_retail_sales s
+    JOIN dim_date d ON d.date_key = s.sales_date_key
+    JOIN dim_product p ON p.product_key = s.product_key
+    WHERE p.department_name = 'Dairy & Eggs' AND d.fiscal_year = 2025 AND d.fiscal_month_num = 12
+    GROUP BY 1, 2, 3, 4
+), monthly_cost AS (
+    SELECT d.fiscal_year, d.fiscal_month_num, c.product_key, c.store_key, AVG(c.net_item_cost) AS unit_cost
+    FROM fact_item_cogs c JOIN dim_date d ON d.date_key = c.date_key
+    WHERE d.fiscal_year = 2025 AND d.fiscal_month_num = 12
+    GROUP BY 1, 2, 3, 4
+)
+SELECT ROUND(100.0 * (SUM(s.net_sales) - SUM(s.units * c.unit_cost)) / NULLIF(SUM(s.net_sales), 0), 2)
+FROM monthly_sales s JOIN monthly_cost c USING (fiscal_year, fiscal_month_num, product_key, store_key)
+"""
+B07_WRONG = """
+SELECT ROUND(100.0 * (SUM(s.net_sales_amt) - SUM(s.quantity_sold * c.net_item_cost)) / NULLIF(SUM(s.net_sales_amt), 0), 2)
+FROM fact_pos_retail_sales s
+JOIN dim_date d ON d.date_key = s.sales_date_key
+JOIN dim_product p ON p.product_key = s.product_key
+JOIN fact_item_cogs c ON c.date_key = s.sales_date_key AND c.product_key = s.product_key
+WHERE p.department_name = 'Dairy & Eggs' AND d.fiscal_year = 2025 AND d.fiscal_month_num = 12
+"""
+
+
+def test_how_a_query_combines_the_tables_it_aggregates_is_read_where_its_grain_shows():
+    """arch7.2: B07's right and wrong answers read the same tables and filter
+    on the same columns; what differs is the grain they combine the facts
+    at -- rolled up to the fiscal month first, or joined on the date row by
+    row."""
+    month = ("fiscal_year", "fiscal_month_num", "product_key", "store_key")
+    right = read_query(B07_RIGHT)
+    assert right.rolled_up == {"fact_pos_retail_sales": month, "fact_item_cogs": month}
+    assert right.joined_on == {table: tuple(sorted(month)) for table in ("fact_pos_retail_sales", "fact_item_cogs")}
+    wrong = read_query(B07_WRONG)
+    assert wrong.rolled_up == {}
+    assert wrong.joined_on == {"fact_pos_retail_sales": ("product_key", "sales_date_key"),
+                               "fact_item_cogs": ("date_key", "product_key")}
+    through_the_dimension = B07_WRONG.replace("c.date_key = s.sales_date_key", "c.date_key = d.date_key")
+    assert read_query(through_the_dimension).joined_on == wrong.joined_on, "joined on the date all the same"
+
+
+@pytest.mark.parametrize(("sql", "rolled_up", "joined_on"), [
+    # A subquery rolls the lines up to baskets before they are averaged.
+    ("SELECT AVG(b.total) FROM (SELECT basket_id, SUM(net_sales_amt) AS total FROM fact_pos_retail_sales "
+     "GROUP BY basket_id) b", {"fact_pos_retail_sales": ("basket_id",)}, {}),
+    # The outermost grouping is the answer's own, not a roll-up; a dimension
+    # joined by USING aggregates nothing.
+    ("SELECT st.banner_name, SUM(s.net_sales_amt) FROM fact_pos_retail_sales s JOIN dim_store st USING (store_key) "
+     "GROUP BY 1", {}, {}),
+    # Each arm of a UNION is outermost.
+    ("SELECT store_key, SUM(net_sales_amt) FROM fact_pos_retail_sales GROUP BY 1 UNION ALL "
+     "SELECT store_key, SUM(net_item_cost) FROM fact_item_cogs GROUP BY 1", {}, {}),
+    # A position whose column is an unnamed column or an expression; a
+    # grouping by an expression; HAVING aggregates too.
+    ("SELECT AVG(x.n) FROM (SELECT s.store_key, date_trunc('month', s.sold_at), SUM(s.qty) AS n "
+     "FROM sales s GROUP BY 1, 2, s.channel, lower(s.region) HAVING MAX(s.price) > 0) x",
+     {"sales": ("store_key", "date_trunc('month',sold_at)", "channel", "lower(region)")}, {}),
+    # Two subqueries, each rolling a fact up -- one by a position naming an
+    # aliased column -- joined USING the column they share.
+    ("SELECT SUM(x.n) + SUM(y.m) FROM (SELECT s.store_key AS store, SUM(s.v) AS n FROM fa s GROUP BY 1) x "
+     "JOIN (SELECT store, SUM(w) AS m FROM fb GROUP BY store) y USING (store)",
+     {"fa": ("store",), "fb": ("store",)}, {"fa": ("store",), "fb": ("store",)}),
+    # Two facts joined the old way, in the WHERE; an OR is no join.
+    ("SELECT SUM(a.v) + SUM(b.w) FROM fa a, fb b WHERE a.k = b.k AND (a.x = b.x OR a.y = b.y) AND a.z > 1",
+     {}, {"fa": ("k",), "fb": ("k",)}),
+    # A USING after a join of several cannot say whose column it is: left out.
+    ("SELECT SUM(a.v), SUM(c.w) FROM fa a JOIN dim_x x ON x.id = a.x_id JOIN fc c USING (k)", {}, {}),
+    # An unqualified column belongs to the one table named, or to none.
+    ("SELECT SUM(v) FROM fa", {}, {}),
+    ("SELECT SUM(v) FROM fa JOIN fb ON fa.k = fb.k", {}, {}),
+    # A scalar subquery in the select list aggregates with no grouping: no roll-up.
+    ("SELECT (SELECT SUM(v) FROM fa) AS total", {}, {}),
+    # A recursive CTE reads itself once and no table; a function and a
+    # subquery with no alias in FROM name nothing to join.
+    ("WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) "
+     "SELECT SUM(f.v), SUM(r.n) FROM fa f JOIN r ON r.n = f.k, generate_series(1, 2) g, (SELECT 1 AS one)", {}, {}),
+])
+def test_what_is_rolled_up_and_what_is_joined_on_is_read_from_every_shape_of_query(sql, rolled_up, joined_on):
+    query = read_query(sql)
+    assert (query.rolled_up, query.joined_on) == (rolled_up, joined_on)
+
+
 def test_a_query_that_does_not_parse_or_is_not_one_select_is_read_as_text_only():
     assert read_query("SELEC nothing").select is None
     assert read_query("SELECT 1; SELECT 2").select is None

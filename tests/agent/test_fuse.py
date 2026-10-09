@@ -305,3 +305,42 @@ def _losing(sql: str) -> list[Dissent]:
 def test_each_losing_answer_is_named_with_how_its_query_differs(sql, differs):
     [lost] = _losing(sql)
     assert (lost.group, lost.members, lost.signature, lost.differs) == (1, [2, 3], "2", differs)
+
+
+def _against(chosen_sql: str, losing_sql: str) -> str:
+    picked = run(0, ["n"], [[1]], sql=chosen_sql)
+    other = run(2, ["n"], [[2]], sql=losing_sql)
+    [lost] = dissent(picked, [Group(index=1, members=[2], representative=2, signature="2")], [picked, other])
+    return lost.differs
+
+
+def test_a_mistake_of_grain_is_named_by_how_each_query_combines_the_facts():
+    """arch7.2: B07's wrong answer reads the tables and filters on the
+    columns the right one does. What differs is the grain: it joins daily
+    sales to monthly costs on the date, row by row, where the right one
+    rolls both up to the fiscal month first."""
+    from .test_completeness import B07_RIGHT, B07_WRONG
+
+    assert _against(B07_RIGHT, B07_WRONG) == (
+        "run 2's query joins fact_item_cogs on date_key, product_key, row by row and joins fact_pos_retail_sales "
+        "on product_key, sales_date_key, row by row; the chosen one rolls fact_item_cogs and fact_pos_retail_sales "
+        "up to fiscal_year, fiscal_month_num, product_key, store_key and joins them on those"
+    )
+
+
+@pytest.mark.parametrize(("chosen_sql", "losing_sql", "differs"), [
+    ("SELECT AVG(net_sales_amt) FROM fact_pos_retail_sales",
+     "SELECT AVG(b.total) FROM (SELECT basket_id, SUM(net_sales_amt) AS total FROM fact_pos_retail_sales "
+     "GROUP BY basket_id) b",
+     "run 2's query rolls fact_pos_retail_sales up to basket_id"),
+    ("SELECT SUM(a.v), SUM(b.w) FROM fa a JOIN fb b ON a.k = b.k",
+     "WITH x AS (SELECT k, m, SUM(v) AS v FROM fa GROUP BY k, m), y AS (SELECT k, SUM(w) AS w FROM fb GROUP BY k) "
+     "SELECT SUM(x.v), SUM(y.w) FROM x JOIN y ON x.k = y.k",
+     "run 2's query rolls fa up to k, m and joins it on k and rolls fb up to k and joins it on those; "
+     "the chosen one joins fa and fb on k, row by row"),
+    ("SELECT SUM(a.v), SUM(b.w) FROM fa a JOIN fb b ON a.k = b.k",
+     "SELECT SUM(a.v), SUM(b.w) FROM fa a JOIN fb b ON a.k = b.k AND a.j = b.k",
+     "run 2's query joins fa on j, k, row by row; the chosen one joins fa on k, row by row"),
+])
+def test_a_roll_up_alone_or_a_join_on_other_columns_than_the_roll_up_is_said_as_it_is(chosen_sql, losing_sql, differs):
+    assert _against(chosen_sql, losing_sql) == differs

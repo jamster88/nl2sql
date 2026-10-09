@@ -495,7 +495,11 @@ the delivered rows. The dissent named what it could: B15's losing answer
 as "run 0's query filters on dim_ad_channel.channel_type" -- the filter
 the Judge set it aside for -- while B07's, whose mistake is the grain of a
 join, reads the same tables and filters the same columns as the chosen
-one, and was named by its figure alone.
+one, and was named by its figure alone. The dissent has since been taught
+to read the grain (arch7.2): read from B07's real queries, its line now
+says the losing runs join fact_item_cogs to the sales on the date, row by
+row, where the chosen one rolls both up to the fiscal month and joins them
+on that.
 
 **The claims rule was set by this run.** The specification counts a claim
 as a repeat when it has the same value from the same cells, or the same

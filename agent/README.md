@@ -270,16 +270,18 @@ pipeline can give itself is a different wording of the same question. arch7
 builds on that: the question is screened once, reworded three to ten ways,
 each rewording held to the original's answer contract, the pipeline above run
 once per wording, and the largest agreeing group's answer delivered with the
-record of every run. arch7.1
-([`Multi-Agent_NL2SQL_arch7_1.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md))
-is arch7 with the Judge moved before the vote: every distinct answer is read
-against the question first, and only the runs whose answer it accepts are
-counted. It is built in phases
-([`Multi-Agent_NL2SQL_arch7_1_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md),
-with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md)),
+record of every run. arch7.1 is arch7 with the Judge moved before the
+vote: every distinct answer is read against the question first, and only
+the runs whose answer it accepts are counted. arch7.2
+([`Multi-Agent_NL2SQL_arch7_2.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md))
+is arch7.1 as its Phase 3 was built, with a grain check added as a phase
+of its own. It is built in phases
+([`Multi-Agent_NL2SQL_arch7_2_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_implementation.md),
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_risks_by_phase.md)),
 and Phases 0 to 3 of it are built -- the outer graph, the rewordings, the
 Judge and the vote, the second wave and fusion; the calibration of the two
-new routing tasks and the clients' views of the runs are still to come --
+new routing tasks, the clients' views of the runs and the grain check
+(Phase 6) are still to come --
 [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
 
 ```
@@ -306,7 +308,7 @@ screen ─┬─ refuse                    the Supervisor, once, on the original
 | `validate` | Each run checked against its own question ([`agreement.py`](nl2sql_agent/agreement.py)): E1 answered, E2 faithful, E3 rows when the question implies some, E4 the audit did not judge the rows wrong, E5 not a sample -- only what makes a run's rows no answer keeps it from voting. Then every pair compared with the benchmark's scorer ([`compare.py`](nl2sql_agent/compare.py)) and the runs grouped by agreement | -- |
 | `judge` | The Judge ([`judge.py`](nl2sql_agent/judge.py)), on every question with an answer to judge, before anything is counted: each group's representative query and first five rows, lettered in the order the runs were asked -- never how many runs gave it -- read against the question, what every answer was held to, and the knowledge the original's run retrieved. A verdict per letter, accepted or set aside with the mistake in the query named; an answer it says nothing about stands. A failure costs the verdicts: the runs vote alone | judges, heavy |
 | `vote` | Only the runs whose answer the Judge accepted vote: a strict majority of them, the largest accepted group winning, ties to the original's. `judged` when that is not the group the runs alone would have chosen; when the Judge accepted none, the runs' own choice, `contested`, with its objection. A vote that does not settle the question -- no majority among the runs that voted, or one run standing alone -- goes back to `plan_wave` while a wave is left (`ENSEMBLE_WAVES`), a faithful rewording has not run and `ENSEMBLE_DEADLINE_SECONDS`, if set, has not passed; the Judge then reads every group again and the vote is recounted over both waves. With no wave left, the largest accepted group is delivered as `contested` | -- |
-| `fuse` | The representative of the winning group -- complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan -- whose SQL and chart are the answer's ([`fuse.py`](nl2sql_agent/fuse.py)). Then, in code: a column of a dimension the rows identify that another run of the group carried, joined on that dimension's key only when every row matches exactly once (`ENSEMBLE_FUSE_COLUMNS`); the other runs' claims that speak of a row the narrative does not yet speak of, each kept only when the delivered rows reproduce it, up to `ENSEMBLE_MAX_CLAIMS`, and the whole re-audited; the assumptions every run made, once; and each losing answer with the tables and filtered columns its query has that the chosen one's has not. No SQL is fused | -- |
+| `fuse` | The representative of the winning group -- complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan -- whose SQL and chart are the answer's ([`fuse.py`](nl2sql_agent/fuse.py)). Then, in code: a column of a dimension the rows identify that another run of the group carried, joined on that dimension's key only when every row matches exactly once (`ENSEMBLE_FUSE_COLUMNS`); the other runs' claims that speak of a row the narrative does not yet speak of, each kept only when the delivered rows reproduce it, up to `ENSEMBLE_MAX_CLAIMS`, and the whole re-audited; the assumptions every run made, once; and each losing answer with the tables and filtered columns its query has that the chosen one's has not, and how it rolls up and joins the tables it adds up where the two differ -- where a mistake of grain shows. No SQL is fused | -- |
 | `deliver` | The answer, rendered for the question as asked, opening with its agreement line: "Agreed by 4 of 4 independent runs of the question, each worded differently.", or, when the Judge overruled the runs, "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and accepted this one, which 1 gave." Its notes name each joined column's run, each column left out and why, and each answer that lost. When no run could vote, the original's give-up, as the pipeline delivers one | -- |
 
 The outer state ([`ensemble_state.py`](nl2sql_agent/ensemble_state.py))

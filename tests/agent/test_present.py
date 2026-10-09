@@ -1233,3 +1233,16 @@ def test_the_answer_names_a_gap_the_reviewer_could_not_close():
     assert "could not be completed" not in render_answer(
         "q", top_stores(), [], audit_report=AuditReport(), completeness=CompletenessReport()
     )
+
+
+def test_an_answer_the_ensemble_chose_opens_with_its_agreement_line():
+    """arch7: how many runs there were and how they agreed comes first,
+    before anything they say -- escaped like every other piece of text."""
+    from types import SimpleNamespace
+
+    result = QueryResult(columns=["n"], rows=[[42]])
+    plain = render_answer("how many stores?", result, [])
+    decision = SimpleNamespace(line="3 of 4 runs agreed; 1 answered <differently>.")
+    chosen = render_answer("how many stores?", result, [], ensemble=decision)
+    assert chosen == "*3 of 4 runs agreed; 1 answered &lt;differently&gt;.*\n\n" + plain
+    assert render_answer("how many stores?", result, [], ensemble=SimpleNamespace(line="")) == plain

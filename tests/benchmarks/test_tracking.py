@@ -236,3 +236,16 @@ def test_the_stacks_certificate_is_trusted_when_it_has_been_copied_out(tmp_path)
     trust_the_stack(environ, certificate)
     assert environ["MLFLOW_TRACKING_SERVER_CERT_PATH"] == "/mine.pem", "the environment's own choice wins"
 
+
+
+def test_through_the_ensemble_the_metrics_say_how_the_runs_agreed():
+    from tests.benchmarks.test_runner import _ensembled
+
+    report = BenchmarkReport(label="ensemble", results=[
+        _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard")),
+        _ensembled("B02", WRONG, "majority"),
+    ])
+    metrics = tracking.metrics(report)
+    assert (metrics["agreement.unanimous"], metrics["agreement.majority"]) == (1, 1)
+    assert (metrics["rejected.F4"], metrics["agreed_on_wrong"], metrics["rung_spread"]) == (2, 1, 1)
+    assert "agreement.unanimous" not in tracking.metrics(BenchmarkReport(results=report.results[:0]))

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import operator
+from dataclasses import replace
 from typing import Annotated, get_args, get_origin, get_type_hints
 
 from nl2sql_agent.ensemble_state import (
@@ -24,6 +25,7 @@ from nl2sql_agent.ensemble_state import (
     is_ensemble,
     new_ensemble_state,
     run_state,
+    upsert_candidates,
     wave_reset,
     whole_trace,
 )
@@ -64,7 +66,21 @@ def test_a_new_state_seeds_every_field():
 def test_the_keys_several_writers_share_have_reducers():
     hints = get_type_hints(EnsembleState, include_extras=True)
     reducers = {name: get_args(hint)[1] for name, hint in hints.items() if get_origin(hint) is Annotated}
-    assert reducers == {"candidates": operator.add, "node_errors": merge_errors, "trace": operator.add}
+    assert reducers == {"candidates": upsert_candidates, "node_errors": merge_errors, "trace": operator.add}
+
+
+def test_a_wave_appends_its_runs_and_the_vote_marks_them_where_they_stand():
+    """`answer` adds candidates and `validate` marks them; a run comes back
+    with its own index and replaces itself, and none is ever removed."""
+    first = [_candidate(0), _candidate(1)]
+    marked = [replace(first[1], admissible=True, group=0)]
+    merged = upsert_candidates(first, marked)
+    assert [c.index for c in merged] == [0, 1] and merged[1].admissible and merged[1].group == 0
+    assert merged[0] is first[0]
+    later = upsert_candidates(merged, [_candidate(2)])
+    assert [c.index for c in later] == [0, 1, 2]
+    assert upsert_candidates(None, [_candidate(0)])[0].index == 0
+    assert upsert_candidates(first, None) == first
 
 
 def test_the_delivered_run_is_the_decisions_and_otherwise_the_originals():

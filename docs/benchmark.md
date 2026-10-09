@@ -196,12 +196,19 @@ will be; Phase 2's fidelity rejections by check are the number for those.
 python benchmarks/run_benchmark.py --config ensemble
 ```
 
-`snippets` with the ensemble on (arch7): the question screened once by the
-ensemble's own outer graph and run as its first wording. As built so far the
-ensemble asks the original alone and delivers it as it ran, so the claim to
-check is that it changes no answer -- the same SQL, question by question, as
-`snippets` -- while the screening is paid once, not twice.
+`snippets` with the ensemble on (arch7): each question screened once,
+reworded, the rewordings held to it by the fidelity gate, the pipeline run
+on the original and the first three kept, the runs voted on, and the
+strongest run of the largest agreeing group delivered. The report gains an
+ENSEMBLE block: how the runs agreed, how often they agreed on a wrong
+answer, the rewordings the gate discarded by check, how often a question's
+runs were scored at different rungs, and how large a question's state grew;
+`--json` carries each question's runs and rewordings with their fates.
 
+### One wording: the plumbing changes no answer
+
+Built first (arch7's Phase 1), the ensemble asked the original alone and
+delivered it as it ran, so the claim to check was that it changed no answer.
 Measured 2026-10-08 against the running 6.3 stack, `snippets` then
 `ensemble`, the same fifteen questions routed by the committed catalog,
 untraced:
@@ -211,19 +218,135 @@ untraced:
 | `snippets` | 14/15 | -- | 15 | 52 | 417.0s | 28.0s |
 | `ensemble` | 14/15 | 15 of 15 | 15 | 52 | 391.3s | 28.7s |
 
-Every question came out the same way in both -- the same outcome, the same
-SQL, the same attempts, the same rung and the same number of model calls --
-so the original's run made no Supervisor call of its own, the ensemble's
-screening having been made for it. The one miss is B15 in both: its own
-wording, "Print Flyer, Paid Social and so on", read as a filter, as in the
-paraphrase set above, so `snippets` is 14 of 15 on this host today and that
-is the number the ensemble has to match. The difference in total time is
-the first question's: `snippets` ran first and loaded the models (B01 18.1s,
-then 7.6s); the medians are within a second.
+Every question came out the same way in both -- the same outcome, SQL,
+attempts, rung and number of model calls -- so the original's run made no
+Supervisor call of its own. The one miss is B15 in both: its own wording,
+"Print Flyer, Paid Social and so on", read as a filter, as in the paraphrase
+set above, so `snippets` is 14 of 15 on this host. A question's state grew
+by what the ensemble copies up from the delivered run: 40.1 KB rendered as
+JSON against the pipeline's 37.3 KB for B04, 43.5 KB against 38.2 KB for B09.
 
-A question's state is bigger under the ensemble by what it copies up from
-the delivered run: 40.1 KB rendered as JSON against the pipeline's 37.3 KB
-for B04, and 43.5 KB against 38.2 KB for B09 -- the bulk of either is the run's
-own retrieval context, which the ensemble keeps whole as its candidate. It is
-the baseline a job of several candidates will be measured against.
+### Four wordings and a vote
 
+With the Paraphraser, the gate, the vote and selection built (Phase 2), the
+same fifteen, the same stack, three times on 2026-10-08 -- the second and
+third after fixes the run before found:
+
+| Run | Right | Missed | Agreement | Rewordings discarded | Total | Median |
+|---|---|---|---|---|---|---|
+| first | 13/15 | B13, B15 | 12 unanimous, 1 majority, 2 contested | 66: F3 8, F4 49, F5 9 | 2488.1s | 152.7s |
+| second | 13/15 | B07, B15 | 10 unanimous, 3 majority, 1 contested, 1 none | 52: F2 9, F3 7, F4 29, F5 7 | 2118.1s | 143.6s |
+| third | 13/15 | B07, B15 | 11 unanimous, 2 majority, 2 contested | 46: F2 1, F3 9, F4 26, F5 10 | 2265.0s | 135.7s |
+
+**What the first run found.** Two defects of the ensemble's own. The
+Paraphraser was shown the contract as the generator sees it, column names
+and all, and wrote them into its rewordings ("List the store count for
+every banner_name"): F4 discarded all ten of B03's and the Supervisor
+refused B11's. And it was told the measure in the Supervisor's own words --
+for B13, "average price difference" -- so it reworded "which competitor
+prices lowest relative to us" as "the smallest average price gap", two such
+runs agreed on a difference, and they outvoted the original's right answer,
+a percentage, which stood alone. The Paraphraser is now told what may not
+change in everyday words, the measure only as the generator is told it, and
+to add no column name of its own. F4's 49 discards also showed it reading
+each rewording's shape from the rewording's own words: "What is the store
+count?" read as a list, "the greatest" as unranked. Every run is now held to
+the contract read from the question as asked, as arch7 has it, and F4
+compares what the Supervisor read -- the entities, the measure, the period.
+
+**What the second run found.** E4, "the audit dropped every claim the
+narrator made", was the one reason a run could not vote -- six runs, right
+answers among them, B09's original's -- and it judges the narrative, not the
+rows. E4 is now the audit judging the rows wrong, and nothing else.
+
+**What the third run shows.** Every run could vote, and the vote decided two
+questions against the single run:
+
+- **B07** -- the original was right (34.20), and three rewordings agreed on
+  34.65 and outvoted it. They were near-copies -- "Can you tell me...", "I
+  need...", "Could you share..." the same sentence -- since almost every word
+  of B07 is a number or a name the Paraphraser must keep; at temperature
+  zero their few different words were enough to change the query, and the
+  same way each time. Three draws that agree are not three independent
+  draws.
+- **B15** -- the original read "Print Flyer, Paid Social and so on" as a
+  filter, as the single run does; one rewording read the channels as
+  examples and was right, and three read them as a filter and outvoted it.
+  The rewordings keep the question's names exactly as written, as they must,
+  so they keep its ambiguity too.
+
+So on this benchmark, today, the ensemble does not do better than one run a
+question -- 13 of 15 three times, against 14 of 15 -- and the two questions
+it loses are the two the paraphrase set found unstable. Agreement is the
+evidence the vote rests on, and where the rewordings share a failure the
+original avoids, it is evidence for the failure; the second wave and the
+Judge, still to come, are where a split vote is weighed rather than counted.
+
+**The other measures** (the third run). The gate discarded 46 of the 151
+rewordings written (one a retry's): F4 26 -- 11 of them B08's, read by the Supervisor as
+about products where B08 itself was read as about market share -- F5 10, F3
+9, F2 1. A question's runs were scored at more than one rung in 2 of 15, so
+a host serving several calls at once would have been asked for two models
+at once that often (R6). A question's state, rendered as JSON, is 154.2 KB
+at the median and 165.3 KB at the largest, at four runs a question, against
+40 KB at one. The reader's high-water mark at several slots (R5) could not
+be measured: this host serves one call at a time, so nothing ran at once.
+The ensemble made 20.7 model calls a question against the single run's 3.5,
+and took 135.7s a question at the median against 28.0s.
+
+### The paraphrase set, through the ensemble
+
+Phase 2's acceptance asks, beside 15 of 15, for the paraphrase set's
+stability under `ensemble` to be at least `single`'s. Measured 2026-10-08
+after the third run, on the same stack: `--config ensemble
+--paraphrase-set`, each of the sixty wordings asked through the ensemble as
+a question of its own -- so each was the original of its own runs --
+against Phase 0's `snippets`:
+
+| | `snippets` (Phase 0) | `ensemble` |
+|---|---|---|
+| **stability** | **13/15** | **13/15** |
+| the benchmark's own wordings | 14/15 | 13/15 |
+| the rewordings | 43/45 | 42/45 |
+| every wording | 57/60 | 55/60 |
+
+**The acceptance holds in the count, and only there.** The same thirteen
+questions are stable both ways, and B07 and B15 are unstable in both. Across
+the sixty wordings the ensemble gets two fewer right, both of them B07's.
+
+**Every wording's own run answered as the single run did.** Candidate 0 was
+right on the same 57 wordings as Phase 0's run and wrong on the same three:
+B07's rewording 2, and B15's own wording and rewording 1. What changed is
+the vote's doing.
+
+**The vote changed two answers, both from right to wrong.** On B07's own
+wording and its rewording 3 the original's 34.20 was outvoted by runs that
+agreed on 34.65. It set none of the three wrong originals right: B07's
+rewording 2 and B15's own wording each had one run that was right, outvoted
+2 to 1 and 3 to 1, and every run of B15's rewording 1 read the channels it
+names as a filter -- `IN ('Print Flyer', 'Paid Social')`, two rows of five.
+
+**B07's majorities share one mistake.** Every 34.65 joins the daily sales to
+the monthly item costs on the date and the product -- the grain trap B07 was
+written around. Every 34.20 rolls both up to the month, product and store
+first. The runs that fall into the trap come out with the same number, so
+they agree, and the vote counts agreement. B07's right answer was among the
+runs of all four of its wordings, and was delivered for one.
+
+**What agreement told.** Every wrong answer had a majority behind it, and
+one, B15's rewording 1, a unanimous one. Of the 47 unanimous answers 46 were
+right; of the 9 majorities, 5; of the 4 contested, all 4 -- B08's two and
+B13's two, each delivering the original's group, the largest or tied for
+it. B08's splits were one share computed two ways, 21.51 as a percentage
+and 0.22 as a fraction. A majority is final in arch7 (section 22.6): the
+second wave and the Judge, still to come, see only a vote without one, so
+neither would have seen B07's.
+
+**The other measures.** The gate discarded 196 of the 611 rewordings
+written: F4 106, F5 46, F3 37, F2 5, F1 2. Fifty-six wordings ran four
+times; B07's rewordings 2 and 3 three times, two of eleven rewordings kept;
+one of B08's and one of B09's twice, one kept. A wording's runs were scored
+at more than one rung for 13 of the 60, and its state was 152.3 KB at the
+median and 165.5 KB at the largest. The run made 1,253 model calls, 20.9 a
+wording, and took 9,028.6s, 138.1s a wording at the median, against Phase
+0's 1,692s in all.

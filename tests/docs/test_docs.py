@@ -547,8 +547,11 @@ def _parser_from(parse_args) -> argparse.ArgumentParser:
 
 
 def _table_row(text: str, name: str) -> str:
+    """The setting's own row: the one that starts with its name. A row that
+    only mentions it -- a node the setting governs -- says nothing of its
+    default."""
     for line in text.splitlines():
-        if line.startswith("|") and f"`{name}`" in line:
+        if line.startswith(f"| `{name}` |"):
             return line
     raise AssertionError(f"{name} has no row in the README config table")
 

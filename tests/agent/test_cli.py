@@ -656,3 +656,13 @@ def test_json_mode_carries_the_ensembles_record_and_the_delivered_runs_own_field
 def test_json_mode_for_one_run_has_no_ensemble_record(capsys):
     cli.answer(StubAgent({"sql": "SELECT 1", "trace": []}), "q", as_json=True, quiet=False)
     assert "ensemble" not in json.loads(capsys.readouterr().out)
+
+
+def test_an_ensemble_answer_is_printed_under_how_its_runs_agreed(capsys):
+    from nl2sql_agent.ensemble_state import Decision
+
+    state = {"result": {"columns": ["n"], "rows": [[10]], "truncated": False}, "narrative": "There are 10.",
+             "decision": Decision(chosen=0, line="Agreed by 4 of 4 independent runs of the question, each worded differently.")}
+    assert cli.answer(StubAgent(state), "q", as_json=False, quiet=True) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("Agreed by 4 of 4 independent runs of the question, each worded differently.\n\nThere are 10.")

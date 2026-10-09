@@ -344,8 +344,9 @@ class AgentState(TypedDict, total=False):
     clarification: str | None  # what to ask back when verdict == "ambiguous"
     #: The run was screened for it before it started (arch7 section 22.4): the
     #: ensemble's anchor screening, or a rewording's, seeded by `new_state`.
-    #: The Supervisor then makes no call and builds the contract from
-    #: `screening_fields` -- the screening's entities, measure and period.
+    #: The Supervisor then makes no call, and the run is held to the contract
+    #: `screening_fields` brings -- the anchor's -- or, without one, the one
+    #: built from the screening's entities, measure and period.
     #: Only the outer graph seeds one, from a screening it made itself; no
     #: client can, since neither is on the wire.
     screened: bool
@@ -432,8 +433,9 @@ def new_state(
 
     `screening` is a Supervisor's reading made for this run before it
     started -- `supervisor.screen`'s update -- which the run then trusts
-    (arch7 section 22.4). This keyword is the only way a state is marked
-    screened.
+    (arch7 section 22.4), and the contract the run is held to when it
+    carries one: the ensemble's anchor, read from the question as asked.
+    This keyword is the only way a state is marked screened.
     """
     return {
         "question": question,
@@ -443,7 +445,7 @@ def new_state(
         "clarification": (screening or {}).get("clarification"),
         "screened": screening is not None,
         "screening_fields": (
-            {name: screening.get(name) for name in SCREENING_FIELDS} if screening is not None else {}
+            {name: screening.get(name) for name in (*SCREENING_FIELDS, "contract")} if screening is not None else {}
         ),
         "answer_contract": AnswerContract(),
         "assumptions": [],

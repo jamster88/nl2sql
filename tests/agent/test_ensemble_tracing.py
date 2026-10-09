@@ -47,7 +47,9 @@ def test_a_question_is_one_trace_with_a_span_for_each_run_beneath_its_own_nodes(
 
     trace = client.only_trace()
     assert state["trace_id"] == trace.root.trace_id
-    assert [span.name for span in trace.root.children] == ["Supervisor", "Wave Planner", "Candidate Runs", "Answer"]
+    assert [span.name for span in trace.root.children] == [
+        "Supervisor", "Paraphraser", "Fidelity Gate", "Wave Planner", "Candidate Runs", "Agreement", "Fusion", "Answer",
+    ]
     [run] = trace.root.child("Candidate Runs").children
     assert run.name == "Candidate 0" and run.inputs == {"question": "How many stores are there?"}
     # Beneath it, the run as the pipeline's own trace shows one -- its
@@ -60,8 +62,11 @@ def test_a_question_is_one_trace_with_a_span_for_each_run_beneath_its_own_nodes(
     # The candidate runs' span records a line per run, not the runs.
     assert trace.root.child("Candidate Runs").outputs == {
         "candidates": [{"index": 0, "wording": "How many stores are there?", "outcome": "answered", "sql": SQL,
-                        "ms": state["candidates"][0].ms}]
+                        "ms": state["candidates"][0].ms, "admissible": False, "reasons": [], "group": None}]
     }
+    # The vote's span records the same lines, marked.
+    [voted] = trace.root.child("Agreement").outputs["candidates"]
+    assert (voted["admissible"], voted["group"]) == (True, 0)
 
 
 def test_the_trace_is_tagged_with_the_agreement_and_the_whole_questions_cost():

@@ -199,6 +199,24 @@ class QuestionResult:
     #: set's rewordings (`benchmarks/paraphrases.py`), whose words `question`
     #: then holds.
     wording: int = 0
+    #: Under the ensemble (arch7): how the runs agreed -- `unanimous`,
+    #: `majority`, `contested`, `single` or `none` -- of how many, how many
+    #: agreed, the rewordings the fidelity gate discarded by the check that
+    #: discarded them, the rung each run's generator was scored at, and the
+    #: question's state rendered as JSON, in bytes. Empty for one run.
+    agreement: str = ""
+    candidates: int = 0
+    agreed: int = 0
+    rejections: dict[str, int] = field(default_factory=dict)
+    candidate_rungs: list[str] = field(default_factory=list)
+    state_bytes: int = 0
+    #: Every rewording the Paraphraser wrote: its words, what it changed,
+    #: and whether the gate kept it or why not -- where a false rejection
+    #: shows, and so where the gate's vocabulary grows from.
+    rewordings: list[dict[str, Any]] = field(default_factory=list)
+    #: Every run, in a line: its wording, how it ended, whether it could
+    #: vote and why not, its group, its SQL, and which was delivered.
+    runs: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def label(self) -> str:
@@ -331,6 +349,45 @@ class BenchmarkReport:
             if result.rung:
                 counts[result.rung] = counts.get(result.rung, 0) + 1
         return counts
+
+    # --- the ensemble (arch7 section 11) ----------------------------------
+
+    @property
+    def ensembled(self) -> bool:
+        """Whether the questions were asked through the ensemble."""
+        return any(result.candidates for result in self.results)
+
+    def agreement_levels(self) -> dict[str, int]:
+        """How many questions the runs agreed on at each level."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            if result.agreement:
+                counts[result.agreement] = counts.get(result.agreement, 0) + 1
+        return counts
+
+    @property
+    def agreed_on_wrong(self) -> int:
+        """Questions a majority or all of the runs agreed on, wrongly: the
+        failure agreement cannot catch, and the one worth reading first."""
+        return sum(1 for r in self.results if r.agreement in ("unanimous", "majority") and not r.correct)
+
+    def fidelity_rejections(self) -> dict[str, int]:
+        """Rewordings the fidelity gate discarded, by check, across the run."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            for check, count in result.rejections.items():
+                counts[check] = counts.get(check, 0) + count
+        return dict(sorted(counts.items()))
+
+    @property
+    def rung_spread(self) -> int:
+        """Questions whose runs' generators were scored at more than one rung:
+        how often a host serving several calls at once would be asked for two
+        models at once (R6 of arch7's risks by phase)."""
+        return sum(1 for r in self.results if len(set(r.candidate_rungs)) > 1)
+
+    def state_sizes(self) -> list[int]:
+        return sorted(r.state_bytes for r in self.results if r.state_bytes)
 
     def stage_totals(self) -> dict[str, float]:
         """Seconds spent in each pipeline stage across the whole run."""

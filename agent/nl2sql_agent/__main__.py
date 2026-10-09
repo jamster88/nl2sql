@@ -174,6 +174,11 @@ def answer(agent: Any, question: str, *, as_json: bool, quiet: bool) -> int:
     if state.get("result") is None:
         print(state.get("answer") or "(no answer)")
         return 0
+    # Under the ensemble (arch7) the answer opens with how its runs agreed.
+    line = getattr(state.get("decision"), "line", "")
+    if line:
+        print(line)
+        print()
     narrative = (state.get("narrative") or "").strip()
     if narrative:
         print(narrative)

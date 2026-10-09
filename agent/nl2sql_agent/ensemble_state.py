@@ -152,12 +152,32 @@ class Decision:
     line: str = ""  # the agreement line, as rendered
 
 
+def upsert_candidates(left: list[Candidate], right: list[Candidate]) -> list[Candidate]:
+    """A wave's runs appended; a run already there updated where it stands.
+
+    `answer` adds candidates and `validate` marks them -- admissible or not,
+    their group -- so a candidate comes back with its own index and replaces
+    itself. Nothing is ever removed: append-only, as arch7 section 22.2 has
+    it, in what ran.
+    """
+    merged = list(left or [])
+    where = {candidate.index: position for position, candidate in enumerate(merged)}
+    for candidate in right or []:
+        if candidate.index in where:
+            merged[where[candidate.index]] = candidate
+        else:
+            where[candidate.index] = len(merged)
+            merged.append(candidate)
+    return merged
+
+
 class EnsembleState(TypedDict, total=False):
-    """arch7 section 22.2, field for field, and three fields more.
+    """arch7 section 22.2, field for field, and four fields more.
 
     `screening` is the anchor screening's reading, kept to seed the
-    original's run, and `wave_plan` the candidates the current wave runs
-    (the implementation specification's sections 3.8.1 and 3.8.5);
+    original's run, `wave_plan` the candidates the current wave runs and
+    `paraphrase_retried` the Paraphraser's one retry spent (the
+    implementation specification's sections 3.8.1, 3.8.5 and 3.8.4);
     `parallel_calls` is how many runs the question was allowed at once,
     which its record on the wire states.
     """
@@ -174,12 +194,14 @@ class EnsembleState(TypedDict, total=False):
     answer_contract: AnswerContract
     screening: dict[str, Any] | None
     paraphrases: list[Paraphrase]
+    #: The Paraphraser's one retry has been spent (arch7 section 22.3).
+    paraphrase_retried: bool
     waves: int
     deadline: float  # monotonic; 0.0 when none
     wave_plan: list[int]
 
     # --- the candidate runs ------------------------------------------------
-    candidates: Annotated[list[Candidate], operator.add]
+    candidates: Annotated[list[Candidate], upsert_candidates]
 
     # --- stage 6 -----------------------------------------------------------
     groups: list[Group]
@@ -216,6 +238,7 @@ def new_ensemble_state(
         "answer_contract": AnswerContract(),
         "screening": None,
         "paraphrases": [],
+        "paraphrase_retried": False,
         "waves": 0,
         "deadline": deadline,
         "wave_plan": [],

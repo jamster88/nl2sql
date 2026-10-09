@@ -298,8 +298,8 @@ event: `{"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
 "parallel_calls": 1, "judge": true, "fuse_columns": true}`. With it enabled,
 `pipeline.nodes` lists the ensemble's own nodes (`screen`, `refuse`,
 `plan_wave`, `answer`, `deliver`) before the pipeline's. A server older than
-7.0 sends no `ensemble`. The ensemble as built so far asks the original
-question alone, whatever `paraphrases` says.
+7.0 sends no `ensemble`. As built so far the ensemble runs one wave --
+the original and `paraphrases` rewordings -- whatever `waves` says.
 
 Two of those limits describe the request rather than the answer:
 
@@ -407,11 +407,11 @@ for 6.3 needs nothing new. `ensemble` is the record beside it:
 
 ```jsonc
 "ensemble": {
-  "agreement": {"admissible": 1, "agreed": 1, "total": 1,
-                "level": "single",       // unanimous | majority | judged | contested | single | none
-                "why": "asked 1 way"},
+  "agreement": {"admissible": 4, "agreed": 3, "total": 4,
+                "level": "majority",     // unanimous | majority | judged | contested | single | none
+                "why": "3 of the 4 that could vote agree"},
   "chosen": 0,                           // the delivered run; null when none could be (level "none")
-  "fused_from": [0],
+  "fused_from": [0, 1, 3],               // the winning group
   "columns_fused": true,                 // ENSEMBLE_FUSE_COLUMNS for this run
   "joined_columns": [], "declined_columns": [],
   "claims_added": 0, "claims_dropped": 0,
@@ -421,23 +421,40 @@ for 6.3 needs nothing new. `ensemble` is the record beside it:
     "index": 0, "wording": "What was total net sales for Produce in FY2025?",
     "origin": "original", "wave": 1, "changed": "",
     "outcome": "answered",               // answered | gave_up | refused
-    "admissible": true, "reasons": [],   // why it could not vote, by rule: "E1 answered: gave_up"
-    "sql": "SELECT ...", "signature": "", "attempts": 1, "group": null,
+    "admissible": true, "reasons": [],   // why it could not vote, by rule: "E1 answered: gave up after 7 attempts"
+    "sql": "SELECT ...", "signature": "719279.97", "attempts": 1, "group": 0,
     "duration_ms": 61210.0,
     "trace": [ /* that run's nodes */ ]
+  }, {
+    "index": 2, "wording": "Report the Produce department's net sales for FY2025.",
+    "origin": "paraphrase", "wave": 1, "changed": "instruction form",
+    /* ... */
   }],
-  "discarded": [],                       // rewordings the fidelity gate would not run, and why
+  "discarded": [{"index": 4, "text": "What were Produce sales in 2024?", "changed": "shorter",
+                 "reason": "F1 numbers: 2025 missing; 2024 added"}],
   "parallel_calls": 1                    // OLLAMA_PARALLEL_CALLS: runs this server makes at once
 }
 ```
 
-As built so far the ensemble asks the original alone, so there is one
-candidate, `level` is `single` when it answered and `none` when it gave up
--- whose `answer` and `error` are then the run's own give-up -- and the
-fields for rewordings, votes and fusion are empty. A refused question has no
-candidate at all. Without administrator detail, a candidate's `reasons` keep
-the rule's name and lose what follows it, as the error maps do. A client
-reading the agreement:
+Each candidate is one run of the pipeline on one wording: `0` the question
+as asked, `1` and up the rewordings, numbered in the order the Paraphraser
+wrote them. A rewording runs only after the fidelity gate kept it, so
+`discarded` lists the ones that never ran and the check that stopped each:
+F1 numbers, F2 literals, F3 polarity, F5 distinct (in code), or F4 (the
+Supervisor's reading of it: a verdict other than `proceed`, or another
+contract than the question's). `admissible` is whether the run could vote,
+and `reasons` why not, by rule (E1 answered, E2 faithful, E3 rows, E4
+audited, E5 comparable); `group` is the agreeing group it fell in, `0` the
+largest, and `signature` its result's key fact. `chosen` is the run whose
+rows, SQL and claims were delivered; the answer opens with a sentence
+saying how the runs agreed. As built so far there is one wave and no Judge
+or fusion: `judged` is null, `joined_columns`, `declined_columns` and
+`dissent` are empty, and a vote with no majority is delivered as
+`contested`. When no run could vote, `level` is `none`, `chosen` is null and
+the answer and `error` are the original's own give-up. A refused question
+has no candidate at all. Without administrator detail, a candidate's
+`reasons` keep the rule's name and lose what follows it, as the error maps
+do. A client reading the agreement:
 
 ```python
 answer = job["answer"]

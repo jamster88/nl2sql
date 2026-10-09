@@ -30,3 +30,11 @@ catalog's shape.
 models it will route to, and says: how many models the calls are shared
 between, or why every one goes to `OLLAMA_MODEL` -- the catalog describes
 another host, nothing in it has been measured, or routing is off.
+
+**Two tasks more since 7.0.** The ensemble (arch7) adds the Paraphraser and
+the Judge to the router's tasks. The scanner and the calibrator do not know
+them yet, and a catalog -- schema 2, as every catalog built before 7.0 is --
+is read with the two as unmeasured, so `OLLAMA_MODEL` answers them and the
+routing table's notes say so. Routing on measured suitability only, that is
+what any task nothing has measured gets. A catalog of a schema the agent
+does not know is refused, as before.

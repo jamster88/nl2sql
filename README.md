@@ -53,32 +53,44 @@ docker compose --profile '*' down                 # stop; your data is kept
 ## What's new in 7.0
 
 7.0 is being built, and is not published yet. It answers a hard question
-several ways and votes: the question reworded three to ten ways, the
-pipeline run once per wording, and the answers checked against each other
-before one is chosen ([the
+several ways and votes ([the
 design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md)). So far:
 
+- **The question, asked four ways.** Every question is screened once, then
+  reworded by a model -- up to ten rewordings, each held to the original's
+  numbers, names, direction and answer contract by a fidelity gate, the
+  Supervisor reading each one -- and the pipeline runs on the original and
+  the first three that pass. The runs are checked against their own
+  question and against each other with the benchmark's scorer, and the
+  largest agreeing group's answer is delivered, opening with how the runs
+  agreed: "Agreed by 4 of 4 independent runs of the question, each worded
+  differently." A second wave on disagreement, a Judge, and fusing what the
+  agreeing runs found are still to come. Measured on the fifteen benchmark
+  questions, it scores 13 to one run's 14 so far, and on the sixty wordings
+  of the paraphrase set 55 to 57: where rewordings share a failure the
+  original avoids, they outvote it ([the
+  measurement](docs/benchmark.md#four-wordings-and-a-vote)).
+- **The record of every run**, in `--json` and the REST answer's `ensemble`:
+  each wording, its SQL and outcome, whether it could vote, and every
+  rewording the gate discarded with the check it failed. Progress lines name
+  the run, and MLflow keeps one trace per question with each run inside it.
+  `--no-ensemble` (`ENSEMBLE_ENABLED=false`) is the pipeline alone.
 - **How much the wording matters, measured.** `python
   benchmarks/run_benchmark.py --paraphrase-set` asks each benchmark
-  question its own way and three others, and reports the questions every
-  wording of which came out right -- see [The paraphrase
-  set](docs/benchmark.md#the-paraphrase-set).
-- **The checks a rewording must pass**, in code: the original's numbers,
-  names and directions, kept, and enough changed to be a different draw.
-- **The benchmark and calibration scripts run on a host again**, which
-  they had not since 6.2.
-- **The ensemble's plumbing, with nothing riding on it yet.** Every
-  question now goes through the outer graph: screened once, run as the first
-  of its wordings, and delivered as it ran -- the same answer as 6.3, with
-  the record of the run beside it in `--json` and the REST answer's
-  `ensemble`, progress lines that name the run, and one MLflow trace with
-  the run as a span inside it. `--no-ensemble` (`ENSEMBLE_ENABLED=false`)
-  is the pipeline alone.
+  question its own way and three others; `--config ensemble` asks it
+  through the ensemble -- see [The paraphrase
+  set](docs/benchmark.md#the-paraphrase-set) and [The ensemble
+  configuration](docs/benchmark.md#the-ensemble-configuration).
 - **One gate on the model host.** Every model call takes a slot first, and
   there is one slot unless `OLLAMA_PARALLEL_CALLS` says the host serves
   more. Upgrading from 6.3: the REST API's two workers, which called the
   host at once, now take turns; a host that serves two calls needs
   `OLLAMA_PARALLEL_CALLS=2` to keep them.
+- **Two routing tasks more**, the Paraphraser and the Judge. A model catalog
+  built before 7.0 is still read: the two are unmeasured and go to
+  `OLLAMA_MODEL`.
+- **The benchmark and calibration scripts run on a host again**, which
+  they had not since 6.2.
 
 ## What's new in 6.3
 

@@ -364,3 +364,37 @@ def test_a_candidates_step_is_timed_like_any_other_and_forwarded_without_its_ind
     timer("generate_sql", "SELECT 1", candidate=0)
     assert [name for name, _ in timer.timing.stages] == ["generate_sql"]
     assert seen == [("generate_sql", "SELECT 1")]
+
+
+# ---------------------------------------------------------------------------
+# The ensemble's measures (arch7 section 11)
+# ---------------------------------------------------------------------------
+
+
+def _ensembled(qid, outcome, level, *, rejections=None, rungs=("light",), size=1000, runs=4) -> QuestionResult:
+    asked = result(qid, "schema", outcome, 1.0)
+    asked.agreement, asked.candidates, asked.agreed = level, runs, 3
+    asked.rejections = dict(rejections or {})
+    asked.candidate_rungs, asked.state_bytes = list(rungs), size
+    return asked
+
+
+def test_one_run_a_question_is_not_the_ensemble():
+    report = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)])
+    assert not report.ensembled
+    assert report.agreement_levels() == {} and report.fidelity_rejections() == {} and report.state_sizes() == []
+
+
+def test_the_ensembles_agreement_rejections_spread_and_size():
+    report = BenchmarkReport(results=[
+        _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "light"), size=900),
+        _ensembled("B02", WRONG, "majority", rejections={"F2": 1, "F4": 1}, rungs=("light", "standard"), size=300),
+        _ensembled("B03", WRONG, "contested", size=600),
+        _ensembled("B04", CORRECT, "unanimous"),
+    ])
+    assert report.ensembled
+    assert report.agreement_levels() == {"unanimous": 2, "majority": 1, "contested": 1}
+    assert report.agreed_on_wrong == 1, "the majority that agreed on a wrong answer; contested is not agreement"
+    assert report.fidelity_rejections() == {"F2": 1, "F4": 3}
+    assert report.rung_spread == 1
+    assert report.state_sizes() == [300, 600, 900, 1000]

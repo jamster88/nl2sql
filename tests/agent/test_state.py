@@ -128,13 +128,23 @@ def test_a_screening_made_for_the_run_is_seeded_and_marks_it_screened():
     state = new_state("q", screening=screening)
     assert (state["verdict"], state["intent"], state["clarification"]) == ("proceed", "compare", None)
     assert state["screened"] is True
-    assert state["screening_fields"] == {"entities": ["store"], "measure": "net sales", "period": "FY2025"}
+    assert state["screening_fields"] == {"entities": ["store"], "measure": "net sales", "period": "FY2025",
+                                         "contract": None}
 
 
 def test_a_screening_that_said_little_still_seeds_a_complete_state():
     state = new_state("q", screening={})
     assert (state["verdict"], state["intent"], state["screened"]) == ("proceed", "aggregate", True)
-    assert state["screening_fields"] == {"entities": None, "measure": None, "period": None}
+    assert state["screening_fields"] == {"entities": None, "measure": None, "period": None, "contract": None}
+
+
+def test_a_screening_can_bring_the_contract_the_run_is_held_to():
+    """The ensemble's: every run held to the anchor, read from the question
+    as asked (arch7 section 22.2)."""
+    from nl2sql_agent.state import AnswerContract
+
+    anchor = AnswerContract(measure="units", ranked=True, limit=5)
+    assert new_state("q", screening={"verdict": "proceed", "contract": anchor})["screening_fields"]["contract"] is anchor
 
 
 def test_a_principal_is_carried_for_row_level_security():

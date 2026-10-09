@@ -54,14 +54,17 @@ from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
 
 log = logging.getLogger(__name__)
 
-TASKS = ("supervisor", "generator", "reflection", "narrator", "repair")
-#: The ensemble's two tasks (arch7 section 22.10), not the router's until the
-#: Paraphraser and the Judge are built: their pins are read and checked at
-#: startup as the five's are, and route nothing. Do not route a call as one
-#: of these before it is in TASKS -- the table has no cell for it.
-PENDING_TASKS = ("paraphraser", "judge")
-#: The catalog layout this router reads (models/build_catalog.py SCHEMA_VERSION).
-CATALOG_SCHEMA = 2
+#: The five of arch5.2 and, since 7.0, the ensemble's two (arch7 section
+#: 22.10): the Paraphraser and the Judge.
+TASKS = ("supervisor", "generator", "reflection", "narrator", "repair", "paraphraser", "judge")
+#: The two tasks a catalog of schema 2 knows nothing about.
+ENSEMBLE_TASKS = ("paraphraser", "judge")
+#: The catalog layout this router reads: 3, with the two tasks. A catalog of
+#: schema 2 -- what `models/build_catalog.py` wrote until 7.0, and every
+#: calibrated host's -- is read as one with the two tasks unmeasured, so they
+#: go to OLLAMA_MODEL; any other schema is refused.
+CATALOG_SCHEMA = 3
+LENIENT_SCHEMAS = (2,)
 OLLAMA_PORT = 11434
 CALIBRATION = "calibration"
 
@@ -124,13 +127,34 @@ def load_catalog(path: str) -> dict[str, Any]:
         ) from exc
     except ValueError as exc:
         raise RoutingError(f"{path} is not a model catalog: {exc}") from exc
-    if not isinstance(catalog, dict) or catalog.get("schema") != CATALOG_SCHEMA:
-        found = catalog.get("schema") if isinstance(catalog, dict) else None
+    found = catalog.get("schema") if isinstance(catalog, dict) else None
+    if found in LENIENT_SCHEMAS:
+        return lenient(catalog)
+    if found != CATALOG_SCHEMA:
         raise RoutingError(
-            f"{path} is a catalog of schema {found}; this agent reads schema {CATALOG_SCHEMA}. "
-            "Re-run `python3 models/build_catalog.py` to rebuild it."
+            f"{path} is a catalog of schema {found}; this agent reads schema {CATALOG_SCHEMA} "
+            f"(and {', '.join(map(str, LENIENT_SCHEMAS))}). Re-run `python3 models/build_catalog.py` to rebuild it."
         )
     return catalog
+
+
+def lenient(catalog: dict[str, Any]) -> dict[str, Any]:
+    """A schema-2 catalog as schema 3: the ensemble's two tasks added and
+    unmeasured, so nothing is routed for them and they go to OLLAMA_MODEL --
+    routing on measured suitability only, as everything else is. The
+    catalog's own schema is kept, so the routing table can say it was read
+    this way."""
+    tasks = list(catalog.get("tasks") or [])
+    tasks += [task for task in ENSEMBLE_TASKS if task not in tasks]
+    budgets = {"paraphraser": 8192, "judge": 16384, **(catalog.get("task_budgets") or {})}
+    models = []
+    for model in catalog.get("models", []):
+        model = dict(model)
+        for part in ("prior", "suited"):
+            model[part] = {**(model.get(part) or {}), **{task: None for task in ENSEMBLE_TASKS}}
+        model["suited_from"] = {**(model.get("suited_from") or {}), **{task: "unmeasured" for task in ENSEMBLE_TASKS}}
+        models.append(model)
+    return {**catalog, "tasks": tasks, "task_budgets": budgets, "models": models}
 
 
 def listed_models(base_url: str, timeout: float) -> set[str] | None:
@@ -373,8 +397,11 @@ def build_table(
                 notes.append(f"{setting} pins {model}, which the host does not serve: pin ignored")
                 continue
             cells[(task, rung)] = Cell(model, anchor if model != anchor else None, f"pinned by {setting}")
-    for task in PENDING_TASKS:
-        parse_pin(getattr(settings, f"model_route_{task}"), f"MODEL_ROUTE_{task.upper()}")
+    if catalog is not None and catalog.get("schema") in LENIENT_SCHEMAS:
+        notes.append(
+            f"the catalog is schema {catalog.get('schema')}: {' and '.join(ENSEMBLE_TASKS)} are unmeasured, "
+            "so OLLAMA_MODEL answers them until models/calibrate.py measures them"
+        )
 
     table_models = {cell.model for cell in cells.values()} | {anchor}
     if len(table_models) > settings.model_max_loaded:

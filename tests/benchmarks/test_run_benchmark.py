@@ -354,6 +354,8 @@ def test_an_ensemble_answer_is_scored_from_what_it_delivered_and_timed_from_ever
 
     assert (result.outcome, result.sql, result.attempts) == (CORRECT, "SELECT 10", 3)
     assert (result.examples, result.knowledge_chunks, result.rung) == (["Q07"], 1, "standard")
+    assert (result.agreement, result.candidates, result.candidate_rungs) == ("none", 1, ["standard"])
+    assert result.rejections == {} and result.state_bytes > 0
     assert result.timing.as_dict() == {"screen": 0.1, "deliver": 0.001, "generate_sql": 0.8}
     assert result.model_calls == {"screen": 1, "generate_sql": 1}
     assert [route["node"] for route in result.routes] == ["screen", "generate_sql"]
@@ -900,3 +902,67 @@ def test_running_it_as_a_script_calls_main_and_exits_with_its_code():
     finally:
         sys.argv = saved_argv
     assert raised.value.code == 0
+
+
+def test_what_the_ensemble_did_with_a_question_is_measured():
+    """arch7 section 11 and the risks document: the agreement, the rewordings
+    discarded by check, the rung each run was scored at, the state's size."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.ensemble_state import Agreement, Candidate, Paraphrase, new_ensemble_state
+    from nl2sql_agent.state import new_state
+
+    def run(index, rung):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state={**new_state("w"), "complexity": SimpleNamespace(rung=rung)})
+
+    state = {
+        **new_ensemble_state("q"),
+        "agreement": Agreement(admissible=3, agreed=3, total=3, level="unanimous"),
+        "paraphrases": [Paraphrase(1, "a", "x", status="faithful"),
+                        Paraphrase(2, "b", "y", status="discarded", reason="F4 contract: period"),
+                        Paraphrase(3, "c", "z", status="discarded", reason="F1 numbers: 5 added"),
+                        Paraphrase(4, "d", "z", status="discarded", reason="F4 verdict: injection")],
+        "candidates": [run(2, "standard"), run(0, "light"), run(1, "light")],
+    }
+    measured = run_benchmark.ensemble_measures(state)
+    assert (measured["agreement"], measured["agreed"], measured["candidates"]) == ("unanimous", 3, 3)
+    assert measured["rejections"] == {"F4": 2, "F1": 1}
+    assert measured["rewordings"][1] == {"index": 2, "text": "b", "changed": "y", "status": "discarded",
+                                         "reason": "F4 contract: period"}
+    assert [(run["index"], run["outcome"], run["chosen"]) for run in measured["runs"]] == [
+        (0, "answered", False), (1, "answered", False), (2, "answered", False)]
+    assert measured["candidate_rungs"] == ["light", "light", "standard"]
+    assert measured["state_bytes"] > 0
+    assert run_benchmark.ensemble_measures(new_state("q")) == {}
+
+
+def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
+    from tests.benchmarks.test_runner import _ensembled
+
+    report = BenchmarkReport(label="ensemble", results=[
+        _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard"), size=2048),
+        _ensembled("B02", WRONG, "majority", size=1024, runs=3),
+    ])
+    run_benchmark.print_report(report)
+    out = capsys.readouterr().out
+    assert "ENSEMBLE" in out
+    assert "agreement            majority 1, unanimous 1" in out
+    assert "agreed, but wrong    1" in out
+    assert "runs per question    4 (median), 3 to 4" in out
+    assert "rewordings discarded 2: F4 2" in out
+    assert "runs at mixed rungs  1 of 2 question(s)" in out
+    assert "state, as JSON       2.0 KB median, 2.0 KB largest" in out
+    [config] = run_benchmark.as_json([report])["configurations"]
+    assert config["ensemble"]["agreement"] == {"unanimous": 1, "majority": 1}
+    assert config["results"][0]["candidate_rungs"] == ["light", "standard"]
+    plain = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0, [])])
+    assert run_benchmark.as_json([plain])["configurations"][0]["ensemble"] is None
+
+
+def test_a_report_with_no_state_measured_says_nothing_of_its_size(capsys):
+    from tests.benchmarks.test_runner import _ensembled
+
+    run_benchmark.print_report(BenchmarkReport(label="ensemble", results=[_ensembled("B01", CORRECT, "single", size=0)]))
+    out = capsys.readouterr().out
+    assert "ENSEMBLE" in out and "state, as JSON" not in out

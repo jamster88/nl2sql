@@ -269,10 +269,10 @@ class Settings:
     # --- arch7: asking it several ways --------------------------------------
     # The question reworded, the pipeline run once per wording, the results
     # validated against each other and one chosen (arch7 section 22). Off is
-    # arch6 to the answer. 7.0 is built in phases, and so far the original is
-    # the only wording asked: the outer graph screens it and runs it once, so
-    # ENSEMBLE_ENABLED and OLLAMA_PARALLEL_CALLS act and the rest are read,
-    # checked and carried for the stages that will read them.
+    # arch6 to the answer. 7.0 is built in phases, and so far there is one
+    # wave and no Judge or fusion: ENSEMBLE_WAVES, ENSEMBLE_DEADLINE_SECONDS,
+    # ENSEMBLE_JUDGE_ENABLED and ENSEMBLE_MAX_CLAIMS are read, checked and
+    # carried for the stages that will read them.
     ensemble_enabled: bool = True
     # Rewordings in the first wave, beside the original: 3 to 10.
     ensemble_paraphrases: int = 3
@@ -294,10 +294,8 @@ class Settings:
     # host this was built against serves one call at a time. Set it no higher
     # than the host's own OLLAMA_NUM_PARALLEL.
     ollama_parallel_calls: int = 1
-    # Pins for the ensemble's two routing tasks, as the five above. Checked
-    # at startup like them (`router.build_table`) and routed by nothing yet:
-    # the Paraphraser and the Judge are not tasks of the router until they
-    # are built, so a pin here changes no call.
+    # Pins for the ensemble's two routing tasks, the Paraphraser and the
+    # Judge, as the five above.
     model_route_paraphraser: str = ""
     model_route_judge: str = ""
 

@@ -430,3 +430,121 @@ def test_the_contract_names_only_the_measure_it_supplies_itself(resources):
     asked = build_contract("net sales by store", entities=["store"], measure="gross margin",
                            period="none", resources=resources)
     assert "the figure the question asks for, as a column" in render_contract(asked)
+
+
+# ---------------------------------------------------------------------------
+# F4: does a rewording's reading build the original's contract? (arch7)
+# ---------------------------------------------------------------------------
+
+from nl2sql_agent.contract import (  # noqa: E402
+    ContractResources as _Resources,
+    Label as _Label,
+    LabelMap as _LabelMap,
+    build_contract as _build,
+    differences,
+    same_contract,
+)
+
+_F4 = _Resources(
+    label_map=_LabelMap([_Label(table="dim_store", key="store_key", label="store_name")],
+                        names=[("dim_department", "department_name")]),
+    fiscal_year=2025,
+)
+
+
+def _read(question: str, **reading) -> AnswerContract:
+    return _build(question, resources=_F4, **reading)
+
+
+def test_the_same_reading_of_two_wordings_is_the_same_contract():
+    a = _read("which store sold the most in FY2025?", entities=["store"], measure="net sales", period="FY2025")
+    b = _read("which store had the highest sales in fiscal year 2025?", entities=["stores"],
+              measure="net sales", period="fiscal year 2025", intent="compare")
+    assert same_contract(a, b) and differences(a, b) == []
+
+
+@pytest.mark.parametrize(("field", "other", "says"), [
+    ("entities", {"entities": ["department"]}, "entities [store_name] vs [department_name]"),
+    ("period", {"period": "FY2024"}, "period 'FY2025' vs 'FY2024'"),
+    ("period", {"period": "fiscal quarter 4 of FY2025"}, "period 'FY2025' vs 'fiscal quarter 4 of FY2025'"),
+])
+def test_a_reading_that_differs_in_one_field_is_another_contract(field, other, says):
+    reading = {"entities": ["store"], "measure": "units", "period": "FY2025", **other}
+    a = _read("which store sold the most units in FY2025?", entities=["store"], measure="units", period="FY2025")
+    b = _read("which store sold the most units in FY2025?", **reading)
+    assert not same_contract(a, b)
+    assert differences(a, b) == [says]
+
+
+def test_whether_the_period_was_the_default_and_whose_year_it_was_are_compared():
+    named = _read("total net sales", measure="net sales", period="FY2025")
+    defaulted = _read("total net sales", measure="net sales")
+    assert differences(named, defaulted) == [
+        "default period False vs True", "fiscal year None vs 2025",
+    ]
+
+
+def test_ranked_and_the_row_count_are_compared():
+    top10 = _read("top 10 stores", entities=["store"])
+    assert "ranked True vs False" in differences(top10, _read("the stores", entities=["store"]))
+    assert differences(top10, _read("top 5 stores", entities=["store"])) == ["row count 10 vs 5"]
+
+
+@pytest.mark.parametrize(("left", "right"), [
+    ("fiscal year 2025", "FY2025"),
+    ("fiscal year 2025", "fy 2025"),
+    ("fiscal quarter 4 of fiscal year 2025", "fiscal Q4 of FY2025"),
+    ("fiscal quarter 4 of fiscal year 2025", "the fourth fiscal quarter of fiscal year 2025"),
+    ("fiscal month 12 of fiscal year 2025", "twelfth fiscal month of FY2025"),
+    ("fiscal month 12 of fiscal year 2025", "12th fiscal month of fiscal year 2025"),
+])
+def test_a_period_is_the_same_however_it_is_spelled(left, right):
+    """Grown from the paraphrase set: the Supervisor copies the period in the
+    question's own words, so a faithful rewording's period is spelled as the
+    rewording spelled it."""
+    a = _read("q", measure="m", period=left)
+    b = _read("q", measure="m", period=right)
+    assert not [d for d in differences(a, b) if d.startswith("period")]
+
+
+def test_no_period_is_no_period_however_the_supervisor_says_so():
+    """With nothing to default -- no measure -- "none" and nothing are one."""
+    assert same_contract(_read("which banner is store 7?", period="none"), _read("which banner is store 7?"))
+
+
+@pytest.mark.parametrize(("left", "right"), [
+    ("fiscal year 2025", "fiscal year 2024"),
+    ("fiscal quarter 4 of FY2025", "fiscal month 4 of FY2025"),
+    ("fiscal year 2025", "calendar year 2025"),
+])
+def test_a_different_period_is_still_a_different_period(left, right):
+    assert differences(_read("q", measure="m", period=left), _read("q", measure="m", period=right))
+
+
+def test_net_sales_named_in_other_words_is_not_another_measure():
+    """Grown: "net sales" named by the reading is not the default stated, and
+    "total net sales" read one way and "net sales" the other are one measure."""
+    total = _read("what were total net sales in FY2025?", measure="total net sales", period="FY2025")
+    plain = _read("what did net sales come to in FY2025?", measure="net sales", period="FY2025")
+    assert same_contract(total, plain) and same_contract(plain, total)
+
+
+def test_a_ranking_that_names_another_measure_than_the_default_differs():
+    """The case the measure check is for: one reading names units, the other
+    none -- so its contract would tell the generator to rank by net sales."""
+    units = _read("top 5 stores by units sold", entities=["store"], measure="units sold")
+    default = _read("top 5 stores", entities=["store"])
+    assert differences(units, default) == ["measure None vs 'net sales'"]
+
+
+def test_an_entity_the_label_map_cannot_resolve_is_not_compared():
+    """It is shown to nobody and checks nothing: the Supervisor's "total", or
+    "market share"."""
+    a = _read("what is our market share?", entities=["market share"], measure="share", period="FY2025")
+    b = _read("what share of the market do we hold?", entities=["total"], measure="share", period="FY2025")
+    assert same_contract(a, b)
+
+
+def test_a_period_written_as_none_is_no_period():
+    """The Supervisor's words for "no period", should a contract carry them."""
+    assert same_contract(AnswerContract(period="n/a"), AnswerContract(period=None))

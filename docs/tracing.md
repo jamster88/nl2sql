@@ -49,6 +49,11 @@ span beneath them, holding that run's agents as above:
 nl2sql                      AGENT       the question in, the delivered answer out
   Supervisor                AGENT       the screening, once for the question
     qwen3.8-256k:latest     CHAT_MODEL
+  Paraphraser               AGENT       the rewordings, in one call
+    <model>                 CHAT_MODEL
+  Fidelity Gate             GUARDRAIL   each rewording that passed the checks in
+    <model>                 CHAT_MODEL  code, read by the Supervisor (F4)
+    ...
   Wave Planner              TASK
   Candidate Runs            CHAIN       a line per run: its wording, outcome and SQL
     Candidate 0             AGENT       the question as asked
@@ -56,14 +61,17 @@ nl2sql                      AGENT       the question in, the delivered answer ou
       Schema Retriever      RETRIEVER
       ...
       Answer                TASK
+    Candidate 1             AGENT       the first rewording, the same again
+    ...
+  Agreement                 EVALUATOR   each run marked: could it vote, its group
+  Fusion                    TASK        the run chosen
   Answer                    TASK        what was delivered
 ```
 
-The trace gains two tags, `nl2sql.agreement` (`1/1 single`: agreed of run,
-and the level) and `nl2sql.candidates`, and its attempts and model calls are
-read from the runs -- the delivered run's attempts, every run's calls with
-the ensemble's own. As built so far the ensemble asks the original alone, so
-there is one *Candidate 0*.
+The trace gains two tags, `nl2sql.agreement` (`3/4 majority`: agreed of
+run, and the level) and `nl2sql.candidates`, and its attempts and model
+calls are read from the runs -- the delivered run's attempts, every run's
+calls with the ensemble's own.
 
 **A verdict lands on the trace it judges.** *Correct*, *Wrong* or *Correct
 but incomplete*, given in the web or desktop interface, is staged for review

@@ -153,10 +153,21 @@ def test_a_job_records_which_run_each_step_came_from():
 # ---------------------------------------------------------------------------
 
 
+#: What the scripted Paraphraser writes: three it keeps, and one that
+#: changes the question's number, which the gate discards.
+WRITTEN = ("count the stores we operate", "what is our store count", "tell me the number of stores in total",
+           "how many stores are there in 5 states?")
+
+
 @pytest.fixture
 def ensemble_client(make_client):
     def build():
-        agent = make_agent(FakeDatabase(tables=TABLES), scripted([SQL]))
+        from nl2sql_agent.paraphrase import Rewording, Rewordings
+
+        llm = scripted([SQL] * 4)
+        llm.rewordings = Rewordings(rewordings=[Rewording(text=text, changed=f"varied {i}") for i, text in
+                                                enumerate(WRITTEN, 1)])
+        agent = make_agent(FakeDatabase(tables=TABLES), llm)
         return EnsembleAgent(agent.settings, agent=agent)
 
     return make_client(agent_factory=build)
@@ -168,20 +179,35 @@ def test_a_question_through_the_ensemble_is_answered_with_its_record(ensemble_cl
     assert job["status"] == "succeeded"
     answer = job["answer"]
     assert answer["sql"] == SQL and answer["attempts"] == 1
-    assert answer["ensemble"]["agreement"]["level"] == "single"
-    [candidate] = answer["ensemble"]["candidates"]
-    assert (candidate["index"], candidate["origin"], candidate["outcome"]) == (0, "original", "answered")
+    assert answer["answer"].startswith("*Agreed by 4 of 4 independent runs")
+    record = answer["ensemble"]
+    assert record["agreement"] == {"admissible": 4, "agreed": 4, "total": 4, "level": "unanimous",
+                                   "why": "all 4 that could vote agree"}
+    assert (record["chosen"], record["fused_from"]) == (0, [0, 1, 2, 3])
+    assert [(c["index"], c["origin"], c["outcome"], c["admissible"], c["group"]) for c in record["candidates"]] == [
+        (0, "original", "answered", True, 0), (1, "paraphrase", "answered", True, 0),
+        (2, "paraphrase", "answered", True, 0), (3, "paraphrase", "answered", True, 0),
+    ]
+    assert record["candidates"][2]["changed"] == "varied 2" and record["candidates"][2]["signature"] == "1"
+    [discarded] = record["discarded"]
+    assert (discarded["index"], discarded["text"]) == (4, WRITTEN[3])
+    assert discarded["reason"].startswith("F1 numbers")
     assert answer["trace"][0]["node"] == "screen"
     steps = [(event["step"], event["candidate"]) for event in job["progress"]]
     assert steps[0] == ("screen", None) and steps[-1] == ("deliver", None)
-    assert ("generate_sql", 0) in steps
+    assert {candidate for step, candidate in steps if step == "generate_sql"} == {0, 1, 2, 3}
+    labels = {event["step"]: event["label"] for event in job["progress"] if event["candidate"] is None}
+    assert (labels["paraphrase"], labels["screen_paraphrase"], labels["validate"], labels["fuse"]) == (
+        "rewordings", "fidelity", "agreement", "fusion")
 
 
 def test_meta_names_the_ensembles_nodes_first_and_its_settings(make_client):
     meta = make_client(settings=Settings(ensemble_paraphrases=4, ollama_parallel_calls=2)).get("/v1/meta").json()
     pipeline = meta["pipeline"]
-    assert pipeline["nodes"][:5] == ["screen", "refuse", "plan_wave", "answer", "deliver"]
-    assert pipeline["nodes"][5:] == list(STEP_LABELS)
+    assert pipeline["nodes"][:9] == [
+        "screen", "refuse", "paraphrase", "screen_paraphrase", "plan_wave", "answer", "validate", "fuse", "deliver",
+    ]
+    assert pipeline["nodes"][9:] == list(STEP_LABELS)
     assert pipeline["ensemble"] == {"enabled": True, "paraphrases": 4, "max_paraphrases": 10, "waves": 2,
                                     "parallel_calls": 2, "judge": True, "fuse_columns": True}
 

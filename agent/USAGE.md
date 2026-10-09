@@ -233,27 +233,40 @@ works in a shell pipeline. Pull out just the SQL with
 
 ### Asked several ways (arch7)
 
-The ensemble is on by default (`ENSEMBLE_ENABLED`). As it is built so far it
-asks the original question alone: screened once, run once, delivered as the
-pipeline would deliver it, so the answer is the same and the progress lines
-gain a few. The ensemble's own steps come unprefixed; a run's steps carry
-its index, `[0]` for the question as asked:
+The ensemble is on by default (`ENSEMBLE_ENABLED`). The question is screened
+once, reworded, and each rewording that keeps what the question asks is run
+beside it -- four runs, the original and three rewordings -- and the answer
+is the strongest run of the largest group that agree. The ensemble's own
+steps come unprefixed; a run's steps carry its index, `[0]` for the question
+as asked. From a real run, the middle of each run's steps left out:
 
 ```
 [screen] proceed / aggregate; contract: total net sales, fiscal year 2025   <- once, for every wording
-[wave] wave 1: the original                                                  <- which wordings run now
-[0] [screen] screened by the ensemble; contract: total net sales, fiscal year 2025   <- no second call
-[0] [knowledge] 8 chunk(s) -- business_index:Business overview: ...
-[0] [tables] fact_pos_retail_sales, dim_date, ...
-[0] [sql] SELECT SUM(s.net_sales_amt) AS total_net_sales ...                 <- the pipeline, on wording 0
-...
-[0] [audit] passed
+[rewordings] 10 rewording(s)                                  <- the Paraphraser, one call
+[fidelity] 9 faithful of 10; F5 x1                            <- one too close to another
+[wave] wave 1: the original and rewording(s) 1, 2, 3
+[0] [screen] screened by the ensemble; contract: total net sales, fiscal year 2025
+[0] [sql] SELECT SUM(s.net_sales_amt) AS total_net_sales ...  <- the pipeline, on the question as asked
 [0] [answer] 141 characters
-[candidate] 1 run(s): [0] answered
-[answer] single: the original's run
+[1] [screen] screened by the ensemble; contract: total net sales, fiscal year 2025
+...
+[3] [answer] 156 characters
+[candidate] 4 run(s): [0] answered, [1] answered, [2] answered, [3] answered
+[agreement] 4 run, 4 admissible, 4 agree (unanimous)
+[fusion] [0] of [0, 1, 2, 3] (unanimous)                      <- the original's run chosen
+[answer] unanimous: [0]
+
+Agreed by 4 of 4 independent runs of the question, each worded differently.
 
 Our total net sales in fiscal year 2025 were 6032194.28.
 ```
+
+The first line of the answer is how the runs agreed: all of them, a
+majority ("3 of 4 runs agreed; 1 answered differently."), no majority ("The
+runs disagreed and no answer had a majority; this is the largest group's (2
+of 4 runs)."), or one wording only ("Asked 1 way; one run answered.") when
+no rewording passed the gate. Four runs take about four times one -- on a
+host that serves one call at a time, a minute or two a question.
 
 Four flags, each overriding its setting for the run:
 
@@ -271,12 +284,14 @@ A value out of range is refused before anything runs, by name:
 
 With `--json`, the run's own fields -- what retrieval found, the attempts --
 are the delivered run's, the trace is the ensemble's steps followed by that
-run's, and `ensemble` holds the record: the agreement, the decision, and
-every run whole, each with its own state:
+run's, and `ensemble` holds the record: the agreement, the decision, every
+rewording with the check that discarded it, and every run whole, each with
+its own state:
 
 ```bash
 docker compose run --rm agent --json "top 10 SKUs" | jq '.ensemble.agreement'
 docker compose run --rm agent --json "top 10 SKUs" | jq '.ensemble.candidates[].state.sql'
+docker compose run --rm agent --json "top 10 SKUs" | jq '.ensemble.paraphrases[] | {text, status, reason}'
 ```
 
 ## Asking in a browser instead

@@ -214,6 +214,19 @@ def supervisor_rung(question: str) -> tuple[str, str]:
     return LIGHT, "pre-screen clear -> light"
 
 
+def paraphraser_rung(question: str) -> tuple[str, str]:
+    """The Paraphraser goes where the Supervisor goes (arch7 section 22.10):
+    light when the pre-screen is clear, standard when it flags the question."""
+    rung, why = supervisor_rung(question)
+    return rung, f"as the Supervisor: {why}"
+
+
+def judge_rung() -> tuple[str, str]:
+    """Heavy, always: the Judge runs rarely, once a question, and decides the
+    answer, so it is where the strongest model costs least per decision."""
+    return HEAVY, "the Judge: heavy, always"
+
+
 def reflection_rung(generation_rung: str) -> tuple[str, str]:
     rung = cap(generation_rung, STANDARD)
     return rung, f"the generation's {generation_rung}, capped at standard -> {rung}"

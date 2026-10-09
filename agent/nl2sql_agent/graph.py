@@ -73,7 +73,7 @@ from langgraph.graph import END, START, StateGraph
 from . import complexity
 from . import completeness as reviewer, contract as answer_contract, present, repair as repair_agent, supervisor, tracing
 from .config import Settings
-from .contract import ContractResources
+from .contract import ContractResources, LabelMap
 from .database import Database, plan_cost_problem, strip_sql
 from .examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING, GoldenPairLibrary
 from .literals import LiteralMatcher, build_catalog, render_literal_map
@@ -509,6 +509,12 @@ class Nl2SqlAgent:
                 dropped.append(name)
         return dropped
 
+    def label_map(self) -> LabelMap:
+        """The key-to-label map of the retail catalog, read once: what the
+        contract and the Completeness Reviewer resolve names with, and what
+        the ensemble's vote reads a result's key fact by."""
+        return self._contract_resources().label_map
+
     def _contract_resources(self) -> ContractResources:
         """The label map and the fiscal calendar, read once on first use.
 
@@ -667,8 +673,11 @@ class Nl2SqlAgent:
                 _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
             }
         if state.get("screened"):
+            # The contract it is held to, when the screening brought one --
+            # the ensemble's anchor, read from the question as asked -- and
+            # otherwise the one its own reading builds.
             fields = state.get("screening_fields") or {}
-            contract = self.build_contract(
+            contract = fields.get("contract") or self.build_contract(
                 state["question"],
                 intent=state.get("intent", "aggregate"),
                 entities=fields.get("entities") or [],
@@ -682,7 +691,7 @@ class Nl2SqlAgent:
         update, _ = self.screen(state["question"])
         return update
 
-    def screen(self, question: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    def screen(self, question: str, *, shaped_by: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         """The Supervisor's reading of one question, and the contract built from it.
 
         Returns the update the Supervisor's node writes -- verdict, intent,
@@ -691,6 +700,12 @@ class Nl2SqlAgent:
         screening itself, which seeds a run made for it
         (`new_state(screening=...)`): what the ensemble's anchor screening
         hands the original's run, so its Supervisor call is not paid twice.
+
+        `shaped_by` is another question whose words the contract's shape is
+        read from -- one number or a list, ranked, how many rows -- while the
+        reading, its entities, measure and period, is this question's. The
+        ensemble's fidelity gate reads a rewording so: held to its original's
+        shape, the reading is what is compared (arch7 section 22.3's F4).
         """
         routed = self.router.model("supervisor", *complexity.supervisor_rung(question))
         update = supervisor.screen(
@@ -704,7 +719,7 @@ class Nl2SqlAgent:
             name: update.get(name) for name in ("verdict", "intent", "clarification", *SCREENING_FIELDS)
         }
         contract = self.build_contract(
-            question,
+            shaped_by or question,
             intent=update["intent"],
             entities=update.pop("entities", []),
             measure=update.pop("measure", ""),

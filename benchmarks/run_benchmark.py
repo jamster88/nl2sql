@@ -61,7 +61,8 @@ from benchmarks.runner import (  # noqa: E402
     routes_from_trace,
     timing_from_trace,
 )
-from nl2sql_agent.ensemble_state import run_state, whole_trace  # noqa: E402
+from nl2sql_agent.ensemble_state import is_ensemble, run_state, whole_trace  # noqa: E402
+from nl2sql_agent.state import to_jsonable  # noqa: E402
 
 #: How the report marks each outcome: a miss in capitals, so it stands out.
 MARKS = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}
@@ -281,6 +282,7 @@ def run_question(
         routes=routes_from_trace(trace),
         rung=getattr(run.get("complexity"), "rung", None),
         trace_id=state.get("trace_id", ""),
+        **ensemble_measures(state),
     )
 
     if state.get("error"):
@@ -307,6 +309,41 @@ def run_question(
     return QuestionResult(
         outcome=CORRECT if matched else WRONG, row_count=len(rows), **common
     )
+
+
+def ensemble_measures(state) -> dict:
+    """What the ensemble did with the question (arch7 section 11): how its
+    runs agreed, the rewordings its gate discarded by check, the rung each
+    run's generator was scored at, and the state's size. Nothing for one run."""
+    if not is_ensemble(state):
+        return {}
+    agreement = state.get("agreement")
+    rejections: dict[str, int] = {}
+    for paraphrase in state.get("paraphrases") or []:
+        if paraphrase.status == "discarded":
+            check = paraphrase.reason.split(" ", 1)[0]
+            rejections[check] = rejections.get(check, 0) + 1
+    candidates = state.get("candidates") or []
+    return {
+        "agreement": getattr(agreement, "level", ""),
+        "agreed": getattr(agreement, "agreed", 0),
+        "candidates": len(candidates),
+        "rejections": rejections,
+        "candidate_rungs": [
+            getattr(c.state.get("complexity"), "rung", "") for c in sorted(candidates, key=lambda c: c.index)
+        ],
+        "state_bytes": len(json.dumps(to_jsonable(state), default=str).encode()),
+        "rewordings": [
+            {"index": p.index, "text": p.text, "changed": p.changed, "status": p.status, "reason": p.reason}
+            for p in state.get("paraphrases") or []
+        ],
+        "runs": [
+            {"index": c.index, "wording": c.wording, "outcome": c.outcome, "admissible": c.admissible,
+             "reasons": list(c.reasons), "group": c.group, "signature": c.signature,
+             "chosen": c.index == getattr(state.get("decision"), "chosen", None), "sql": c.state.get("sql", "")}
+            for c in sorted(candidates, key=lambda c: c.index)
+        ],
+    }
 
 
 def run_configuration(args, configuration: str, questions: list[BenchmarkQuestion]) -> BenchmarkReport:
@@ -383,6 +420,9 @@ def print_report(report: BenchmarkReport) -> None:
     if report.paraphrased:
         print_stability(report)
 
+    if report.ensembled:
+        print_ensemble(report)
+
     print("\nSPEED")
     asked = "wordings" if report.paraphrased else "questions"
     print(f"  total                {report.total_seconds:.1f}s for {report.total} {asked}")
@@ -426,6 +466,26 @@ def print_report(report: BenchmarkReport) -> None:
         for stage, seconds in totals.items():
             share = 100 * seconds / overall
             print(f"    {stage:<20} {seconds:7.1f}s  {share:5.1f}%  {'#' * int(share / 3)}")
+
+
+def print_ensemble(report: BenchmarkReport) -> None:
+    """What the ensemble did (arch7 section 11): how the runs agreed, how often
+    they agreed on a wrong answer, which checks discarded rewordings, how
+    often a question's runs were scored at different rungs, and how large a
+    question's state grew."""
+    print("\nENSEMBLE")
+    levels = report.agreement_levels()
+    print(f"  agreement            {', '.join(f'{level} {n}' for level, n in sorted(levels.items()))}")
+    print(f"  agreed, but wrong    {report.agreed_on_wrong}")
+    runs = sorted(r.candidates for r in report.results if r.candidates)
+    print(f"  runs per question    {runs[len(runs) // 2]} (median), {runs[0]} to {runs[-1]}")
+    rejections = report.fidelity_rejections()
+    shown = ", ".join(f"{check} {n}" for check, n in rejections.items()) or "none"
+    print(f"  rewordings discarded {sum(rejections.values())}: {shown}")
+    print(f"  runs at mixed rungs  {report.rung_spread} of {report.total} question(s)")
+    sizes = report.state_sizes()
+    if sizes:
+        print(f"  state, as JSON       {sizes[len(sizes) // 2] / 1024:.1f} KB median, {sizes[-1] / 1024:.1f} KB largest")
 
 
 def print_stability(report: BenchmarkReport) -> None:
@@ -496,6 +556,14 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         for question_id, results in report.by_question().items()
                     },
                 } if report.paraphrased else None,
+                # The ensemble's: None for one run a question.
+                "ensemble": {
+                    "agreement": report.agreement_levels(),
+                    "agreed_on_wrong": report.agreed_on_wrong,
+                    "fidelity_rejections": report.fidelity_rejections(),
+                    "rung_spread": report.rung_spread,
+                    "state_bytes": report.state_sizes(),
+                } if report.ensembled else None,
                 "results": [
                     {
                         "id": r.question_id,
@@ -517,6 +585,14 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "trace_id": r.trace_id,
                         "sql": r.sql,
                         "error": r.error,
+                        "agreement": r.agreement,
+                        "candidates": r.candidates,
+                        "agreed": r.agreed,
+                        "rejections": r.rejections,
+                        "candidate_rungs": r.candidate_rungs,
+                        "state_bytes": r.state_bytes,
+                        "rewordings": r.rewordings,
+                        "runs": r.runs,
                     }
                     for r in report.results
                 ],

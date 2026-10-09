@@ -20,7 +20,7 @@ import pytest
 from nl2sql_agent.config import Settings
 from nl2sql_agent.router import (
     CATALOG_SCHEMA,
-    PENDING_TASKS,
+    ENSEMBLE_TASKS,
     RoutingError,
     Router,
     build_table,
@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 HOST = "http://192.168.10.82:11434"
 ANCHOR = "qwen3.8-256k:latest"
 RUNGS = ("light", "standard", "heavy")
-TASKS = ("supervisor", "generator", "reflection", "narrator", "repair")
+TASKS = ("supervisor", "generator", "reflection", "narrator", "repair", "paraphraser", "judge")
 
 
 def settings(**overrides) -> Settings:
@@ -119,6 +119,7 @@ def test_a_catalog_is_read(tmp_path):
     ("not json", "is not a model catalog"),
     ("[1, 2]", "a catalog of schema None"),
     ('{"schema": 1, "models": []}', "a catalog of schema 1"),
+    ('{"schema": 4, "models": []}', "a catalog of schema 4; this agent reads schema 3"),
 ])
 def test_a_catalog_that_cannot_be_used_stops_the_agent(tmp_path, content, message):
     """Routing everything to one model the operator did not choose, silently,
@@ -496,13 +497,73 @@ def test_a_call_that_hops_gives_its_slot_back_before_the_next_model_is_asked():
         pass  # free: neither attempt kept it
 
 
-@pytest.mark.parametrize("variable", ["model_route_paraphraser", "model_route_judge"])
-def test_a_pin_for_the_ensembles_tasks_is_checked_at_startup_and_routes_nothing(variable):
-    """arch7 section 22.10: the Paraphraser and the Judge are not tasks of the
-    router until they are built. Their pins are read and checked as the
-    five's are, so a typo is found at startup, and no cell is made for them."""
+# ---------------------------------------------------------------------------
+# The ensemble's two tasks (arch7 section 22.10), and catalogs that predate them
+# ---------------------------------------------------------------------------
+
+
+def _schema_2(*models) -> dict:
+    """A catalog as models/build_catalog.py wrote one before 7.0: five tasks."""
+    five = TASKS[:5]
+    for model in models:
+        for part in ("suited", "suited_from"):
+            model[part] = {task: value for task, value in model[part].items() if task in five}
+        model["prior"] = {task: "heavy" for task in five}
+    return {**catalog(*models), "schema": 2, "tasks": list(five),
+            "task_budgets": {task: 8192 for task in five}}
+
+
+def test_a_schema_2_catalog_is_read_with_the_two_tasks_unmeasured(tmp_path):
+    """R4: every calibrated host's catalog predates the two tasks. It is read,
+    not refused, and nothing is routed for them -- they go to OLLAMA_MODEL,
+    routing on measured suitability only, as everything else is."""
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(_schema_2(entry("middle:14b", p50=1.0, tasks=TASKS[:5]))))
+    read = load_catalog(str(path))
+
+    assert read["schema"] == 2 and read["tasks"] == [*TASKS[:5], *ENSEMBLE_TASKS]
+    assert read["task_budgets"]["paraphraser"] == 8192 and read["task_budgets"]["judge"] == 16384
+    [model] = read["models"]
+    assert {task: model["suited"][task] for task in ENSEMBLE_TASKS} == {"paraphraser": None, "judge": None}
+    assert model["suited_from"]["judge"] == "unmeasured" and model["prior"]["paraphraser"] is None
+    table = build_table(settings(), read, catalog_path=str(path), host={ANCHOR, "middle:14b"})
+    assert models_of(table, "generator") == ["middle:14b"] * 3
+    assert models_of(table, "paraphraser") == models_of(table, "judge") == [ANCHOR] * 3
+    assert any("schema 2: paraphraser and judge are unmeasured" in note for note in table.notes)
+
+
+def test_the_committed_catalog_is_read_leniently_until_it_is_rebuilt():
+    """The checkout's own catalog is schema 2 until arch7's Phase 4 rebuilds
+    it, so every start goes through the lenient read."""
+    read = load_catalog(str(REPO_ROOT / "models" / "catalog.json"))
+    assert read["schema"] == 2 and "judge" in read["tasks"]
+    assert all(model["suited"]["paraphraser"] is None for model in read["models"])
+
+
+def test_a_schema_3_catalog_is_read_as_it_is(tmp_path):
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(catalog(entry("middle:14b", p50=1.0))))
+    read = load_catalog(str(path))
+    assert read["schema"] == CATALOG_SCHEMA == 3
+    table = build_table(settings(), read, host={ANCHOR, "middle:14b"})
+    assert models_of(table, "judge") == ["middle:14b"] * 3, "a measured task is routed like any other"
+    assert not any("unmeasured" in note for note in table.notes)
+
+
+def test_the_routing_table_shows_all_seven_tasks():
+    table = build_table(settings(), _schema_2(entry("middle:14b", p50=1.0, tasks=TASKS[:5])),
+                        host={ANCHOR, "middle:14b"})
+    assert {task for task, _ in table.cells} == set(TASKS)
+    lines = table.lines()
+    assert any(line.strip().startswith("paraphraser") for line in lines)
+    assert any(line.strip().startswith("judge") for line in lines)
+    assert set(table.describe()["table"]) == set(TASKS)
+
+
+@pytest.mark.parametrize("variable,task", [("model_route_paraphraser", "paraphraser"), ("model_route_judge", "judge")])
+def test_the_ensembles_tasks_take_a_pin_as_the_five_do(variable, task):
     with pytest.raises(RoutingError, match=variable.upper()):
         build_table(settings(**{variable: "nonsense=x"}), catalog(entry("middle:14b", p50=1.0)))
-    table = build_table(settings(**{variable: "middle:14b"}), catalog(entry("middle:14b", p50=1.0)))
-    assert {task for task, _ in table.cells} == set(TASKS)
-    assert not set(PENDING_TASKS) & set(TASKS)
+    table = build_table(settings(**{variable: "light=middle:14b"}), catalog(entry("middle:14b", p50=1.0)),
+                        host={ANCHOR, "middle:14b"})
+    assert table.cells[(task, "light")].why == f"pinned by {variable.upper()}"

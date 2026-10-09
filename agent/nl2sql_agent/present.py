@@ -986,6 +986,7 @@ def render_answer(
     *,
     assumptions: Sequence[str] = (),
     completeness: CompletenessReport | None = None,
+    ensemble: Any = None,
 ) -> str:
     """The markdown answer: the claims that survived the audit, then the table.
 
@@ -997,12 +998,19 @@ def render_answer(
     stated here, so the reader is told regardless of what the narrator did;
     and a gap the Completeness Reviewer accepted rather than send back again
     is named, so a reader is told what is missing rather than left to guess.
+
+    Under the ensemble (arch7), `ensemble` is its decision, and the answer
+    opens with its agreement line: how many runs there were and how they
+    agreed, before anything they say.
     """
     report = audit_report if audit_report is not None else AuditReport()
     kept = surviving_claims(claims, report)
     is_scalar = chart is not None and chart.kind == "scalar"
 
     blocks: list[str] = []
+    line = getattr(ensemble, "line", "")
+    if line:
+        blocks.append(f"*{_escape_text(line)}*")
     if is_scalar and result.columns and result.rows:
         blocks.append(_scalar_sentence(question, result))
     if kept:

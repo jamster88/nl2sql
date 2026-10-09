@@ -11,7 +11,8 @@ run:
 * **metrics**: the score and where the time went -- accuracy overall and per
   category, answered, the total and median seconds, seconds per stage, and
   how many questions the Aggregator scored at each rung; with the
-  paraphrase set, the stability too;
+  paraphrase set, the stability too; through the ensemble, how its runs
+  agreed and which checks discarded rewordings;
 * **an artifact**: the whole report, as `--json` writes it;
 * **traces**: every question's, filed under the run by MLflow itself, tagged
   with the question's id, category and wording, and carrying the benchmark's
@@ -116,6 +117,13 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
     if report.paraphrased:
         values["stability"] = report.stability
         values["stable"] = report.stable
+    if report.ensembled:
+        for level, count in report.agreement_levels().items():
+            values[f"agreement.{level}"] = count
+        for check, count in report.fidelity_rejections().items():
+            values[f"rejected.{check}"] = count
+        values["agreed_on_wrong"] = report.agreed_on_wrong
+        values["rung_spread"] = report.rung_spread
     return values
 
 

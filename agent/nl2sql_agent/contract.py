@@ -483,6 +483,107 @@ def render_contract(contract: AnswerContract | None) -> str:
     return "; ".join(parts) + "." if parts else ""
 
 
+#: How a period is written, made one spelling: what the Supervisor copies
+#: out of a question is the question's own words, and a faithful rewording
+#: may say "FY2025" where the question said "fiscal year 2025".
+_PERIOD_SPELLINGS = (
+    (re.compile(r"\bfy\s*-?\s*(\d{2,4})\b"), r"fiscal year \1"),
+    (re.compile(r"\bq\s*([1-4])\b"), r"quarter \1"),
+    (re.compile(r"\b(\d+)(?:st|nd|rd|th)\b"), r"\1"),
+)
+_PERIOD_ORDINALS = {
+    "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6", "seventh": "7",
+    "eighth": "8", "ninth": "9", "tenth": "10", "eleventh": "11", "twelfth": "12",
+}
+_PERIOD_FILLER = frozenset({"of", "the", "in", "for", "during", "a", "an"})
+
+
+def _period(contract: AnswerContract) -> tuple[str, ...]:
+    """A period as F4 compares it: its words, whatever their order, with the
+    abbreviations and ordinals spelled out -- so "fiscal Q4 of FY2025",
+    "the fourth fiscal quarter of fiscal year 2025" and "fiscal quarter 4 of
+    fiscal year 2025" are one period, while 2024 and 2025, a quarter and a
+    month, fiscal and calendar stay apart. No period is no period however the
+    Supervisor said so.
+
+    Grown (arch7): the specification compared the words case-folded, and the
+    Supervisor's readings of the paraphrase set's rewordings differed from
+    their questions' in nothing but these spellings for eleven of the
+    forty-five."""
+    text = " ".join((contract.period or "").casefold().split())
+    if text in NO_PERIOD:
+        return ()
+    for pattern, spelled in _PERIOD_SPELLINGS:
+        text = pattern.sub(spelled, text)
+    words = [_PERIOD_ORDINALS.get(word, word) for word in re.findall(r"[a-z0-9]+", text)]
+    return tuple(sorted(word for word in words if word not in _PERIOD_FILLER))
+
+
+def _measure(a: AnswerContract, b: AnswerContract) -> str | None:
+    """Whether the two contracts tell the generator different measures.
+
+    Only a default is stated (`stated_measure`): "net sales", for a ranking
+    that names none. That one contract states it and the other does not is a
+    difference only when the other names some other quantity -- "units sold"
+    -- and not when the other names net sales in its own words.
+
+    Grown (arch7): the Supervisor read B04's "total net sales" as "net sales"
+    in two of its rewordings, and a measure the reading names that happens
+    to be the default's name was taken for the default."""
+    left, right = stated_measure(a), stated_measure(b)
+    if left == right:
+        return None
+    stated, other = (left, b) if left else (right, a)
+    if stated in (other.measure or "").casefold():
+        return None
+    return f"measure {left!r} vs {right!r}"
+
+
+def _entities(contract: AnswerContract) -> set[tuple[str | None, str | None, str | None]]:
+    """The entities as the contract acts on them: resolved to a key or a
+    label. One the label map could not resolve -- the Supervisor's "total",
+    or "market share" -- is shown to nobody and checks nothing."""
+    return {(e.key, e.label, e.table) for e in contract.entities if e.key or e.label}
+
+
+def differences(a: AnswerContract, b: AnswerContract) -> list[str]:
+    """What two contracts disagree on, as the fidelity gate's F4 reads them
+    (arch7 section 22.3): the entities by resolved key, label and table, the
+    measure the contract states, the period and whether it was the default,
+    the fiscal year, whether the rows are ranked, and how many are asked for.
+
+    The intent is not compared -- it is the noisiest of the Supervisor's
+    readings, and it shapes the framing line and the chart, not the rows --
+    and nor is a named measure's wording, which the contract never shows the
+    generator. Empty when the contracts are the same."""
+    found = []
+    if _entities(a) != _entities(b):
+        found.append(f"entities {_entity_words(a)} vs {_entity_words(b)}")
+    measure = _measure(a, b)
+    if measure:
+        found.append(measure)
+    if _period(a) != _period(b):
+        found.append(f"period {a.period!r} vs {b.period!r}")
+    for name, left, right in (
+        ("default period", a.period_default, b.period_default),
+        ("fiscal year", a.fiscal_year, b.fiscal_year),
+        ("ranked", a.ranked, b.ranked),
+        ("row count", a.limit, b.limit),
+    ):
+        if left != right:
+            found.append(f"{name} {left!r} vs {right!r}")
+    return found
+
+
+def same_contract(a: AnswerContract, b: AnswerContract) -> bool:
+    """F4: does a rewording's reading build the original's contract?"""
+    return not differences(a, b)
+
+
+def _entity_words(contract: AnswerContract) -> str:
+    return "[" + ", ".join(sorted(e.label or e.key or "" for e in contract.entities if e.key or e.label)) + "]"
+
+
 def default_period_assumption(contract: AnswerContract) -> str:
     """The sentence the answer must carry when the pipeline chose the period."""
     return (

@@ -1,5 +1,8 @@
 package org.nl2sql.desktop.ui;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * Undoing the agent's markup escaping.
  *
@@ -31,6 +34,9 @@ package org.nl2sql.desktop.ui;
  */
 public final class Markup {
 
+    /** A blank line: what ends a block of a markdown document. */
+    private static final Pattern GAP = Pattern.compile("\n\\s*\n");
+
     private Markup() {
     }
 
@@ -61,5 +67,19 @@ public final class Markup {
             prose.append(line).append('\n');
         }
         return plain(prose.toString()).trim();
+    }
+
+    /**
+     * A markdown answer without its first block.
+     *
+     * <p>Under the ensemble (7.0) the document opens with the agreement line
+     * -- how many runs there were and how they agreed -- before anything the
+     * runs say. This application shows that line as a badge, from
+     * {@code Ensemble.line}, so the prose it falls back to is the block after
+     * it.
+     */
+    public static String afterLead(String markup) {
+        Matcher gap = GAP.matcher(markup);
+        return gap.find() ? markup.substring(gap.end()) : "";
     }
 }

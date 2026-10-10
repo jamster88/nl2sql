@@ -189,6 +189,8 @@ export interface DiscardedRewording {
 /** The question asked several ways (7.0): the vote, the delivered run, every run's record. */
 export interface Ensemble {
   agreement: EnsembleAgreement;
+  /** The agreement as the sentence the answer opens with; empty when no run could be delivered. */
+  line: string;
   chosen: number | null;
   fused_from: number[];
   columns_fused: boolean;
@@ -293,6 +295,12 @@ export interface EnsembleSettings {
   parallel_calls: number;
   judge: boolean;
   fuse_columns: boolean;
+  /**
+   * The ensemble's own nodes, in order. `Pipeline.nodes` lists these first
+   * and each run's after them, so this is where a client splits the two:
+   * the steps around the runs, and the steps of every run.
+   */
+  nodes: string[];
 }
 
 export interface Pipeline {

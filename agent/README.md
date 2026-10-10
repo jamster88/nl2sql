@@ -280,11 +280,12 @@ of its own, and arch7.3
 records the owner's decisions on it. It is built in phases
 ([`Multi-Agent_NL2SQL_arch7_3_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md),
 with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md)),
-and Phases 0 to 4 of it are built -- the outer graph, the rewordings, the
-Judge and the vote, the second wave and fusion, and the calibration of the
-two new routing tasks; the clients' views of the runs and the grain check
+and Phases 0 to 5 of it are built -- the outer graph, the rewordings, the
+Judge and the vote, the second wave and fusion, the calibration of the two
+new routing tasks, and the clients' views of the runs; the grain check
 (Phase 6, which 7.0.0 ships on by default, for the pipeline with the
-ensemble off as well) are still to come --
+ensemble off as well) is still to come. It is drawn in full by
+[`arch_diagrams/arch_v7.svg`](../arch_diagrams/arch_v7.svg), and it is
 [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
 
 ```
@@ -323,7 +324,13 @@ discarded it; `--json` and the REST answer's
 run's nodes carry the run's index (`[2] [sql] ...` on the CLI, `candidate`
 on the event stream), and the trace is one per question, each run a
 "Candidate k" span beneath the ensemble's own nodes (see
-[Tracing](#tracing-mlflow)). `ENSEMBLE_ENABLED=false` is the pipeline alone,
+[Tracing](#tracing-mlflow)). The web interface and the desktop client draw
+a lane per run while a question is answered, show how the runs agreed
+beside the answer, and fold every wording and its SQL away beneath it
+([the web interface](../docs/web_interface.md#the-web-interface)); and a
+verdict on an answer is staged with the record, so a reviewer sees the
+queries that agreed and the ones that lost
+([feedback](../docs/feedback.md#what-happens-to-a-verdict)). `ENSEMBLE_ENABLED=false` is the pipeline alone,
 and the answer's `ensemble` is null; with `SUPERVISOR_ENABLED=false` nothing
 is reworded, since no rewording runs that the Supervisor has not read.
 
@@ -367,6 +374,16 @@ something measured, so set it to what the host serves -- Ollama's own
 `OLLAMA_NUM_PARALLEL` -- and no higher, and raise it only for a host with the
 memory for its resident models times the slots: two runs at different rungs
 ask for two models at once, and a host that holds one swaps on every call.
+A model pinned for the Judge or the Paraphraser (`MODEL_ROUTE_JUDGE`,
+`MODEL_ROUTE_PARAPHRASER`) that routing would not otherwise keep is one
+resident model more. With one slot, `API_MAX_CONCURRENCY=1` is the setting
+to prefer for the REST API: two questions at once only take turns at the
+gate, call by call, so each takes about twice as long and neither finishes
+sooner than it would have from the queue.
+And a deployer who raises the slots should raise the API container's
+process ceiling with them (`pids_limit`, 512, in `docker-compose.yml`):
+every run is a thread with threads of its own, and threads count against it
+([what each container may use](../docs/hardening.md#what-each-container-may-use)).
 One consequence for an upgrade: at one slot the REST API's two workers,
 which 6.3 let call the host at once, take turns; a host that serves two
 calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them. And the API warns at

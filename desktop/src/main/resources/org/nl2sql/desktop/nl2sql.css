@@ -179,6 +179,35 @@
     -fx-text-fill: -accent-contrast;
 }
 
+/*
+ * The ensemble's lanes: a run of the pipeline each, between the steps the
+ * ensemble takes before the runs and the ones it takes with their answers.
+ */
+.progress-lane {
+    -fx-padding: 8 10 8 10;
+    -fx-background-color: -surface-raised;
+    -fx-background-radius: 7;
+    -fx-border-color: transparent transparent transparent -border-strong;
+    -fx-border-width: 0 0 0 3;
+}
+
+.progress-lane.active {
+    -fx-border-color: transparent transparent transparent -accent;
+}
+
+.progress-lane.waiting {
+    -fx-opacity: 0.7;
+}
+
+.progress-lane-name {
+    -fx-font-weight: bold;
+    -fx-font-size: 12.5px;
+}
+
+.progress-lane-current {
+    -fx-font-size: 12px;
+}
+
 /* --- the answer -------------------------------------------------------- */
 
 .answer {
@@ -264,6 +293,53 @@
 
 .audit-failed {
     -fx-background-color: derive(-warn, 86%);
+}
+
+/* The ensemble: the badge with the sentence, the notes, the runs. */
+
+.agreement-badge {
+    -fx-padding: 2 10 2 10;
+    -fx-background-color: -surface-sunken;
+    -fx-background-radius: 10;
+    -fx-border-color: -border-strong;
+    -fx-border-radius: 10;
+    -fx-font-size: 12px;
+    -fx-font-weight: bold;
+}
+
+.agreement-unanimous {
+    -fx-border-color: -good;
+}
+
+.agreement-contested,
+.agreement-single,
+.agreement-judged {
+    -fx-border-color: -warn;
+}
+
+.agreement-none {
+    -fx-border-color: -bad;
+}
+
+.ensemble-notes {
+    -fx-padding: 0 0 0 2;
+}
+
+.ensemble-notes .label {
+    -fx-text-fill: -text-secondary;
+}
+
+.candidate-wording {
+    -fx-padding: 6 0 0 0;
+}
+
+.candidate-wording.chosen {
+    -fx-font-weight: bold;
+}
+
+.candidate-reason {
+    -fx-text-fill: -warn;
+    -fx-font-size: 12px;
 }
 
 .sql {

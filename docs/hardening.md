@@ -29,6 +29,16 @@ it:
 | `storesmigrate` | 1 GB | 128 | none: it runs as the stores' `postgres` account, 999 |
 | `desktop` | 256 MB | 64 | `SETUID`, `SETGID` |
 
+The `api` container's 512 processes are sized for the defaults: one slot at
+the model host and two questions at a time. Since 7.0 every run of a
+question is a thread, with threads of its own for the retrievers, and
+threads count against this ceiling. So a deployer who raises
+`OLLAMA_PARALLEL_CALLS` -- the runs of a question that go at once -- or
+`API_MAX_CONCURRENCY` well past the defaults should raise the `api`
+service's `pids_limit` with them, as they raise the host's own memory for
+its resident models ([the host
+gate](../agent/README.md#asking-it-several-ways-arch7)).
+
 `tests/security/test_posture.py` holds every service to the block, and to
 giving back nothing beyond those five; the acceptance tier checks, in the
 running stack, that no process in any container is root and that no

@@ -30,6 +30,47 @@ export type Verdict = "yes" | "no" | "incomplete";
  * curator rewrite the question would turn the staging table into a place
  * where evidence changes. Edits live in `draft`.
  */
+/**
+ * The agent's record of asking the question several ways (7.0), as staged.
+ *
+ * The review service keeps it as the agent wrote it and models none of it:
+ * the two are different images, and this one only shows it. So this is what
+ * the page reads of it, every part optional -- a submission from before 7.0
+ * holds `{}`, as does an answer one run gave, and a record written by a
+ * later agent may hold more. `agent/API.md` documents the whole of it as
+ * `Answer.ensemble`.
+ */
+export interface EnsembleRecord {
+  agreement?: { agreed: number; total: number; level: string; why: string };
+  /** The agreement, as the sentence the answer opened with. */
+  line?: string;
+  /** The delivered run's index. */
+  chosen?: number | null;
+  /** The runs that gave the delivered answer. */
+  fused_from?: number[];
+  dissent?: { group: number; members: number[]; signature: string; differs: string }[];
+  judged?: {
+    verdicts: { group: number; accepted: boolean; why: string }[];
+    set_aside: number[];
+    error: string;
+  } | null;
+  candidates?: EnsembleRun[];
+  discarded?: { index: number; text: string; changed: string; reason: string }[];
+}
+
+/** One wording's run, as the record holds it. */
+export interface EnsembleRun {
+  index: number;
+  wording: string;
+  origin: string;
+  changed: string;
+  outcome: string;
+  reasons: string[];
+  sql: string;
+  signature: string;
+  group: number | null;
+}
+
 export interface SubmissionModel {
   id: string;
   job_id: string;
@@ -44,6 +85,7 @@ export interface SubmissionModel {
   columns: string[];
   comment: string;
   agent_version: string;
+  ensemble: EnsembleRecord;
   submitted_at: string | null;
   state: State;
   reviewer: string;

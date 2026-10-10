@@ -59,7 +59,7 @@ def _ensemble_state() -> dict:
                       outcome="answered", admissible=True, signature="42", group=0, ms=9.5),
         ],
         "agreement": Agreement(admissible=1, agreed=1, total=2, level="single", why="asked 2 ways"),
-        "decision": Decision(chosen=0, fused_from=[0]),
+        "decision": Decision(chosen=0, fused_from=[0], line="Asked 2 ways; only one run answered."),
         "answer": "There are 42 stores.",
         "narrative": "There are 42 stores.",
         "sql": SQL,
@@ -90,6 +90,8 @@ def test_the_record_of_every_run_is_beside_it():
 
     assert ensemble.agreement.level == "single" and ensemble.agreement.total == 2
     assert (ensemble.chosen, ensemble.fused_from, ensemble.parallel_calls) == (0, [0], 2)
+    # The sentence the answer opens with, so no client composes its own.
+    assert ensemble.line == "Asked 2 ways; only one run answered."
     first, second = ensemble.candidates
     assert (first.index, first.origin, first.sql, first.attempts, first.signature, first.group) == (
         0, "original", SQL, 2, "42", 0)
@@ -115,7 +117,7 @@ def test_a_refused_question_has_a_record_with_no_run_in_it():
     answer = answer_from_state(state)
     assert (answer.verdict, answer.answer, answer.tables, answer.attempts) == ("injection", "No.", [], 0)
     assert answer.ensemble.candidates == [] and answer.ensemble.chosen is None
-    assert answer.ensemble.agreement.level == "none"
+    assert answer.ensemble.agreement.level == "none" and answer.ensemble.line == ""
 
 
 def test_one_run_has_no_ensemble_on_the_wire():
@@ -212,6 +214,10 @@ def test_meta_names_the_ensembles_nodes_first_and_its_settings(make_client):
         "fuse", "deliver",
     ]
     assert pipeline["nodes"][11:] == list(STEP_LABELS)
+    # Its own nodes again, by themselves: where a client splits the list
+    # into the steps around the runs and the steps of each run.
+    outer = pipeline["ensemble"].pop("nodes")
+    assert outer == pipeline["nodes"][:11]
     assert pipeline["ensemble"] == {"enabled": True, "paraphrases": 4, "max_paraphrases": 10, "waves": 2,
                                     "parallel_calls": 2, "judge": True, "fuse_columns": True}
 
@@ -219,7 +225,7 @@ def test_meta_names_the_ensembles_nodes_first_and_its_settings(make_client):
 def test_meta_with_the_ensemble_off_names_the_pipelines_nodes_alone(make_client):
     pipeline = make_client(settings=Settings(ensemble_enabled=False)).get("/v1/meta").json()["pipeline"]
     assert pipeline["nodes"] == list(STEP_LABELS)
-    assert pipeline["ensemble"]["enabled"] is False
+    assert pipeline["ensemble"]["enabled"] is False and pipeline["ensemble"]["nodes"] == []
 
 
 def test_a_client_cannot_send_a_screening_for_its_own_question(client):

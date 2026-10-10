@@ -80,6 +80,7 @@ class ModelsTest {
                             "ensemble": {
                               "agreement": {"admissible": 2, "agreed": 2, "total": 3,
                                             "level": "unanimous", "why": "2 of 2", "set_aside": 1},
+                              "line": "Agreed by 2 of 3 runs.",
                               "chosen": 0, "fused_from": [0, 1], "columns_fused": true,
                               "joined_columns": [{"column": "brand", "from_candidate": 1,
                                                   "key": "sku_id", "table": "dim_product"}],
@@ -108,7 +109,8 @@ class ModelsTest {
                 {"supervisor": true, "literals": true, "narrate": true, "audit": true,
                  "schema_retrieval": "vector", "nodes": ["screen"],
                  "ensemble": {"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
-                              "parallel_calls": 2, "judge": true, "fuse_columns": true}}
+                              "parallel_calls": 2, "judge": true, "fuse_columns": true,
+                              "nodes": ["screen", "deliver"]}}
                 """, Models.Pipeline.class);
 
         Models.Ensemble ensemble = job.answer().ensemble();
@@ -127,7 +129,9 @@ class ModelsTest {
         assertEquals("finish", ensemble.candidates().get(0).trace().get(0).node());
         assertEquals("F3 polarity", ensemble.discarded().get(0).reason());
         assertEquals(2, ensemble.parallel_calls());
+        assertEquals("Agreed by 2 of 3 runs.", ensemble.line());
         assertEquals(10, pipeline.ensemble().max_paraphrases());
+        assertEquals(List.of("screen", "deliver"), pipeline.ensemble().nodes());
     }
 
     @Test
@@ -140,6 +144,10 @@ class ModelsTest {
         assertEquals(List.of(), ensemble.candidates());
         assertEquals(List.of(), ensemble.discarded());
         assertNull(ensemble.chosen());
+        // No vote is a vote of nothing, in words the badge can show.
+        assertEquals("none", ensemble.agreement().level());
+        assertEquals("", ensemble.line());
+        assertEquals(List.of(), Json.read("{}", Models.EnsembleSettings.class).nodes());
         Models.EnsembleCandidate candidate = Json.read("{}", Models.EnsembleCandidate.class);
         assertEquals(List.of(), candidate.reasons());
         assertEquals(List.of(), candidate.trace());

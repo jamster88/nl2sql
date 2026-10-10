@@ -50,6 +50,11 @@ class SubmissionModel(Wire):
     columns: list[str] = Field(default_factory=list)
     comment: str = ""
     agent_version: str = ""
+    #: The agent's `Ensemble` as it was staged: every wording's run, the
+    #: Judge's verdicts, the vote. Empty for a submission from before 7.0.
+    #: Kept as the agent wrote it rather than modelled here: the two services
+    #: are different images, and this one only shows it.
+    ensemble: dict[str, Any] = Field(default_factory=dict)
     submitted_at: datetime | None = None
     state: State = "pending"
     reviewer: str = ""

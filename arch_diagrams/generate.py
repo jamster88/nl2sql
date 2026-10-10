@@ -532,7 +532,10 @@ def startup(y, steps, fail):
 
 def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=(),
              retry_label="retry &#183; up to --max-attempts",
-             loop_from=(), loop_into=None):
+             loop_from=(), loop_into=None,
+             heading="the pipeline — a compiled langgraph stategraph",
+             state_line="state: AgentState (TypedDict) &#183; every node returns a partial update",
+             returns=()):
     """Draw the node column, the retry rail, and any data-flow rails.
 
     A rail is {from, to, color, label, x, side}: where the data originates,
@@ -544,15 +547,19 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=(),
     already runs on, and `loop_into` the row the rail arrows into. v4 has four
     failure sources and one Repair Agent spending one counter, and drawing that
     as one track rather than four is the point of the picture.
+
+    `returns` are control-flow edges that go back up the column, each
+    {from, to, label, color}: v7's vote sends an unsettled question to the
+    wave planner again, and no decision row stands between them to draw it.
     """
     if knowledge_from:
         rails = (*rails, {"from": knowledge_from, "to": knowledge_to, "color": TEAL,
                           "label": "state.knowledge &#8594; 3 consumers",
                           "x": KFLOW_X, "side": 1})
-    s = [label(MARGIN, y, "the pipeline — a compiled langgraph stategraph")]
+    s = [label(MARGIN, y, heading)]
     yy = y + 26
     s.append(f'<text x="{MARGIN}" y="{yy:.1f}" font-family="{MONO}" font-size="11.5" fill="{FAINT}">'
-             f'state: AgentState (TypedDict) &#183; every node returns a partial update</text>')
+             f'{state_line}</text>')
     yy += 22
 
     drawn: list[str] = []
@@ -644,6 +651,19 @@ def pipeline(y, rows, knowledge_from=None, knowledge_to=(), rails=(),
         s.append(f'<text x="{RAIL_X-9}" y="{my:.1f}" font-family="{SANS}" font-size="11.5" '
                  f'font-weight="700" fill="{RED}" text-anchor="middle" '
                  f'transform="rotate(-90 {RAIL_X-9} {my:.1f})">{retry_label}</text>')
+
+    # control flow back up the column, on the retry rail's track
+    for back in returns:
+        fy, fh = pos[back["from"]]
+        ty, th = pos[back["to"]]
+        col = back.get("color", RED)
+        s.append(path(f"M {STEP_X-4} {fy+fh/2:.1f} L {RAIL_X} {fy+fh/2:.1f} "
+                      f"L {RAIL_X} {ty+th/2:.1f} L {STEP_X-8} {ty+th/2:.1f}",
+                      color=col, dash="7 5", wdt=1.7))
+        my = (fy + fh / 2 + ty + th / 2) / 2
+        s.append(f'<text x="{RAIL_X-9}" y="{my:.1f}" font-family="{SANS}" font-size="11.5" '
+                 f'font-weight="700" fill="{col}" text-anchor="middle" '
+                 f'transform="rotate(-90 {RAIL_X-9} {my:.1f})">{back["label"]}</text>')
 
     # data-flow rails: a producing node out to each of its consumers
     for rail in rails:
@@ -2103,10 +2123,287 @@ def _build_v5(review: bool = False, routing: bool = False, snippets: bool = Fals
 
 
 #: What `main` writes, in the order the versions came.
+# --- v7: the question, asked several ways -----------------------------------
+
+OLLAMA_CHAT_V7 = {"name": "Ollama — chat models, gated", "color": PURPLE,
+                  "desc": "The same routed models. Every routed call now waits for a slot at the "
+                          "host gate: OLLAMA_PARALLEL_CALLS of them, one by default, process-wide "
+                          "-- so the runs of a question go one after another on a host that "
+                          "serves one call at a time, and side by side only on the deployer's "
+                          "word.",
+                  "link": "→ every call through the gate"}
+
+CATALOG_V7 = {"name": "models/catalog.json", "color": PURPLE,
+              "desc": "Schema 3: seven tasks. The Paraphraser and the Judge are calibrated beside "
+                      "the five; a schema-2 catalog is still read, the two tasks unmeasured and "
+                      "routed to OLLAMA_MODEL.",
+              "link": "← read once, at startup"}
+
+V7_ADDED = ("One run of the pipeline is one draw. Temperature is 0 everywhere, so asking again "
+            "gets the same answer -- right or wrong -- and the only independent draw there is to "
+            "take is another wording. So the question is reworded, every wording that still asks "
+            "the same thing is run through the whole v5.6 pipeline, and the answers are compared: "
+            "runs that agree are a reason to believe the answer, and runs that disagree are a "
+            "mistake caught that one run would have delivered. Everything in green is new in v7, "
+            "and it is all outside the pipeline: an outer graph of eleven nodes around it. Inside, "
+            "one thing changed -- supervise accepts a screening it is handed rather than making "
+            "its own.")
+
+V7_COST = ("A question costs about four runs of the pipeline rather than one, plus three calls "
+           "of the ensemble's own: the anchor screening, the Paraphraser and the Judge, and a "
+           "screening per rewording. Wall time follows, because the runs queue at the host gate. "
+           "That is the trade this version makes on purpose -- it is meant for the question worth "
+           "asking four times -- and ENSEMBLE_ENABLED=false is v5.6 to the answer.")
+
+V7_SCREEN_WHY = ("The anchor. Screening happens on the words the person typed and before "
+                 "anything is reworded, for the reason it comes first in the pipeline: an "
+                 "injection or an out-of-scope question must stop here, not be paraphrased into "
+                 "four prompts. The contract it builds is the yardstick every rewording is held "
+                 "to, and every run is seeded with it, so the runs differ in wording and never in "
+                 "what a complete answer is.")
+
+V7_REFUSE_WHY = ("Exactly v5.6's refusal, reached one graph further out. Nothing was reworded "
+                 "and nothing ran, so the record says level none with no candidates, and a "
+                 "client shows the refusal as it always did.")
+
+V7_PARAPHRASE_WHY = ("One call for all of them, so the rewordings are written to differ from "
+                     "each other, the most different first. The Paraphraser is told what must "
+                     "not change in words -- the entities, the measure, the period, the limit -- "
+                     "and is never shown the contract as the generator sees it: shown a column "
+                     "name, it copies the column name into the question, and the wordings stop "
+                     "being a person's.")
+
+V7_FIDELITY_WHY = ("A rewording is model output about to become a prompt, so it is checked like "
+                   "one. F1 to F3 and F5 are code and cost nothing, so they run first; F4 is the "
+                   "Supervisor reading the rewording, which makes it the injection screen for "
+                   "text a model wrote, and its reading must build the anchor's contract. A "
+                   "rewording that asks something else is discarded with the check it failed, "
+                   "never run -- an answer to a different question would vote.")
+
+V7_WAVE_WHY = ("The original is always candidate 0: whatever the rewordings do, the question as "
+               "asked is among the runs. The second wave is planned only when the first could "
+               "not settle the vote, from rewordings already written and already checked, so it "
+               "costs runs and no new rewording.")
+
+V7_ANSWER_WHY = ("Each run is the whole pipeline with its own repair loop and its own seven "
+                 "attempts, in a copied context so its progress and its trace spans stay its "
+                 "own. Runs share no state: the only thing one run knows of another is the "
+                 "contract they were all seeded with. A run that gives up is a run that could "
+                 "not answer, and the vote goes on without it.")
+
+V7_VALIDATE_WHY = ("Two questions, in order. Is this result an answer to its own question -- "
+                   "answered, with rows, audited, whole -- and only then: which results are the "
+                   "same answer. Sameness is the benchmark's own scorer, so two "
+                   "queries that differ in column names, column order or rounding agree, and two "
+                   "that return different numbers do not, whatever their SQL looks like.")
+
+V7_JUDGE_WHY = ("Runs that make the same mistake get the same number, and so they agree: "
+                "without this, a majority can be wrong together. The Judge reads the answers "
+                "before they are counted and is never told how many runs gave each, so it "
+                "cannot side with the crowd. It may set an answer aside only for a mistake it "
+                "can point to in the query, it cannot write SQL, and it cannot take the answer "
+                "away: with none accepted the runs' own choice is delivered, flagged.")
+
+V7_VOTE_WHY = ("The level is the confidence a reader is given: every voter agreed, most did, "
+               "the Judge overruled the runs' own choice, nothing had a majority, or one run "
+               "stood alone. An unsettled vote with a wave left goes round again; a settled one "
+               "never does, so a question that four wordings agree on costs four runs and not "
+               "eleven.")
+
+V7_FUSE_WHY = ("Selection first: one run's query is the answer's query, chosen by a fixed "
+               "ranking, and SQL is never merged. What fusion adds is what the other agreeing "
+               "runs carry that the chosen one lacks -- a column, joined only when every row "
+               "matches exactly once on the entity's key, and named with the run it came from; "
+               "a claim about rows not yet spoken of, re-verified against the rows. The answer "
+               "that lost is described from the two queries' trees, not by a model.")
+
+V7_DELIVER_WHY = ("One answer, with how it was arrived at beside it rather than instead of it. "
+                  "A client written for v5.6 reads the same fields it always did; one written "
+                  "for v7 reads the record too.")
+
+V7_INSIDE = ("supervise (handed the anchor's screening, so no model call) → the five retrievers "
+             "→ aggregate → generate_sql → validate_static → planner_gate → execute_query → "
+             "review → visualise → narrate → audit → finish, with its one repair loop and one "
+             "attempts counter. Nineteen nodes, none added and none renamed by v7: drawn node "
+             "by node in arch_v5_6.svg.")
+
+V7_LEVELS = [("unanimous", "Every run that voted gave this answer.", GREEN),
+             ("majority", "Most did; the others are named among the notes, with how their "
+              "query differs.", BLUE),
+             ("judged", "The Judge set aside the answer the runs preferred, and this is the one "
+              "it accepted.", PURPLE),
+             ("contested", "No majority, or the Judge accepted none: the runs' own choice, "
+              "flagged.", AMBER),
+             ("single", "One run's answer stands alone.", SLATE)]
+
+V7_LEVELS_NOTE = ("The level opens the answer as a sentence -- \"Agreed by 4 of 4 independent runs "
+                  "of the question, each worded differently\" -- and is what a client shows as a "
+                  "badge. A question refused at the anchor has level none: nothing ran.")
+
+V7_SURFACES = [
+    {"name": "The terminal", "color": SLATE, "tag": "[k] per run",
+     "does": "Progress lines carry [k] for a run's node; --json carries every candidate whole."},
+    {"name": "The REST API", "color": BLUE, "tag": "Answer.ensemble",
+     "does": "The vote, the delivered run and every run's record; each progress event names "
+             "its candidate."},
+    {"name": "Web and desktop", "color": GREEN, "tag": "lanes · badge · runs",
+     "does": "A lane per run while it works; the agreement beside the sentence; every wording "
+             "and its SQL folded away."},
+    {"name": "MLflow", "color": PURPLE, "tag": "one trace a question",
+     "does": "A span per outer node and a Candidate k span per run, with that run's spans "
+             "beneath it."},
+    {"name": "Review", "color": AMBER, "tag": "the staged snapshot",
+     "does": "A verdict is staged with the record, so a reviewer sees the queries that agreed "
+             "and the ones that lost."},
+]
+
+
+def build_v7():
+    parts, y = [], 56
+    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                 f'font-weight="700" fill="{INK}">NL2SQL Agent v7 '
+                 f'<tspan fill="{MUTED}" font-weight="400">— the question, asked several '
+                 f'ways</tspan></text>')
+    y += 26
+    intro = ("v5.6's pipeline, unchanged, run once for the question as asked and once for each "
+             "faithful rewording of it; the answers compared, read by a Judge, voted on, and one "
+             "delivered with how the runs agreed (arch7.3). Everything marked in green is new in "
+             "v7. The pipeline inside each run is drawn as one box here and node by node in "
+             "arch_v5_6.svg.")
+    blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
+    parts.append(blk); y += h + 26
+
+    svg, h = deployment(y, {"name": "nl2sql-agent",
+                            "desc": "python -m nl2sql_agent, or the same image serving the REST "
+                                    "API. With ENSEMBLE_ENABLED the agent is the outer graph, "
+                                    "holding one pipeline it runs once per wording."},
+                        [PG_V5, VECTORDB_V4, CHUNKDB, SNIPPETSDB_V56],
+                        [OLLAMA_CHAT_V7, OLLAMA_EMBED_V4, CATALOG_V7])
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v7 adds: asking it several ways", V7_ADDED, color=GREEN, x=MARGIN,
+                      w=CONTENT_R - MARGIN, dashed=False)
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What it costs", V7_COST, color=PURPLE, x=MARGIN, w=CONTENT_R - MARGIN)
+    parts.append(svg); y += h + 36
+
+    rows = [
+        {"id": "screen", "kind": "step", "n": 1, "name": "screen",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "The Supervisor, on the question as asked: verdict, intent, and the answer "
+                 "contract -- the entities, the measure, the period, the N. The pipeline's own "
+                 "screening, made once here and handed to every run.",
+         "tags": [("LLM · Supervision", PURPLE), ("the anchor contract", GREEN)],
+         "why": V7_SCREEN_WHY},
+        {"id": "refuse", "kind": "offramp", "name": "refuse", "color": AMBER,
+         "flow": {"x": STEP_X + 105, "color": AMBER},
+         "does": "Answer with the scope sentence, the refusal or the clarifying question, and "
+                 "stop. Nothing is reworded and nothing runs. → END",
+         "tag": "terminal · exit 0", "why": V7_REFUSE_WHY},
+        {"id": "paraphrase", "kind": "step", "n": 2, "name": "paraphrase",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "The Paraphraser. One structured call: up to ENSEMBLE_MAX_PARAPHRASES (10) "
+                 "rewordings of the question, each different from it and from the others, each "
+                 "with a few words on what was changed.",
+         "tags": [("LLM · Rewordings", PURPLE), ("routed: the Supervisor's rung", PURPLE)],
+         "wrap_tags": True, "why": V7_PARAPHRASE_WHY},
+        {"id": "screen_paraphrase", "kind": "step", "n": 3, "name": "screen_paraphrase",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "The fidelity gate, a rewording at a time. In code: F1 the same numbers, F2 the "
+                 "same literals, F3 the same direction, F5 distinct from the question and the "
+                 "others. Then F4: the Supervisor reads it, and its reading must build the "
+                 "anchor's contract. Too few faithful, and the Paraphraser is asked once more.",
+         "tags": [("F1 F2 F3 F5 · code", GREEN), ("F4 · LLM per rewording", PURPLE),
+                  ("discarded, never run", RED)],
+         "wrap_tags": True, "why": V7_FIDELITY_WHY},
+        {"id": "plan_wave", "kind": "step", "n": 4, "name": "plan_wave",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "Which wordings run now. The first wave: the question as asked, candidate 0, "
+                 "and the first ENSEMBLE_PARAPHRASES (3) faithful rewordings. The second, when "
+                 "there is one: the faithful rewordings not yet run.",
+         "tags": [("no model call", GREEN), ("ENSEMBLE_WAVES · 2", GREEN)],
+         "why": V7_WAVE_WHY},
+        {"id": "answer", "kind": "step", "n": 5, "name": "answer",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "The candidate runs: each wording through the whole v5.6 pipeline, seeded with "
+                 "the anchor's screening and contract. OLLAMA_PARALLEL_CALLS runs at a time -- "
+                 "one by default -- each reading as the same database role, each with its own "
+                 "state, trace and attempts.",
+         "tags": [("the v5.6 pipeline, once per wording", MAGENTA), ("host gate", PURPLE)],
+         "wrap_tags": True, "why": V7_ANSWER_WHY},
+        {"id": "inside", "kind": "note", "color": MAGENTA, "w": STEP_W,
+         "title": "Inside each run: the v5.6 pipeline, unchanged", "body": V7_INSIDE},
+        {"id": "validate", "kind": "step", "n": 6, "name": "validate",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "Per run, E1 to E5: it answered; its wording passed the fidelity gate; it has "
+                 "rows where the question implies some; the audit found no semantic issue; and "
+                 "its rows are the whole result, not a sample cut at the row cap. Then every "
+                 "pair of admissible results is compared, and the runs fall into groups: one "
+                 "group, one answer.",
+         "tags": [("no model call", GREEN), ("the benchmark's scorer", GREEN)],
+         "why": V7_VALIDATE_WHY},
+        {"id": "judge", "kind": "step", "n": 7, "name": "judge",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "The Judge, once a wave. It is shown each distinct answer by letter -- the "
+                 "query and its first five rows, the original's first -- with the question, what "
+                 "every answer was held to and the knowledge, and gives a verdict for each: "
+                 "accepted, or set aside with the mistake in one sentence.",
+         "tags": [("LLM · Verdicts", PURPLE), ("routed: heavy, always", PURPLE),
+                  ("never told the count", RED)],
+         "wrap_tags": True, "why": V7_JUDGE_WHY},
+        {"id": "vote", "kind": "step", "n": 8, "name": "vote",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "Over the runs whose answer the Judge accepted: the largest group wins, a "
+                 "strict majority of the voters settles it, and the level is recorded -- "
+                 "unanimous, majority, judged, contested or single. Unsettled, with a wave left "
+                 "and inside the deadline when one is set: back to plan_wave.",
+         "tags": [("no model call", GREEN), ("→ plan_wave when unsettled", RED)],
+         "why": V7_VOTE_WHY},
+        {"id": "fuse", "kind": "step", "n": 9, "name": "fuse",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "Choose the winning group's representative -- complete, audited, the original "
+                 "before a rewording, fewest attempts, cheapest plan. Join the columns the "
+                 "other members carry, add their claims about rows not yet spoken of, unite the "
+                 "assumptions, describe each answer that lost, and write the agreement line.",
+         "tags": [("no model call", GREEN), ("columns: on, and a switch", GREEN),
+                  ("SQL is never merged", RED)],
+         "wrap_tags": True, "why": V7_FUSE_WHY},
+        {"id": "deliver", "kind": "step", "n": 10, "name": "deliver",
+         "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
+         "does": "Render the answer: the agreement line, the claims, the table, then the notes "
+                 "-- a joined column and the run it is from, a column that would not join, an "
+                 "answer that lost. With no run to deliver, the original's own ending, as v5.6 "
+                 "would have given it. → END",
+         "tags": [("no model call", GREEN), ("Answer.ensemble", BLUE)],
+         "why": V7_DELIVER_WHY},
+    ]
+    svg, h, nodes = pipeline(
+        y, rows,
+        heading="the ensemble — an outer langgraph stategraph around the pipeline",
+        state_line="state: EnsembleState (TypedDict) &#183; each candidate holds a whole "
+                   "AgentState of its own",
+        returns=[{"from": "vote", "to": "plan_wave",
+                  "label": "second wave &#183; only when the vote is unsettled"}])
+    parts.append(svg); y += h + 34
+    svg, h = outcomes(y, V7_LEVELS, V7_LEVELS_NOTE); parts.append(svg); y += h + 26
+    svg, h = panes_row(y, "what the surfaces show", V7_SURFACES)
+    parts.append(svg); y += h + 26
+    svg, h = legend(y, [("solid", "control flow", SLATE),
+                        ("line", "second wave", RED),
+                        ("pill", "model call", PURPLE), ("pill", "database access", BLUE),
+                        ("pill", "new in v7", GREEN),
+                        ("pill", "v5.6's pipeline", MAGENTA)])
+    parts.append(svg); y += h
+    return document("NL2SQL Agent v7 architecture",
+                    "The v5.6 pipeline run once per wording of the question, with a fidelity "
+                    "gate, a Judge, a vote and fusion around it",
+                    "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE, CYAN))
+
+
 DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
             ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"),
             ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
-            ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6"))
+            ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6"),
+            ("arch_v7.svg", "build_v7"))
 
 
 def main(output_dir: Path | None = None) -> None:

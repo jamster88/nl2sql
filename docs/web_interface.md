@@ -22,12 +22,43 @@ running it, narrating, auditing -- so the user watches work rather than an
 animation, and the nodes still to come are listed greyed because `/v1/meta`
 says which ones this server runs.
 
+**A question asked several ways has a lane for every run.** Since 7.0 the
+agent asks a question as it was typed and reworded, and runs the whole
+pipeline once per wording ([asking it several
+ways](../agent/README.md#asking-it-several-ways-arch7)). Every event on the
+stream says which run it came from, so the progress panel draws a lane per
+run, each with the pipeline's steps, between the ensemble's own: above the
+lanes, what it did before the runs -- screening the question, writing the
+rewordings, checking each one still asks the same thing -- and below them,
+what it did with their answers -- comparing them, the Judge, the vote,
+fusion. `/v1/meta` says how many runs to expect and which steps are whose,
+so the lanes are there, waiting, before the first event. On a host that
+serves one model call at a time they fill one after another, and side by
+side when the deployer has allowed more (`OLLAMA_PARALLEL_CALLS`); either
+way it is the order things happened in. With the ensemble off it is the one
+row of steps it always was.
+
 **The answer arrives with its working.** The sentence, then the chart the
 Visual Formatter asked for, then the rows. Folded away beneath: the SQL and
 how many attempts it took, the phrases matched to database values, and how
 long each node took. Hovering a claim highlights the exact cells it was read
 from -- the audit ties every sentence to the rows that support it, and this
 is the clearest thing that makes possible.
+
+**An answer several runs gave says how they agreed.** Beside the sentence
+is a badge: the level in a word -- all agree, most agree, the Judge's
+choice, contested, one answer -- the count, and the agent's own line about
+the vote, which is the server's sentence rather than one this page composed
+from the numbers. An answer that lost is among the notes, with how its
+query differs from the one delivered; so is a column joined on from another
+run that agreed, named with its run, because the SQL shown does not return
+it. And folded away with the SQL is "The question, asked 4 ways": every
+wording, what was changed to make it, how its run ended, which answer it
+gave and the SQL it wrote; what the Judge said of each answer; and the
+rewordings that were written and never run, each with the check it failed.
+A rewording and a Judge's reason are a model's words, and the page renders
+them as text, never as markup. Feedback is unchanged: three buttons, on the
+answer that was delivered.
 
 **A refusal is rendered as a refusal.** `verdict` is not `proceed` for an
 out-of-scope or unsafe question, and there is no table because no query ran;

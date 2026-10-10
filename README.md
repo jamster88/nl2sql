@@ -88,6 +88,17 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   each wording, its SQL and outcome, whether it could vote, and every
   rewording the gate discarded with the check it failed. Progress lines name
   the run, and MLflow keeps one trace per question with each run inside it.
+- **The runs on screen.** The web interface and the desktop client draw a
+  lane for every run while a question is answered, show how the runs agreed
+  beside the answer -- "Most agree · 3 of 4", and the agent's own line
+  about the vote -- and fold every wording, its outcome and its SQL away
+  beneath it, with the Judge's verdict on each answer ([the web
+  interface](docs/web_interface.md#the-web-interface)). A verdict is staged
+  with that record, so a reviewer fixing a wrong answer sees the queries
+  that agreed and the ones that lost; the review service adds the column
+  when it starts, and until it has, verdicts are staged without it
+  ([feedback](docs/feedback.md#what-happens-to-a-verdict)).
+  [`arch_v7.svg`](arch_diagrams/arch_v7.svg) draws the whole of it.
   `--no-ensemble` (`ENSEMBLE_ENABLED=false`) is the pipeline alone.
 - **How much the wording matters, measured.** `python
   benchmarks/run_benchmark.py --paraphrase-set` asks each benchmark

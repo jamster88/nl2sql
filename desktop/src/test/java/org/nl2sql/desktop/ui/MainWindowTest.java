@@ -74,6 +74,40 @@ class MainWindowTest {
     }
 
     @Test
+    void a_server_that_asks_a_question_several_ways_gets_a_lane_for_every_run() {
+        // What `/v1/meta` says about the ensemble is what the lanes are drawn
+        // from before the first event: how many runs, and which steps are whose.
+        FxToolkit.onFx(() -> {
+            Models.Meta meta = Fakes.meta(true);
+            Models.Pipeline pipeline = meta.pipeline();
+            client.meta = new Models.Meta(meta.service(), meta.version(), meta.model(),
+                    meta.intents(), meta.tables(), meta.scope(), meta.limits(),
+                    new Models.Pipeline(pipeline.supervisor(), pipeline.literals(),
+                            pipeline.narrate(), pipeline.audit(), pipeline.schema_retrieval(),
+                            Fakes.ensembleNodes(), Fakes.ensembleSettings(true, 2)),
+                    meta.tls(), meta.authentication(), meta.feedback(), meta.routing());
+            Models.Job answered = Fakes.job("job-1", Models.JobStatus.SUCCEEDED,
+                    Fakes.answer(Fakes.ensemble()));
+            client.streams.add(stream(
+                    event("progress", Json.write(Fakes.own(1, "plan_wave"))),
+                    event("progress", Json.write(Fakes.run(2, 1, "generate_sql"))),
+                    event("done", Json.write(answered))));
+            MainWindow window = window();
+
+            window.start();
+            assertTrue(Nodes.says(window.root(), "0 / 3 runs"));
+            assertEquals(3, Nodes.withClass(window.root(), "progress-lane").size());
+
+            window.ask("how many stores are there?");
+
+            assertTrue(Nodes.says(window.root(), "Finished — 2 steps in 1 run"));
+            assertTrue(Nodes.says(window.root(), "Rewording 1"));
+            assertTrue(Nodes.says(window.root(), "Most agree · 3 of 4"));
+            window.close();
+        });
+    }
+
+    @Test
     void a_dependency_that_is_not_ready_is_a_warning_rather_than_a_disconnection() {
         FxToolkit.onFx(() -> {
             client.readiness = new Models.Readiness(false,

@@ -27,10 +27,13 @@ server happens not to have feedback configured.
 from __future__ import annotations
 
 import json
+import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 from nl2sql_common.errors import DATABASE_ERRORS, Unavailable
+
+log = logging.getLogger(__name__)
 
 #: The table the review service owns. Named here because this process writes
 #: to it and has no way to import the module that creates it -- the two run
@@ -55,7 +58,19 @@ COLUMNS = (
     "columns",
     "comment",
     "agent_version",
+    "ensemble",
 )
+
+#: The one column a store may not have yet. The review service adds it when
+#: it starts (7.0), and the review service is a compose profile: a stack
+#: upgraded and started without it holds the 6.3 table until the day it is.
+#: This process cannot add a column -- it is the INSERT-only writer -- so it
+#: asks the catalog whether the column is there and leaves it out until it is
+#: (`PostgresSink.columns`).
+OPTIONAL = "ensemble"
+
+#: The columns Postgres stores as JSON, encoded on the way in.
+JSON_COLUMNS = ("columns", "ensemble")
 
 
 class FeedbackUnavailable(Unavailable, RuntimeError):
@@ -78,13 +93,18 @@ class Capture:
     columns: tuple[str, ...] = ()
     comment: str = ""
     agent_version: str = ""
+    #: The wire `Ensemble` as JSON -- every wording's run, the Judge's
+    #: verdicts, the vote -- and `{}` for an answer one run gave.
+    ensemble: dict[str, Any] = field(default_factory=dict)
 
-    def values(self) -> list[Any]:
-        """Positional values for `COLUMNS`, with the JSON column encoded."""
+    def values(self, columns: tuple[str, ...] = COLUMNS) -> list[Any]:
+        """Positional values for `columns`, with the JSON columns encoded."""
         out: list[Any] = []
-        for name in COLUMNS:
+        for name in columns:
             value = getattr(self, name)
-            out.append(json.dumps(list(value)) if name == "columns" else value)
+            if name in JSON_COLUMNS:
+                value = json.dumps(value if isinstance(value, dict) else list(value))
+            out.append(value)
         return out
 
 
@@ -132,12 +152,39 @@ class PostgresSink:
     def __init__(self, url: str, *, connect=None) -> None:
         self.url = url
         self._connect = connect or self._psycopg_connect
+        # Whether the table has `OPTIONAL` yet: unknown until a vote asks,
+        # and asked again on every vote until the answer is yes.
+        self._whole = False
+        self._said = False
 
     @staticmethod
     def _psycopg_connect(url: str):
         import psycopg
 
         return psycopg.connect(url, connect_timeout=5)
+
+    def columns(self, conn) -> tuple[str, ...]:
+        """The columns this store's table takes: all of them, or all but `OPTIONAL`.
+
+        Asked of the catalog, which shows this role every column of a table
+        it may insert into. A yes is kept for the life of the process; a no
+        is asked again at the next vote, so the first one after the review
+        service has started carries its ensemble, and it is said once in the
+        log, because a snapshot without its runs is otherwise silent.
+        """
+        if not self._whole:
+            self._whole = conn.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
+                (TABLE, OPTIONAL),
+            ).fetchone() is not None
+            if not self._whole and not self._said:
+                self._said = True
+                log.warning(
+                    "the staging table has no %r column yet, so verdicts are recorded without "
+                    "the ensemble's record until the review service has started once",
+                    OPTIONAL,
+                )
+        return COLUMNS if self._whole else tuple(c for c in COLUMNS if c != OPTIONAL)
 
     def record(self, capture: Capture) -> str:
         """Insert the verdict, replacing the pending one for that job.
@@ -158,27 +205,45 @@ class PostgresSink:
         without ever being able to read the row that refused.
         """
         submission_id = str(uuid.uuid4())
-        statement = (
-            f"INSERT INTO {TABLE} (id, {', '.join(COLUMNS)}) "
-            f"VALUES ({', '.join(['%s'] * (len(COLUMNS) + 1))}) "
-            "RETURNING id"
-        )
         try:
             with self._connect(self.url) as conn:
-                conn.execute(f"DELETE FROM {TABLE} WHERE job_id = %s", (capture.job_id,))
-                try:
-                    row = conn.execute(statement, [submission_id, *capture.values()]).fetchone()
-                except DATABASE_ERRORS as exc:
-                    if _is_unique_violation(exc):
-                        conn.rollback()
-                        raise AlreadyReviewed(capture.job_id) from exc
-                    raise
+                row = self._insert(conn, submission_id, capture)
+                if row is _ASK_AGAIN:
+                    row = self._insert(conn, submission_id, capture, again=False)
                 conn.commit()
         except (AlreadyReviewed, FeedbackUnavailable):
             raise
         except DATABASE_ERRORS as exc:  # every driver failure reads the same here
             raise FeedbackUnavailable(f"cannot record feedback: {type(exc).__name__}") from exc
         return str(row[0]) if row else submission_id
+
+    def _insert(self, conn, submission_id: str, capture: Capture, *, again: bool = True):
+        """One delete and insert, into the columns the table has.
+
+        `_ASK_AGAIN` comes back when the table turned out to lack a column
+        this process had seen it with -- a store restored from before 7.0
+        under a running API -- and the transaction is rolled back for the
+        caller to try once more, the catalog asked afresh. Once: a second
+        refusal is the store's to explain.
+        """
+        columns = self.columns(conn)
+        statement = (
+            f"INSERT INTO {TABLE} (id, {', '.join(columns)}) "
+            f"VALUES ({', '.join(['%s'] * (len(columns) + 1))}) "
+            "RETURNING id"
+        )
+        conn.execute(f"DELETE FROM {TABLE} WHERE job_id = %s", (capture.job_id,))
+        try:
+            return conn.execute(statement, [submission_id, *capture.values(columns)]).fetchone()
+        except DATABASE_ERRORS as exc:
+            if _is_unique_violation(exc):
+                conn.rollback()
+                raise AlreadyReviewed(capture.job_id) from exc
+            if again and self._whole and _sqlstate(exc) == UNDEFINED_COLUMN:
+                conn.rollback()
+                self._whole = False
+                return _ASK_AGAIN
+            raise
 
     def withdraw(self, job_id: str) -> bool:
         """Delete the verdict. The policy makes a reviewed one unreachable.
@@ -221,16 +286,27 @@ class AlreadyReviewed(RuntimeError):
         self.job_id = job_id
 
 
-def _is_unique_violation(exc: Exception) -> bool:
-    """Whether this driver error is a duplicate key, without importing psycopg.
+#: `undefined_column`: an INSERT naming a column the table does not have.
+UNDEFINED_COLUMN = "42703"
 
-    The SQLSTATE is checked rather than the exception class so that a fake
-    connection in a test can raise something of its own shape and still be
-    understood -- and so this module keeps working if the driver is swapped.
-    23505 is `unique_violation`, and it has been that since SQL:1999.
+#: What `PostgresSink._insert` returns for "rolled back; ask the catalog again".
+_ASK_AGAIN = object()
+
+
+def _sqlstate(exc: Exception) -> str:
+    """A driver error's SQLSTATE, without importing psycopg.
+
+    Read off the exception rather than its class so that a fake connection
+    in a test can raise something of its own shape and still be understood
+    -- and so this module keeps working if the driver is swapped.
     """
-    code = getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None)
-    return str(code) == "23505"
+    return str(getattr(exc, "sqlstate", None) or getattr(exc, "pgcode", None))
+
+
+def _is_unique_violation(exc: Exception) -> bool:
+    """Whether this driver error is a duplicate key: 23505, `unique_violation`,
+    which it has been since SQL:1999."""
+    return _sqlstate(exc) == "23505"
 
 
 def build_sink(url: str | None) -> FeedbackSink:

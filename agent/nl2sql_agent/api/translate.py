@@ -162,6 +162,7 @@ def ensemble_from_state(state: dict[str, Any], *, detail: bool = True) -> Ensemb
     ]
     return Ensemble(
         agreement=EnsembleAgreement(**to_jsonable(state.get("agreement"))),
+        line=decision.get("line") or "",
         chosen=decision.get("chosen"),
         fused_from=list(decision.get("fused_from") or []),
         columns_fused=bool(decision.get("columns_fused", True)),

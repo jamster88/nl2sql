@@ -215,6 +215,7 @@ export function makeSubmission(overrides: Partial<SubmissionModel> = {}): Submis
     columns: ["count"],
     comment: "",
     agent_version: "7.0.0",
+    ensemble: {},
     submitted_at: null,
     state: "pending",
     reviewer: "",

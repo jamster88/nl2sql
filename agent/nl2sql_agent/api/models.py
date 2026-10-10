@@ -319,6 +319,10 @@ class Ensemble(Wire):
     from which runs, and every run's record."""
 
     agreement: EnsembleAgreement
+    line: str = Field(
+        default="",
+        description="The agreement, as the sentence the answer opens with; empty when no run could be delivered.",
+    )
     chosen: int | None = Field(description="The delivered run's index; None when no run could be delivered.")
     fused_from: list[int] = Field(default_factory=list)
     columns_fused: bool = True
@@ -501,6 +505,10 @@ class EnsembleSettings(Wire):
     parallel_calls: int
     judge: bool
     fuse_columns: bool
+    nodes: list[str] = Field(
+        default_factory=list,
+        description="The ensemble's own nodes, in order: the first of `Pipeline.nodes`, where each run's follow them.",
+    )
 
 
 class Pipeline(Wire):

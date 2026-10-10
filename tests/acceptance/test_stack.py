@@ -28,9 +28,10 @@ which the last test drives.
 The tests sign in as the administrator the directory made on its first
 start, with the password `setup.sh` generated -- read from the copy's `secrets/`
 and never printed -- and then: every page, a question through the web
-interface, its verdict and its promotion into the golden set, the SQL
-console, MLflow behind its front door with the question's trace in it, and
-the desktop client's own classes. Everything is torn down afterwards, volumes
+interface -- asked several ways since 7.0, every run of it reporting its own
+steps -- its verdict, staged with the record of those runs, and its promotion
+into the golden set, the SQL console, MLflow behind its front door with the
+question's trace in it, and the desktop client's own classes. Everything is torn down afterwards, volumes
 included, unless NL2SQL_ACCEPTANCE_KEEP is set.
 
 A question needs a chat model. The tier asks the same one this checkout's
@@ -421,6 +422,34 @@ def test_a_question_through_the_web_interface_is_answered_with_its_working(answe
     assert any(entry["model"] for entry in answer["trace"]), "no model call in the trace"
 
 
+def test_the_question_was_asked_several_ways_and_every_run_reported_its_own_steps(answered: dict):
+    """7.0's ensemble, through the page: the answer carries the record of its
+    runs, and the progress the page drew its lanes from names each run.
+
+    What a lane is drawn from is an event's `candidate`, so a run with no
+    event of its own is a lane that stayed empty, and an event naming a run
+    the record does not hold is a step drawn in the wrong one -- either is
+    the worker threads losing the question's context (arch7.3's R1).
+    """
+    ensemble = answered["answer"]["ensemble"]
+    assert ensemble is not None, "the answer has no ensemble: is ENSEMBLE_ENABLED off in this stack?"
+    runs = {run["index"]: run for run in ensemble["candidates"]}
+    assert 0 in runs and runs[0]["origin"] == "original", sorted(runs)
+    assert ensemble["agreement"]["total"] == len(runs), ensemble["agreement"]
+    assert ensemble["chosen"] in runs and ensemble["line"], ensemble["agreement"]
+
+    reported: dict[int | None, list[str]] = {}
+    for event in answered["progress"]:
+        reported.setdefault(event["candidate"], []).append(event["step"])
+    # The ensemble's own steps name no run, and a question starts and ends there.
+    assert reported[None][0] == "screen" and reported[None][-1] == "deliver", reported[None]
+    assert set(reported) - {None} == set(runs), f"lanes {sorted(set(reported) - {None})} for runs {sorted(runs)}"
+    for index, steps in reported.items():
+        if index is not None:
+            # Each lane is a whole run of the pipeline, not one line saying it ran.
+            assert {"generate_sql", "execute_query", "finish"} <= set(steps), (index, steps)
+
+
 def test_its_verdict_reaches_review_and_is_promoted_into_the_golden_set(stack, sessions, answered):
     gui, review = stack.url("GUI_PORT"), stack.url("REVIEW_GUI_PORT")
     said = _call(stack, "POST", f"{gui}/v1/questions/{answered['id']}/feedback", {"verdict": "yes"},
@@ -428,6 +457,9 @@ def test_its_verdict_reaches_review_and_is_promoted_into_the_golden_set(stack, s
     assert said.status in (200, 201), said.body
     queue = _call(stack, "GET", f"{review}/v1/submissions?state=pending", cookie=sessions["REVIEW_GUI_PORT"])
     [submission] = [s for s in queue.body["submissions"] if s["job_id"] == answered["id"]]
+    # Staged with the record of every run (7.0): the review service added the
+    # column when it started, and the API found it there.
+    assert submission["ensemble"] == answered["answer"]["ensemble"]
     draft = {
         "title": "Acceptance: how many stores", "question": submission["question"],
         "tables": submission["tables"] or "dim_store", "keywords": "count, stores",
@@ -467,6 +499,28 @@ def test_mlflow_answers_only_through_its_front_door_and_holds_the_questions_trac
             break
         time.sleep(5)
     assert any(QUESTION in json.dumps(trace) for trace in traces), f"{len(traces)} traces, none of the question"
+
+    # One trace for the question, with every run inside it (7.0): a span per
+    # run under the ensemble's own, holding exactly the steps that run
+    # reported. A run traced beside the question rather than inside it, or a
+    # step in another run's span, is the worker threads losing the context
+    # the span is found by -- the same fault an empty lane would be.
+    [trace] = [trace for trace in traces if QUESTION in json.dumps(trace)]
+    spans = _call(stack, "GET", f"{door}/ajax-api/2.0/mlflow/get-trace-artifact?request_id={trace['request_id']}",
+                  basic=f"admin:{stack.admin_password}").body["spans"]
+    children: dict[str | None, list[dict]] = {}
+    for span in spans:
+        children.setdefault(span["parent_span_id"], []).append(span)
+    [root] = children[None]
+    [runs] = [span for span in children[root["span_id"]] if span["name"] == "Candidate Runs"]
+    ensemble = answered["answer"]["ensemble"]
+    steps: dict[int, int] = {}
+    for event in answered["progress"]:
+        if event["candidate"] is not None:
+            steps[event["candidate"]] = steps.get(event["candidate"], 0) + 1
+    assert {span["name"]: len(children.get(span["span_id"], [])) for span in children[runs["span_id"]]} == {
+        f"Candidate {index}": count for index, count in steps.items()}
+    assert len(children[runs["span_id"]]) == ensemble["agreement"]["total"]
 
 
 def test_the_directory_page_lists_the_administrator(stack, sessions):

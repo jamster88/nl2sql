@@ -472,6 +472,7 @@ public final class MainWindow {
         feedbackAccepted.set(meta.feedback());
         statusBar.show(meta);
         progress.setNodes(meta.pipeline().nodes());
+        progress.setEnsemble(meta.pipeline().ensemble());
         if (meta.limits() != null && meta.limits().max_question_length() > 0) {
             askBox.setMaxQuestionLength(meta.limits().max_question_length());
         }

@@ -285,14 +285,21 @@ public final class Models {
      * The question asked several ways (7.0): the vote, the delivered run and
      * every run's record. Null on an answer from a server with the ensemble
      * off, or older than 7.0.
+     *
+     * <p>{@code line} is the agreement as the sentence the answer opens with,
+     * written by the server so that no client composes its own from the
+     * counts; empty when no run could be delivered.
      */
-    public record Ensemble(EnsembleAgreement agreement, Integer chosen, List<Integer> fused_from,
+    public record Ensemble(EnsembleAgreement agreement, String line, Integer chosen,
+                           List<Integer> fused_from,
                            boolean columns_fused, List<JoinedColumn> joined_columns,
                            List<DeclinedColumn> declined_columns, int claims_added, int claims_dropped,
                            List<EnsembleDissent> dissent, EnsembleJudgement judged,
                            List<EnsembleCandidate> candidates, List<DiscardedRewording> discarded,
                            int parallel_calls) {
         public Ensemble {
+            agreement = agreement == null ? NO_AGREEMENT : agreement;
+            line = text(line);
             fused_from = list(fused_from);
             joined_columns = list(joined_columns);
             declined_columns = list(declined_columns);
@@ -376,9 +383,20 @@ public final class Models {
                          int max_question_length, int max_metadata_entries) {
     }
 
-    /** How this server asks a question several ways (7.0). */
+    /**
+     * How this server asks a question several ways (7.0).
+     *
+     * <p>{@code nodes} is the ensemble's own nodes, in order. The pipeline's
+     * {@code nodes} lists these first and each run's after them, so this is
+     * where a client divides the two: the steps around the runs, and the
+     * steps of every run.
+     */
     public record EnsembleSettings(boolean enabled, int paraphrases, int max_paraphrases, int waves,
-                                   int parallel_calls, boolean judge, boolean fuse_columns) {
+                                   int parallel_calls, boolean judge, boolean fuse_columns,
+                                   List<String> nodes) {
+        public EnsembleSettings {
+            nodes = list(nodes);
+        }
     }
 
     /** Which optional stages this server is running with. */
@@ -511,6 +529,9 @@ public final class Models {
             new AuditReport(true, List.of(), List.of(), List.of(), null);
 
     private static final JobLinks NO_LINKS = new JobLinks("", "");
+
+    private static final EnsembleAgreement NO_AGREEMENT =
+            new EnsembleAgreement(0, 0, 0, "none", "", 0);
 
     /**
      * The three normalisers the compact constructors above are written in

@@ -295,12 +295,17 @@ to render (`pipeline.narrate` false means there is no paragraph to show,
 Since 7.0 `pipeline.ensemble` says how the server asks a question several
 ways (arch7), so a client knows how many runs to expect before the first
 event: `{"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
-"parallel_calls": 1, "judge": true, "fuse_columns": true}`. With it enabled,
-`pipeline.nodes` lists the ensemble's own nodes (`screen`, `refuse`,
-`paraphrase`, `screen_paraphrase`, `plan_wave`, `answer`, `validate`,
-`judge`, `vote`, `fuse`, `deliver`) before the pipeline's. A server older than
-7.0 sends no `ensemble`. As built so far the ensemble runs one wave --
-the original and `paraphrases` rewordings -- whatever `waves` says.
+"parallel_calls": 1, "judge": true, "fuse_columns": true, "nodes": [...]}`.
+With it enabled, `pipeline.nodes` lists the ensemble's own nodes (`screen`,
+`refuse`, `paraphrase`, `screen_paraphrase`, `plan_wave`, `answer`,
+`validate`, `judge`, `vote`, `fuse`, `deliver`) before the pipeline's, and
+`pipeline.ensemble.nodes` is those eleven again by themselves: where a
+client divides the list into the steps around the runs and the steps of
+each run, without knowing any of their names. The first wave is the
+question as asked and `paraphrases` rewordings, so `1 + paraphrases` lanes
+is what to draw before the first event; fewer run when fewer rewordings
+were faithful, and more when a second wave is taken. With the ensemble off
+`nodes` there is empty, and a server older than 7.0 sends no `ensemble`.
 
 Two of those limits describe the request rather than the answer:
 
@@ -412,6 +417,7 @@ for 6.3 needs nothing new. `ensemble` is the record beside it:
                 "level": "unanimous",    // unanimous | majority | judged | contested | single | none
                 "why": "all 3 that could vote agree",
                 "set_aside": 1},         // runs the Judge kept from voting
+  "line": "Agreed by 3 of 4 independent runs of the question, each worded differently; the Judge set aside the answer of 1 other.",
   "chosen": 0,                           // the delivered run; null when none could be (level "none")
   "fused_from": [0, 1, 3],               // the winning group
   "columns_fused": true,                 // ENSEMBLE_FUSE_COLUMNS for this run
@@ -468,7 +474,10 @@ when the Judge was not asked -- `ENSEMBLE_JUDGE_ENABLED=false`, or no run
 could vote -- and carries `error` when it could not be reached. `chosen` is
 the run whose SQL was delivered, and whose rows and claims the answer's
 start from; the answer opens with a sentence saying how the runs agreed and
-what the Judge set aside. A vote with no majority among the runs that voted,
+what the Judge set aside, and `line` is that sentence by itself -- plain
+text, for a client that shows the agreement as a badge rather than
+composing its own from the counts; empty when no run could be delivered.
+A vote with no majority among the runs that voted,
 or one run standing alone, runs a second wave first when one is left --
 each candidate's `wave` says which it ran in -- and with none left is
 delivered as `contested`. `fused_from` is the winning group, from whose
@@ -495,7 +504,13 @@ answer = job["answer"]
 if answer.get("ensemble"):
     agreement = answer["ensemble"]["agreement"]
     print(f"{agreement['agreed']} of {agreement['total']} ({agreement['level']})")
+    print(answer["ensemble"]["line"])
 ```
+
+Everything in the record that a model wrote -- a candidate's `wording` and
+`changed`, a discarded rewording's `text`, a verdict's `why`, and `line`
+where it quotes one -- is plain text that was never escaped for markdown.
+Render it as text.
 
 ---
 
@@ -523,7 +538,9 @@ data: { ...the whole finished job... }
   question as asked, `1` and up a rewording, `null` for a step of the
   ensemble's own -- and for every step with the ensemble off. A run's steps
   are the pipeline's nodes, so group them by `candidate` to draw one lane
-  per run.
+  per run. The numbers are the rewordings' own, so a rewording the fidelity
+  gate discarded leaves a gap: draw a lane for each number that reports,
+  not for each number up to the largest.
 * `id:` is the sequence number. Reconnect with `Last-Event-ID: 4` (browsers
   send it automatically) or `?from_seq=4` and the server resumes rather than
   replaying.
@@ -582,6 +599,14 @@ a job is forgotten after `API_JOB_TTL_SECONDS`, and a verdict holding only a
 job id would be pointing at nothing within the hour. The SQL in particular is
 the entire reason a "yes" is worth keeping -- it is the candidate a golden
 question/SQL pair gets built from.
+
+Since 7.0 the snapshot includes the answer's `ensemble`, whole, so whoever
+reviews the verdict sees every run behind the answer. The column it goes in
+is the review service's to add, when it starts; against a staging table
+that does not have it yet -- a stack upgraded and started without the
+review service -- the verdict is staged without it, which the server says
+once in its log, and the first verdict after the review service has started
+carries it.
 
 Four rules are worth knowing:
 

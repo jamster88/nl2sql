@@ -83,6 +83,28 @@ A verdict arrives with a snapshot of the job it is about: the question, the
 generated SQL, the answer, the narrative, the intent, the tables, the result
 shape, and any comment the user added.
 
+Since 7.0 it also carries **`ensemble`**: the agent's record of asking the
+question several ways -- every wording's run with its outcome and its SQL,
+which runs agreed and which answer was delivered, the answers that lost and
+how their queries differ, the Judge's verdict on each, and the rewordings
+that were not run. It is the API's `Answer.ensemble` as JSON
+([`agent/API.md`](../agent/API.md)), with no rows in it, and this service
+stores it without reading it: the two are different images. The review
+interface shows it beneath the delivered SQL, folded away -- a reviewer
+fixing a wrong answer very often finds the right query already there,
+written by a run that lost the vote. Promotion and fixing are unchanged: a
+golden pair is the question as the person asked it and the SQL the reviewer
+settles on. A submission from before 7.0 holds `{}`, as does an answer one
+run gave, and the interface says "a single run; no ensemble record" rather
+than drawing an empty list.
+
+The column is added on start, `ADD COLUMN IF NOT EXISTS` beside the
+`CREATE TABLE IF NOT EXISTS` that never revisits a table that exists; a
+constant default adds it without rewriting a row. Only this service can:
+the API is the INSERT-only writer. So until this service has started once
+since the upgrade the API finds no such column, stages each verdict
+without it, and says so once in its log; the first vote after carries it.
+
 The verdict itself is one of three: `yes` (correct), `no` (wrong), or
 `incomplete` (correct but incomplete -- the SQL was right and the answer
 left out something a reader needed). Each has its own pane in the review
@@ -788,7 +810,7 @@ whether the stores caught up.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 182 tests, 100% coverage
+npm run test     # review GUI: 197 tests, 100% coverage
 ```
 
 ## Tests

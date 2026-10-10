@@ -7,8 +7,13 @@
  * plainly a *derivative* of this, which is the distinction that keeps a
  * curator honest -- it is very easy to fix a question until it matches the
  * SQL, and a golden pair built that way tests nothing.
+ *
+ * Since 7.0 the evidence includes the other runs: the agent asks a question
+ * several ways, and the SQL above is the one it delivered. What the others
+ * wrote, and which of them agreed, is in the candidates pane beneath it.
  */
 
+import { Candidates } from "./Candidates";
 import { plainText } from "../api/text";
 import type { SubmissionModel, Verdict } from "../api/types";
 
@@ -85,6 +90,8 @@ export function Original({ submission }: OriginalProps) {
           <dd className="mono">{submission.job_id}</dd>
         </div>
       </dl>
+
+      <Candidates ensemble={submission.ensemble} />
 
       {submission.review_note && (
         <p className="original-note">

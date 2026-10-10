@@ -35,6 +35,34 @@ own nodes as they happen -- screening, schema, literals, SQL, the plan gate,
 execution, the narrator, the audit -- and it resumes from `Last-Event-ID`
 after a dropped connection.
 
+**An answer several runs gave carries its runs.** Since 7.0 the agent asks
+a question several ways and runs the pipeline once per wording ([asking it
+several ways](../agent/README.md#asking-it-several-ways-arch7)), and the
+wire says so in three places, each of which a client written for 6.3 can
+ignore:
+
+- **`Answer.ensemble`**: how the runs agreed -- the counts, the level, and
+  the sentence the answer opens with -- which run was delivered, the answers
+  that lost and how their queries differ, the Judge's verdict on each
+  answer, every wording's run with its SQL, and the rewordings that were
+  not run. `null` with the ensemble off, so the answer is the one it always
+  was.
+- **`ProgressEvent.candidate`**: which run a step came from -- `0` the
+  question as asked, `1` and up a rewording, `null` one of the ensemble's
+  own steps. A client that ignores it sees every run's steps in one list.
+- **`Pipeline.ensemble`** in `/v1/meta`: whether this server asks several
+  ways, how many rewordings it runs, and which of `nodes` are the ensemble's
+  own, so a client can draw a lane per run before the first event.
+
+**Watch the job; do not hold the connection for it.** A question asked
+several ways takes several runs' time -- minutes, where one run took about
+one. `?wait=` still works and is still bounded by `API_MAX_WAIT_SECONDS`
+(900), and a job that outlasts the wait comes back still running, with the
+links to follow. But a proxy, a load balancer or a browser between the
+client and the API usually gives up on a silent connection long before
+that. The event stream is never silent for long, resumes after a drop, and
+is what both clients here use; polling the job is the other answer.
+
 **TLS is on by default.** Under compose the API's certificate is its own,
 issued by the stack's development CA before it starts (the `pki` service),
 and kept in a volume so a restart presents the same one; started on its

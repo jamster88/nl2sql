@@ -146,6 +146,7 @@ export function App({ client: given, store: givenStore, watch }: AppProps) {
             events={ask.progress}
             nodes={meta?.pipeline.nodes ?? []}
             done={ask.phase === "finished"}
+            ensemble={meta?.pipeline.ensemble ?? null}
           />
         )}
 

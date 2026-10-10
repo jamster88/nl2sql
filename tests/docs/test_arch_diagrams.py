@@ -37,12 +37,17 @@ CORRECTIONS_PY = REPO_ROOT / "review" / "nl2sql_review" / "corrections.py"
 ROUTER_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "router.py"
 # v5.6's: the Snippet Retriever.
 SNIPPETS_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "snippets.py"
+# v7's: the outer graph that asks the question several ways (arch7). A second
+# graph rather than more nodes in the first, so its diagram is held to its own
+# module and v5.6's stays the picture of graph.py.
+ENSEMBLE_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "ensemble.py"
 
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
 V4, V5, V5_1 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg", DIAGRAMS / "arch_v5_1.svg"
 V5_2, V5_6 = DIAGRAMS / "arch_v5_2.svg", DIAGRAMS / "arch_v5_6.svg"
-ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2, V5_6]
-IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2", "v5_6"]
+V7 = DIAGRAMS / "arch_v7.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2, V5_6, V7]
+IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2", "v5_6", "v7"]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
@@ -75,6 +80,13 @@ def graph_nodes() -> set[str]:
     """Node names registered in graph.py, read as text (no import needed)."""
     nodes = set(re.findall(r'add_node\(\s*"(\w+)"', GRAPH_PY.read_text()))
     assert nodes, "no add_node() calls found in graph.py -- the pattern needs updating"
+    return nodes
+
+
+def ensemble_nodes() -> set[str]:
+    """Node names registered in ensemble.py, read the same way."""
+    nodes = set(re.findall(r'add_node\(\s*"(\w+)"', ENSEMBLE_PY.read_text()))
+    assert nodes, "no add_node() calls found in ensemble.py -- the pattern needs updating"
     return nodes
 
 
@@ -202,6 +214,39 @@ def test_v5_6_draws_the_snippets_and_the_curation_page():
         assert tag in text, tag
 
 
+def test_v7_draws_the_outer_graph_exactly():
+    """arch7 is a second graph around the first, so its diagram is held to
+    the module that builds it: rename a node of the ensemble and the picture
+    is wrong, as it is for the pipeline's."""
+    assert diagram_nodes(V7) == ensemble_nodes()
+
+
+def test_v7_adds_no_node_to_the_pipeline_it_runs():
+    """Every run is v5.6's pipeline, which v7's diagram draws as one box and
+    points at: the diagram for graph.py is still v5.6's."""
+    assert diagram_for_this_tree() == V5_6
+    assert diagram_nodes(V5_6) == graph_nodes()
+    text = V7.read_text()
+    assert "Inside each run: the v5.6 pipeline, unchanged" in text
+    assert "arch_v5_6.svg" in text
+    # Only `refuse` is in both graphs: the question refused before any run.
+    assert diagram_nodes(V7) & diagram_nodes(V5_6) == {"refuse"}
+
+
+def test_v7_draws_the_gate_the_judge_and_the_second_wave():
+    text = V7.read_text()
+    for name in ("Ollama — chat models, gated", "models/catalog.json"):
+        assert f">{name}</text>" in text, name
+    assert "What v7 adds: asking it several ways" in text
+    for tag in ("F4 · LLM per rewording", "routed: heavy, always", "never told the count",
+                "→ plan_wave when unsettled", "SQL is never merged"):
+        assert tag in text, tag
+    assert "second wave &#183; only when the vote is unsettled" in text
+    # The five levels a delivered answer can have, as the vote names them.
+    for level in ("unanimous", "majority", "judged", "contested", "single"):
+        assert f">{level}</text>" in text, level
+
+
 def test_the_snippet_node_is_present_exactly_when_the_module_is():
     node_drawn = SNIPPETS_NODE in diagram_nodes(diagram_for_this_tree())
     assert node_drawn is this_tree_is_v5_6()
@@ -279,7 +324,8 @@ def generator():
     "name,builder",
     [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
      ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
-     ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6")],
+     ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6"),
+     ("arch_v7.svg", "build_v7")],
     ids=IDS,
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
@@ -302,6 +348,7 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v5_1() == generator.build_v5_1()
     assert generator.build_v5_2() == generator.build_v5_2()
     assert generator.build_v5_6() == generator.build_v5_6()
+    assert generator.build_v7() == generator.build_v7()
 
 
 @pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)

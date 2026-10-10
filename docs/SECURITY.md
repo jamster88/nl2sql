@@ -198,6 +198,10 @@ And the work in *Known limits*, which no setting replaces.
 | Every health check verifies the certificate it is answered with (6.3) | `tests/security/test_posture.py`, `tests/common/test_health.py`, `tests/proxy/test_proxy_startup.py`, `tests/docker/test_gui_container.py` (`--run-docker`) |
 | Every base image and stock image is pinned by digest (6.3) | `tests/security/test_pinned_images.py` |
 | Every service role has a statement timeout, a memory ceiling and a connection limit (6.3) | `tests/common/test_roles.py`, `tests/ops/test_ops_retail.py`, `tests/ops/test_ops_stores.py`, `tests/auth/test_auth_rolesync.py` |
+| A rewording is a model's text about to become a prompt, and is screened before it runs: one that changes a number, a name or the direction is discarded in code, and one the Supervisor refuses, or reads as asking for something else, never reaches the pipeline (7.0) | `tests/agent/test_fidelity.py`, `tests/agent/test_ensemble.py` |
+| The Judge gives a verdict on each answer it was shown and nothing else: it is never told how many runs gave an answer, a verdict on an answer it was not shown is discarded, it writes no SQL, and it cannot take the answer away (7.0) | `tests/agent/test_judge.py`, `tests/agent/test_ensemble.py` |
+| What a model wrote -- a rewording, the Judge's reason -- is drawn as text by every client, never as markup (7.0) | `gui/test/ensemble.test.tsx`, `review/gui/test/candidates.test.tsx`, `desktop/src/test/java/org/nl2sql/desktop/ui/EnsembleViewTest.java` |
+| The API stages a verdict as the INSERT-only writer whether or not the staging table has 7.0's column yet; it adds none (7.0) | `tests/api/test_feedback.py`, `tests/review/test_store_live.py` (`--run-docker`) |
 
 `tests/security/` is the tier for posture: what the stack exposes by
 default, read from the files that decide it.

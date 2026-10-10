@@ -482,6 +482,17 @@ three of B13's ten, and the first wave ran them all.
 JSON, against 155.0 KB at the median at four runs -- the size arch7.1's
 risks document asked to be recorded once a second wave ran.
 
+**The widest snapshot measured.** A verdict on an answer is staged with the
+record of its runs -- the answer's `ensemble`, which holds no rows -- and
+that record outlives the job: it is kept as long as the submission is.
+B15 asked eleven ways in one wave, the most the settings allow (the
+question as asked and ten rewordings, `ENSEMBLE_PARAPHRASES=10`), made a
+record of 50.3 KB as JSON: about 4.5 KB a run, 3.6 KB of it the run's
+trace of sixteen nodes. Every run there answered at its first attempt; an
+attempt more is about five nodes more in that run's trace, a little over
+1 KB. So eleven runs that each used all seven attempts would stage about
+130 KB, and the usual four runs about 20 KB.
+
 **What fusion added.** No columns: every agreeing run returned the columns
 the chosen one did, so there was nothing to join and nothing to decline.
 Four claims, one each on B02, B09, B10 and B15, each about a row the chosen

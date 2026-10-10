@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from . import tracing
-from .complexity import RUNGS
+from .complexity import CALLED_AT, RUNGS
 from .config import Settings
 from .hostgate import HostGate, gate_for
 from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
@@ -310,12 +310,16 @@ def candidates(
 
 def choose_models(ranked: dict[tuple[str, str], list[str]], anchor: str, limit: int) -> list[str]:
     """At most `limit` models, the anchor first, then greedily whichever model
-    would take the most rungs from the models already chosen."""
+    would take the most rungs from the models already chosen -- counting only
+    the rungs a task is ever called at (`complexity.CALLED_AT`). A model fast
+    at the Judge is suited to its light and standard rungs too, and counting
+    them won it a place from the models the older tasks were routed to."""
+    called = [order for (task, rung), order in ranked.items() if rung in CALLED_AT.get(task, RUNGS)]
     chosen = [anchor]
     while len(chosen) < max(1, limit):
         gains: dict[str, int] = {}
         places: dict[str, int] = {}
-        for order in ranked.values():
+        for order in called:
             for place, name in enumerate(order):
                 if name in chosen:
                     break

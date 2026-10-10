@@ -37,6 +37,7 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 
 **Fixed**
 - `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
+- The router chooses which models to keep by the rungs each task is actually called at: counted at every rung, a model fast at the Judge -- called only at heavy -- took a place from the models the older tasks were routed to.
 
 **Updated**
 - The REST API's two workers take turns at the model host by default; a host that serves two calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them.

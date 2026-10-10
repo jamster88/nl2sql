@@ -227,6 +227,21 @@ def test_no_more_models_than_the_host_keeps_loaded():
     assert build_table(settings(model_max_loaded=1), catalog(entry("broad:14b", p50=2.0))).models() == [ANCHOR]
 
 
+def test_a_rung_no_task_is_called_at_wins_no_model_a_place():
+    """The Judge is called only at heavy: a model suited to all three of its
+    rungs takes one that counts, and loses the place to one that takes two
+    the Supervisor and the reflection are called at. Its other two rungs
+    are still filled in the table, by the models chosen."""
+    table = build_table(settings(model_max_loaded=2), catalog(
+        entry(ANCHOR, p50=9.0),
+        entry("judge-only:12b", p50=1.0, tasks=("judge",)),
+        entry("light:7b", p50=2.0, suited="light", tasks=("supervisor", "reflection")),
+    ))
+    assert table.models() == [ANCHOR, "light:7b"]
+    assert models_of(table, "judge") == [ANCHOR] * 3
+    assert table.cells[("supervisor", "light")].model == "light:7b"
+
+
 def test_an_unmeasured_candidate_follows_every_timed_one_smallest_first():
     ranked = candidates(catalog(
         entry("timed:30b", p50=4.0, params=30e9),

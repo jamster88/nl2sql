@@ -521,36 +521,51 @@ serves and rebuilt the committed catalog with what it found
 ([`model_catalog.md`](model_catalog.md)). Before it, both tasks went to
 `OLLAMA_MODEL`; now each goes to the fastest model measured suited to it,
 among the `MODEL_MAX_LOADED` models the router keeps. Measured 2026-10-09
-on the same stack, the fifteen questions through `ensemble`, once:
+and 10 on the same stack, the fifteen questions through `ensemble`, before
+and after the router was changed to count only the rungs a task is called
+at:
 
 | | Right | Agreement | Second wave | Total | Median |
 |---|---|---|---|---|---|
 | with the second wave and fusion (6.3's catalog) | 15/15 | 11 unanimous, 2 judged, 2 single | 1 of 15 | 2590.6s | 146.7s |
-| on the calibrated catalog | 14/15 | 14 unanimous, 1 contested | 0 of 15 | 3767.9s | 211.4s |
+| on the calibrated catalog, every rung counted | 14/15 | 14 unanimous, 1 contested | 0 of 15 | 3767.9s | 211.4s |
+| on the calibrated catalog, the rungs called at | **15/15** | 14 unanimous, 1 judged | 0 of 15 | 2193.5s | 168.2s |
 
-**The five older tasks moved too.** The router chooses which models to
-keep by how many task-and-rung cells each would take, every cell alike, and
-the two new tasks add six. A model measured fast at the Judge takes all
-three of its cells -- though the Judge is only ever called at heavy -- and
-wins one of the three places, and two models the older tasks used lose
-theirs: the Supervisor's light rung, the generator's light and standard,
-the narrator's light and all three of the repair's are answered by other
-models than in every run above. Counting only the rungs each task is called
-at would have kept the three models as they were and moved the
-Paraphraser's light rung alone -- worked out from the catalog, not run.
-
-**B13 is the one miss.** Its runs were asked at the heavy rung rather than
-standard, and its original was written as an absolute difference, the
-question's recorded trap. Of its four runs, one returned the competitor's
-price as a percentage of ours beside that difference, so it agreed with a
-run that returned the difference alone, and that run stood for the group.
-The Judge, now another model, accepted none of the three answers -- two of
+**Counted at every rung, the five older tasks moved too.** The router
+chooses which models to keep by how many task-and-rung cells each would
+take from the anchor, and the two new tasks add six. A model measured fast
+at the Judge took all three of the Judge's cells -- though the Judge is
+only ever called at heavy -- and won one of the three places, and two
+models the older tasks used lost theirs: the Supervisor's light rung, the
+generator's light and standard, the narrator's light and all three of the
+repair's were answered by other models than in every run above. B13 was
+the miss. Its runs were asked at the heavy rung rather than standard, and
+its original was written as an absolute difference, the question's
+recorded trap; of its four runs, one returned the competitor's price as a
+percentage of ours beside that difference, so it agreed with a run that
+returned the difference alone, and that run stood for the group. The
+Judge, then another model, accepted none of the three answers -- two of
 them for not filtering to a fiscal year the question does not name -- and
-the runs' own choice went out `contested`, with the Judge's objection.
-Counted without the Judge, the same.
+the runs' own choice went out `contested`. The narrator, on `OLLAMA_MODEL`
+at every rung, took 940.6s of the 3,767.9s.
 
-**What it cost.** 315 model calls, 21.0 a question against 22.7, and
-1,177.3s more in all. The Judge's call took 5.6s at the median against
-16.2s, and the Paraphraser's 5.9s; the narrator, now on `OLLAMA_MODEL` at
-every rung, took 940.6s of the 3,767.9s, and one generator call on B03
-took 632.0s of its 735.5s.
+**Counted at the rungs called at, only the Paraphraser moved.** A rung no
+rule asks for saves no call, so it now wins no model a place
+(`complexity.CALLED_AT`; the changelog's Fixed). On this catalog the
+router keeps the three models 6.3's catalog chose, the five older tasks
+are routed exactly as before, and the Judge stays on `OLLAMA_MODEL`, the
+one of the three measured suited to it; only the Paraphraser's light rung
+moves, to a model measured suited and faster. Every original's SQL was the
+SQL of the Phase 3 run above; the rewordings were new, and with them the
+runs beside it. The Judge overruled the runs once, on B15, from wrong to
+right, with four runs where Phase 3 had needed ten; it set one answer
+aside on B07 without changing the answer. B08 and B13, which Phase 3
+delivered with one run standing, had four runs agreeing. The host dropped
+off the network during B12 of this run, so B12 to B15 were run again once
+it was back; the table counts that second run.
+
+**What it cost.** 337 model calls, 22.5 a question against 22.7. The
+Paraphraser's call took 6.5s at the median, where `OLLAMA_MODEL`'s had
+taken 32.6s in the calibration, and the Judge's 15.5s. In all, 397.1s
+less than Phase 3's run, mostly B15's second wave not needed; at the
+median, 21.5s more.

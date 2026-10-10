@@ -502,7 +502,9 @@ size and description, and by size alone a 2023 mixture of experts outranks
 the reference, so it is used only with `MODEL_ROUTE_ON_PRIOR=true`. At most
 `MODEL_MAX_LOADED` distinct models fill the table, because Ollama swaps from
 disk when too many are asked for: `OLLAMA_MODEL` first, then whichever
-models take the most rungs. `MODEL_ROUTE_<TASK>` pins a task's rungs
+models take the most rungs -- counting only the rungs a task is ever called
+at, so the Judge, called only at heavy, wins a model no place by its light
+and standard rungs. `MODEL_ROUTE_<TASK>` pins a task's rungs
 outright. The table is printed by the CLI, logged, and reported by
 `/v1/meta`.
 

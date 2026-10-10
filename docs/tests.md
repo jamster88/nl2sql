@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 5309 tests, no Docker, npm, JDK or network needed
+pytest                                          # 5311 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 6134, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 6136, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -118,7 +118,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-17,770 statements and 4,252 branches, none missed. `coverage report` fails below
+17,772 statements and 4,252 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](../.coveragerc)) rather than printing
 a number, the way the five web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST

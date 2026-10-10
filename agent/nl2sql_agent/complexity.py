@@ -14,8 +14,11 @@ what it set out to save.
 | Completeness reflection | the generation's, capped at standard | with the generation |
 | Insight Narrator | light or standard, by the result's size | an audit send-back |
 | Repair diagnosis | one above the generator, standard at least | with the generator |
+| Paraphraser (arch7) | the Supervisor's | never: one call a wave |
+| Judge (arch7.1) | heavy | never: one call a wave |
 
-Nothing lowers a rung within a run.
+Nothing lowers a rung within a run, and no rule reaches a rung outside
+`CALLED_AT`, which the router counts when it chooses its models.
 """
 
 from __future__ import annotations
@@ -28,6 +31,20 @@ from .state import AnswerContract, Complexity, CompletenessReport, Issue, Litera
 
 LIGHT, STANDARD, HEAVY = "light", "standard", "heavy"
 RUNGS = (LIGHT, STANDARD, HEAVY)
+
+#: The rungs each task is ever called at, by the rules below. The router
+#: keeps the models that would take the most rungs from the anchor, and a
+#: rung no rule asks for -- the Judge's light, the Supervisor's heavy --
+#: saves no call, so it wins no model a place.
+CALLED_AT = {
+    "supervisor": (LIGHT, STANDARD),
+    "generator": RUNGS,
+    "reflection": (LIGHT, STANDARD),
+    "narrator": RUNGS,
+    "repair": (STANDARD, HEAVY),
+    "paraphraser": (LIGHT, STANDARD),
+    "judge": (HEAVY,),
+}
 
 #: Points per intent. A comparison or a trend is two queries' worth of shape
 #: in one; a lookup is the floor.

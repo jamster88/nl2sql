@@ -93,20 +93,23 @@ One entry per model, sorted by name. The top of the file says which host it
 describes and when, and `schema` is the version of this layout, so a router
 can refuse a file it does not understand. Schema 2 records where each task's
 `suited` came from, since calibration can measure some of a model's tasks and
-not others.
+not others; schema 3 (7.0) adds the ensemble's two tasks, the Paraphraser and
+the Judge. A 7.0 router still reads a schema-2 catalog, with the two
+unmeasured; a 6.3 router reads schema 2 only.
 
 ```json
 {
-  "schema": 2,
+  "schema": 3,
   "host": "http://192.168.10.82:11434",
-  "ollama_version": "0.34.4",
+  "ollama_version": "0.35.0",
   "built": "2026-09-28T00:56:41Z",
   "reference": "qwen3.8-256k:latest",
   "reference_on_host": true,
   "calibrated": null,
   "rungs": ["light", "standard", "heavy"],
-  "tasks": ["supervisor", "generator", "reflection", "narrator", "repair"],
-  "task_budgets": {"supervisor": 8192, "generator": 16384, "reflection": 8192, "narrator": 8192, "repair": 16384},
+  "tasks": ["supervisor", "generator", "reflection", "narrator", "repair", "paraphraser", "judge"],
+  "task_budgets": {"supervisor": 8192, "generator": 16384, "reflection": 8192, "narrator": 8192, "repair": 16384,
+                   "paraphraser": 8192, "judge": 16384},
   "models": [
     {
       "name": "qwen3.8-256k:latest",
@@ -120,14 +123,14 @@ not others.
       "library": {"page": "https://ollama.com/library/qwen3.8", "badges": ["vision", "tools", "thinking"],
                   "tags": ["code"], "...": "..."},
       "prior": {"supervisor": "heavy", "generator": "standard", "reflection": "heavy",
-                "narrator": "standard", "repair": "heavy",
-                "reasons": ["27.3 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+                "narrator": "standard", "repair": "heavy", "paraphraser": "standard", "judge": "heavy",
+                "reasons": ["27.3 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
                             "a reasoning model: repair one rung up, and routed with thinking off everywhere"]},
       "measured": {},
       "suited": {"supervisor": "heavy", "generator": "standard", "reflection": "heavy",
-                 "narrator": "standard", "repair": "heavy"},
+                 "narrator": "standard", "repair": "heavy", "paraphraser": "standard", "judge": "heavy"},
       "suited_from": {"supervisor": "prior", "generator": "prior", "reflection": "prior",
-                      "narrator": "prior", "repair": "prior"}
+                      "narrator": "prior", "repair": "prior", "paraphraser": "prior", "judge": "prior"}
     }
   ]
 }
@@ -147,6 +150,7 @@ it measured:
   "generator": {"light": {"correct": 6, "of": 6, "p50_s": 14.2},
                 "standard": {"correct": 4, "of": 9, "p50_s": 19.8, "tried": 5}},
   "narrator": {"light": {"correct": 11, "of": 12, "p50_s": 1.3}},
+  "judge": {"heavy": {"correct": 13, "of": 15, "p50_s": 16.0, "rejected_reference": 1}},
   "load_s": 2.2,
   "resident_bytes": 7700000000,
   "measured_as": "the-twin-it-was-measured-on:latest"
@@ -158,6 +162,10 @@ rung early because nothing left could make the model suited to it; the
 probes it did not ask still count toward `of`, as not right, so the model
 and the reference are compared on the same number of probes. `measured_as`
 appears on a model that shares a fingerprint with the one measured.
+`rejected_reference` appears on the Judge's measurement when it set a right
+answer aside -- a Judge's way of taking a right answer away, counted apart
+from its score, and named on the calibrator's line for the model (`judge:
+heavy 13/15 (16.0s; the right answer set aside on 1)`).
 
 ## The prior
 
@@ -167,14 +175,14 @@ the result.
 
 | Fact | Effect |
 |---|---|
-| parameters: under 10 B / 10 to 40 B / over 40 B | generator, narrator and repair light / standard / heavy |
-| parameters: under 7 B / 7 B and over | supervisor and reflection light / heavy |
+| parameters: under 10 B / 10 to 40 B / over 40 B | generator, narrator, repair and paraphraser light / standard / heavy |
+| parameters: under 7 B / 7 B and over | supervisor, reflection and judge light / heavy |
 | parameters unknown | light for every task, and no promotions |
 | a mixture of experts | placed by total parameters, with a note that it will measure faster than its size |
 | a code model | generator and repair one rung up |
 | `thinking` capability, or *reasoning* in the description | repair one rung up; routed with thinking off everywhere |
 | quantised below 4 bits | every task one rung down |
-| no `tools` capability, or capabilities unknown | supervisor, reflection and narrator one rung down |
+| no `tools` capability, or capabilities unknown | supervisor, reflection, narrator, paraphraser and judge one rung down -- the tasks that answer in a JSON schema |
 | a context window below a task's budget | no candidate for that task |
 | an embedding model (the capability, or a BERT family) | no candidate for any task |
 | served by another host (an Ollama cloud model) | no candidate for any task |
@@ -214,6 +222,7 @@ suitability only, unless `MODEL_ROUTE_ON_PRIOR=true` says otherwise.
 .venv/bin/python models/calibrate.py                          # every chat model, every task
 .venv/bin/python models/calibrate.py --resume                 # carry on where a run stopped
 .venv/bin/python models/calibrate.py --models <model> <model> --tasks supervisor narrator
+.venv/bin/python models/calibrate.py --tasks paraphraser judge  # the ensemble's two, after a 6.3 catalog's rebuild
 .venv/bin/python models/calibrate.py --questions B01 B07 B15 --host-memory 128G
 ```
 
@@ -230,13 +239,17 @@ one probe per task:
 | reflection | each benchmark question's accepted result, replayed | the model agrees with the reference model's own reflection |
 | narrator | each accepted result, narrated again | the audit passes every claim and every assumption is stated |
 | repair | [`probes/repair.json`](probes/repair.json): six real Postgres errors the classifier cannot place | the diagnosis names the fix -- never a word the error itself contains, or a model that only repeated the error would pass |
+| paraphraser | each benchmark question, reworded as the ensemble asks: `ENSEMBLE_MAX_PARAPHRASES` rewordings from the question and the contract the reference's run read from it | at least `ENSEMBLE_PARAPHRASES` of them, in the order written, pass the fidelity gate -- F1-F3 and F5 in code, F4 the reference model's reading -- so a first wave needs no retry |
+| judge | [`probes/judge.json`](probes/judge.json): each question's reference answer beside wrong ones -- the ensemble's own runs' mistakes where they made one, the question's recorded trap written as SQL elsewhere -- their rows run live, shown by letter and never with a count, the reference first on one question and last on the next | the reference accepted and every wrong answer set aside |
 
 Each probe counts toward the rung the router would route it at -- a
 benchmark question toward the rung its score gives it, a flagged triage case
 toward standard -- and for each rung the catalog records correct out of
 tried and the P50. A model is suited to a rung when it scores within one
-question of the reference model on the same probes -- the Supervisor and the
-generator within none, since their miss is a wrong answer. A Supervisor one
+question of the reference model on the same probes -- the Supervisor, the
+generator and the Judge within none, since their miss is a wrong answer: a
+Judge that sets a right answer aside, or accepts a wrong one the runs agreed
+on, changes the answer delivered. A Supervisor one
 question behind refused a valid benchmark question as out of domain; a
 generator one question behind lost that very question in the routed
 benchmark, because the repairs that climb to the reference start from its
@@ -253,7 +266,11 @@ the probe can show: where the reference finds nothing missing -- as it
 mostly does once the rules have passed -- the probe measures whether a model
 asks for columns the reference would not, which costs a generation each
 time, and cannot tell a careful model from one that always answers
-"complete".
+"complete". The Paraphraser and the Judge read each question as the
+reference's own run read it -- its contract, its knowledge, its assumptions
+-- and a wrong answer in the Judge's probe that cannot run, or that returns
+the reference's rows, is left out and said, so the probe never asks a Judge
+to set a right answer aside.
 
 It also times each model's cold load and reads how much memory it holds
 once loaded (`--no-load` skips both), and with `--host-memory` it warns when
@@ -280,7 +297,9 @@ a host with dozens of models takes hours, and is built to be left alone:
 Calibrate again when the host changes -- a model pulled, a new Ollama, other
 hardware -- since the numbers are a measurement of one machine on one day. A
 rebuild of the catalog keeps the measurements of every model whose weights
-have not changed, so `--resume` then measures only what is new.
+have not changed, so `--resume` then measures only what is new. A catalog of
+schema 2 rebuilt keeps its five tasks' measurements; `--tasks paraphraser
+judge` then measures the ensemble's two.
 
 ## HTTPS on a Mac
 

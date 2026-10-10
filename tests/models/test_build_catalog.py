@@ -187,7 +187,8 @@ def test_an_uncalibrated_catalog_says_so(build_catalog, host, library, tmp_path)
     assert catalog["schema"] == build_catalog.SCHEMA_VERSION
     assert catalog["calibrated"] is None
     assert (catalog["rungs"], catalog["tasks"]) == (["light", "standard", "heavy"],
-                                                    ["supervisor", "generator", "reflection", "narrator", "repair"])
+                                                    ["supervisor", "generator", "reflection", "narrator", "repair",
+                                                     "paraphraser", "judge"])
     assert catalog["task_budgets"] == build_catalog.TASK_BUDGETS
     for model in catalog["models"]:
         assert model["measured"] == {}
@@ -210,7 +211,7 @@ def test_the_summary_shows_every_model_and_its_prior(build_catalog, host, librar
     assert "Ollama 0.34.4 at" in out and "18 models, 18 of them chat candidates" in out
     header = next(line for line in out.splitlines() if line.startswith("model"))
     assert header.split() == ["model", "params", "quant", "context", "supervisor", "generator",
-                              "reflection", "narrator", "repair"]
+                              "reflection", "narrator", "repair", "paraphraser", "judge"]
     assert "qwen3-coder-next:latest  79.7B   Q4_K_M  256k     heavy" in out
     assert f"wrote {tmp_path / 'catalog.json'}" in out
 
@@ -236,8 +237,8 @@ def test_the_requests_say_who_is_asking(build_catalog, host, library, tmp_path):
 )
 def test_size_bands(build_catalog, billions, classifying, drafting):
     prior = build_catalog.prior_for("m", facts(build_catalog, params=billions * 1e9), {})
-    assert (prior["supervisor"], prior["reflection"]) == (classifying, classifying)
-    assert (prior["generator"], prior["narrator"], prior["repair"]) == (drafting, drafting, drafting)
+    assert (prior["supervisor"], prior["reflection"], prior["judge"]) == (classifying, classifying, classifying)
+    assert (prior["generator"], prior["narrator"], prior["repair"], prior["paraphraser"]) == (drafting,) * 4
 
 
 def test_an_embedding_model_is_never_a_chat_candidate(build_catalog):
@@ -309,7 +310,8 @@ def test_without_tool_support_the_structured_tasks_are_a_rung_down(build_catalog
     unknown = build_catalog.prior_for("m", facts(build_catalog, params=22e9, capabilities=None), {})
 
     for prior in (none, unknown):
-        assert [prior[t] for t in ("supervisor", "reflection", "narrator")] == ["standard", "standard", "light"]
+        assert [prior[t] for t in ("supervisor", "reflection", "narrator", "paraphraser", "judge")] == [
+            "standard", "standard", "light", "light", "standard"]
         assert (prior["generator"], prior["repair"]) == ("standard", "standard")
     assert none["reasons"][-1].startswith("no tool support")
     assert unknown["reasons"][-1].startswith("capabilities unknown")
@@ -320,8 +322,8 @@ def test_a_window_smaller_than_a_tasks_prompt_rules_the_model_out_for_it(build_c
     tiny = build_catalog.prior_for("m", facts(build_catalog, context=4096), {})
     unknown = build_catalog.prior_for("m", facts(build_catalog, context=None), {})
 
-    assert (medium["generator"], medium["repair"]) == (None, None)
-    assert (medium["supervisor"], medium["narrator"]) == ("heavy", "standard")
+    assert (medium["generator"], medium["repair"], medium["judge"]) == (None, None, None)
+    assert (medium["supervisor"], medium["narrator"], medium["paraphraser"]) == ("heavy", "standard", "standard")
     assert {tiny[task] for task in build_catalog.TASKS} == {None}
     assert None not in {unknown[task] for task in build_catalog.TASKS}
     assert unknown["reasons"][-1] == "context length unknown: no task excluded for it"
@@ -786,6 +788,43 @@ def test_a_rebuild_keeps_what_calibration_measured_for_unchanged_weights(build_c
     assert rebuilt["gemma4:12b-mlx"]["suited_from"]["generator"] == "calibration"
     assert rebuilt["mistral:7b"]["measured"] == {}
     assert "standard*" in capsys.readouterr().out
+
+
+def test_a_schema_2_catalog_rebuilt_keeps_its_five_tasks_measurements_and_leaves_the_two_new_unmeasured(
+        build_catalog, host, library, tmp_path):
+    """S5 of arch7.3's risks by phase: the catalog every calibrated host has
+    is schema 2. A rebuild reads it for what it measured -- by name and
+    digest, as any rebuild does -- and writes schema 3: the five tasks'
+    measurements kept, the Paraphraser and the Judge on their priors until
+    `calibrate.py --tasks paraphraser judge` measures them."""
+    _, first = run(build_catalog, tmp_path, "--host", host.url)
+    old = {**first, "schema": 2, "tasks": first["tasks"][:5], "calibrated": "2026-09-28T01:00:00Z",
+           "task_budgets": {t: b for t, b in first["task_budgets"].items() if t in first["tasks"][:5]}}
+    measured = {"generator": _scores(light=(6, 6), standard=(6, 6)), "narrator": _scores(light=(9, 10))}
+    for model in old["models"]:
+        model["prior"] = {k: v for k, v in model["prior"].items() if k not in ("paraphraser", "judge")}
+        model["measured"] = measured if model["name"] == "gemma4:12b-mlx" else {}
+    (tmp_path / "catalog.json").write_text(json.dumps(old))
+
+    _, rebuilt = run(build_catalog, tmp_path, "--host", host.url)
+    gemma = by_name(rebuilt)["gemma4:12b-mlx"]
+    assert (rebuilt["schema"], rebuilt["calibrated"]) == (3, "2026-09-28T01:00:00Z")
+    assert rebuilt["tasks"][5:] == ["paraphraser", "judge"]
+    assert gemma["measured"] == measured
+    assert (gemma["suited_from"]["paraphraser"], gemma["suited_from"]["judge"]) == ("prior", "prior")
+    assert gemma["prior"]["judge"] is not None
+
+
+def test_a_judge_that_errs_once_more_than_the_reference_is_not_suited_and_a_paraphraser_may(build_catalog):
+    """A Judge's miss changes the answer delivered; a Paraphraser's costs a
+    retry."""
+    reference = {"measured": {"judge": _scores(heavy=(14, 15)), "paraphraser": _scores(light=(12, 13))}}
+    model = {"prior": {"judge": "heavy", "paraphraser": "light"},
+             "measured": {"judge": _scores(heavy=(13, 15)), "paraphraser": _scores(light=(11, 13))}}
+    suited, source = build_catalog.suitability(model, reference)
+    assert (suited["judge"], source["judge"]) == (None, "calibration")
+    assert (suited["paraphraser"], source["paraphraser"]) == ("light", "calibration")
+    assert suited["supervisor"] is None, "a task the prior does not name has no prior"
 
 
 def test_measurements_of_another_host_are_not_kept(build_catalog, host, library, tmp_path):

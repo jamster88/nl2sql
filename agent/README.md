@@ -280,9 +280,9 @@ of its own, and arch7.3
 records the owner's decisions on it. It is built in phases
 ([`Multi-Agent_NL2SQL_arch7_3_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md),
 with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md)),
-and Phases 0 to 3 of it are built -- the outer graph, the rewordings, the
-Judge and the vote, the second wave and fusion; the calibration of the two
-new routing tasks, the clients' views of the runs and the grain check
+and Phases 0 to 4 of it are built -- the outer graph, the rewordings, the
+Judge and the vote, the second wave and fusion, and the calibration of the
+two new routing tasks; the clients' views of the runs and the grain check
 (Phase 6, which 7.0.0 ships on by default, for the pipeline with the
 ensemble off as well) are still to come --
 [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
@@ -483,12 +483,17 @@ from state the pipeline already holds; nothing in routing calls a model.
 | Paraphraser (arch7) | the Supervisor's: light, standard when the pre-screen flags the question | never: one call, and one retry |
 | Judge (arch7.1) | heavy, always | never: one call a question, before the vote |
 
-The two arch7 tasks are new in 7.0, and a catalog built before it -- schema
-2, every calibrated host's, the committed one included -- knows nothing of
-them. It is read, not refused: the two are taken as unmeasured, so
-`OLLAMA_MODEL` answers them until `models/calibrate.py` measures them, and
-the routing table's notes say so. A catalog of any other schema than 2 or 3
-is refused, as before.
+The two arch7 tasks are new in 7.0. `models/build_catalog.py` writes
+catalogs of schema 3, with a prior for both, and `models/calibrate.py
+--tasks paraphraser judge` measures them -- the Paraphraser on whether
+enough of its rewordings pass the fidelity gate, the Judge on whether it
+accepts each benchmark question's right answer and sets aside the wrong
+ones recorded beside it ([`models/README.md`](../models/README.md#calibration)).
+A catalog built before 7.0 -- schema 2, every calibrated host's -- knows
+nothing of them. It is read, not refused: the two are taken as unmeasured,
+so `OLLAMA_MODEL` answers them until a rebuild and the calibrator measure
+them, and the routing table's notes say so. A catalog of any other schema
+than 2 or 3 is refused, as before.
 
 The **routing table** is built once, at startup, from the catalog
 `MODEL_CATALOG` names. Each task and rung gets the fastest model whose

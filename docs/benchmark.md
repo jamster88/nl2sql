@@ -513,3 +513,44 @@ the narrative does not yet speak of (the changelog's departures, Phase 3).
 **What it cost.** B15's second wave: six runs and a second Judge call,
 373.6s for the question against 173.5s. The fifteen made 340 model calls,
 22.7 a question against 21.7; fusion is code and took no measurable time.
+
+### On the calibrated catalog
+
+Phase 4 measured the Paraphraser and the Judge on every model the host
+serves and rebuilt the committed catalog with what it found
+([`model_catalog.md`](model_catalog.md)). Before it, both tasks went to
+`OLLAMA_MODEL`; now each goes to the fastest model measured suited to it,
+among the `MODEL_MAX_LOADED` models the router keeps. Measured 2026-10-09
+on the same stack, the fifteen questions through `ensemble`, once:
+
+| | Right | Agreement | Second wave | Total | Median |
+|---|---|---|---|---|---|
+| with the second wave and fusion (6.3's catalog) | 15/15 | 11 unanimous, 2 judged, 2 single | 1 of 15 | 2590.6s | 146.7s |
+| on the calibrated catalog | 14/15 | 14 unanimous, 1 contested | 0 of 15 | 3767.9s | 211.4s |
+
+**The five older tasks moved too.** The router chooses which models to
+keep by how many task-and-rung cells each would take, every cell alike, and
+the two new tasks add six. A model measured fast at the Judge takes all
+three of its cells -- though the Judge is only ever called at heavy -- and
+wins one of the three places, and two models the older tasks used lose
+theirs: the Supervisor's light rung, the generator's light and standard,
+the narrator's light and all three of the repair's are answered by other
+models than in every run above. Counting only the rungs each task is called
+at would have kept the three models as they were and moved the
+Paraphraser's light rung alone -- worked out from the catalog, not run.
+
+**B13 is the one miss.** Its runs were asked at the heavy rung rather than
+standard, and its original was written as an absolute difference, the
+question's recorded trap. Of its four runs, one returned the competitor's
+price as a percentage of ours beside that difference, so it agreed with a
+run that returned the difference alone, and that run stood for the group.
+The Judge, now another model, accepted none of the three answers -- two of
+them for not filtering to a fiscal year the question does not name -- and
+the runs' own choice went out `contested`, with the Judge's objection.
+Counted without the Judge, the same.
+
+**What it cost.** 315 model calls, 21.0 a question against 22.7, and
+1,177.3s more in all. The Judge's call took 5.6s at the median against
+16.2s, and the Paraphraser's 5.9s; the narrator, now on `OLLAMA_MODEL` at
+every rung, took 940.6s of the 3,767.9s, and one generator call on B03
+took 632.0s of its 735.5s.

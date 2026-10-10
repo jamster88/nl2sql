@@ -1,0 +1,144 @@
+{
+  "about": "The Judge's probe (arch7.3, implementation specification section 4): per benchmark question, wrong answers shown beside the reference answer, by letter and without counts. A Judge is right on a question when it accepts the reference and sets aside every trap. Traps marked 'a live run's' are queries the ensemble's own runs wrote; the rest are each question's recorded trap, written as SQL. Every trap runs and returns another answer than the reference -- calibrate.py leaves out one that does not.",
+  "cases": [
+    {
+      "id": "B01",
+      "traps": [
+        {
+          "mistake": "a filter the question does not state: one banner's stores",
+          "sql": "SELECT count(*) AS store_count FROM dim_store WHERE banner_name = 'Corner Fresh Grocers'"
+        }
+      ]
+    },
+    {
+      "id": "B02",
+      "traps": [
+        {
+          "mistake": "the private-label count inverted: the products that are not private label",
+          "sql": "SELECT count(*) AS products, count(*) FILTER (WHERE NOT is_private_label) AS private_label FROM dim_product"
+        }
+      ]
+    },
+    {
+      "id": "B03",
+      "traps": [
+        {
+          "mistake": "another measure: sales lines per banner, not stores",
+          "sql": "SELECT st.banner_name, count(*) AS stores FROM fact_pos_retail_sales s JOIN dim_store st ON st.store_key = s.store_key GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": "B04",
+      "traps": [
+        {
+          "mistake": "another period: calendar 2025, not fiscal year 2025",
+          "sql": "SELECT ROUND(SUM(s.net_sales_amt), 2) AS net_sales FROM fact_pos_retail_sales s JOIN dim_date d ON d.date_key = s.sales_date_key WHERE d.calendar_date BETWEEN DATE '2025-01-01' AND DATE '2025-12-31'"
+        }
+      ]
+    },
+    {
+      "id": "B05",
+      "traps": [
+        {
+          "mistake": "another measure: gross sales, which ignore markdowns, for net sales",
+          "sql": "SELECT p.department_name, ROUND(SUM(s.gross_sales_amt), 2) AS net_sales FROM fact_pos_retail_sales s JOIN dim_date d ON d.date_key = s.sales_date_key JOIN dim_product p ON p.product_key = s.product_key WHERE d.fiscal_year = 2025 GROUP BY 1 ORDER BY 2 DESC LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": "B06",
+      "traps": [
+        {
+          "mistake": "another period: the calendar's fourth quarter of the fiscal year, not the fiscal fourth quarter",
+          "sql": "SELECT ROUND(SUM(s.markdown_discount_amt), 2) AS markdowns FROM fact_pos_retail_sales s JOIN dim_date d ON d.date_key = s.sales_date_key WHERE d.fiscal_year = 2025 AND EXTRACT(QUARTER FROM d.calendar_date) = 4"
+        }
+      ]
+    },
+    {
+      "id": "B07",
+      "traps": [
+        {
+          "mistake": "daily sales joined to monthly costs on the date (a live run's)",
+          "sql": "SELECT ROUND(100.0 * (SUM(s.net_sales_amt) - SUM(s.quantity_sold * c.net_item_cost))\n            / NULLIF(SUM(s.net_sales_amt), 0), 2) AS gross_margin_pct\nFROM fact_pos_retail_sales s\nJOIN dim_date d ON d.date_key = s.sales_date_key\nJOIN dim_product p ON p.product_key = s.product_key\nJOIN fact_item_cogs c ON c.date_key = s.sales_date_key AND c.product_key = s.product_key\nWHERE p.department_name = 'Dairy & Eggs'\n  AND d.fiscal_year = 2025\n  AND d.fiscal_month_num = 12"
+        }
+      ]
+    },
+    {
+      "id": "B08",
+      "traps": [
+        {
+          "mistake": "a fraction where a percentage is asked (a live run's)",
+          "sql": "SELECT ROUND(SUM(m.grocer_sales_amount) / NULLIF(SUM(m.total_market_sales_amount), 0), 2) AS market_share_pct\nFROM fact_market_share_weekly m\nJOIN dim_date d ON d.date_key = m.week_key\nWHERE d.fiscal_year = 2024\n  AND m.competitor_key = (SELECT min(competitor_key) FROM dim_competitor)"
+        }
+      ]
+    },
+    {
+      "id": "B09",
+      "traps": [
+        {
+          "mistake": "another period: every year, not fiscal year 2025",
+          "sql": "SELECT t.allowance_type_code, ROUND(SUM(a.total_allowance_amt), 2) AS total FROM fact_vendor_allowances a JOIN dim_allowance_type t ON t.allowance_type_key = a.allowance_type_key GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": "B10",
+      "traps": [
+        {
+          "mistake": "the wrong end: the five lowest, not the five highest",
+          "sql": "SELECT p.sku_id, ROUND(SUM(s.net_sales_amt), 2) AS net_sales FROM fact_pos_retail_sales s JOIN dim_date d ON d.date_key = s.sales_date_key JOIN dim_product p ON p.product_key = s.product_key WHERE d.fiscal_year = 2025 GROUP BY 1 ORDER BY 2 ASC LIMIT 5"
+        }
+      ]
+    },
+    {
+      "id": "B11",
+      "traps": [
+        {
+          "mistake": "basket lines averaged, not baskets",
+          "sql": "SELECT st.banner_name, ROUND(AVG(s.net_sales_amt), 2) AS avg_basket FROM fact_pos_retail_sales s JOIN dim_store st ON st.store_key = s.store_key JOIN dim_date d ON d.date_key = s.sales_date_key WHERE d.fiscal_year = 2025 GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": "B12",
+      "traps": [
+        {
+          "mistake": "another period: calendar 2025, not fiscal year 2025",
+          "sql": "SELECT pr.mechanic_type, ROUND(SUM(f.promo_quantity_sold), 2) AS units, ROUND(SUM(f.promo_quantity_lift), 2) AS lift FROM fact_promo_performance f JOIN dim_promotion pr ON pr.promotion_key = f.promotion_key JOIN dim_date d ON d.date_key = f.date_key WHERE EXTRACT(YEAR FROM d.calendar_date) = 2025 GROUP BY 1 ORDER BY 3 DESC"
+        }
+      ]
+    },
+    {
+      "id": "B13",
+      "traps": [
+        {
+          "mistake": "a filter the question does not state: only the rows where the competitor is cheaper (a live run's)",
+          "sql": "SELECT c.competitor_name,\n       c.competitor_id,\n       ROUND(AVG(100.0 * (ip.regular_retail_price - comp.comp_regular_price) / ip.regular_retail_price), 1) AS price_advantage_pct\nFROM fact_competitor_pricing comp\nJOIN dim_competitor c ON c.competitor_key = comp.competitor_key\nJOIN fact_item_prices ip\n    ON ip.date_key = comp.date_key\n   AND ip.product_key = comp.product_key\n   AND ip.store_key = comp.store_key\nWHERE comp.comp_regular_price < ip.regular_retail_price\nGROUP BY 1, 2\nORDER BY price_advantage_pct DESC\nLIMIT 1"
+        },
+        {
+          "mistake": "another measure: an absolute price difference where a relative one is asked (a live run's)",
+          "sql": "SELECT c.competitor_name, c.competitor_id,\n       ROUND(AVG(ip.regular_retail_price - cp.comp_regular_price), 2) AS avg_price_diff\nFROM fact_competitor_pricing cp\nJOIN dim_competitor c ON c.competitor_key = cp.competitor_key\nJOIN fact_item_prices ip\n    ON ip.date_key = cp.date_key\n   AND ip.product_key = cp.product_key\n   AND ip.store_key = cp.store_key\nGROUP BY 1, 2\nORDER BY avg_price_diff ASC\nLIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": "B14",
+      "traps": [
+        {
+          "mistake": "another period: every year, not fiscal year 2025",
+          "sql": "SELECT st.state_code, ROUND(SUM(s.net_sales_amt), 2) AS net_sales FROM fact_pos_retail_sales s JOIN dim_store st ON st.store_key = s.store_key GROUP BY 1 ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": "B15",
+      "traps": [
+        {
+          "mistake": "examples read as a filter: two channels of five (a live run's)",
+          "sql": "SELECT ch.channel_type,\n       SUM(ad.impressions_count) AS total_impressions,\n       SUM(ad.clicks_or_coupon_clips_count) AS total_clicks\nFROM fact_ad_performance ad\nJOIN dim_ad_placement pl ON pl.ad_placement_key = ad.ad_placement_key\nJOIN dim_ad_channel ch ON ch.ad_channel_key = pl.ad_channel_key\nJOIN dim_date d ON d.date_key = ad.date_key\nWHERE ch.channel_type IN ('Print Flyer', 'Paid Social')\n  AND d.fiscal_year = 2025\nGROUP BY ch.channel_type"
+        }
+      ]
+    }
+  ]
+}

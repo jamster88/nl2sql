@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 5301 tests, no Docker, npm, JDK or network needed
+pytest                                          # 5309 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 6126, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 6134, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -34,7 +34,7 @@ nginx image carries; without it they skip, saying so.
 | [`tests/web/`](../tests/web) | The shared web package (6.2, [`web/README.md`](../web/README.md)): every page taking it in the same way -- its Vite, Vitest and TypeScript configuration, its image -- and the desktop client unescaping the agent's text by the same rule. Its own tests run in every page's suite |
 | [`tests/docs/`](../tests/docs) | These documents and the architecture diagrams, checked against the code they describe -- including every place the repository writes its own version down, which a release has to move together -- the phrases the adversarial reviews retired, absent from every document and comment, and the newest specification's security blueprint naming files and tests that exist -- and the adversarial reviews' figures: each committed draw.io file held to the script that computes it, its SVG and PNG exports to the file, and the `_enhanced` review documents to the originals they add figures to |
 | [`tests/benchmarks/`](../tests/benchmarks) | The benchmark's own ground truth: every reference query executed against the dataset, the scorer it grades by -- the agent's since 7.0, its cases against both kinds of mistake it could make in `tests/agent/` -- an ensemble answer scored on what it delivered and timed from every run, the paraphrase set -- three hand-written rewordings of each question, every one held to the fidelity checks against its question, and the stability they measure, a question right only when every wording is -- and its MLflow runs -- one per configuration with its parameters, metrics and report, every question's trace in it and judged, a run cut short ended as such, and a host without the runs API told so |
-| [`tests/models/`](../tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
+| [`tests/models/`](../tests/models) | The calibrator, against fake models that answer by what each prompt says -- which probe counts toward which rung, what counts as right, the reference's reflection as the key, the Paraphraser held to the fidelity gate and the Judge to each question's right and wrong answers -- its rejections of the right one counted apart -- the cold load and resident size read from the host's own API, and what reaches the catalog -- and the model catalog builder, run against a fake Ollama host answering exactly what the real one did on 2026-09-27 and a fake ollama.com serving that day's pages: every model catalogued from the host's own answers, the MLX builds described by `/api/show` where `/api/tags` says nothing, a local build described by its parent's page, the prior checked against the table the spec worked by hand and then rule by rule on each boundary, every way of naming a host, measurements carried across a rebuild only for unchanged weights on the same host, every way the host or the site can fail to answer, borrowing the system's certificate authorities when Python has none -- over real TLS, and never by turning verification off -- and the committed catalog re-derived from its own facts; plus, behind `--run-docker`, the real host and the real library page |
 
 The 758 tests behind `--run-docker` are the ones that need a working daemon:
 they build the agent, GUI, console, desktop, directory and auth images and run them, resolve the real
@@ -118,7 +118,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-17,684 statements and 4,226 branches, none missed. `coverage report` fails below
+17,770 statements and 4,252 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](../.coveragerc)) rather than printing
 a number, the way the five web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST

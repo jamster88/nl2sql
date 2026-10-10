@@ -1,11 +1,11 @@
 {
-  "schema": 3,
+  "schema": 2,
   "host": "http://192.168.10.82:11434",
-  "ollama_version": "0.35.0",
-  "built": "2026-10-09T21:24:56Z",
+  "ollama_version": "0.34.4",
+  "built": "2026-09-28T13:13:20Z",
   "reference": "qwen3.8-256k:latest",
   "reference_on_host": true,
-  "calibrated": "2026-10-10T02:54:51Z",
+  "calibrated": "2026-09-28T12:48:50Z",
   "rungs": [
     "light",
     "standard",
@@ -16,158 +16,16 @@
     "generator",
     "reflection",
     "narrator",
-    "repair",
-    "paraphraser",
-    "judge"
+    "repair"
   ],
   "task_budgets": {
     "supervisor": 8192,
     "generator": 16384,
     "reflection": 8192,
     "narrator": 8192,
-    "repair": 16384,
-    "paraphraser": 8192,
-    "judge": 16384
+    "repair": 16384
   },
   "models": [
-    {
-      "name": "bge-large:335m",
-      "digest": "b3d71c92805938e2c9d78e6f35e82d7cc1bd77e05b47dd2ab3016240f4021c15",
-      "chat": false,
-      "facts": {
-        "family": "bert",
-        "parent_model": null,
-        "parameter_size": "334.09M",
-        "parameter_count": 334092288,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 512,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": "MIT License",
-        "remote_host": null,
-        "size_bytes": 670532029,
-        "modified_at": "2026-09-28",
-        "fingerprint": "f9f0579932c72845"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/bge-large",
-        "description": "Embedding model from BAAI mapping texts to vectors.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "335m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "bge-m3:567m",
-      "digest": "7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab",
-      "chat": false,
-      "facts": {
-        "family": "bert",
-        "parent_model": null,
-        "parameter_size": "566.70M",
-        "parameter_count": 566703104,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 8192,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": "MIT License",
-        "remote_host": null,
-        "size_bytes": 1157672605,
-        "modified_at": "2026-09-28",
-        "fingerprint": "da3f8fb5c5769d04"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/bge-m3",
-        "description": "BGE-M3 is a new model from BAAI distinguished for its versatility in Multi-Functionality, Multi-Linguality, and Multi-Granularity.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "567m"
-        ],
-        "tags": []
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
     {
       "name": "deepseek-r1:14b",
       "digest": "c333b7232bdb521236694ffbb5f5a6b11cc45d98e9142c73123b670fca400b09",
@@ -221,10 +79,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "14.8 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "14.8 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -285,20 +141,6 @@
             "of": 6,
             "p50_s": 10.245
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 30.963
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 19.376
-          }
         }
       },
       "suited": {
@@ -306,18 +148,14 @@
         "generator": null,
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -373,10 +211,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "32.8 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "32.8 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -438,20 +274,6 @@
             "of": 6,
             "p50_s": 29.822
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 7,
-            "of": 15,
-            "p50_s": 79.89
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 14,
-            "of": 15,
-            "p50_s": 41.485
-          }
         }
       },
       "suited": {
@@ -459,18 +281,14 @@
         "generator": null,
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -526,10 +344,8 @@
         "reflection": "heavy",
         "narrator": "heavy",
         "repair": "heavy",
-        "paraphraser": "heavy",
-        "judge": "heavy",
         "reasons": [
-          "70.6 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)",
+          "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -591,20 +407,6 @@
             "of": 6,
             "p50_s": 39.991
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 5,
-            "of": 15,
-            "p50_s": 81.685
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 14,
-            "of": 15,
-            "p50_s": 83.742
-          }
         }
       },
       "suited": {
@@ -612,18 +414,14 @@
         "generator": null,
         "reflection": "heavy",
         "narrator": "light",
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -682,10 +480,8 @@
         "reflection": "heavy",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "heavy",
         "reasons": [
-          "8.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
+          "8.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -747,20 +543,6 @@
             "of": 6,
             "p50_s": 31.789
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 11,
-            "of": 15,
-            "p50_s": 16.866
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 12.945
-          }
         }
       },
       "suited": {
@@ -768,18 +550,14 @@
         "generator": null,
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -837,10 +615,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "14.8 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "14.8 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -902,39 +678,21 @@
             "p50_s": 10.245
           }
         },
-        "measured_as": "deepseek-r1:14b",
-        "paraphraser": {
-          "light": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 30.963
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 19.376
-          }
-        }
+        "measured_as": "deepseek-r1:14b"
       },
       "suited": {
         "supervisor": "light",
         "generator": null,
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -992,10 +750,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "32.8 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "32.8 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -1058,39 +814,21 @@
             "p50_s": 29.822
           }
         },
-        "measured_as": "deepseek-r1:32b",
-        "paraphraser": {
-          "light": {
-            "correct": 7,
-            "of": 15,
-            "p50_s": 79.89
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 14,
-            "of": 15,
-            "p50_s": 41.485
-          }
-        }
+        "measured_as": "deepseek-r1:32b"
       },
       "suited": {
         "supervisor": "light",
         "generator": null,
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -1148,10 +886,8 @@
         "reflection": "heavy",
         "narrator": "heavy",
         "repair": "heavy",
-        "paraphraser": "heavy",
-        "judge": "heavy",
         "reasons": [
-          "70.6 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)",
+          "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -1214,39 +950,21 @@
             "p50_s": 39.991
           }
         },
-        "measured_as": "deepseek-r1:70b",
-        "paraphraser": {
-          "light": {
-            "correct": 5,
-            "of": 15,
-            "p50_s": 81.685
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 14,
-            "of": 15,
-            "p50_s": 83.742
-          }
-        }
+        "measured_as": "deepseek-r1:70b"
       },
       "suited": {
         "supervisor": "light",
         "generator": null,
         "reflection": "heavy",
         "narrator": "light",
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -1306,10 +1024,8 @@
         "reflection": "heavy",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "heavy",
         "reasons": [
-          "8.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
+          "8.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -1372,39 +1088,21 @@
             "p50_s": 31.789
           }
         },
-        "measured_as": "deepseek-r1:8b",
-        "paraphraser": {
-          "light": {
-            "correct": 11,
-            "of": 15,
-            "p50_s": 16.866
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 12.945
-          }
-        }
+        "measured_as": "deepseek-r1:8b"
       },
       "suited": {
         "supervisor": null,
         "generator": null,
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -1456,10 +1154,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "24.0 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "24.0 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a code model by its library description: generator and repair one rung up"
         ]
       },
@@ -1520,20 +1216,6 @@
             "of": 6,
             "p50_s": 5.399
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 20.228
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 13.842
-          }
         }
       },
       "suited": {
@@ -1541,18 +1223,14 @@
         "generator": "standard",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -1604,10 +1282,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "24.0 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "24.0 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a code model by its library description: generator and repair one rung up"
         ]
       },
@@ -1669,112 +1345,21 @@
             "p50_s": 5.399
           }
         },
-        "measured_as": "devstral-small-2:24b",
-        "paraphraser": {
-          "light": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 20.228
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 13.842
-          }
-        }
+        "measured_as": "devstral-small-2:24b"
       },
       "suited": {
         "supervisor": "light",
         "generator": "standard",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
-      }
-    },
-    {
-      "name": "embeddinggemma:300m",
-      "digest": "85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
-      "chat": false,
-      "facts": {
-        "family": "gemma3",
-        "parent_model": "embeddinggemma:300m-bf16",
-        "parameter_size": "307.58M",
-        "parameter_count": 307581696,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "BF16",
-        "format": "gguf",
-        "context_length": 2048,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {
-          "num_batch": 2048,
-          "num_ctx": 2048
-        },
-        "license": "Gemma Terms of Use",
-        "remote_host": null,
-        "size_bytes": 621875917,
-        "modified_at": "2026-09-28",
-        "fingerprint": "94b411e53c772d06"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/embeddinggemma",
-        "description": "EmbeddingGemma is a 300M parameter embedding model from Google.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "300m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
+        "repair": "calibration"
       }
     },
     {
@@ -1824,11 +1409,9 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "10.3 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "10.3 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -1888,21 +1471,6 @@
             "of": 6,
             "p50_s": 3.549
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 11,
-            "of": 15,
-            "p50_s": 12.359
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 7.696,
-            "rejected_reference": 3
-          }
         }
       },
       "suited": {
@@ -1910,18 +1478,14 @@
         "generator": "standard",
         "reflection": "standard",
         "narrator": "light",
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -1971,11 +1535,9 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "light",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "7.5 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "7.5 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -2036,21 +1598,6 @@
             "of": 6,
             "p50_s": 2.72
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 6,
-            "of": 15,
-            "p50_s": 9.747
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 6,
-            "of": 15,
-            "p50_s": 6.029,
-            "rejected_reference": 2
-          }
         }
       },
       "suited": {
@@ -2058,18 +1605,14 @@
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -2117,11 +1660,9 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "10.3 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "10.3 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -2182,40 +1723,21 @@
             "p50_s": 3.549
           }
         },
-        "measured_as": "falcon3-10b-32k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 11,
-            "of": 15,
-            "p50_s": 12.359
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 7.696,
-            "rejected_reference": 3
-          }
-        }
+        "measured_as": "falcon3-10b-32k:latest"
       },
       "suited": {
         "supervisor": null,
         "generator": "standard",
         "reflection": "standard",
         "narrator": "light",
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -2263,11 +1785,9 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "light",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "7.5 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "7.5 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -2329,40 +1849,21 @@
             "p50_s": 2.72
           }
         },
-        "measured_as": "falcon3-7b-32k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 6,
-            "of": 15,
-            "p50_s": 9.747
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 6,
-            "of": 15,
-            "p50_s": 6.029,
-            "rejected_reference": 2
-          }
-        }
+        "measured_as": "falcon3-7b-32k:latest"
       },
       "suited": {
         "supervisor": "light",
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -2427,10 +1928,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "12.4 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "12.4 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -2491,20 +1990,6 @@
             "of": 6,
             "p50_s": 1.688
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 6.109
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 6.315
-          }
         }
       },
       "suited": {
@@ -2512,18 +1997,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -2547,9 +2028,9 @@
           "vision"
         ],
         "defaults": {
+          "top_k": 64,
           "top_p": 0.95,
-          "temperature": 1,
-          "top_k": 64
+          "temperature": 1
         },
         "license": "Apache License",
         "remote_host": null,
@@ -2587,10 +2068,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "26.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "26.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -2651,20 +2130,6 @@
             "of": 6,
             "p50_s": 1.245
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 4.867
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 2.821
-          }
         }
       },
       "suited": {
@@ -2672,18 +2137,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -2707,9 +2168,9 @@
           "vision"
         ],
         "defaults": {
-          "temperature": 1,
           "top_k": 64,
-          "top_p": 0.95
+          "top_p": 0.95,
+          "temperature": 1
         },
         "license": "Apache License",
         "remote_host": null,
@@ -2747,10 +2208,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "31.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "31.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -2811,20 +2270,6 @@
             "of": 6,
             "p50_s": 3.777
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 11.672
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 14.902
-          }
         }
       },
       "suited": {
@@ -2832,18 +2277,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -2890,10 +2331,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "12.4 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "12.4 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -2954,20 +2393,6 @@
             "of": 6,
             "p50_s": 1.711
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 6.02
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 6.347
-          }
         }
       },
       "suited": {
@@ -2975,18 +2400,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -3010,10 +2431,10 @@
           "vision"
         ],
         "defaults": {
-          "top_k": 64,
-          "top_p": 0.95,
           "num_ctx": 262144,
-          "temperature": 1
+          "temperature": 1,
+          "top_k": 64,
+          "top_p": 0.95
         },
         "license": "Apache License",
         "remote_host": null,
@@ -3032,10 +2453,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "26.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "26.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -3096,20 +2515,6 @@
             "of": 6,
             "p50_s": 1.207
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 4.772
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 2.792
-          }
         }
       },
       "suited": {
@@ -3117,18 +2522,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -3152,10 +2553,10 @@
           "vision"
         ],
         "defaults": {
+          "num_ctx": 262144,
           "temperature": 1,
           "top_k": 64,
-          "top_p": 0.95,
-          "num_ctx": 262144
+          "top_p": 0.95
         },
         "license": "Apache License",
         "remote_host": null,
@@ -3174,10 +2575,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "31.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "31.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -3238,20 +2637,6 @@
             "of": 6,
             "p50_s": 3.911
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 12.516
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 14.904
-          }
         }
       },
       "suited": {
@@ -3259,18 +2644,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -3325,10 +2706,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "20.9 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "20.9 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a mixture of 32 experts, 4 active per token: placed by total parameters, so it will measure faster than its size",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
@@ -3390,21 +2769,6 @@
             "of": 6,
             "p50_s": 4.582
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 25.588
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 6.909,
-            "rejected_reference": 2
-          }
         }
       },
       "suited": {
@@ -3412,18 +2776,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -3477,10 +2837,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "20.9 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "20.9 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a mixture of 32 experts, 4 active per token: placed by total parameters, so it will measure faster than its size",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
@@ -3543,40 +2901,21 @@
             "p50_s": 4.582
           }
         },
-        "measured_as": "gpt-oss-128k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 25.588
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 6.909,
-            "rejected_reference": 2
-          }
-        }
+        "measured_as": "gpt-oss-128k:latest"
       },
       "suited": {
         "supervisor": "light",
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -3625,12 +2964,10 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "8.1 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
+          "8.1 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
           "a code model by name (granite-code): generator and repair one rung up",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -3685,21 +3022,6 @@
             "of": 6,
             "p50_s": 2.39
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 3,
-            "of": 15,
-            "p50_s": 8.118
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 5,
-            "of": 15,
-            "p50_s": 7.664,
-            "rejected_reference": 3
-          }
         }
       },
       "suited": {
@@ -3707,160 +3029,14 @@
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
-      }
-    },
-    {
-      "name": "granite-embedding:278m",
-      "digest": "1a37926bf842899cbf90583e3932f3820548716d9d07661ba622199ffe95c552",
-      "chat": false,
-      "facts": {
-        "family": "bert",
-        "parent_model": "/Users/administrator/.ollama/models/blobs/sha256-a658c903bf83a9d84fe1b9869874229ddfdfc1c88b04f958f17dd24e243d262c",
-        "parameter_size": "277.45M",
-        "parameter_count": 277451520,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 512,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": "Apache License",
-        "remote_host": null,
-        "size_bytes": 562777301,
-        "modified_at": "2026-09-28",
-        "fingerprint": "8b78e6b2375a541e"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/granite-embedding",
-        "description": "The IBM Granite Embedding 30M and 278M models models are text-only dense biencoder embedding models, with 30M available in English only and 278M serving multilingual use cases.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "30m",
-          "278m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "granite-embedding:30m",
-      "digest": "eb4c533ba6f7983afdc681a327251a34667340567bb160adfde1a3e07c468ec7",
-      "chat": false,
-      "facts": {
-        "family": "bert",
-        "parent_model": "/Users/administrator/.ollama/models/blobs/sha256-27d24c87a53d110b95abecbff83f966206857a9dc0ba1efd336d08dbd0afc833",
-        "parameter_size": "30.15M",
-        "parameter_count": 30146688,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 512,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": "Apache License",
-        "remote_host": null,
-        "size_bytes": 62534804,
-        "modified_at": "2026-09-28",
-        "fingerprint": "e5473af20ed4f53f"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/granite-embedding",
-        "description": "The IBM Granite Embedding 30M and 278M models models are text-only dense biencoder embedding models, with 30M available in English only and 278M serving multilingual use cases.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "30m",
-          "278m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
+        "repair": "calibration"
       }
     },
     {
@@ -3907,10 +3083,8 @@
         "reflection": "light",
         "narrator": "light",
         "repair": "light",
-        "paraphraser": "light",
-        "judge": "light",
         "reasons": [
-          "3.3 B parameters: supervisor, reflection and judge light (under 7 B); generator, narrator, repair and paraphraser light (under 10 B)",
+          "3.3 B parameters: supervisor and reflection light (under 7 B); generator, narrator and repair light (under 10 B)",
           "a mixture of 40 experts, 8 active per token: placed by total parameters, so it will measure faster than its size"
         ]
       },
@@ -3967,21 +3141,6 @@
             "of": 6,
             "p50_s": 1.113
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 9,
-            "of": 15,
-            "p50_s": 3.046
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 1,
-            "of": 15,
-            "p50_s": 1.523,
-            "rejected_reference": 1
-          }
         }
       },
       "suited": {
@@ -3989,18 +3148,14 @@
         "generator": null,
         "reflection": "light",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4051,12 +3206,10 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "8.1 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
+          "8.1 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
           "a code model by name (granite_code-125k): generator and repair one rung up",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -4112,40 +3265,21 @@
             "p50_s": 2.39
           }
         },
-        "measured_as": "granite-code:8b",
-        "paraphraser": {
-          "light": {
-            "correct": 3,
-            "of": 15,
-            "p50_s": 8.118
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 5,
-            "of": 15,
-            "p50_s": 7.664,
-            "rejected_reference": 3
-          }
-        }
+        "measured_as": "granite-code:8b"
       },
       "suited": {
         "supervisor": null,
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4194,10 +3328,8 @@
         "reflection": "light",
         "narrator": "light",
         "repair": "light",
-        "paraphraser": "light",
-        "judge": "light",
         "reasons": [
-          "3.3 B parameters: supervisor, reflection and judge light (under 7 B); generator, narrator, repair and paraphraser light (under 10 B)",
+          "3.3 B parameters: supervisor and reflection light (under 7 B); generator, narrator and repair light (under 10 B)",
           "a mixture of 40 experts, 8 active per token: placed by total parameters, so it will measure faster than its size"
         ]
       },
@@ -4255,40 +3387,21 @@
             "p50_s": 1.113
           }
         },
-        "measured_as": "granite3.1-moe:3b",
-        "paraphraser": {
-          "light": {
-            "correct": 9,
-            "of": 15,
-            "p50_s": 3.046
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 1,
-            "of": 15,
-            "p50_s": 1.523,
-            "rejected_reference": 1
-          }
-        }
+        "measured_as": "granite3.1-moe:3b"
       },
       "suited": {
         "supervisor": "light",
         "generator": null,
         "reflection": "light",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4336,10 +3449,8 @@
         "reflection": "heavy",
         "narrator": "heavy",
         "repair": "heavy",
-        "paraphraser": "heavy",
-        "judge": "heavy",
         "reasons": [
-          "70.6 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)"
+          "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)"
         ]
       },
       "measured": {
@@ -4399,20 +3510,6 @@
             "of": 6,
             "p50_s": 13.527
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 3.441
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 26.953
-          }
         }
       },
       "suited": {
@@ -4420,18 +3517,14 @@
         "generator": "standard",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4477,10 +3570,8 @@
         "reflection": "heavy",
         "narrator": "heavy",
         "repair": "heavy",
-        "paraphraser": "heavy",
-        "judge": "heavy",
         "reasons": [
-          "70.6 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)"
+          "70.6 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)"
         ]
       },
       "measured": {
@@ -4541,39 +3632,21 @@
             "p50_s": 13.527
           }
         },
-        "measured_as": "llama3.3-128k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 3.441
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 26.953
-          }
-        }
+        "measured_as": "llama3.3-128k:latest"
       },
       "suited": {
         "supervisor": "light",
         "generator": "standard",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4620,10 +3693,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "standard",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "22.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)"
+          "22.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)"
         ]
       },
       "measured": {
@@ -4684,20 +3755,6 @@
             "of": 6,
             "p50_s": 3.938
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 8,
-            "of": 15,
-            "p50_s": 16.436
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 13.469
-          }
         }
       },
       "suited": {
@@ -4705,18 +3762,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4762,10 +3815,8 @@
         "reflection": "heavy",
         "narrator": "light",
         "repair": "light",
-        "paraphraser": "light",
-        "judge": "heavy",
         "reasons": [
-          "7.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)"
+          "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)"
         ]
       },
       "measured": {
@@ -4825,21 +3876,6 @@
             "of": 6,
             "p50_s": 3.014
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 9.148
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 6.804,
-            "rejected_reference": 3
-          }
         }
       },
       "suited": {
@@ -4847,18 +3883,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -4906,10 +3938,8 @@
         "reflection": "heavy",
         "narrator": "light",
         "repair": "light",
-        "paraphraser": "light",
-        "judge": "heavy",
         "reasons": [
-          "7.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)"
+          "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)"
         ]
       },
       "measured": {
@@ -4970,40 +4000,21 @@
             "p50_s": 3.014
           }
         },
-        "measured_as": "mistral:7b",
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 9.148
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 6.804,
-            "rejected_reference": 3
-          }
-        }
+        "measured_as": "mistral:7b"
       },
       "suited": {
         "supervisor": null,
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -5052,10 +4063,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "standard",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "22.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)"
+          "22.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)"
         ]
       },
       "measured": {
@@ -5117,39 +4126,21 @@
             "p50_s": 3.938
           }
         },
-        "measured_as": "mistral-small:22b",
-        "paraphraser": {
-          "light": {
-            "correct": 8,
-            "of": 15,
-            "p50_s": 16.436
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 13.469
-          }
-        }
+        "measured_as": "mistral-small:22b"
       },
       "suited": {
         "supervisor": "light",
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -5195,12 +4186,10 @@
         "reflection": "standard",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "standard",
         "reasons": [
-          "46.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)",
+          "46.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
           "a mixture of 8 experts, 2 active per token: placed by total parameters, so it will measure faster than its size",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -5256,20 +4245,6 @@
             "of": 6,
             "p50_s": 4.229
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 10.642
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 8.532
-          }
         }
       },
       "suited": {
@@ -5277,18 +4252,14 @@
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -5336,12 +4307,10 @@
         "reflection": "standard",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "standard",
         "reasons": [
-          "46.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)",
+          "46.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
           "a mixture of 8 experts, 2 active per token: placed by total parameters, so it will measure faster than its size",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -5398,177 +4367,21 @@
             "p50_s": 4.229
           }
         },
-        "measured_as": "mixtral:8x7b",
-        "paraphraser": {
-          "light": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 10.642
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 10,
-            "of": 15,
-            "p50_s": 8.532
-          }
-        }
+        "measured_as": "mixtral:8x7b"
       },
       "suited": {
         "supervisor": "light",
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
-      }
-    },
-    {
-      "name": "nomic-embed-text-v2-moe:latest",
-      "digest": "ff9c2f10ef5e3722623a1b396e1e04efc27a93112c83e9b7b7b9ca1d05620965",
-      "chat": false,
-      "facts": {
-        "family": "nomic-bert-moe",
-        "parent_model": "/Users/nicole/.ollama/models/blobs/sha256-a5db3381f2e514d3490a3a31fe70eb1a65e95016c85c6c2c23223b810806594f",
-        "parameter_size": "475.29M",
-        "parameter_count": 475288320,
-        "expert_count": 8,
-        "expert_used_count": 2,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 512,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": null,
-        "remote_host": null,
-        "size_bytes": 957680763,
-        "modified_at": "2026-09-28",
-        "fingerprint": "527eeaee57e09ed9"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/nomic-embed-text-v2-moe",
-        "description": "nomic-embed-text-v2-moe is a multilingual MoE text embedding model that excels at multilingual retrieval.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "nomic-embed-text:v1.5",
-      "digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
-      "chat": false,
-      "facts": {
-        "family": "nomic-bert",
-        "parent_model": null,
-        "parameter_size": "137M",
-        "parameter_count": 136727040,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 2048,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {
-          "num_ctx": 8192
-        },
-        "license": "Apache License",
-        "remote_host": null,
-        "size_bytes": 274302450,
-        "modified_at": "2026-09-28",
-        "fingerprint": "35e2bd1b417ab9cb"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/nomic-embed-text",
-        "description": "A high-performing open embedding model with a large token context window.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
+        "repair": "calibration"
       }
     },
     {
@@ -5614,12 +4427,10 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "14.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "14.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -5679,20 +4490,6 @@
             "of": 6,
             "p50_s": 58.526
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 0.572
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 4,
-            "of": 15,
-            "p50_s": 5.727
-          }
         }
       },
       "suited": {
@@ -5700,18 +4497,14 @@
         "generator": "light",
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -5759,12 +4552,10 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "14.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "14.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -5825,39 +4616,21 @@
             "p50_s": 58.526
           }
         },
-        "measured_as": "phi4-reasoning:14b",
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 0.572
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 4,
-            "of": 15,
-            "p50_s": 5.727
-          }
-        }
+        "measured_as": "phi4-reasoning:14b"
       },
       "suited": {
         "supervisor": null,
         "generator": "light",
         "reflection": "standard",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": null,
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -5908,10 +4681,8 @@
         "reflection": "heavy",
         "narrator": "heavy",
         "repair": "heavy",
-        "paraphraser": "heavy",
-        "judge": "heavy",
         "reasons": [
-          "79.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)",
+          "79.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
           "a mixture of 512 experts, 10 active per token: placed by total parameters, so it will measure faster than its size",
           "a code model by name (qwen3-coder-next-256k): generator and repair one rung up"
         ]
@@ -5973,20 +4744,6 @@
             "of": 6,
             "p50_s": 2.264
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 11,
-            "of": 15,
-            "p50_s": 7.781
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 4.559
-          }
         }
       },
       "suited": {
@@ -5994,18 +4751,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -6055,10 +4808,8 @@
         "reflection": "heavy",
         "narrator": "heavy",
         "repair": "heavy",
-        "paraphraser": "heavy",
-        "judge": "heavy",
         "reasons": [
-          "79.7 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser heavy (over 40 B)",
+          "79.7 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair heavy (over 40 B)",
           "a mixture of 512 experts, 10 active per token: placed by total parameters, so it will measure faster than its size",
           "a code model by name (qwen3-coder-next): generator and repair one rung up"
         ]
@@ -6121,259 +4872,21 @@
             "p50_s": 2.264
           }
         },
-        "measured_as": "qwen3-coder-next-256k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 11,
-            "of": 15,
-            "p50_s": 7.781
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 4.559
-          }
-        }
+        "measured_as": "qwen3-coder-next-256k:latest"
       },
       "suited": {
         "supervisor": null,
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
-      }
-    },
-    {
-      "name": "qwen3-embedding:0.6b",
-      "digest": "ac6da0dfba84a81fdbfbaf330198c33cd77c4cdfc53e8bc50eb581914a15621d",
-      "chat": false,
-      "facts": {
-        "family": "qwen3",
-        "parent_model": "/Users/ollama/.ollama/models/blobs/sha256-06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
-        "parameter_size": "595.78M",
-        "parameter_count": 595776512,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "Q8_0",
-        "format": "gguf",
-        "context_length": 32768,
-        "capabilities": [
-          "embedding",
-          "thinking",
-          "tools"
-        ],
-        "defaults": {},
-        "license": null,
-        "remote_host": null,
-        "size_bytes": 639150858,
-        "modified_at": "2026-09-28",
-        "fingerprint": "d5367d473410c4bf"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/qwen3-embedding",
-        "description": "Building upon the foundational models of the Qwen3 series, Qwen3 Embedding provides a comprehensive range of text embeddings models in various sizes",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "0.6b",
-          "4b",
-          "8b"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "qwen3-embedding:4b",
-      "digest": "df5bd2e3c74cd8d069d21dc038f1b359fcdc9458fce1c99bd43c9eb1518ff907",
-      "chat": false,
-      "facts": {
-        "family": "qwen3",
-        "parent_model": "/Users/ollama/.ollama/models/blobs/sha256-2b0cf8f17b4c723c27303015383c27ec4bf2d8314bb677d05e920dd70bb0f16b",
-        "parameter_size": "4.0B",
-        "parameter_count": 4021774336,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "Q4_K_M",
-        "format": "gguf",
-        "context_length": 40960,
-        "capabilities": [
-          "embedding",
-          "tools"
-        ],
-        "defaults": {},
-        "license": null,
-        "remote_host": null,
-        "size_bytes": 2496704041,
-        "modified_at": "2026-09-28",
-        "fingerprint": "d8578f8863cee865"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/qwen3-embedding",
-        "description": "Building upon the foundational models of the Qwen3 series, Qwen3 Embedding provides a comprehensive range of text embeddings models in various sizes",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "0.6b",
-          "4b",
-          "8b"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "qwen3-embedding:8b",
-      "digest": "64b933495768fbd3b87c20583d379728a07471e0c66733a9df87cd1901b3c44b",
-      "chat": false,
-      "facts": {
-        "family": "qwen3",
-        "parent_model": "/Users/ollama/.ollama/models/blobs/sha256-3fcd3febec8b3fd64435204db75bf0dd73b91e8d0661e0331acfe7e7c3120b85",
-        "parameter_size": "7.6B",
-        "parameter_count": 7567295488,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "Q4_K_M",
-        "format": "gguf",
-        "context_length": 40960,
-        "capabilities": [
-          "embedding",
-          "tools"
-        ],
-        "defaults": {},
-        "license": null,
-        "remote_host": null,
-        "size_bytes": 4676805193,
-        "modified_at": "2026-09-28",
-        "fingerprint": "df7fb49b32f154a1"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/qwen3-embedding",
-        "description": "Building upon the foundational models of the Qwen3 series, Qwen3 Embedding provides a comprehensive range of text embeddings models in various sizes",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "0.6b",
-          "4b",
-          "8b"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
+        "repair": "calibration"
       }
     },
     {
@@ -6397,13 +4910,13 @@
           "vision"
         ],
         "defaults": {
-          "top_k": 20,
-          "top_p": 0.95,
-          "min_p": 0,
           "num_ctx": 262144,
           "presence_penalty": 1.5,
           "repeat_penalty": 1,
-          "temperature": 1
+          "temperature": 1,
+          "top_k": 20,
+          "top_p": 0.95,
+          "min_p": 0
         },
         "license": "Apache License",
         "remote_host": null,
@@ -6435,10 +4948,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "36.0 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "36.0 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a mixture of 256 experts, 8 active per token: placed by total parameters, so it will measure faster than its size",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
@@ -6500,21 +5011,6 @@
             "of": 6,
             "p50_s": 1.661
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 6.394
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 14,
-            "of": 15,
-            "p50_s": 3.362,
-            "rejected_reference": 1
-          }
         }
       },
       "suited": {
@@ -6522,18 +5018,14 @@
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -6557,12 +5049,12 @@
           "vision"
         ],
         "defaults": {
+          "min_p": 0,
+          "presence_penalty": 1.5,
           "repeat_penalty": 1,
           "temperature": 1,
           "top_k": 20,
-          "top_p": 0.95,
-          "min_p": 0,
-          "presence_penalty": 1.5
+          "top_p": 0.95
         },
         "license": "Apache License",
         "remote_host": null,
@@ -6594,10 +5086,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "36.0 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "36.0 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a mixture of 256 experts, 8 active per token: placed by total parameters, so it will measure faster than its size",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
@@ -6660,40 +5150,21 @@
             "p50_s": 1.661
           }
         },
-        "measured_as": "qwen3.6-256k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 13,
-            "of": 15,
-            "p50_s": 6.394
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 14,
-            "of": 15,
-            "p50_s": 3.362,
-            "rejected_reference": 1
-          }
-        }
+        "measured_as": "qwen3.6-256k:latest"
       },
       "suited": {
         "supervisor": "light",
         "generator": "light",
         "reflection": "heavy",
         "narrator": null,
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": null
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -6717,14 +5188,14 @@
           "vision"
         ],
         "defaults": {
-          "num_ctx": 262144,
           "presence_penalty": 0,
           "repeat_penalty": 1,
           "temperature": 1,
           "top_k": 20,
           "top_p": 0.95,
           "draft_num_predict": 4,
-          "min_p": 0
+          "min_p": 0,
+          "num_ctx": 262144
         },
         "license": "Apache License",
         "remote_host": null,
@@ -6754,10 +5225,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "27.3 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "27.3 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -6818,20 +5287,6 @@
             "of": 6,
             "p50_s": 9.949
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 32.633
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 18.569
-          }
         }
       },
       "suited": {
@@ -6839,18 +5294,14 @@
         "generator": "standard",
         "reflection": "heavy",
         "narrator": "light",
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -6874,13 +5325,13 @@
           "vision"
         ],
         "defaults": {
-          "draft_num_predict": 4,
-          "min_p": 0,
           "presence_penalty": 0,
           "repeat_penalty": 1,
           "temperature": 1,
           "top_k": 20,
-          "top_p": 0.95
+          "top_p": 0.95,
+          "draft_num_predict": 4,
+          "min_p": 0
         },
         "license": "Apache License",
         "remote_host": null,
@@ -6910,10 +5361,8 @@
         "reflection": "heavy",
         "narrator": "standard",
         "repair": "heavy",
-        "paraphraser": "standard",
-        "judge": "heavy",
         "reasons": [
-          "27.3 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser standard (10 to 40 B)",
+          "27.3 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair standard (10 to 40 B)",
           "a reasoning model: repair one rung up, and routed with thinking off everywhere"
         ]
       },
@@ -6975,257 +5424,21 @@
             "p50_s": 9.949
           }
         },
-        "measured_as": "qwen3.8-256k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 12,
-            "of": 15,
-            "p50_s": 32.633
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 15,
-            "of": 15,
-            "p50_s": 18.569
-          }
-        }
+        "measured_as": "qwen3.8-256k:latest"
       },
       "suited": {
         "supervisor": "light",
         "generator": "standard",
         "reflection": "heavy",
         "narrator": "light",
-        "repair": "heavy",
-        "paraphraser": "light",
-        "judge": "heavy"
+        "repair": "heavy"
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
-      }
-    },
-    {
-      "name": "snowflake-arctic-embed2:568m",
-      "digest": "5de93a84837d0ff00da872e90830df5d973f616cbf1e5c198731ab19dd7b776b",
-      "chat": false,
-      "facts": {
-        "family": "bert",
-        "parent_model": "/Users/administrator/.ollama/models/blobs/sha256-8c625c9569c3c799f5f9595b5a141f91d224233055608189d66746347c14e613",
-        "parameter_size": "566.70M",
-        "parameter_count": 566703104,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 8192,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": null,
-        "remote_host": null,
-        "size_bytes": 1160296718,
-        "modified_at": "2026-09-28",
-        "fingerprint": "df48046f8be0af58"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/snowflake-arctic-embed2",
-        "description": "Snowflake's frontier embedding model. Arctic Embed 2.0 adds multilingual support without sacrificing English performance or scalability.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "568m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "snowflake-arctic-embed:137m",
-      "digest": "12616299a158799353f29e8697de067e7079f0a75abeb6a946bda70e1173a86c",
-      "chat": false,
-      "facts": {
-        "family": "nomic-bert",
-        "parent_model": null,
-        "parameter_size": "137M",
-        "parameter_count": 136731648,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 2048,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": "Apache License",
-        "remote_host": null,
-        "size_bytes": 274189495,
-        "modified_at": "2026-09-28",
-        "fingerprint": "be175d2fc2c76de5"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/snowflake-arctic-embed",
-        "description": "A suite of text embedding models by Snowflake, optimized for performance.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "22m",
-          "33m",
-          "110m",
-          "137m",
-          "335m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
-      }
-    },
-    {
-      "name": "snowflake-arctic-embed:335m",
-      "digest": "21ab8b9b0545e26a78164a910691440a3f1de1bfa41c3953d7451d52036c581a",
-      "chat": false,
-      "facts": {
-        "family": "bert",
-        "parent_model": null,
-        "parameter_size": "334M",
-        "parameter_count": 334092288,
-        "expert_count": null,
-        "expert_used_count": null,
-        "quantization": "F16",
-        "format": "gguf",
-        "context_length": 512,
-        "capabilities": [
-          "embedding"
-        ],
-        "defaults": {},
-        "license": "Apache License",
-        "remote_host": null,
-        "size_bytes": 669493195,
-        "modified_at": "2026-09-28",
-        "fingerprint": "86f36fafb4ec2871"
-      },
-      "facts_from": "show",
-      "library": {
-        "page": "https://ollama.com/library/snowflake-arctic-embed",
-        "description": "A suite of text embedding models by Snowflake, optimized for performance.",
-        "badges": [
-          "embedding"
-        ],
-        "sizes": [
-          "22m",
-          "33m",
-          "110m",
-          "137m",
-          "335m"
-        ],
-        "tags": [
-          "embedding"
-        ]
-      },
-      "prior": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null,
-        "reasons": [
-          "an embedding model: never routed a chat task"
-        ]
-      },
-      "measured": {},
-      "suited": {
-        "supervisor": null,
-        "generator": null,
-        "reflection": null,
-        "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
-      },
-      "suited_from": {
-        "supervisor": "prior",
-        "generator": "prior",
-        "reflection": "prior",
-        "narrator": "prior",
-        "repair": "prior",
-        "paraphraser": "prior",
-        "judge": "prior"
+        "repair": "calibration"
       }
     },
     {
@@ -7273,12 +5486,10 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "7.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
+          "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
           "a code model by name (sqlcoder-32k): generator and repair one rung up",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -7334,20 +5545,6 @@
             "of": 6,
             "p50_s": 21.478
           }
-        },
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 0.03
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 0.035
-          }
         }
       },
       "suited": {
@@ -7355,18 +5552,14 @@
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
+        "repair": null
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     },
     {
@@ -7412,12 +5605,10 @@
         "reflection": "standard",
         "narrator": "light",
         "repair": "standard",
-        "paraphraser": "light",
-        "judge": "standard",
         "reasons": [
-          "7.2 B parameters: supervisor, reflection and judge heavy (7 B and over); generator, narrator, repair and paraphraser light (under 10 B)",
+          "7.2 B parameters: supervisor and reflection heavy (7 B and over); generator, narrator and repair light (under 10 B)",
           "a code model by name (sqlcoder): generator and repair one rung up",
-          "no tool support: supervisor, reflection, narrator, paraphraser and judge one rung down"
+          "no tool support: supervisor, reflection and narrator one rung down"
         ]
       },
       "measured": {
@@ -7474,39 +5665,21 @@
             "p50_s": 21.478
           }
         },
-        "measured_as": "sqlcoder-32k:latest",
-        "paraphraser": {
-          "light": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 0.03
-          }
-        },
-        "judge": {
-          "heavy": {
-            "correct": 0,
-            "of": 15,
-            "p50_s": 0.035
-          }
-        }
+        "measured_as": "sqlcoder-32k:latest"
       },
       "suited": {
         "supervisor": null,
         "generator": null,
         "reflection": "standard",
         "narrator": null,
-        "repair": null,
-        "paraphraser": null,
-        "judge": null
+        "repair": null
       },
       "suited_from": {
         "supervisor": "calibration",
         "generator": "calibration",
         "reflection": "prior",
         "narrator": "calibration",
-        "repair": "calibration",
-        "paraphraser": "calibration",
-        "judge": "calibration"
+        "repair": "calibration"
       }
     }
   ]

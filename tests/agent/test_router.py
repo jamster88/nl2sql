@@ -532,12 +532,18 @@ def test_a_schema_2_catalog_is_read_with_the_two_tasks_unmeasured(tmp_path):
     assert any("schema 2: paraphraser and judge are unmeasured" in note for note in table.notes)
 
 
-def test_the_committed_catalog_is_read_leniently_until_it_is_rebuilt():
-    """The checkout's own catalog is schema 2 until arch7's Phase 4 rebuilds
-    it, so every start goes through the lenient read."""
+def test_the_committed_catalog_is_calibrated_for_the_two_tasks():
+    """arch7's Phase 4 rebuilt the checkout's own catalog at schema 3 and
+    calibrated the Paraphraser and the Judge on the host, so it is read as it
+    is, and each of the two tasks has a model measured suited to it."""
     read = load_catalog(str(REPO_ROOT / "models" / "catalog.json"))
-    assert read["schema"] == 2 and "judge" in read["tasks"]
-    assert all(model["suited"]["paraphraser"] is None for model in read["models"])
+    assert read["schema"] == CATALOG_SCHEMA and read["tasks"][-2:] == list(ENSEMBLE_TASKS)
+    [reference] = [model for model in read["models"] if model["name"] == read["reference"]]
+    assert all(task in reference["measured"] for task in ENSEMBLE_TASKS)
+    for task in ENSEMBLE_TASKS:
+        assert any(
+            model["suited"][task] and model["suited_from"][task] == "calibration" for model in read["models"]
+        ), task
 
 
 def test_a_schema_3_catalog_is_read_as_it_is(tmp_path):

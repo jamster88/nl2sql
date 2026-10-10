@@ -5,6 +5,7 @@ model on the Ollama host is suited to.
     python models/calibrate.py                                     # every chat model, every task
     python models/calibrate.py --models gemma4:12b-mlx mistral:7b --tasks supervisor narrator
     python models/calibrate.py --questions B01 B07 B15 --host-memory 128G
+    python models/calibrate.py --tasks paraphraser judge             # the ensemble's two (7.0)
 
 Step 5 of section 15.1 of multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md,
 measured the way section 15.5 describes. Each model is run through a probe
@@ -21,10 +22,16 @@ probes -- the Supervisor within none (`build_catalog.TOLERANCE`) -- and
 | reflection | each benchmark question's accepted result, replayed | the model agrees with the reference model's own reflection |
 | narrator | each benchmark question's accepted result, narrated again | the audit passes every claim and every assumption is stated |
 | repair | probes/repair.json: errors the classifier cannot place | the diagnosis names the fault |
+| paraphraser | each benchmark question, reworded as the ensemble asks (arch7.3, section 22.3) | at least `ENSEMBLE_PARAPHRASES` of the rewordings pass the fidelity gate: F1-F3 and F5 in code, F4 the reference model's reading |
+| judge | probes/judge.json: each question's reference answer beside wrong ones, by letter, never the count (section 22.7) | the reference accepted and every wrong answer set aside |
 
 The reflection is scored against the reference rather than a key: whether
 a result is "fleshed out" is a judgement, and matching the model the
-pipeline was tuned on is what suited means there.
+pipeline was tuned on is what suited means there. The Paraphraser and the
+Judge (7.0) read each question as the reference's own run read it -- its
+answer contract, its knowledge, its assumptions -- and the Judge's
+measurement counts, beside its score, how often it set the reference
+answer aside: a Judge's way of taking a right answer away.
 
 It needs the agent and the stack, so it runs where the benchmark runs -- the
 repository's virtualenv, against the stack's published ports -- and against
@@ -71,13 +78,16 @@ import build_catalog  # noqa: E402 -- models/build_catalog.py, beside this file
 from benchmarks.questions import QUESTIONS, BenchmarkQuestion  # noqa: E402
 from benchmarks.run_benchmark import build_settings, parse_args as benchmark_args, reference_rows  # noqa: E402
 from benchmarks.runner import result_matches  # noqa: E402
-from nl2sql_agent import complexity, present, supervisor  # noqa: E402
+from nl2sql_agent import complexity, fidelity, paraphrase, present, supervisor  # noqa: E402
+from nl2sql_agent import judge as judges  # noqa: E402
 from nl2sql_agent import repair as repair_agent  # noqa: E402
+from nl2sql_agent.ensemble import f4_reason  # noqa: E402
+from nl2sql_agent.ensemble_state import ORIGINAL, PARAPHRASE, Candidate, Group  # noqa: E402
 from nl2sql_agent.completeness import entity_tables, read_query, reflect  # noqa: E402
 from nl2sql_agent.config import Settings  # noqa: E402
 from nl2sql_agent.contract import load_resources  # noqa: E402
 from nl2sql_agent.router import window_for  # noqa: E402
-from nl2sql_agent.state import PLANNER, Attempt, Issue  # noqa: E402
+from nl2sql_agent.state import PLANNER, AnswerContract, Attempt, Issue, QueryResult  # noqa: E402
 from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
 
 TASKS = build_catalog.TASKS
@@ -88,11 +98,13 @@ PROBES = HERE / "probes"
 class Sample:
     """One probe's outcome for one model, and the rungs it counts toward.
     `seconds` is None for a probe never asked -- one an early stop made
-    pointless -- which still counts toward `of`, as not right."""
+    pointless -- which still counts toward `of`, as not right. `rejected` is
+    the Judge's probe saying the right answer was set aside."""
 
     rungs: tuple[str, ...]
     correct: bool
     seconds: float | None
+    rejected: bool = False
 
 
 def tally(samples: Sequence[Sample]) -> dict[str, dict[str, Any]]:
@@ -110,7 +122,17 @@ def tally(samples: Sequence[Sample]) -> dict[str, dict[str, Any]]:
             }
             if len(timed) < len(mine):
                 out[rung]["tried"] = len(timed)
+            if any(s.rejected for s in mine):
+                out[rung]["rejected_reference"] = sum(s.rejected for s in mine)
     return out
+
+
+def _score(rung: str, tallied: dict[str, Any]) -> str:
+    """One rung's tally as the calibrator says it: the Judge's rejections of
+    the right answer named, since they are its way of taking one away."""
+    rejected = tallied.get("rejected_reference")
+    aside = f"; the right answer set aside on {rejected}" if rejected else ""
+    return f"{rung} {tallied['correct']}/{tallied['of']} ({tallied['p50_s']}s{aside})"
 
 
 @dataclass
@@ -129,6 +151,7 @@ class Probes:
     questions: list[BenchmarkQuestion]
     triage: list[dict[str, str]] = field(default_factory=list)
     repair: list[dict[str, Any]] = field(default_factory=list)
+    judge: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def load(cls, questions: list[BenchmarkQuestion], directory: Path = PROBES) -> "Probes":
@@ -136,6 +159,7 @@ class Probes:
             questions=questions,
             triage=json.loads((directory / "triage.json").read_text())["cases"],
             repair=json.loads((directory / "repair.json").read_text())["cases"],
+            judge=json.loads((directory / "judge.json").read_text())["cases"],
         )
 
 
@@ -215,6 +239,9 @@ class Calibrator:
         self.models = {model["name"]: model for model in catalog["models"]}
         self._runs: list[Run] | None = None
         self._expected: dict[str, set[str]] | None = None
+        self._screener: Any = None
+        self._f4: dict[tuple[str, str], str | None] = {}
+        self._answers: dict[str, list[tuple[str, QueryResult, bool]]] = {}
 
     # --- the reference ---------------------------------------------------------
 
@@ -384,6 +411,123 @@ class Calibrator:
             samples.append(Sample((complexity.STANDARD, complexity.HEAVY), named, seconds))
         return samples
 
+    def _read(self) -> list[Run]:
+        """The reference's runs that read their question: those with a state
+        to take its contract, knowledge and assumptions from."""
+        return [run for run in self.runs() if run.state]
+
+    def paraphraser(self, model: str, client: Any) -> list[Sample]:
+        """Each question reworded as the ensemble asks (arch7.3, section
+        22.3): `ENSEMBLE_MAX_PARAPHRASES` rewordings from the question and
+        the contract the reference's run read from it, then the fidelity
+        gate, in the order written, until `ENSEMBLE_PARAPHRASES` pass -- a
+        full first wave with no retry. Right when that many pass."""
+        wanted = self.settings.ensemble_paraphrases
+        samples = []
+        for run in self._read():
+            question = run.question.question
+            contract = run.state.get("answer_contract") or AnswerContract()
+            started = self.clock()
+            try:
+                written = paraphrase.paraphrase(client, question, contract,
+                                                count=self.settings.ensemble_max_paraphrases)
+            except MODEL_ERRORS:  # a Paraphraser that could not answer wrote nothing
+                written = []
+            seconds = self.clock() - started
+            kept: list[str] = []
+            for rewording in written:
+                if len(kept) == wanted:
+                    break
+                if not fidelity.check(question, rewording.text, kept) and not self._read_otherwise(
+                    question, rewording.text, contract
+                ):
+                    kept.append(rewording.text)
+            samples.append(Sample((complexity.paraphraser_rung(question)[0],), len(kept) == wanted, seconds))
+        return samples
+
+    def _read_otherwise(self, question: str, text: str, contract: AnswerContract) -> str | None:
+        """F4, as the ensemble's gate has it (`ensemble.f4_reason`), on the
+        reference model: why the rewording's reading is not the question's,
+        or None. Remembered, since another model may write the same words."""
+        if (question, text) not in self._f4:
+            if self._screener is None:
+                self._screener = self.agent_factory(self.settings)
+            update, _ = self._screener.screen(text, shaped_by=question)
+            self._f4[(question, text)] = f4_reason(update, contract)
+        return self._f4[(question, text)]
+
+    def judge(self, model: str, client: Any) -> list[Sample]:
+        """probes/judge.json: each question's reference answer beside the
+        wrong ones it records, their rows run live, shown by letter in the
+        order given -- the reference first on one question and last on the
+        next, so no letter is the right one by habit -- with the contract,
+        the knowledge and the assumptions the reference's run had. Right
+        when the reference is accepted and every wrong answer set aside; a
+        reference set aside is counted on its own (`rejected_reference`)."""
+        traps = {case["id"]: case["traps"] for case in self.probes.judge}
+        samples = []
+        for number, run in enumerate(self._read()):
+            answers = self._judged_answers(run.question, traps.get(run.question.id, []))
+            if len(answers) < 2:
+                continue
+            if number % 2:
+                answers = answers[::-1]
+            candidates = [
+                Candidate(index=i, wording=run.question.question, origin=ORIGINAL if i == 0 else PARAPHRASE, wave=1,
+                          state={"sql": sql, "result": result}, outcome="answered")
+                for i, (sql, result, _) in enumerate(answers)
+            ]
+            groups = [Group(index=i, members=[i], representative=i, signature="") for i in range(len(answers))]
+            started = self.clock()
+            try:
+                verdicts = {
+                    verdict.group: verdict.accepted
+                    for verdict in judges.judge(
+                        client, run.question.question, run.state.get("answer_contract") or AnswerContract(),
+                        groups, candidates, knowledge=run.state.get("knowledge") or "",
+                        assumptions=run.state.get("assumptions") or [],
+                    )
+                }
+            except MODEL_ERRORS:  # a Judge that could not answer judged nothing
+                verdicts = {}
+            seconds = self.clock() - started
+            right = [verdicts.get(i) for i, (_, _, reference) in enumerate(answers) if reference]
+            wrong = [verdicts.get(i) for i, (_, _, reference) in enumerate(answers) if not reference]
+            samples.append(Sample(
+                (complexity.judge_rung()[0],),
+                right == [True] and all(verdict is False for verdict in wrong),
+                seconds,
+                rejected=right == [False],
+            ))
+        return samples
+
+    def _judged_answers(self, question: BenchmarkQuestion, traps: list[dict[str, Any]]) -> list[tuple[str, QueryResult, bool]]:
+        """The reference answer and the recorded wrong ones, each with its
+        rows: `(sql, result, is_reference)`. A wrong answer that cannot run,
+        or returns the reference's rows, is left out and said -- the probe
+        never asks a Judge to set a right answer aside. Run once a question."""
+        if question.id not in self._answers:
+            reference = self._result(question.reference_sql)
+            answers = [(question.reference_sql, reference, True)]
+            for trap in traps:
+                try:
+                    result = self._result(trap["sql"])
+                except Exception as exc:  # noqa: BLE001 -- the database's error is the trap's
+                    self.say(f"    {question.id}: a wrong answer cannot run, left out ({exc})")
+                    continue
+                if result_matches(reference.rows, result.rows, ordered=question.ordered) or result_matches(
+                    result.rows, reference.rows, ordered=question.ordered
+                ):
+                    self.say(f"    {question.id}: a wrong answer returns the reference's rows, left out")
+                    continue
+                answers.append((trap["sql"], result, False))
+            self._answers[question.id] = answers
+        return list(self._answers[question.id])
+
+    def _result(self, sql: str) -> QueryResult:
+        rows = self.db.run_select(sql)
+        return QueryResult(columns=list(rows.columns), rows=[list(row) for row in rows.rows], truncated=rows.truncated)
+
     # --- one model ---------------------------------------------------------------
 
     def measure(self, name: str, tasks: Sequence[str]) -> dict[str, Any]:
@@ -396,7 +540,7 @@ class Calibrator:
             measured["resident_bytes"] = self.host.resident_bytes(name)
         client = self.client_factory(name, window)
         for task in tasks:
-            if model["prior"][task] is None:
+            if model["prior"].get(task) is None:
                 self.say(f"  {task}: not a candidate ({model['prior']['reasons'][-1]})")
                 continue
             try:
@@ -405,7 +549,7 @@ class Calibrator:
                 self.say(f"  {task}: could not be measured ({exc})")
                 continue
             measured[task] = tally(samples)
-            scores = ", ".join(f"{r} {v['correct']}/{v['of']} ({v['p50_s']}s)" for r, v in measured[task].items())
+            scores = ", ".join(_score(r, v) for r, v in measured[task].items())
             self.say(f"  {task}: {scores or 'no probes'}")
         return measured
 
@@ -465,7 +609,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--catalog", type=Path, default=build_catalog.DEFAULT_OUT, help="default: models/catalog.json")
     parser.add_argument("--models", nargs="+", metavar="MODEL", help="default: every chat model in the catalog")
-    parser.add_argument("--tasks", nargs="+", choices=TASKS, default=list(TASKS), help="default: all five")
+    parser.add_argument("--tasks", nargs="+", choices=TASKS, default=list(TASKS), help="default: all seven")
     parser.add_argument("--questions", nargs="+", metavar="ID", help="benchmark question ids (default: all)")
     parser.add_argument("--host-memory", type=parse_memory, help="the host's memory, e.g. 128G: warns when "
                         "the routed models cannot all be resident")

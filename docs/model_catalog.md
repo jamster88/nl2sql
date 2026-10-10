@@ -31,11 +31,18 @@ models it will route to, and says: how many models the calls are shared
 between, or why every one goes to `OLLAMA_MODEL` -- the catalog describes
 another host, nothing in it has been measured, or routing is off.
 
-**Two tasks more since 7.0.** The ensemble (arch7) adds the Paraphraser and
-the Judge to the router's tasks -- the Judge heavy always, and asked once a
-question, before the vote (arch7.1). The scanner and the calibrator do not know
-them yet, and a catalog -- schema 2, as every catalog built before 7.0 is --
-is read with the two as unmeasured, so `OLLAMA_MODEL` answers them and the
-routing table's notes say so. Routing on measured suitability only, that is
-what any task nothing has measured gets. A catalog of a schema the agent
-does not know is refused, as before.
+**Seven tasks since 7.0.** The ensemble (arch7) adds the Paraphraser and
+the Judge to the router's tasks -- the Judge heavy always, and asked before
+every vote (arch7.1). The scanner writes catalogs of schema 3, with a prior
+for each of the seven, and the calibrator measures the two with probes of
+their own (`calibrate.py --tasks paraphraser judge`): the Paraphraser on
+whether enough of its rewordings pass the fidelity gate, the Judge on
+whether it accepts each benchmark question's right answer and sets aside
+the wrong ones recorded beside it -- and how often it set a right answer
+aside is counted on its own. A catalog of schema 2, as every catalog built
+before 7.0 is, is still read, with the two tasks unmeasured, so
+`OLLAMA_MODEL` answers them and the routing table's notes say so; a rebuild
+carries its measurements over, and the two tasks then wait for the
+calibrator. A catalog of a schema the agent does not know is refused, as
+before -- and a 6.3 agent knows only schema 2, so a stack still running 6.3
+images needs a schema-2 catalog of its own.

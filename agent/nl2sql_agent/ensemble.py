@@ -388,7 +388,7 @@ class EnsembleAgent:
                 update, screening = read
                 calls[0] += int(update.get(_MODEL_CALLS, 0))
                 routes.append(update[_ROUTE])
-                reason = _f4(update, contract)
+                reason = f4_reason(update, contract)
                 judged[item.index] = replace(
                     item,
                     status=DISCARDED if reason else FAITHFUL,
@@ -707,10 +707,12 @@ def _for_candidate(report: ProgressFn, index: int) -> ProgressFn:
     return candidate_progress
 
 
-def _f4(update: dict[str, Any], contract: Any) -> str | None:
+def f4_reason(update: dict[str, Any], contract: Any) -> str | None:
     """Why a rewording's reading fails F4, or None: the screening could not
     be made, it did not proceed -- a refusal and a request to clarify alike --
-    or its reading builds another contract than the original's."""
+    or its reading builds another contract than the original's. Public, so
+    the Paraphraser's calibration probe (`models/calibrate.py`) holds a
+    rewording to the gate the ensemble holds it to."""
     if update.get("node_errors"):
         return "F4 screening: the Supervisor could not read it"
     if update.get("verdict", "proceed") != "proceed":

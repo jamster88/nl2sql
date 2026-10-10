@@ -102,7 +102,9 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   `OLLAMA_PARALLEL_CALLS=2` to keep them.
 - **Two routing tasks more**, the Paraphraser and the Judge. A model catalog
   built before 7.0 is still read: the two are unmeasured and go to
-  `OLLAMA_MODEL`.
+  `OLLAMA_MODEL`. `models/build_catalog.py` rebuilds it at schema 3,
+  keeping what was measured, and `models/calibrate.py --tasks paraphraser
+  judge` measures the two ([the model catalog](docs/model_catalog.md)).
 - **The benchmark and calibration scripts run on a host again**, which
   they had not since 6.2.
 - **Still to come in 7.0: the grain check**, on by default. Each table's

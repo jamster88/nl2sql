@@ -39,6 +39,19 @@ is held to `ensemble.py`'s nodes the same way, and `arch_v5_6.svg` stays the
 picture of `graph.py`. Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
+Each SVG has a PNG and a TIFF beside it, for where an SVG cannot go. They
+are exports, pixel for pixel at the SVG's own size, and nothing checks them,
+so they are made again whenever their SVG changes:
+
+```bash
+cd arch_diagrams
+rsvg-convert -w 1300 arch_v7.svg -o arch_v7.png
+sips -s format tiff arch_v7.png --out arch_v7.tif
+```
+
+`rsvg-convert` is librsvg's (`brew install librsvg`) and `sips` is macOS's
+own.
+
 The adversarial reviews in [`adversary_reviews/`](../adversary_reviews) are
 illustrated the same way:
 [`adversary_reviews/diagrams/generate.py`](../adversary_reviews/diagrams/generate.py)

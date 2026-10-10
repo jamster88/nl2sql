@@ -40,6 +40,8 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 
 **Fixed**
 - `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
+- The web interface's run counter stays on one line beside a long step.
+- `arch_v7` has its PNG and TIFF; the stale PNG and TIFF of `arch_v1` and `arch_v2` are exported again.
 - The router chooses which models to keep by the rungs each task is actually called at: counted at every rung, a model fast at the Judge -- called only at heavy -- took a place from the models the older tasks were routed to.
 
 **Updated**

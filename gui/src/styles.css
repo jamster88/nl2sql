@@ -299,6 +299,10 @@ pre {
 
 .progress-count {
   margin-left: auto;
+  /* Never wrapped or squeezed: beside a long step it is "1 / 4 runs" on one
+     line, not three. */
+  flex: none;
+  white-space: nowrap;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }

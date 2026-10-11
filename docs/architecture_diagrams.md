@@ -15,7 +15,7 @@ each step does, why it is there, and how control flows.
 | [`arch_v5_1.svg`](../arch_diagrams/arch_v5_1.svg) | The v5 pipeline unchanged, with the review side added to the deployment: one pane per verdict, the golden set, and the corrections and completions stores |
 | [`arch_v5_2.svg`](../arch_diagrams/arch_v5_2.svg) | v5.1 with every model call routed: the catalog and the routed chat models in the deployment, the router and the ladder, and on each step that calls a model, the rung it is routed at |
 | [`arch_v5_6.svg`](../arch_diagrams/arch_v5_6.svg) | v5.2 with the Snippet Retriever as a fifth Stage 1 branch, the snippet store and its document in the deployment, and the curation interface beside the review one |
-| [`arch_v7.svg`](../arch_diagrams/arch_v7.svg) | The question asked several ways: the outer graph's eleven nodes -- the anchor screening, the Paraphraser, the fidelity gate, the wave planner, the candidate runs, agreement, the Judge, the vote, fusion -- around the v5.6 pipeline, which is drawn as one box; the host gate and the seven-task catalog in the deployment, the second wave as the one edge that goes back, the levels an answer can have, and what each surface shows |
+| [`arch_v7.svg`](../arch_diagrams/arch_v7.svg) | The question asked several ways: the outer graph's eleven nodes -- the anchor screening, the Paraphraser, the fidelity gate, the wave planner, the candidate runs, agreement, the Judge, the vote, fusion -- around the v5.6 pipeline, which is drawn as one box; the host gate and the seven-task catalog in the deployment, the second wave as the one edge that goes back, the levels an answer can have, and what each surface shows; and, in a note of its own, the one thing v7 changes inside the pipeline -- the Static Validator's grain check |
 
 All of them are laid out identically so the versions can be read side by side --
 everything new or changed is marked, in teal for v2's retrieval and indigo for
@@ -36,7 +36,8 @@ the nodes it drew in the SVG, which is what lets
 the pictures against `graph.py` and fail when a node is renamed. v7 is a
 second graph around the first rather than more nodes in it, so `arch_v7.svg`
 is held to `ensemble.py`'s nodes the same way, and `arch_v5_6.svg` stays the
-picture of `graph.py`. Edit the
+picture of `graph.py` -- whose nodes v7 leaves as they were, the grain
+check being one rule more inside `validate_static`. Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
 Each SVG has a PNG and a TIFF beside it, for where an SVG cannot go. They

@@ -144,6 +144,9 @@ class _Query:
 
     text: str
     select: ast.SelectStmt | None = None
+    #: The statement as parsed, whatever it is: the grain check reads its
+    #: joins and filters SELECT by SELECT (`grain.mismatches`).
+    statement: ast.Node | None = None
     relations: set[str] = field(default_factory=set)
     functions: set[str] = field(default_factory=set)
     #: Names the outermost select list outputs, and names its expressions read.
@@ -207,7 +210,7 @@ def read_query(sql: str, label_map: LabelMap | None = None) -> _Query:
         return query
     if len(statements) != 1:
         return query
-    statement = statements[0].stmt
+    statement = query.statement = statements[0].stmt
     try:
         query.relations = {name.split(".")[-1].strip('"').lower() for name in referenced_relations(sql)}
     except PARSE_ERRORS:  # a statement that parsed has relations; this is for one that has none

@@ -223,6 +223,36 @@ with the models warm and cold as they are in use. Above it, how the
 generator's task was scored across the set -- a rung nothing is ever routed
 at is visible there. `--json` carries both, and each question's routes.
 
+### What the grain check did (arch7.3)
+
+With the grain check on (`GRAIN_CHECK_ENABLED`, the default), every
+configuration's report ends with what it did:
+
+```
+GRAIN CHECK
+  references refused   none
+  runs sent to repair  2: ended right 2, wrong 0, failed 0
+    B07 run 0  refused once, ended ok
+    B07 run 2  refused once, ended ok
+```
+
+**References refused** is the check run over the benchmark's own reference
+queries with the grains this run read from the database. They are right by
+construction, so one named there is the check wrong about a right query,
+and the benchmark exits non-zero whatever the answers scored.
+**Runs sent to repair** counts the runs in which the Static Validator
+refused a query for its grain at least once -- a run is a question for the
+first four configurations and one wording of it through the ensemble --
+with how each ended against the reference: right, wrong, or no rows.
+"Ended wrong" is a query that was repaired and still missed, or a right
+query sent to repair and broken by it; the query and the message are in
+the question's trace, which tells the two apart. To measure the check's
+effect, run the same questions again with `GRAIN_CHECK_ENABLED=false` in
+the environment: the block is then left out. `--json` carries a `grain`
+block for each configuration (`rejected_references`, and `repairs` with
+the four counts; `null` with the check off) and each result's
+`grain_repairs`.
+
 ## Comparing configurations
 
 `--compare` runs the same questions through five configurations, each the
@@ -324,7 +354,8 @@ python benchmarks/run_benchmark.py --verbose           # every pipeline step
 python benchmarks/run_benchmark.py --model other-model --base-url http://host:11434
 ```
 
-It exits non-zero when anything was not correct, so CI can gate on it.
+It exits non-zero when anything was not correct, or when the grain check
+would refuse a reference query, so CI can gate on it.
 
 The database URLs default to the **published ports on localhost**, because the
 benchmark runs on the host while the agent normally runs inside compose, where
@@ -355,7 +386,7 @@ after it when the set was asked -- in the agent's experiment
 | | |
 |---|---|
 | Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`) |
-| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped` |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
 | Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
 

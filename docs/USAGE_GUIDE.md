@@ -551,6 +551,13 @@ index, `[0]` for the question as asked. It takes about four times as long.
 `--no-ensemble` asks the pipeline alone, and `--json` carries the record of
 every run and every rewording under `ensemble`.
 
+Also since 7.0, and with the ensemble on or off: a query that joins two
+tables kept at different grains -- daily sales and monthly costs, say --
+without bringing them to one grain is refused before it runs and written
+again (the grain check). The `[validation]` line says so in the check's
+own words -- which two tables, their grains, the columns to join on -- and
+the query is one attempt more. `GRAIN_CHECK_ENABLED=false` turns it off.
+
 | Flag | What |
 |---|---|
 | `--model MODEL` | The chat model, and the one every routed call falls back to |
@@ -1058,6 +1065,7 @@ recreates the containers.
 | `SNIPPETS_ENABLED` | `true` | Retrieve SQL snippets |
 | `MODEL_ROUTING_ENABLED` | `true` | Route calls by the catalog |
 | `MAX_ATTEMPTS` | `7` | SQL generations before giving up |
+| `GRAIN_CHECK_ENABLED` | `true` | Refuse a query that joins tables of different grains -- daily, weekly, monthly -- without bringing them to one |
 | `MAX_ROWS` | `50` | Rows read back from a query |
 | `STATEMENT_TIMEOUT_MS` | `30000` | How long a query may run |
 | `MAX_PLAN_COST` | `1000000` | The planner-cost ceiling a query must be under |

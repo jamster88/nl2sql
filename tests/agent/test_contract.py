@@ -383,6 +383,69 @@ def test_each_half_of_the_resources_fails_on_its_own():
     assert loaded.fiscal_year is None and len(loaded.label_map) == 12
 
 
+# The grains (arch7.3 section 22.14), read with the label map when the grain
+# check is on. `tests/agent/test_grain.py` holds how each is measured; here
+# is when they are read at all, and what a failure costs.
+
+
+class _Dated(_Database):
+    """A catalog with a date dimension and two facts stamped with it."""
+
+    def __init__(self, *, dates_error=None, **kwargs):
+        calendar = table("dim_date", ["date_key", "fiscal_week_num", "fiscal_month_num", "fiscal_year"],
+                         ["PRIMARY KEY (date_key)"])
+        sales = table("fact_pos_retail_sales", ["sales_date_key", "net_sales_amt"],
+                      ["FOREIGN KEY (sales_date_key) REFERENCES dim_date(date_key)"])
+        costs = table("fact_item_cogs", ["date_key", "net_item_cost"],
+                      ["FOREIGN KEY (date_key) REFERENCES dim_date(date_key)"])
+        super().__init__(catalog=[calendar, sales, costs], **kwargs)
+        self.dates_error, self.asked = dates_error, []
+
+    def dates_per_period(self, name, column, periods, *, calendar, key):
+        self.asked.append(name)
+        if self.dates_error:
+            raise self.dates_error
+        return {"fact_pos_retail_sales": [9, 37], "fact_item_cogs": [1, 1]}[name]
+
+
+PERIODS = (("fiscal_year", "fiscal_week_num"), ("fiscal_year", "fiscal_month_num"))
+
+
+def test_the_grains_are_read_with_the_label_map_when_the_check_is_on():
+    loaded = load_resources(_Dated(), grain_periods=PERIODS)
+    assert loaded.errors == {}
+    assert {name: (grain.period, grain.column) for name, grain in loaded.grains.items()} == {
+        "fact_pos_retail_sales": ("day", "sales_date_key"), "fact_item_cogs": ("fiscal month", "date_key")}
+
+
+def test_with_the_check_off_the_grains_are_not_read_at_all():
+    """`grain_periods=None` is the check off: eight queries nobody would use."""
+    database = _Dated()
+    loaded = load_resources(database)
+    assert loaded.grains == {} and loaded.errors == {} and database.asked == []
+
+
+def test_dates_that_cannot_be_read_cost_the_grain_check_and_nothing_else():
+    loaded = load_resources(_Dated(dates_error=psycopg.errors.QueryCanceled("statement timeout"),
+                                   latest=(2025, date(2024, 4, 1), date(2025, 3, 31))), grain_periods=PERIODS)
+    assert loaded.errors == {"grains": "statement timeout"} and loaded.grains == {}
+    assert loaded.fiscal_year == 2025 and "dim_date" not in loaded.label_map.tables
+
+
+def test_a_period_the_date_dimension_lacks_costs_the_grain_check_and_says_which():
+    """Stood down and said, not refused: the default names columns another
+    database's calendar may not have, and a refusal would take every
+    question with it."""
+    loaded = load_resources(_Dated(), grain_periods=(("fiscal_year", "fiscal_period"),))
+    assert loaded.grains == {}
+    assert loaded.errors["grains"].startswith("GRAIN_PERIODS names fiscal_period, which dim_date does not have")
+
+
+def test_a_catalog_that_cannot_be_read_costs_the_grains_with_the_labels():
+    loaded = load_resources(_Database(catalog_error=psycopg.OperationalError("no catalog")), grain_periods=PERIODS)
+    assert loaded.errors == {"label_map": "no catalog", "grains": "no catalog"} and loaded.grains == {}
+
+
 def test_a_database_with_no_complete_year_offers_no_default():
     loaded = load_resources(_Database(catalog=CATALOG, latest=None))
     assert loaded.errors == {} and loaded.fiscal_year is None

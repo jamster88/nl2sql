@@ -134,6 +134,10 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
         values["second_waves"] = report.second_waves
         for measure, count in report.fusion().items():
             values[measure.replace(" ", "_")] = count
+    if report.grain_checked:
+        values["grain.references_refused"] = len(report.rejected_references)
+        for measure, count in report.grain_repairs().items():
+            values[f"grain.repaired_{measure}"] = count
     return values
 
 

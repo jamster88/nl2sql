@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -21,7 +22,7 @@ for _path in (REPO_ROOT, REPO_ROOT / "agent"):
 
 from benchmarks import run_benchmark  # noqa: E402
 from benchmarks.paraphrases import PARAPHRASES, wordings  # noqa: E402
-from benchmarks.questions import by_id  # noqa: E402
+from benchmarks.questions import QUESTIONS, by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
 from tests.benchmarks.test_runner import result  # noqa: E402
 from tests import live_stores
@@ -538,11 +539,16 @@ def _settings():
         statement_timeout_ms=30000,
         max_rows=50,
         ensemble_enabled=False,
+        grain_check_enabled=True,
     )
 
 
 class _StubAgent:
     """An agent that answers every question with the same canned state."""
+
+    #: What the database's grains measure to, for the tests that say: with
+    #: none, the grain check has nothing to hold a reference to.
+    measured: dict = {}
 
     def __init__(self, state: dict, tracer=None) -> None:
         from nl2sql_agent.config import Settings
@@ -553,6 +559,9 @@ class _StubAgent:
         self.settings = Settings()
         # Untraced unless a test hands it a tracer: MLFLOW_TRACKING_URI unset.
         self.tracer = tracer or Tracer(self.settings)
+
+    def grains(self) -> dict:
+        return self.measured
 
     def run(self, question: str, **kwargs) -> dict:
         self.asked.append(question)
@@ -1047,3 +1056,144 @@ def test_a_report_with_no_state_measured_says_nothing_of_its_size(capsys):
     out = capsys.readouterr().out
     assert "ENSEMBLE" in out and "state, as JSON" not in out
     assert "the Judge" not in out, "a run with no Judge says nothing of one"
+
+
+# ---------------------------------------------------------------------------
+# arch7.3 section 22.14: what the grain check did, measured
+# ---------------------------------------------------------------------------
+
+
+def _attempts(*messages):
+    """A run's history: one refused attempt per message, by the Static Validator."""
+    from nl2sql_agent.state import Attempt, Issue
+
+    return [Attempt(sql="SELECT 1", issues=[Issue(source="static", message=message)]) for message in messages]
+
+
+def _grain_messages():
+    from tests.agent import test_grain
+
+    return test_grain.ON_THE_DATE_MESSAGE, test_grain.ON_NO_DATE_MESSAGE
+
+
+def test_a_run_the_grain_check_sent_to_repair_is_counted_with_how_it_ended():
+    """Scored against the reference, as the answer is: what the check bought
+    is counted beside what it cost."""
+    from types import SimpleNamespace
+
+    on_the_date, on_no_date = _grain_messages()
+    repaired = {"attempt_history": _attempts(on_the_date, on_no_date), "result": SimpleNamespace(rows=[[10]])}
+    assert run_benchmark.grain_repairs(repaired, [[10]], False) == [{"run": 0, "sent": 2, "ended": CORRECT}]
+    assert run_benchmark.grain_repairs(repaired, [[11]], False) == [{"run": 0, "sent": 2, "ended": WRONG}]
+    # As the benchmark's stubs and a JSON state give a result: a dict.
+    as_dict = {**repaired, "result": {"rows": [[10]]}}
+    assert run_benchmark.grain_repairs(as_dict, [[10]], False)[0]["ended"] == CORRECT
+
+
+def test_a_run_it_sent_to_repair_that_never_answered_is_counted_as_failed():
+    on_the_date, _ = _grain_messages()
+    gave_up = {"attempt_history": _attempts(on_the_date), "result": None, "error": "Could not produce a valid query"}
+    assert run_benchmark.grain_repairs(gave_up, [[10]], False) == [{"run": 0, "sent": 1, "ended": FAILED}]
+    errored = {"attempt_history": _attempts(on_the_date), "result": {"rows": [[10]]}, "error": "timeout"}
+    assert run_benchmark.grain_repairs(errored, [[10]], False)[0]["ended"] == FAILED
+
+
+def test_a_run_refused_for_anything_else_is_not_the_grain_checks():
+    from nl2sql_agent.state import new_state
+
+    other = {"attempt_history": _attempts('column "nope" does not exist', "fact_x is not in scope."),
+             "result": {"rows": [[10]]}}
+    assert run_benchmark.grain_repairs(other, [[10]], False) == []
+    assert run_benchmark.grain_repairs(new_state("q"), [[10]], False) == []
+
+
+def test_under_the_ensemble_each_candidates_run_is_counted_on_its_own():
+    """The trap is repaired inside the run that falls into it, so that is
+    where it is counted: by run, each scored on what that run returned."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.ensemble_state import Candidate, new_ensemble_state
+    from nl2sql_agent.state import new_state
+
+    on_the_date, _ = _grain_messages()
+
+    def run(index, rows, *refused):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state={**new_state("w"), "attempt_history": _attempts(*refused),
+                                "result": SimpleNamespace(rows=rows)})
+
+    state = {**new_ensemble_state("q"), "candidates": [
+        run(2, [[11]], on_the_date), run(0, [[10]]), run(1, [[10]], on_the_date, on_the_date)]}
+    assert run_benchmark.grain_repairs(state, [[10]], False) == [
+        {"run": 1, "sent": 2, "ended": CORRECT}, {"run": 2, "sent": 1, "ended": WRONG}]
+
+
+def test_a_reference_the_check_would_refuse_is_named_and_none_is_with_the_catalogs_grains():
+    from tests.agent import test_grain
+    from tests.grain_fixture import GRAINS
+
+    assert run_benchmark.rejected_references(GRAINS, list(QUESTIONS)) == []
+    assert run_benchmark.rejected_references({}, list(QUESTIONS)) == [], "nothing measured, nothing held"
+    trapped = replace(QUESTIONS[6], reference_sql=test_grain.TRAP)
+    assert run_benchmark.rejected_references(GRAINS, [QUESTIONS[0], trapped]) == ["B07"]
+
+
+def test_the_report_and_its_json_say_what_the_grain_check_did(capsys):
+    from tests.benchmarks.test_runner import result
+
+    repaired = result("B07", "grain", CORRECT, 1.0)
+    repaired.grain_repairs = [{"run": 0, "sent": 1, "ended": CORRECT}, {"run": 2, "sent": 2, "ended": WRONG},
+                              {"run": 3, "sent": 1, "ended": FAILED}]
+    report = BenchmarkReport(label="ensemble", grain_checked=True,
+                             results=[result("B01", "schema", CORRECT, 1.0), repaired])
+    run_benchmark.print_report(report)
+    out = capsys.readouterr().out
+
+    assert "GRAIN CHECK" in out
+    assert "references refused   none" in out
+    assert "runs sent to repair  3: ended right 1, wrong 1, failed 1" in out
+    assert "B07 run 0  refused once, ended ok" in out
+    assert "B07 run 2  refused 2 times, ended WRONG" in out
+    [config] = run_benchmark.as_json([report])["configurations"]
+    assert config["grain"] == {"rejected_references": [],
+                               "repairs": {"runs": 3, "right": 1, "wrong": 1, "failed": 1}}
+    assert config["results"][1]["grain_repairs"] == repaired.grain_repairs
+    assert config["results"][0]["grain_repairs"] == []
+
+
+def test_with_the_check_off_the_report_says_nothing_of_it(capsys):
+    from tests.benchmarks.test_runner import result
+
+    report = BenchmarkReport(label="snippets", results=[result("B01", "schema", CORRECT, 1.0)])
+    run_benchmark.print_report(report)
+    assert "GRAIN CHECK" not in capsys.readouterr().out
+    assert run_benchmark.as_json([report])["configurations"][0]["grain"] is None
+
+
+def test_a_refused_reference_is_said_loudly_and_fails_the_run_whatever_the_answers_scored(monkeypatch, capsys):
+    """A release blocker: every answer right, and the gate still wrong."""
+    from tests.agent import test_grain
+    from tests.grain_fixture import GRAINS
+
+    import benchmarks.run_benchmark as rb
+
+    trapped = replace(by_id("B07"), reference_sql=test_grain.TRAP)
+    monkeypatch.setattr(rb, "QUESTIONS", tuple(trapped if q.id == "B07" else q for q in QUESTIONS))
+    monkeypatch.setattr(_StubAgent, "measured", GRAINS)
+    code, _ = _drive(monkeypatch, {"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1},
+                     argv=["--only", "B07"])
+    out = capsys.readouterr().out
+    assert "execution accuracy   1/1" in out
+    assert "references refused   B07  <-- a right query, refused" in out
+    assert code == 1
+
+
+def test_a_run_reports_the_check_as_on_and_the_references_as_passing_by_default(monkeypatch, capsys):
+    from tests.grain_fixture import GRAINS
+
+    monkeypatch.setattr(_StubAgent, "measured", GRAINS)
+    code, _ = _drive(monkeypatch, {"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1},
+                     argv=["--only", "B01", "B07"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "references refused   none" in out and "runs sent to repair  0: ended right 0, wrong 0, failed 0" in out

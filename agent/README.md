@@ -130,7 +130,7 @@ supervise --+-- retrieve_schema ----+
 | 1. Context | `retrieve_snippets` | SQL snippets -- joins, filters, measures, dimensions -- found by keyword phrase and by meaning (v5.6) | -- |
 | 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described; the snippets over those tables | -- |
 | 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
-| 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope | -- |
+| 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope; and the grain check (7.0): no two tables of different grains joined without being brought to one | -- |
 | 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
 | 3. Execute | `execute_query` | Reader role, READ ONLY, statement timeout, row cap | -- |
 | 3. Review | `review` | The Completeness Reviewer: a label beside every id, the measure a ranking was ranked by, the period, the row count; then one reflection | once, when the rows name something |
@@ -172,6 +172,45 @@ the budget runs out, the answer is shown with the gap named. A default the
 pipeline chose, such as the fiscal year, is written to `assumptions`, and
 the narrator must state it -- the audit checks, and the answer states it
 itself if the narrative did not.
+
+**Two grains, one join** (arch7.3, 7.0). A table of monthly costs holds one
+date in each fiscal month. Joined to daily sales on the date, each month's
+cost meets one day's sales and the rest of the month is dropped: the query
+runs, the planner has no objection, and the margin is a plausible number
+from a twenty-eighth of the data. The Static Validator now refuses that
+join ([`grain.py`](nl2sql_agent/grain.py)). Each table's grain is measured,
+not declared: for every table with a foreign key to the date dimension,
+the coarsest period of `GRAIN_PERIODS` that holds at most one of the
+table's distinct dates in each -- on this catalog three tables are daily,
+three weekly and two monthly. It is read once a process, beside the label
+map, a query a table. The rule reads the query
+([`completeness.py`](nl2sql_agent/completeness.py)'s reading of what is
+added up, rolled up and joined) and refuses two shapes, both between two
+tables that are added up and whose grains differ:
+
+- **on the date** -- the two joined date to date, directly or through the
+  date dimension, with the finer not first rolled up to the coarser's
+  period;
+- **on no date** -- the two joined on a product or a store alone, with the
+  coarser still bringing a row for every period, so each row of the finer
+  meets all of them.
+
+Each is an ordinary static issue whose message names the two tables, their
+grains and the columns to join on, and the Repair Agent passes it on to the
+generator without a model call. The rule refuses only what it can read: a
+join it cannot follow, a table read twice, a coarser table held to one
+period or rolled up past its period all pass. A grain is what the data
+shows today -- a table loaded once a month so far reads as monthly -- and
+is read again at the next start. When the grains cannot be read -- no date
+dimension, a period column it does not have, a database error -- the check
+stands down for the process and the log says so once.
+`GRAIN_CHECK_ENABLED=false` is the validator without it. It is the first
+part of arch7 that changes the pipeline itself, so it applies with
+`ENSEMBLE_ENABLED=false` as well. Measured with it and without through
+every benchmark configuration, it fired only on that trap, every run it
+refused ended right, and no right query was refused; a join on a computed
+key is one it cannot read, and it passed
+([`docs/benchmark.md`](../docs/benchmark.md#the-grain-check)).
 
 **One retry budget.** A failure from any gate -- the AST check, the planner, a
 runtime error, the Completeness Reviewer, or the audit -- becomes an
@@ -280,11 +319,11 @@ of its own, and arch7.3
 records the owner's decisions on it. It is built in phases
 ([`Multi-Agent_NL2SQL_arch7_3_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md),
 with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md)),
-and Phases 0 to 5 of it are built -- the outer graph, the rewordings, the
-Judge and the vote, the second wave and fusion, the calibration of the two
-new routing tasks, and the clients' views of the runs; the grain check
-(Phase 6, which 7.0.0 ships on by default, for the pipeline with the
-ensemble off as well) is still to come. It is drawn in full by
+and all seven of its phases are built -- the outer graph, the rewordings,
+the Judge and the vote, the second wave and fusion, the calibration of the
+two new routing tasks, the clients' views of the runs, and the grain check
+(Phase 6, on by default, and in the pipeline itself: see
+[The pipeline](#the-pipeline)). It is drawn in full by
 [`arch_diagrams/arch_v7.svg`](../arch_diagrams/arch_v7.svg), and it is
 [`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
 
@@ -1150,6 +1189,15 @@ all but the pins are published in `/v1/meta`:
 | `OLLAMA_PARALLEL_CALLS` | `--parallel-calls` | 1 model call in flight to the host at once, and one run of a question at a time |
 | `MODEL_ROUTE_PARAPHRASER` | -- | none. A model for every rung, or `light=a,standard=b,heavy=c`, as the five pins |
 | `MODEL_ROUTE_JUDGE` | -- | none, as above |
+
+The grain check ([above](#the-pipeline)) adds these. `GRAIN_PERIODS`
+written wrongly -- an empty period, a name that is not a column's, a
+period or a column twice -- stops the agent at start:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `GRAIN_CHECK_ENABLED` | -- | on: the Static Validator refuses two tables of different grains joined on the date, or on no date. Off, it is the validator of 6.3, and no grain is read |
+| `GRAIN_PERIODS` | -- | `fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num`: the periods a table may be stamped by, finest first, each the date dimension's columns that name one, joined by `+`. A column the date dimension does not have stands the check down |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

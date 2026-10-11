@@ -62,6 +62,8 @@ from benchmarks.runner import (  # noqa: E402
     routes_from_trace,
     timing_from_trace,
 )
+from nl2sql_agent import grain  # noqa: E402
+from nl2sql_agent.completeness import read_query  # noqa: E402
 from nl2sql_agent.ensemble_state import is_ensemble, judged, run_state, whole_trace  # noqa: E402
 from nl2sql_agent.state import to_jsonable  # noqa: E402
 
@@ -283,6 +285,7 @@ def run_question(
         routes=routes_from_trace(trace),
         rung=getattr(run.get("complexity"), "rung", None),
         trace_id=state.get("trace_id", ""),
+        grain_repairs=grain_repairs(state, expected, question.ordered),
         **ensemble_measures(state),
     )
 
@@ -328,6 +331,40 @@ def without_judge(state, expected, ordered: bool, outcome: str) -> str:
     if result is None:
         return FAILED
     return CORRECT if result_matches(expected, result.rows, ordered=ordered) else WRONG
+
+
+def grain_repairs(state, expected, ordered: bool) -> list[dict]:
+    """The runs the grain check sent to repair, and how each ended (arch7.3
+    section 22.14): scored against the reference, run by run, as the Judge's
+    overrulings are -- so what the check bought is counted beside what it
+    cost. One run, or under the ensemble every candidate's."""
+    if is_ensemble(state):
+        runs = [(c.index, c.state) for c in sorted(state.get("candidates") or [], key=lambda c: c.index)]
+    else:
+        runs = [(0, state)]
+    repairs = []
+    for index, run in runs:
+        sent = sum(
+            1 for attempt in run.get("attempt_history") or []
+            if any(grain.describes(issue.message) for issue in attempt.issues)
+        )
+        if not sent:
+            continue
+        result = run.get("result")
+        if result is None or run.get("error"):
+            ended = FAILED
+        else:
+            rows = result["rows"] if isinstance(result, dict) else result.rows
+            ended = CORRECT if result_matches(expected, rows, ordered=ordered) else WRONG
+        repairs.append({"run": index, "sent": sent, "ended": ended})
+    return repairs
+
+
+def rejected_references(grains, questions: list[BenchmarkQuestion]) -> list[str]:
+    """The questions whose reference query the grain check would refuse,
+    against these grains. None is the only acceptable answer: a reference is
+    right by definition, and a gate that rejects it is wrong."""
+    return [q.id for q in questions if grains and grain.mismatches(read_query(q.reference_sql), grains)]
 
 
 def ensemble_measures(state) -> dict:
@@ -397,13 +434,16 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
 
     timer = StageTimer(show)
     try:
-        agent = graph.Nl2SqlAgent(settings, on_progress=timer)
+        agent = pipeline = graph.Nl2SqlAgent(settings, on_progress=timer)
         if settings.ensemble_enabled:
             agent = ensemble.EnsembleAgent(settings, agent=agent, on_progress=timer)
     except LlmUnavailableError as exc:
         raise SystemExit(f"error: {exc}")
 
-    report = BenchmarkReport(label=configuration)
+    report = BenchmarkReport(label=configuration, grain_checked=settings.grain_check_enabled)
+    # Before anything is asked: the check held to the references, against
+    # the grains this database measures to.
+    report.rejected_references = rejected_references(pipeline.grains(), questions)
     tracked = tracking.open_run(agent, configuration, questions, paraphrase_set=args.paraphrase_set)
     complete = False
     try:
@@ -456,6 +496,9 @@ def print_report(report: BenchmarkReport) -> None:
 
     if report.ensembled:
         print_ensemble(report)
+
+    if report.grain_checked:
+        print_grain(report)
 
     print("\nSPEED")
     asked = "wordings" if report.paraphrased else "questions"
@@ -531,6 +574,22 @@ def print_ensemble(report: BenchmarkReport) -> None:
     fusion = report.fusion()
     print(f"  fusion               columns joined {fusion['columns joined']}, declined {fusion['columns declined']}; "
           f"claims added {fusion['claims added']}, dropped {fusion['claims dropped']}")
+
+
+def print_grain(report: BenchmarkReport) -> None:
+    """What the grain check did (arch7.3 section 22.14): the references it
+    would refuse, which must be none, and the runs it sent to repair with
+    how each ended."""
+    print("\nGRAIN CHECK")
+    rejected = ", ".join(report.rejected_references)
+    print(f"  references refused   {rejected + '  <-- a right query, refused' if rejected else 'none'}")
+    repairs = report.grain_repairs()
+    print(f"  runs sent to repair  {repairs['runs']}: ended right {repairs['right']}, wrong {repairs['wrong']}, "
+          f"failed {repairs['failed']}")
+    for result in report.results:
+        for repair in result.grain_repairs:
+            times = "once" if repair["sent"] == 1 else f"{repair['sent']} times"
+            print(f"    {result.label} run {repair['run']}  refused {times}, ended {MARKS[repair['ended']]}")
 
 
 def print_stability(report: BenchmarkReport) -> None:
@@ -612,6 +671,11 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                     "second_waves": report.second_waves,
                     "fusion": report.fusion(),
                 } if report.ensembled else None,
+                # The grain check's: None with it off.
+                "grain": {
+                    "rejected_references": report.rejected_references,
+                    "repairs": report.grain_repairs(),
+                } if report.grain_checked else None,
                 "results": [
                     {
                         "id": r.question_id,
@@ -650,6 +714,7 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "declined": r.declined,
                         "claims_added": r.claims_added,
                         "claims_dropped": r.claims_dropped,
+                        "grain_repairs": r.grain_repairs,
                     }
                     for r in report.results
                 ],
@@ -678,8 +743,10 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.json).write_text(json.dumps(as_json(reports), indent=2, default=str))
         print(f"\nwrote {args.json}")
 
-    # Non-zero when anything was not correct, so CI can gate on it.
-    return 0 if all(r.accuracy == 1.0 for r in reports) else 1
+    # Non-zero when anything was not correct, so CI can gate on it -- and
+    # when the grain check would refuse a reference: a gate that rejects a
+    # right query is wrong whatever the answers scored.
+    return 0 if all(r.accuracy == 1.0 and not r.rejected_references for r in reports) else 1
 
 
 if __name__ == "__main__":

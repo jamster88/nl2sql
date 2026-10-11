@@ -263,6 +263,85 @@ def test_what_is_rolled_up_and_what_is_joined_on_is_read_from_every_shape_of_que
     assert (query.rolled_up, query.joined_on) == (rolled_up, joined_on)
 
 
+# The shapes a rejection hangs on (arch7.3's risks by phase, S11 and S13).
+# This reading was built to describe an answer that lost, where a misreading
+# costs a wrong sentence; since Phase 6 the grain check rejects by it, and a
+# misreading costs a repair. So what it says of each right shape is pinned
+# here, and what the check makes of it in `test_grain.py`.
+
+_SALES_BY_MONTH = ("SELECT {key}, x.product_key, SUM(x.quantity_sold) AS units FROM fact_pos_retail_sales x "
+                   "JOIN dim_date d ON d.date_key = x.sales_date_key GROUP BY {group}")
+_COSTS_BY_MONTH = ("SELECT {key}, k.product_key, AVG(k.net_item_cost) AS unit_cost FROM fact_item_cogs k "
+                   "JOIN dim_date d ON d.date_key = k.date_key GROUP BY {group}")
+
+
+@pytest.mark.parametrize(("sql", "rolled_up", "joined_on"), [
+    # A period join through CTEs that truncate the date to the month: rolled
+    # up to the month, under the name the query gave it, and joined on that.
+    ("WITH s AS (" + _SALES_BY_MONTH.format(key="date_trunc('month', d.calendar_date) AS month", group="1, 2") + "), "
+     "c AS (" + _COSTS_BY_MONTH.format(key="date_trunc('month', d.calendar_date) AS month", group="1, 2") + ") "
+     "SELECT SUM(s.units * c.unit_cost) FROM s JOIN c ON c.month = s.month AND c.product_key = s.product_key",
+     {"fact_pos_retail_sales": ("month", "product_key"), "fact_item_cogs": ("month", "product_key")},
+     {"fact_pos_retail_sales": ("month", "product_key"), "fact_item_cogs": ("month", "product_key")}),
+    # A rolled-up subquery joined on a month-start key that carries the date
+    # column's own name: grouped by the period, joined on the name. That the
+    # name is no longer the date is not this reading's to say -- it gives
+    # names -- and is why the grain check follows a column to what it reads.
+    ("WITH s AS (" + _SALES_BY_MONTH.format(
+        key="MIN(x.sales_date_key) AS sales_date_key", group="d.fiscal_year, d.fiscal_month_num, x.product_key") + ") "
+     "SELECT SUM(s.units * c.net_item_cost) FROM s JOIN fact_item_cogs c "
+     "ON c.date_key = s.sales_date_key AND c.product_key = s.product_key",
+     {"fact_pos_retail_sales": ("fiscal_year", "fiscal_month_num", "product_key")},
+     {"fact_pos_retail_sales": ("product_key", "sales_date_key"), "fact_item_cogs": ("date_key", "product_key")}),
+    # A self-join of one fact: one table, the columns of both its sides.
+    ("SELECT SUM(a.net_sales_amt), SUM(b.net_sales_amt) FROM fact_pos_retail_sales a "
+     "JOIN fact_pos_retail_sales b ON b.product_key = a.product_key AND b.store_key = a.store_key",
+     {}, {"fact_pos_retail_sales": ("product_key", "store_key")}),
+    # The costs rolled up past the month, one row a product.
+    ("WITH unit AS (SELECT k.product_key, AVG(k.net_item_cost) AS unit_cost FROM fact_item_cogs k GROUP BY 1) "
+     "SELECT SUM(s.quantity_sold * unit.unit_cost) FROM fact_pos_retail_sales s "
+     "JOIN unit ON unit.product_key = s.product_key",
+     {"fact_item_cogs": ("product_key",)},
+     {"fact_pos_retail_sales": ("product_key",), "fact_item_cogs": ("product_key",)}),
+], ids=["months by date_trunc", "a month-start key", "a self-join", "past the period"])
+def test_the_right_shapes_the_grain_check_reads_are_read_as_what_they_are(sql, rolled_up, joined_on):
+    query = read_query(sql)
+    assert (query.rolled_up, query.joined_on) == (rolled_up, joined_on)
+
+
+@pytest.mark.parametrize(("cte", "joined_on"), [
+    # DISTINCT ON keeps one row a product and adds nothing up: the costs are
+    # not among the tables this query aggregates, so nothing joins to them.
+    ("SELECT DISTINCT ON (k.product_key) k.product_key, k.net_item_cost AS unit_cost "
+     "FROM fact_item_cogs k ORDER BY k.product_key, k.date_key DESC", {}),
+    # The same by a row number: a window that aggregates nothing.
+    ("SELECT k.product_key, k.net_item_cost AS unit_cost, "
+     "ROW_NUMBER() OVER (PARTITION BY k.product_key ORDER BY k.date_key DESC) AS rn FROM fact_item_cogs k", {}),
+    # An average over a window does add the costs up, and groups nothing:
+    # joined, and not rolled up, though it may be one row a product.
+    ("SELECT DISTINCT k.product_key, AVG(k.net_item_cost) OVER (PARTITION BY k.product_key) AS unit_cost "
+     "FROM fact_item_cogs k",
+     {"fact_pos_retail_sales": ("product_key",), "fact_item_cogs": ("product_key",)}),
+], ids=["DISTINCT ON", "ROW_NUMBER", "AVG OVER"])
+def test_a_roll_up_by_a_window_or_a_distinct_is_not_one_this_reading_sees(cte, joined_on):
+    """S13: none of the three is a grouped SELECT, so none is in `rolled_up`.
+    The grain check therefore says "row by row" only of a SELECT that reads
+    the table itself, never of one behind a CTE (`test_grain.py`)."""
+    query = read_query(f"WITH unit AS ({cte}) SELECT SUM(s.quantity_sold * unit.unit_cost) "
+                       "FROM fact_pos_retail_sales s JOIN unit ON unit.product_key = s.product_key")
+    assert query.rolled_up == {} and query.joined_on == joined_on
+
+
+def test_the_statement_is_kept_as_parsed_for_whoever_reads_it_select_by_select():
+    """The grain check does (`grain.mismatches`): the joins and filters of
+    every SELECT, not only the outermost's list."""
+    query = read_query("WITH c AS (SELECT 1 AS n) SELECT n FROM c")
+    assert query.statement is not None and query.statement is query.select
+    union = read_query("SELECT store_id FROM dim_store UNION SELECT sku_id FROM dim_product")
+    assert union.select is None and union.statement is not None
+    assert read_query("SELEC nothing").statement is None and read_query("SELECT 1; SELECT 2").statement is None
+
+
 def test_a_query_that_does_not_parse_or_is_not_one_select_is_read_as_text_only():
     assert read_query("SELEC nothing").select is None
     assert read_query("SELECT 1; SELECT 2").select is None

@@ -395,3 +395,53 @@ def test_a_field_set_after_construction_is_checked_when_asked():
     settings.ensemble_paraphrases = 1
     with pytest.raises(ValueError, match="ENSEMBLE_PARAPHRASES is 1"):
         settings.validate()
+
+
+# ---------------------------------------------------------------------------
+# arch7.3: the grain check's two settings
+# ---------------------------------------------------------------------------
+
+
+def test_the_grain_check_is_on_by_default_measuring_the_fiscal_week_and_month(monkeypatch):
+    """The owner's decisions (arch7.3 section 13, items 32 and 33): 7.0.0
+    ships it, on, for the one pipeline with the ensemble or without."""
+    for var in ("GRAIN_CHECK_ENABLED", "GRAIN_PERIODS"):
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings.from_env()
+    assert settings.grain_check_enabled is True
+    assert settings.grain_periods == "fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num"
+    assert settings.grain_period_columns == (
+        ("fiscal_year", "fiscal_week_num"), ("fiscal_year", "fiscal_month_num"))
+
+
+def test_both_grain_settings_are_read_from_the_environment(monkeypatch):
+    monkeypatch.setenv("GRAIN_CHECK_ENABLED", "false")
+    monkeypatch.setenv("GRAIN_PERIODS", " Fiscal_Year + fiscal_quarter ")
+    settings = Settings.from_env()
+    assert settings.grain_check_enabled is False
+    assert settings.grain_period_columns == (("fiscal_year", "fiscal_quarter"),)
+
+
+def test_no_periods_is_allowed_and_leaves_nothing_coarser_than_a_day():
+    from nl2sql_agent.config import parse_grain_periods
+
+    assert parse_grain_periods("") == () and parse_grain_periods("   ") == ()
+    assert Settings(grain_periods="").grain_period_columns == ()
+
+
+@pytest.mark.parametrize(
+    ("periods", "message"),
+    [
+        ("fiscal_year+,fiscal_month_num", "'' is not a column name"),
+        ("fiscal_year,,fiscal_month_num", "'' is not a column name"),
+        ("fiscal_year+fiscal_month_num; DROP TABLE dim_date", "'fiscal_month_num; drop table dim_date' is not a column name"),
+        ("fiscal_year+fiscal_year", "the period 'fiscal_year+fiscal_year' names a column twice"),
+        ("fiscal_year+fiscal_month_num,fiscal_year+fiscal_month_num", "it names a period twice"),
+    ],
+)
+def test_a_grain_period_that_is_not_columns_stops_the_agent_at_start(periods, message):
+    """These names are written into a query. Whether the date dimension has
+    each is the database's to say, when the grains are read."""
+    with pytest.raises(ValueError, match=re.escape(message)) as caught:
+        Settings(grain_periods=periods)
+    assert str(caught.value).startswith(f"GRAIN_PERIODS is {periods!r}")

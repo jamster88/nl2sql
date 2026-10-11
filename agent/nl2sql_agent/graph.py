@@ -487,8 +487,9 @@ class Nl2SqlAgent:
         """Forget what was read once and kept, so it is read again (V6-33).
 
         Four things are read on first use and held for the process: the
-        literal catalog, the label map and fiscal calendar, the foreign keys,
-        and the list of knowledge collections. Each describes the retail
+        literal catalog, the label map and fiscal calendar -- and with them
+        each table's grain -- the foreign keys, and the list of knowledge
+        collections. Each describes the retail
         database or the knowledge store, which change when an operator
         changes them -- not when a reviewer promotes a pair or a fix, which
         are read from their stores on every question. Says which were held.
@@ -521,17 +522,34 @@ class Nl2SqlAgent:
         that identify one."""
         return self._contract_resources().dimensions
 
+    def grains(self) -> dict[str, Any]:
+        """Each date-stamped table's grain, measured from its dates and read
+        once: what the Static Validator holds a join to (arch7.3 section
+        22.14). Empty with the grain check off, and when they could not be
+        read."""
+        return self._contract_resources().grains
+
     def _contract_resources(self) -> ContractResources:
-        """The label map and the fiscal calendar, read once on first use.
+        """The label map, the fiscal calendar and each table's grain, read
+        once on first use.
 
         Like the literal catalog, this reads the catalog and not a question,
         so once per process is enough; and like it, a failure costs the
         feature and nothing else -- the contract says less, and the reviewer
-        has fewer keys to ask labels for.
+        has fewer keys to ask labels for. The grains are read only with the
+        grain check on, and one that cannot be read stands the check down:
+        said once here, since a validator that has stopped checking is
+        otherwise silent.
         """
         with self._contract_lock:
             if self._contract is None:
-                self._contract = answer_contract.load_resources(self.db)
+                periods = self.settings.grain_period_columns if self.settings.grain_check_enabled else None
+                self._contract = answer_contract.load_resources(self.db, grain_periods=periods)
+                if "grains" in self._contract.errors:
+                    log.warning(
+                        "the grain check is standing down: the grains could not be read (%s)",
+                        self._contract.errors["grains"],
+                    )
             return self._contract
 
     # --- running ------------------------------------------------------------
@@ -996,9 +1014,12 @@ class Nl2SqlAgent:
     # --- stage 3: validation and repair -------------------------------------
 
     def _validate_static(self, state: AgentState) -> dict:
-        """The AST gate: one statement, SELECT only, in-scope tables."""
+        """The AST gate: one statement, SELECT only, in-scope tables -- and,
+        with the grain check on, no two tables of different grains joined on
+        the date or on no date at all (arch7.3 section 22.14)."""
+        grains = self._contract_resources().grains if self.settings.grain_check_enabled else None
         issues = validate_sql_statically(
-            state.get("sql", ""), allowed_tables=state.get("selected_tables") or None
+            state.get("sql", ""), allowed_tables=state.get("selected_tables") or None, grains=grains or None
         )
         return {
             "issues": issues,

@@ -41,6 +41,11 @@ All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
 | `knowledge` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
 | `multi-shot` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
 
+The first three rows are the pipeline before v4. Measured again on 7.0
+(2026-10-10), `schema-only` scores 1 of 15 and `knowledge` 13, for reasons
+of scope set out under [The grain check](#the-grain-check); the paragraphs
+below read the table as it was measured.
+
 Three things this says, including one that is not flattering:
 
 **The knowledge base earns its place.** Every question schema-only missed is a
@@ -580,3 +585,147 @@ Paraphraser's call took 6.5s at the median, where `OLLAMA_MODEL`'s had
 taken 32.6s in the calibration, and the Judge's 15.5s. In all, 397.1s
 less than Phase 3's run, mostly B15's second wave not needed; at the
 median, 21.5s more.
+
+## The grain check
+
+Phase 6 of arch7.3's build puts a rule in the Static Validator: two tables
+of different grains may not be joined on the date unless the finer is
+first rolled up to the coarser's period, nor on no date at all while the
+coarser still brings a row for every period
+([`agent/README.md`](../agent/README.md#the-pipeline)). It is the first
+phase that changes the pipeline itself, so it is measured through all
+five configurations and not only `ensemble`, with the check and without
+(`GRAIN_CHECK_ENABLED=false`).
+
+**The grains it reads, on this catalog.** Eight tables are stamped with a
+date. Measured from their own dates: the sales, the ad performance and the
+promotion performance are daily; the competitor prices, the item prices and
+the market share weekly; the item costs and the vendor allowances monthly.
+Each read took under a tenth of a second.
+
+**It refuses no reference.** The fifteen reference queries pass, against
+the grains above. Two of them add up two date-stamped facts: B07's rolls
+the daily sales and the monthly costs up to the fiscal month before
+joining them, and B13's joins two weekly tables on the date, which is what
+the date is for. A test holds them to it offline and, under `--run-docker`,
+against the grains read from the live catalog; and every benchmark run
+checks its references with the grains it read itself, and fails if one is
+refused.
+
+**Read against the queries of the measurements above.** Before anything
+was run with it, the rule was given every distinct query the earlier
+phases' runs wrote that adds up two date-stamped facts -- 34 of them,
+B07's and B13's, from the fifteen and the paraphrase set through
+`ensemble` -- and each was run again and scored. It refused five, all
+B07's, all the trap this document has followed since the paraphrase set:
+daily sales joined to monthly costs on the date, 34.65 where the answer is
+34.20. It passed the other 29: the three B07 queries that are right, and
+all 26 of B13's, 14 right and 12 wrong -- B13's recorded mistake is a
+difference where a ratio was asked for, which is not a matter of grain and
+not this rule's to catch.
+
+**Measured 2026-10-10** on the same stack, untraced, routed by the
+committed catalog: the fifteen questions through all five configurations
+with the check, and again without it.
+
+| | Right, with the check | Right, without | Runs it sent to repair | Total, with | Median, with |
+|---|---|---|---|---|---|
+| `schema-only` | 1/15 | 1/15 | 0 | 419.8s | 23.3s |
+| `knowledge` | 13/15 | 13/15 | 0 | 671.0s | 48.0s |
+| `multi-shot` | 15/15 | 15/15 | 0 | 438.4s | 26.6s |
+| `snippets` | 14/15 | 14/15 | 0 | 388.2s | 28.5s |
+| `ensemble` | **15/15** | 15/15 | 2 of 60, both ending right | 2337.6s | 174.3s |
+
+**One run a question, in the benchmark's own wordings, it fired on
+nothing.** In the first four configurations the SQL delivered for every one
+of the fifteen was the same, character for character, with the check and
+without. B07 as the benchmark words it does not fall into the trap once
+the worked examples are shown, and where it is wrong -- `schema-only`,
+`knowledge` -- it is wrong for a reason below that is not its grain. So
+those four rows are the same row twice, which is the first thing a rule
+in every run's validator has to show: it left alone what was right, and
+what was wrong for another reason.
+
+**Through the ensemble it fired on B07, in two of its four runs.** The
+rewordings were the same with the check and without. Two of them joined
+the daily sales to the monthly costs on the date. Without the check, each
+delivered 34.65, the Judge set that answer aside, and 34.20 went out with
+two of the four runs behind it. With it, each was refused once -- "...
+joined on the date, each fiscal month's row of fact_item_cogs meets only
+the rows of fact_pos_retail_sales for that one date. Roll
+fact_pos_retail_sales up to the fiscal month ..." -- and wrote the roll-up:
+34.20, four runs of four agreeing, and nothing for the Judge to set aside.
+The answer is the one it was. What changed is how many runs stand behind
+it, at a cost of two generations: 303.0s for the question against 173.1s.
+The other fourteen questions ran as before -- 14 unanimous and one judged
+(B15, wrong to right) both times, no second wave, 339 model calls against
+337.
+
+**The grain questions, each four ways** -- B07, B09 and B13 in the
+paraphrase set's wordings, twelve in all, which is where the trap was
+first measured:
+
+| | Right, with the check | Right, without | Stable questions | Runs it sent to repair | Total |
+|---|---|---|---|---|---|
+| `snippets` | **12/12** | 11/12 | 3 of 3, from 2 of 3 | 3, all ending right | 645.3s, from 500.8s |
+| `ensemble` | 12/12 | 12/12 | 3 of 3 both ways | 10 of 47, all ending right | 3098.2s, from 2782.6s |
+
+One run a question, this is the miss the paraphrase set found, closed.
+B07's three rewordings each wrote the trap first; each was refused once
+and answered 34.20 at its second attempt. Without the check the second
+("Calculate the gross margin percentage ... for fiscal month 12 of
+FY2025") delivered 34.65 at its first attempt, and the other two reached
+34.20 by another gate, at their second and third. B09's and B13's eight
+wordings wrote the same SQL either way.
+
+Through the ensemble all twelve are right either way, because the Judge
+was already setting the trap aside. What the check changes is what the
+Judge is left to do. Without it, six of B07's sixteen runs delivered
+34.65, in every one of its four wordings; the Judge set that answer aside
+each time, and in the second rewording, where the trap was the runs' own
+choice, it overruled them. With it, no run delivered 34.65: ten were
+refused once each -- those six, and four that without the check reached
+34.20 at a later attempt -- and B07's wordings were agreed by 4, 4, 4 and
+3 of their 4 runs where they had been by 2, 3, 2 and 2. Over the twelve,
+the wordings in which the Judge set an answer aside fell from five to two,
+and it overruled the runs in none where it had in one, with the Judge and
+its rules as they were -- so the fall is the check's and not a change in
+the Judge.
+
+**Every run it refused ended right, and it refused nothing that was.**
+Across the passes above it sent a run to repair fifteen times -- twice the
+same two runs, B07's own wording through the ensemble being in both
+tables -- each refused once and each then answering 34.20; every one was
+B07's. No answer that was right without the check was wrong with it.
+
+**What it did not catch.** The run that kept B07's fourth wording from
+four of four joined the costs on a key it made up -- `c.date_key =
+d.fiscal_year * 100 + d.fiscal_month_num`, which matches no row -- and
+returned NULL. That is a join on an expression, which the rule passes: it
+refuses only what it can read. The Judge set it aside, with the check and
+without. The other answer still set aside was one run of B13's second
+rewording that averaged only the products the competitor undercut, which
+is not a matter of grain.
+
+**What it costs.** The grains are eight queries once a process, under a
+tenth of a second each. A refusal is one generation of the shared budget,
+about a minute on this host.
+
+**`schema-only` and `knowledge` are not the rows at the top of this
+document**, and the check has no part in it: both score the same without
+it, on the same SQL. Those rows were measured before v4, when a model
+call chose the tables from the whole catalog. Since v4 the tables come
+from the schema retriever, and the scope is enforced. With retrieval off
+(`schema-only`) there is no schema retriever, so the scope is the answer
+contract's tables alone -- a product and a date dimension, for a question
+about sales -- or, with none, the first ten tables by name; the sales fact
+is in neither, and a draft that reads it is refused as out of scope until
+the attempts run out. (B02 needs no fact and missed another way: the
+literal matcher took the word "products" for the sub-category 'Paper
+Products', and the count was filtered to it.) With the knowledge base but
+no worked examples (`knowledge`), the schema retriever did not rank the
+sales fact for B06 or B07; B07's first draft began `WITH sales AS (` and
+was refused for reading `fact_pos_retail_sales`, which was not in scope.
+In `multi-shot` and above the worked examples' tables bring it into scope.
+Nothing in this document measured these two configurations after v4,
+which is how it went unseen; it is recorded here, not fixed.

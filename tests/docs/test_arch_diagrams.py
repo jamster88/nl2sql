@@ -222,15 +222,28 @@ def test_v7_draws_the_outer_graph_exactly():
 
 
 def test_v7_adds_no_node_to_the_pipeline_it_runs():
-    """Every run is v5.6's pipeline, which v7's diagram draws as one box and
-    points at: the diagram for graph.py is still v5.6's."""
+    """Every run is v5.6's pipeline node for node, which v7's diagram draws
+    as one box and points at: the diagram for graph.py is still v5.6's."""
     assert diagram_for_this_tree() == V5_6
     assert diagram_nodes(V5_6) == graph_nodes()
     text = V7.read_text()
-    assert "Inside each run: the v5.6 pipeline, unchanged" in text
+    assert "Inside each run: the v5.6 pipeline's nodes, and the grain check" in text
     assert "arch_v5_6.svg" in text
     # Only `refuse` is in both graphs: the question refused before any run.
     assert diagram_nodes(V7) & diagram_nodes(V5_6) == {"refuse"}
+
+
+def test_v7_says_what_it_changes_inside_the_pipeline():
+    """The grain check (arch7.3's Phase 6) is the one part of v7 that is not
+    around the pipeline but in it, in a node v5.6's diagram already draws --
+    so v7's says so, with the two settings that govern it and that it holds
+    with the ensemble off."""
+    text = V7.read_text()
+    assert "What v7 changes inside the pipeline: the grain check" in text
+    words = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+    for phrase in ("validate_static (with the grain check)", "GRAIN_PERIODS",
+                   "GRAIN_CHECK_ENABLED=false", "ENSEMBLE_ENABLED=false too"):
+        assert phrase in words, phrase
 
 
 def test_v7_draws_the_gate_the_judge_and_the_second_wave():

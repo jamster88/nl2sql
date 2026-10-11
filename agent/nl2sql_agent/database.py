@@ -7,6 +7,7 @@ descriptions to the schema makes the agent smarter without touching this code.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
@@ -224,6 +225,50 @@ class Database:
                 ).first()
         return (int(row.fiscal_year), row.first_date, row.last_date) if row is not None else None
 
+    def dates_per_period(
+        self,
+        table: str,
+        column: str,
+        periods: Sequence[Sequence[str]],
+        *,
+        calendar: str = "dim_date",
+        key: str = "date_key",
+    ) -> list[int]:
+        """For each period, the most of `table`'s distinct dates any one holds.
+
+        What a table's grain is read from (arch7.3 section 22.14): a table
+        with at most one date in every fiscal month is monthly, whatever its
+        key is called. `column` is its column that references the calendar's
+        `key`; each period is the calendar columns that together name one,
+        and the answer has a number per period in the order given -- all
+        zeros for a table with no dates. One statement, read-only, over the
+        table's distinct dates and never its rows: on a fact whose key leads
+        with the date that is an index's worth of work.
+
+        Every name is quoted. The caller takes them from the catalog, not
+        from a question.
+        """
+        if not periods:
+            return []
+        arms = " UNION ALL ".join(
+            f"SELECT {index} AS period, COALESCE(MAX(held), 0) AS most FROM ("
+            f"SELECT COUNT(*) AS held FROM stamped GROUP BY {', '.join(_quoted(name) for name in period)}"
+            f") AS by_period_{index}"
+            for index, period in enumerate(periods)
+        )
+        statement = (
+            f"WITH stamped AS ("
+            f"SELECT d.* FROM (SELECT DISTINCT t.{_quoted(column)} AS stamp FROM {self._quote(table)} t) AS dates "
+            f"JOIN {self._quote(calendar)} d ON d.{_quoted(key)} = dates.stamp) "
+            f"{arms} ORDER BY period"
+        )
+        with self._engine.connect() as conn:
+            with conn.begin():
+                conn.exec_driver_sql("SET TRANSACTION READ ONLY")
+                conn.exec_driver_sql(f"SET LOCAL statement_timeout = {int(self._statement_timeout_ms)}")
+                rows = conn.execute(text(statement)).all()
+        return [int(row.most) for row in rows]
+
     def describe_all_tables(self) -> str:
         """Compact catalog of every table: description, size, column names."""
         lines = []
@@ -337,6 +382,11 @@ class Database:
 def _quote_identifier(name: str) -> str:
     """Escape an identifier for use inside double quotes."""
     return name.replace('"', '""')
+
+
+def _quoted(name: str) -> str:
+    """An identifier, quoted: a name and nothing else, whatever it holds."""
+    return f'"{_quote_identifier(name)}"'
 
 
 def _as_person(conn: Any, principal: str, service: str = "agent") -> None:

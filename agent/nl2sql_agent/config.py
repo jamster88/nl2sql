@@ -6,6 +6,7 @@ Ollama host, a different model, or a different database without a rebuild.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from nl2sql_common.env import (
@@ -60,6 +61,40 @@ DEFAULT_MLFLOW_EXPERIMENT = "nl2sql-agent"
 # and at most ten, as the architecture was asked for (arch7 section 22.9).
 MIN_PARAPHRASES = 3
 MAX_PARAPHRASES = 10
+
+# The periods a table's grain is measured against (arch7.3 section 22.14):
+# the fiscal week and the fiscal month, as the date dimension spells them.
+DEFAULT_GRAIN_PERIODS = "fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num"
+_COLUMN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def parse_grain_periods(setting: str) -> tuple[tuple[str, ...], ...]:
+    """`GRAIN_PERIODS` as its periods, finest first, each the columns of the
+    date dimension that together name one: `a+b,a+c` is two periods.
+
+    Empty is allowed and means there is nothing coarser than a day to
+    measure, which leaves the grain check with nothing to say. What is
+    refused is a period with no column and a name that is not a column's --
+    these names are written into a query. Whether the date dimension has
+    each column is the database's to say, when the grains are read.
+    """
+    if not (setting or "").strip():
+        return ()
+    periods = []
+    for period in setting.split(","):
+        columns = tuple(column.strip().lower() for column in period.split("+"))
+        bad = [column for column in columns if not _COLUMN_NAME.match(column)]
+        if bad:
+            raise ValueError(
+                f"GRAIN_PERIODS is {setting!r}; each period is one or more of the date dimension's "
+                f"column names joined by '+', and periods are separated by ',' -- {bad[0]!r} is not a column name"
+            )
+        if len(set(columns)) != len(columns):
+            raise ValueError(f"GRAIN_PERIODS is {setting!r}; the period {period.strip()!r} names a column twice")
+        periods.append(columns)
+    if len(set(periods)) != len(periods):
+        raise ValueError(f"GRAIN_PERIODS is {setting!r}; it names a period twice")
+    return tuple(periods)
 
 
 @dataclass
@@ -297,9 +332,22 @@ class Settings:
     # Judge, as the five above.
     model_route_paraphraser: str = ""
     model_route_judge: str = ""
+    # The grain check (arch7.3 section 22.14): the Static Validator refuses a
+    # query that joins tables of different grains -- daily sales, monthly
+    # costs -- on the date, or on no date at all. On for every run, with the
+    # ensemble or without; off, the validator is 6.3's.
+    grain_check_enabled: bool = True
+    # The periods a table's grain can be, finest first: each a `+`-joined
+    # list of the date dimension's columns that together name one period.
+    grain_periods: str = DEFAULT_GRAIN_PERIODS
 
     def __post_init__(self) -> None:
         self.validate()
+
+    @property
+    def grain_period_columns(self) -> tuple[tuple[str, ...], ...]:
+        """`grain_periods`, parsed: each period as its columns."""
+        return parse_grain_periods(self.grain_periods)
 
     def validate(self) -> None:
         """Stop at start on a setting out of range, naming it and its bound.
@@ -327,6 +375,10 @@ class Settings:
         ):
             if value < least:
                 problems.append(f"{name} is {value:g}; it must be at least {least}")
+        try:
+            parse_grain_periods(self.grain_periods)
+        except ValueError as exc:
+            problems.append(str(exc))
         if problems:
             raise ValueError("; ".join(problems))
 
@@ -414,4 +466,6 @@ class Settings:
             ollama_parallel_calls=_env_int("OLLAMA_PARALLEL_CALLS", 1),
             model_route_paraphraser=_env_str("MODEL_ROUTE_PARAPHRASER", ""),
             model_route_judge=_env_str("MODEL_ROUTE_JUDGE", ""),
+            grain_check_enabled=_env_bool("GRAIN_CHECK_ENABLED", True),
+            grain_periods=_env_str("GRAIN_PERIODS", DEFAULT_GRAIN_PERIODS),
         )

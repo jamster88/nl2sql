@@ -559,6 +559,14 @@ services:
       OLLAMA_PARALLEL_CALLS: ${OLLAMA_PARALLEL_CALLS:-1}
       MODEL_ROUTE_PARAPHRASER: ${MODEL_ROUTE_PARAPHRASER:-}
       MODEL_ROUTE_JUDGE: ${MODEL_ROUTE_JUDGE:-}
+      # The grain check (7.0): the Static Validator refuses a query that
+      # joins tables of different grains -- daily sales, monthly costs -- on
+      # the date, or on no date at all, and the Repair Agent is told why.
+      # For every run, with the ensemble or without: false is 6.3's
+      # validator. GRAIN_PERIODS is the periods a grain can be, finest first,
+      # each the date dimension's columns that name one, joined by '+'.
+      GRAIN_CHECK_ENABLED: ${GRAIN_CHECK_ENABLED:-true}
+      GRAIN_PERIODS: ${GRAIN_PERIODS:-fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     secrets: &agent-secrets

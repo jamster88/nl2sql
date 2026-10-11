@@ -309,24 +309,46 @@ class ContractResources:
     fiscal_year: int | None = None
     fiscal_year_start: date | None = None
     fiscal_year_end: date | None = None
+    #: Table -> its grain, for every table stamped with a date, measured
+    #: from its own dates (`grain.read_grains`). Empty when the grain check
+    #: is off, and when they could not be read.
+    grains: dict[str, Any] = field(default_factory=dict)
     #: Why a part could not be read. Best-effort, like retrieval: recorded
     #: and carried on without.
     errors: dict[str, str] = field(default_factory=dict)
 
 
-def load_resources(database: Any) -> ContractResources:
-    """Read the label map and the latest complete fiscal year.
+def load_resources(database: Any, *, grain_periods: Sequence[Sequence[str]] | None = None) -> ContractResources:
+    """Read the label map, the latest complete fiscal year and the grains.
 
-    Each half fails on its own. A database that cannot describe itself costs
-    the labels; one with no sales calendar costs the default period.
+    Each part fails on its own. A database that cannot describe itself costs
+    the labels; one with no sales calendar costs the default period; one
+    whose dates cannot be read, or whose date dimension lacks a column
+    `GRAIN_PERIODS` names, costs the grain check.
+
+    `grain_periods` is that setting, parsed; None with the check off, when
+    the grains are not read at all.
     """
+    # Here rather than at the top: the grain check reads queries with the
+    # Completeness Reviewer's reading, which imports this module.
+    from . import grain
+
     resources = ContractResources()
     try:
         tables = database.catalog()
-        resources.label_map = build_label_map(tables)
-        resources.dimensions = dimensions(tables, resources.label_map)
     except DATABASE_ERRORS as exc:
         resources.errors["label_map"] = str(exc)
+        if grain_periods is not None:
+            # Which tables are stamped with a date is the catalog's to say.
+            resources.errors["grains"] = str(exc)
+    else:
+        resources.label_map = build_label_map(tables)
+        resources.dimensions = dimensions(tables, resources.label_map)
+        if grain_periods is not None:
+            try:
+                resources.grains = grain.read_grains(database, tables, grain_periods)
+            except DATABASE_ERRORS + (grain.UnknownPeriod,) as exc:
+                resources.errors["grains"] = str(exc)
     try:
         latest = database.latest_complete_fiscal_year()
     except DATABASE_ERRORS as exc:

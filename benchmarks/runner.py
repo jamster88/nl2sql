@@ -236,6 +236,11 @@ class QuestionResult:
     declined: list[dict[str, Any]] = field(default_factory=list)
     claims_added: int = 0
     claims_dropped: int = 0
+    #: The runs the grain check sent to repair (arch7.3 section 22.14): for
+    #: each, which run it was -- 0 the question's own, or the only one --
+    #: how many of its attempts the check refused, and how that run ended,
+    #: scored against the reference as the answer is.
+    grain_repairs: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def label(self) -> str:
@@ -258,6 +263,11 @@ class QuestionResult:
 class BenchmarkReport:
     results: list[QuestionResult] = field(default_factory=list)
     label: str = ""
+    #: Whether the grain check was on for the run, and the questions whose
+    #: reference query it would refuse -- which must be none: a check that
+    #: rejects a right query blocks the release that ships it.
+    grain_checked: bool = False
+    rejected_references: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -426,6 +436,17 @@ class BenchmarkReport:
         fixed = sum(1 for r in overruled if r.correct and r.without_judge == WRONG)
         broke = sum(1 for r in overruled if not r.correct and r.without_judge == CORRECT)
         return {"overruled": len(overruled), "fixed": fixed, "broke": broke}
+
+    def grain_repairs(self) -> dict[str, int]:
+        """What the grain check cost and bought: the runs it sent to repair,
+        and how each ended -- `right`, `wrong`, or `failed` to answer."""
+        ended = [repair["ended"] for result in self.results for repair in result.grain_repairs]
+        return {
+            "runs": len(ended),
+            "right": ended.count(CORRECT),
+            "wrong": ended.count(WRONG),
+            "failed": len(ended) - ended.count(CORRECT) - ended.count(WRONG),
+        }
 
     @property
     def second_waves(self) -> int:

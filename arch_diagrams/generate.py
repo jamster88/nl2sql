@@ -2145,15 +2145,31 @@ V7_ADDED = ("One run of the pipeline is one draw. Temperature is 0 everywhere, s
             "the same thing is run through the whole v5.6 pipeline, and the answers are compared: "
             "runs that agree are a reason to believe the answer, and runs that disagree are a "
             "mistake caught that one run would have delivered. Everything in green is new in v7, "
-            "and it is all outside the pipeline: an outer graph of eleven nodes around it. Inside, "
-            "one thing changed -- supervise accepts a screening it is handed rather than making "
-            "its own.")
+            "and the graph is all outside the pipeline: eleven nodes around it. Inside, no node "
+            "was added and two changed -- supervise accepts a screening it is handed rather than "
+            "making its own, and validate_static has one check more, the grain check below.")
+
+V7_GRAIN = ("A table of monthly costs holds one date in each fiscal month. Joined to daily sales "
+            "on the date, each month's cost meets one day's sales and the rest of the month is "
+            "dropped -- a query that runs, that the planner has no objection to, and that every "
+            "wording of the question can fall into alike. So the Static Validator now refuses "
+            "it. Each table's grain is measured from its own dates, once a process: the "
+            "coarsest period of GRAIN_PERIODS with at most one of the table's dates in each. Two "
+            "tables that are added up and whose grains differ may not be joined on the date "
+            "unless the finer is first rolled up to the coarser's period, nor on no date at all "
+            "while the coarser still brings a row for every period. The refusal is an ordinary "
+            "static issue: it names the two tables, their grains and the columns to join on, "
+            "goes to repair, and spends the one attempts counter. A join the check cannot read "
+            "passes, and a grains read that fails stands it down, logged once. It is in the "
+            "pipeline, so it applies with ENSEMBLE_ENABLED=false too; GRAIN_CHECK_ENABLED=false "
+            "turns it off.")
 
 V7_COST = ("A question costs about four runs of the pipeline rather than one, plus three calls "
            "of the ensemble's own: the anchor screening, the Paraphraser and the Judge, and a "
            "screening per rewording. Wall time follows, because the runs queue at the host gate. "
            "That is the trade this version makes on purpose -- it is meant for the question worth "
-           "asking four times -- and ENSEMBLE_ENABLED=false is v5.6 to the answer.")
+           "asking four times -- and ENSEMBLE_ENABLED=false is one run of the pipeline, to the "
+           "answer.")
 
 V7_SCREEN_WHY = ("The anchor. Screening happens on the words the person typed and before "
                  "anything is reworded, for the reason it comes first in the pipeline: an "
@@ -2222,10 +2238,10 @@ V7_DELIVER_WHY = ("One answer, with how it was arrived at beside it rather than 
                   "for v7 reads the record too.")
 
 V7_INSIDE = ("supervise (handed the anchor's screening, so no model call) → the five retrievers "
-             "→ aggregate → generate_sql → validate_static → planner_gate → execute_query → "
-             "review → visualise → narrate → audit → finish, with its one repair loop and one "
-             "attempts counter. Nineteen nodes, none added and none renamed by v7: drawn node "
-             "by node in arch_v5_6.svg.")
+             "→ aggregate → generate_sql → validate_static (with the grain check) → planner_gate "
+             "→ execute_query → review → visualise → narrate → audit → finish, with its one "
+             "repair loop and one attempts counter. Nineteen nodes, none added and none renamed "
+             "by v7: drawn node by node in arch_v5_6.svg.")
 
 V7_LEVELS = [("unanimous", "Every run that voted gave this answer.", GREEN),
              ("majority", "Most did; the others are named among the notes, with how their "
@@ -2265,11 +2281,11 @@ def build_v7():
                  f'<tspan fill="{MUTED}" font-weight="400">— the question, asked several '
                  f'ways</tspan></text>')
     y += 26
-    intro = ("v5.6's pipeline, unchanged, run once for the question as asked and once for each "
-             "faithful rewording of it; the answers compared, read by a Judge, voted on, and one "
-             "delivered with how the runs agreed (arch7.3). Everything marked in green is new in "
-             "v7. The pipeline inside each run is drawn as one box here and node by node in "
-             "arch_v5_6.svg.")
+    intro = ("v5.6's pipeline, its nodes unchanged, run once for the question as asked and once "
+             "for each faithful rewording of it; the answers compared, read by a Judge, voted on, "
+             "and one delivered with how the runs agreed (arch7.3). Everything marked in green is "
+             "new in v7. The pipeline inside each run is drawn as one box here and node by node "
+             "in arch_v5_6.svg; what v7 changes inside it is the grain check.")
     blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
     parts.append(blk); y += h + 26
 
@@ -2284,6 +2300,9 @@ def build_v7():
                       w=CONTENT_R - MARGIN, dashed=False)
     parts.append(svg); y += h + 18
     svg, h = note_row(y, "What it costs", V7_COST, color=PURPLE, x=MARGIN, w=CONTENT_R - MARGIN)
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v7 changes inside the pipeline: the grain check", V7_GRAIN,
+                      color=GREEN, x=MARGIN, w=CONTENT_R - MARGIN, dashed=False)
     parts.append(svg); y += h + 36
 
     rows = [
@@ -2331,7 +2350,7 @@ def build_v7():
          "tags": [("the v5.6 pipeline, once per wording", MAGENTA), ("host gate", PURPLE)],
          "wrap_tags": True, "why": V7_ANSWER_WHY},
         {"id": "inside", "kind": "note", "color": MAGENTA, "w": STEP_W,
-         "title": "Inside each run: the v5.6 pipeline, unchanged", "body": V7_INSIDE},
+         "title": "Inside each run: the v5.6 pipeline's nodes, and the grain check", "body": V7_INSIDE},
         {"id": "validate", "kind": "step", "n": 6, "name": "validate",
          "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
          "does": "Per run, E1 to E5: it answered; its wording passed the fidelity gate; it has "

@@ -17,7 +17,7 @@ their own and are listed under the release they shipped with. A version marked
 
 ## v7_0 (7.0.0) -- 2026-10-08
 
-In progress: arch7, the ensemble -- the question asked several ways, the pipeline run once per wording, the answers voted on -- built phase by phase. Nothing is published yet; `setup.sh` already pins `v7_0`.
+In progress: arch7, the ensemble -- the question asked several ways, the pipeline run once per wording, the answers voted on -- and the grain check, in the pipeline itself. Every phase is built; what is left is the release. Nothing is published yet; `setup.sh` already pins `v7_0`.
 
 **Added**
 - arch7's Phase 0: the fidelity gate's checks in code (`fidelity.py`), three hand-written rewordings of each benchmark question, and `run_benchmark.py --paraphrase-set`, which reports the stability -- 13 of 15 questions right in every wording, 57 of 60 wordings, on the running 6.3 stack. The checks' starting words discarded 8 of the 45 rewordings; four additions fixed that.
@@ -32,6 +32,10 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 - The review service adds the staging table's `ensemble` column when it starts; until it has, the API stages verdicts without it and says so once in its log.
 - The answer's `ensemble` carries its agreement sentence (`line`), and `/v1/meta` names the ensemble's own nodes (`pipeline.ensemble.nodes`).
 - arch7.3: the owner's decisions on the grain check -- it ships in 7.0.0, on by default, each table's grain measured from its data, and it also catches tables of different grains joined on no date at all. The new `_arch7_3` documents record them; arch7.2's stand.
+- arch7.3's Phase 6: the grain check. Each date-stamped table's grain -- daily, weekly, monthly -- is measured from its own dates, and the Static Validator refuses a query that joins two tables of different grains on the date without rolling the finer up to the coarser's period, or on no date at all while the coarser still brings a row for every period. The refusal names the two tables, their grains and the columns to join on, and goes to repair like any static issue. A join it cannot read passes; when the grains cannot be read it stands down and the log says so once.
+- Two settings: `GRAIN_CHECK_ENABLED` (on) and `GRAIN_PERIODS`, the periods a table may be stamped by.
+- The benchmark reports what the grain check did -- the runs it sent to repair and how each ended -- and fails when the check would refuse one of its own reference queries.
+- Measured with the check and without, through all five configurations: it fired only on B07's trap, every run it refused ended right, and nothing right was refused. One run a question, the grain questions' twelve wordings are 12 of 12 right from 11; through the ensemble they were right either way, and B07 is now agreed by all its runs where the Judge had been setting two aside.
 - The Paraphraser and the Judge are routing tasks; a catalog built before 7.0 is read with the two unmeasured, answered by `OLLAMA_MODEL`.
 - The benchmark reports, through the ensemble, how the runs agreed, the rewordings discarded by check, how often a question's runs were scored at different rungs, and each question's state size.
 - One gate on the model host: every model call takes one of `OLLAMA_PARALLEL_CALLS` slots, one by default.
@@ -45,6 +49,8 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 - The router chooses which models to keep by the rungs each task is actually called at: counted at every rung, a model fast at the Judge -- called only at heavy -- took a place from the models the older tasks were routed to.
 
 **Updated**
+- 7.0.0 changes what one run answers, with `ENSEMBLE_ENABLED=false` as well: the grain check is in the pipeline. `GRAIN_CHECK_ENABLED=false` is 6.3's validator.
+- `arch_v7` says what v7 changes inside the pipeline, the grain check.
 - The REST API's two workers take turns at the model host by default; a host that serves two calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them.
 - The version is 7.0.0 everywhere it is declared, and `setup.sh` pins `v7_0`.
 

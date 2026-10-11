@@ -1433,3 +1433,145 @@ def test_answering_reports_to_the_callback_it_is_given():
         new_state("q"), on_progress=lambda step, detail: seen.append(step)
     )
     assert seen[0] == "supervise" and seen[-1] == "finish"
+
+
+# ---------------------------------------------------------------------------
+# arch7.3 section 22.14: the grain check, in the Static Validator's node
+# ---------------------------------------------------------------------------
+
+import psycopg  # noqa: E402
+
+from tests.agent import test_grain as grain_cases  # noqa: E402
+from tests.grain_fixture import GRAINS  # noqa: E402
+
+GRAIN_TABLES = ["dim_date", "dim_product", "fact_pos_retail_sales", "fact_item_cogs"]
+
+
+def _grain_agent(sql: list[str], *, grains=GRAINS, **settings):
+    """An agent whose tables are B07's and whose grains are the catalog's."""
+    db = FakeDatabase(tables=GRAIN_TABLES)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": t}) for t in GRAIN_TABLES]), db, foreign_keys=lambda: [],
+    )
+    llm = scripted(sql)
+    agent = make_agent(db, llm, schema_retriever=retriever,
+                       contract_resources=ContractResources(grains=grains), **settings)
+    return agent, db, llm
+
+
+def test_the_grain_check_sends_the_trap_to_repair_and_the_repaired_query_is_what_runs():
+    """B07, inside one run: the trap is refused before it is planned, the
+    generator is told both grains and the way round, and what it writes next
+    is what reaches the database."""
+    agent, db, llm = _grain_agent([grain_cases.TRAP, grain_cases.RIGHT])
+    state = agent.run("gross margin for Dairy & Eggs in fiscal month 12 of FY2025?")
+
+    assert state["attempts"] == 2 and state["error"] is None
+    [refused] = state["attempt_history"]
+    assert refused.sql == grain_cases.TRAP
+    assert [(issue.source, issue.message) for issue in refused.issues] == [("static", grain_cases.ON_THE_DATE_MESSAGE)]
+    # Refused statically: the trap was never planned and never run.
+    assert db.explain_calls == [grain_cases.RIGHT] and db.run_select_calls == [grain_cases.RIGHT]
+    # The Repair Agent passed the message on as written, and asked no model.
+    assert [entry.model_calls for entry in state["trace"] if entry.node == "repair"] == [0]
+    retry = llm.plain_invocations[-1][-1].content
+    assert grain_cases.ON_THE_DATE_MESSAGE in retry and "Keep the rest of the query" in retry
+    assert [entry.detail for entry in state["trace"] if entry.node == "validate_static"] == [
+        grain_cases.ON_THE_DATE_MESSAGE, "valid"]
+
+
+def test_with_the_grain_check_off_the_static_validator_is_the_one_it_was():
+    """`GRAIN_CHECK_ENABLED=false`: the trap is the planner's to pass, and it does."""
+    agent, db, _ = _grain_agent([grain_cases.TRAP], grain_check_enabled=False)
+    state = agent.run("q")
+
+    assert state["attempts"] == 1 and state["attempt_history"] == []
+    assert db.run_select_calls == [grain_cases.TRAP]
+    assert agent.grains() == GRAINS, "held, and not handed to the validator"
+
+
+def test_with_no_grains_read_there_is_nothing_to_hold_a_join_to():
+    agent, db, _ = _grain_agent([grain_cases.TRAP], grains={})
+    assert agent.run("q")["attempts"] == 1 and db.run_select_calls == [grain_cases.TRAP]
+
+
+def test_a_query_at_one_grain_passes_the_check_at_its_first_attempt():
+    agent, _, _ = _grain_agent([grain_cases.RIGHT])
+    state = agent.run("q")
+    assert state["attempts"] == 1 and state["attempt_history"] == []
+
+
+class _GrainDatabase(FakeDatabase):
+    """A fake whose catalog has a date dimension and the two facts, and
+    whose dates read as the retail database's do -- or not at all."""
+
+    def __init__(self, *, dates_error=None):
+        super().__init__(tables=GRAIN_TABLES)
+        self.tables_detail = [grain_cases.CALENDAR, grain_cases.DAILY, grain_cases.MONTHLY]
+        self.dates_error = dates_error
+        self.dates_asked: list[tuple] = []
+
+    def dates_per_period(self, table, column, periods, *, calendar, key):
+        self.dates_asked.append((table, tuple(periods)))
+        if self.dates_error is not None:
+            raise self.dates_error
+        # The most dates any one week holds, and any one month.
+        most = {"fact_pos_retail_sales": {"fiscal_week_num": 9, "fiscal_month_num": 37},
+                "fact_item_cogs": {"fiscal_week_num": 1, "fiscal_month_num": 1}}[table]
+        return [most[period[-1]] for period in periods]
+
+
+def _reading_agent(db, sql, **settings):
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": t}) for t in GRAIN_TABLES]), db, foreign_keys=lambda: [],
+    )
+    return make_agent(db, scripted(sql), schema_retriever=retriever, **settings)
+
+
+def test_the_grains_are_read_once_a_process_by_the_periods_the_settings_name():
+    db = _GrainDatabase()
+    agent = _reading_agent(db, [grain_cases.TRAP, grain_cases.RIGHT, grain_cases.RIGHT],
+                           grain_periods="fiscal_year+fiscal_month_num")
+
+    assert agent.run("q")["attempts"] == 2
+    assert agent.run("q again")["attempts"] == 1
+    assert sorted(db.dates_asked) == [
+        ("fact_item_cogs", (("fiscal_year", "fiscal_month_num"),)),
+        ("fact_pos_retail_sales", (("fiscal_year", "fiscal_month_num"),)),
+    ]
+    assert {name: grain.period for name, grain in agent.grains().items()} == {
+        "fact_pos_retail_sales": "day", "fact_item_cogs": "fiscal month"}
+
+
+def test_with_the_check_off_the_dates_are_never_read():
+    db = _GrainDatabase()
+    agent = _reading_agent(db, [grain_cases.TRAP], grain_check_enabled=False)
+    assert agent.run("q")["attempts"] == 1
+    assert db.dates_asked == [] and agent.grains() == {}
+
+
+def test_grains_that_cannot_be_read_stand_the_check_down_and_the_log_says_so_once(caplog):
+    """A validator that has stopped checking is otherwise silent. The
+    question is still answered -- by the trap, as it would have been in 6.3."""
+    db = _GrainDatabase(dates_error=psycopg.errors.QueryCanceled("canceling statement due to statement timeout"))
+    agent = _reading_agent(db, [grain_cases.TRAP, grain_cases.TRAP])
+
+    with caplog.at_level("WARNING", logger="nl2sql_agent.graph"):
+        first, second = agent.run("q"), agent.run("q again")
+
+    assert first["attempts"] == second["attempts"] == 1 and first["error"] is None
+    said = [record.getMessage() for record in caplog.records if "grain check" in record.getMessage()]
+    assert said == ["the grain check is standing down: the grains could not be read "
+                    "(canceling statement due to statement timeout)"]
+
+
+def test_reloading_reads_the_grains_again():
+    """An operator who loaded a table differently: the next question measures."""
+    db = _GrainDatabase()
+    agent = _reading_agent(db, [grain_cases.RIGHT, grain_cases.RIGHT])
+    agent.run("q")
+    asked = len(db.dates_asked)
+
+    assert "contract" in agent.reload()
+    agent.run("q again")
+    assert len(db.dates_asked) == 2 * asked

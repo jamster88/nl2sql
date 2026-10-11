@@ -256,3 +256,18 @@ def test_through_the_ensemble_the_metrics_say_how_the_runs_agreed():
     assert (metrics["columns_joined"], metrics["columns_declined"]) == (1, 0)
     assert (metrics["claims_added"], metrics["claims_dropped"]) == (2, 1)
     assert "agreement.unanimous" not in tracking.metrics(BenchmarkReport(results=report.results[:0]))
+
+
+def test_with_the_grain_check_on_the_metrics_say_what_it_refused_and_how_those_runs_ended():
+    """arch7.3 section 22.14: the references it would refuse, which is zero
+    or a release blocker, and the runs it sent to repair."""
+    repaired = result("B07", CORRECT, grain_repairs=[{"run": 0, "sent": 1, "ended": CORRECT},
+                                                     {"run": 2, "sent": 1, "ended": WRONG}])
+    report = BenchmarkReport(label="snippets", grain_checked=True, rejected_references=["B13"],
+                             results=[result("B01", CORRECT), repaired])
+    metrics = tracking.metrics(report)
+    assert metrics["grain.references_refused"] == 1
+    assert (metrics["grain.repaired_runs"], metrics["grain.repaired_right"], metrics["grain.repaired_wrong"],
+            metrics["grain.repaired_failed"]) == (2, 1, 1, 0)
+    off = tracking.metrics(BenchmarkReport(label="snippets", results=report.results))
+    assert not [name for name in off if name.startswith("grain.")]

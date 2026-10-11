@@ -118,13 +118,26 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   judge` measures the two ([the model catalog](docs/model_catalog.md)).
 - **The benchmark and calibration scripts run on a host again**, which
   they had not since 6.2.
-- **Still to come in 7.0: the grain check**, on by default. Each table's
-  grain -- daily, weekly, monthly -- measured from its own data, and a
-  query that joins tables of different grains on their dates without
-  rolling the finer up, or on no date at all, sent back to be repaired
-  before it runs, whether the ensemble is on or off ([the
-  design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md), section
-  22.14).
+- **The grain check**, on by default, **and it changes the pipeline
+  itself** -- so an upgrade to 7.0 changes what one run answers, with
+  `ENSEMBLE_ENABLED=false` as well. Each table's grain -- daily, weekly,
+  monthly -- is measured from its own dates, once, at the agent's first
+  question. A query
+  that joins two tables of different grains on their dates without rolling
+  the finer up to the coarser's period, or on no date at all while the
+  coarser still brings a row for every period, is refused by the Static
+  Validator before it runs and sent back to be repaired, with a message
+  naming the two tables, their grains and the columns to join on.
+  `GRAIN_CHECK_ENABLED=false` turns it off, and `GRAIN_PERIODS` names the
+  periods for another calendar. Measured through all five benchmark
+  configurations with it and without: it fired only on the trap it was
+  built for, every run it refused ended right, and it refused nothing that
+  was right. One run a question, the grain questions in all their wordings
+  went from 11 of 12 right to 12; through the ensemble they were right
+  either way, and the question that fell into the trap is now agreed by
+  all of its runs where the Judge had been setting two of four aside ([the
+  pipeline](agent/README.md#the-pipeline), [what it
+  measured](docs/benchmark.md#the-grain-check)).
 
 ## What's new in 6.3
 

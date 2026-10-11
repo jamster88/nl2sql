@@ -790,10 +790,14 @@ class Nl2SqlAgent:
         if self.schema_retriever is None:
             return {"schema_tables": [], _DETAIL: "disabled"}
         selection = self.schema_retriever.select(state["question"])
-        update: dict[str, Any] = {"schema_tables": selection.tables}
+        # Every table is no proposal. A retriever that could rank nothing
+        # answers with the whole schema, and passed on as its choice that
+        # would be capped by the aggregator -- to the first ten by name.
+        proposed = [] if selection.whole_schema else selection.tables
+        update: dict[str, Any] = {"schema_tables": proposed}
         if selection.error:
             update["retrieval_errors"] = {"schema": selection.error}
-        update[_DETAIL] = ", ".join(selection.tables) or "none"
+        update[_DETAIL] = ", ".join(proposed) or "none"
         return update
 
     def _select_tables_with_llm(self, state: AgentState) -> dict:
@@ -918,30 +922,42 @@ class Nl2SqlAgent:
         applied to the union of them.
         """
         known = set(self.db.table_names())
+        # What the retrievers chose for this question: the vector ranking,
+        # the tables the knowledge documents, the tables the examples query.
+        chosen = [
+            name
+            for name in (
+                list(state.get("schema_tables", []))
+                + list(state.get("knowledge_tables", []))
+                + list(state.get("example_tables", []))
+            )
+            if name in known
+        ]
         proposed: list[str] = []
         # The answer contract's tables go first, so the cap never takes
         # them: a contract that asks for `product_name` with `dim_product`
         # out of scope sends the generator into the table allowlist.
-        for name in (
-            answer_contract.contract_tables(state.get("answer_contract"))
-            + list(state.get("schema_tables", []))
-            + list(state.get("knowledge_tables", []))
-            + list(state.get("example_tables", []))
-        ):
+        for name in answer_contract.contract_tables(state.get("answer_contract")) + chosen:
             if name in known and name not in proposed:
                 proposed.append(name)
 
         bridges: list[str] = []
-        if self.schema_retriever is not None and proposed:
+        if not chosen:
+            # Nothing chose a table: retrieval is off, or every store is
+            # down. Schema-only is the whole schema, which is v1's behaviour
+            # and still answers a good many questions -- and it is not
+            # capped, since with no ranking the cap keeps the first tables
+            # by name, which here is ten dimensions and no fact. The
+            # contract's tables are not a ranking either: they are what the
+            # answer is about, not what it is computed from, and taken for
+            # the whole scope they left a question about sales with a
+            # product and a date to answer it from.
+            tables = proposed + sorted(known - set(proposed))
+        elif self.schema_retriever is not None:
             closed = self.schema_retriever.close_and_cap(proposed)
             tables, bridges = closed.tables, closed.bridges
         else:
             tables = proposed[: self.settings.max_tables]
-
-        if not tables:
-            # Nothing was retrievable. Schema-only is exactly v1's behaviour
-            # and still answers a good many questions.
-            tables = sorted(known)[: self.settings.max_tables]
 
         schema = self.tools["get_schema_and_data"].invoke({"tables": tables})
         # arch5.2: the one node that has seen everything the generator will

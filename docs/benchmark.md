@@ -42,9 +42,10 @@ All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
 | `multi-shot` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
 
 The first three rows are the pipeline before v4. Measured again on 7.0
-(2026-10-10), `schema-only` scores 1 of 15 and `knowledge` 13, for reasons
-of scope set out under [The grain check](#the-grain-check); the paragraphs
-below read the table as it was measured.
+(2026-10-10), `schema-only` scores 10 of 15 -- 1 until its scope was
+fixed -- and `knowledge` 13, as set out under [Schema-only, with the whole
+schema](#schema-only-with-the-whole-schema); the paragraphs below read the
+table as it was measured.
 
 Three things this says, including one that is not flattering:
 
@@ -728,4 +729,61 @@ sales fact for B06 or B07; B07's first draft began `WITH sales AS (` and
 was refused for reading `fact_pos_retail_sales`, which was not in scope.
 In `multi-shot` and above the worked examples' tables bring it into scope.
 Nothing in this document measured these two configurations after v4,
-which is how it went unseen; it is recorded here, not fixed.
+which is how it went unseen. `schema-only`'s is fixed since, below;
+`knowledge`'s is as it was.
+
+### Schema-only, with the whole schema
+
+The measurement above found `schema-only` answering from a scope with no
+fact table in it. That is fixed (the changelog's Fixed, 7.0): when no
+retriever chose a table -- retrieval off, or every store down -- the scope
+is the whole schema, the answer contract's tables first and `MAX_TABLES`
+not applied. Here that is nineteen tables and about 15,000 characters of
+prompt. Measured 2026-10-10 on the same stack, the fifteen through all
+five configurations again, the grain check on:
+
+| | Right, before | Right, now | Total | Median |
+|---|---|---|---|---|
+| `schema-only` | 1/15 | **10/15** | 318.7s | 16.7s |
+| `knowledge` | 13/15 | 13/15 | 711.6s | 48.4s |
+| `multi-shot` | 15/15 | 15/15 | 456.4s | 27.2s |
+| `snippets` | 14/15 | 14/15 | 396.0s | 28.6s |
+| `ensemble` | 15/15 | 15/15 | 2365.5s | 178.6s |
+
+**Only `schema-only` moved.** The other four wrote the SQL they wrote
+before the fix, for every question -- through the ensemble the same
+rewordings, the same agreement, and B07's same two runs refused by the
+grain check and repaired. A configuration whose retrievers choose tables
+does not pass through what was changed.
+
+**`schema-only` no longer loses a draft to its scope.** Before, thirteen
+of the fifteen needed more than one attempt -- 41 retries in all -- and two
+ran out of attempts; followed step by step, a draft that read a table
+outside the scope was refused each time. Now no draft is refused as out of
+scope: all fifteen produced SQL that ran, with three retries, each the
+planner's.
+By category: schema 2 of 3, calendar 2 of 3, grain 1 of 3, fan-out 1 of 1,
+analysis 4 of 5. Its five misses are a model with the schema and nothing
+else: B03 took the banner from the competitor dimension, B06 computed the
+markdown as net less gross sales where a column holds it, B07 joined the
+daily sales to the monthly costs on the date, B11 averaged sales lines
+where a basket is several, and B13 averaged only the products the
+competitor undercut. With the knowledge base and the worked examples all
+five are answered, which is `multi-shot`'s row.
+
+**It is 10 of 15, or 9.** Run again without the grain check, which fired
+in neither run, fourteen answers were the same SQL and B02 was not: the
+literal matcher offers the sub-category 'Paper Products' for the word
+"products", and on the same prompt, the same model and the same rung the
+generator applied it once and not the other time.
+
+**The grain check passed B07's trap here, and this is why.** The query
+joins the sales to the costs on the date, which is the shape the check
+refuses -- but it reads the sales twice, once for the sales total and once
+joined to the costs, and the rule passes any query that reads one of the
+two tables twice, since which reading a roll-up or a filter belongs to
+cannot be told from the reading alone. Of the 230 distinct queries the
+measurements in this section and the ones before it wrote, 18 join two
+facts of different grains; the rule refused six, and that caution passed
+exactly one, this one, which was wrong. It is recorded, and the rule is as
+it was measured.

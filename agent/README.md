@@ -1103,6 +1103,18 @@ entirely, and the run continues schema-only -- exactly v1 behavior. A missing
 knowledge base slows the agent down; it never fails a question that v1 could
 have answered.
 
+Schema-only means the whole schema. When nothing chose a table for the
+question -- retrieval off (`--no-rag`), every store down, or
+`SCHEMA_TOP_K=0` with no hint from a document or an example -- every table
+is in scope and `MAX_TABLES` does not apply: with no ranking, a cap keeps
+the first tables by name, which in a star schema is dimensions and no
+fact. The answer contract's tables go first and are not a ranking: they
+are what the answer is about, not what it is computed from. From v4 to
+7.0 the scope here was the contract's tables alone, or the first ten by
+name, and a query that read the sales was refused as out of scope until
+the attempts ran out; 7.0.0 fixes it
+([`docs/benchmark.md`](../docs/benchmark.md#the-grain-check)).
+
 ```
 [knowledge] skipped: Could not search the knowledge base: connection failed ...
 [tables] dim_store
@@ -1137,7 +1149,7 @@ optional, so an ablation is an environment change rather than a code change:
 | `CLARIFY_ENABLED` | -- | off (batch and benchmark runs have nobody to answer) |
 | `SCHEMA_RETRIEVAL` | -- | `vector` (or `llm` for v3's table-selection call) |
 | `SCHEMA_TOP_K` | -- | 6 tables from the DDL vectors, before FK closure |
-| `MAX_TABLES` | -- | 10 after closure |
+| `MAX_TABLES` | -- | 10 after closure. Not applied when nothing chose a table: schema-only is the whole schema |
 | `LITERALS_ENABLED` | -- | on |
 | `LITERAL_MAX_DISTINCT` | -- | 500 distinct values per catalogued column |
 | `LITERAL_MIN_SCORE` | -- | 0.6 |

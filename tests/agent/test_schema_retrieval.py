@@ -390,6 +390,9 @@ def test_an_unreachable_vector_store_degrades_to_the_whole_schema():
     assert selection.error == "vectordb refused the connection"
     assert selection.tables == sorted(RETAIL_TABLES)
     assert len(selection.tables) > 10
+    # And it says that is what it is: every table is no choice of tables,
+    # and whoever caps what it is offered must not cap this.
+    assert selection.whole_schema
 
 
 def test_an_unreachable_vector_store_still_closes_over_the_hints():
@@ -403,6 +406,7 @@ def test_an_unreachable_vector_store_still_closes_over_the_hints():
         "dim_ad_channel",
         "dim_ad_placement",
     ]
+    assert not selection.whole_schema
 
 
 def test_an_empty_store_falls_back_without_calling_it_an_error():
@@ -411,6 +415,13 @@ def test_an_empty_store_falls_back_without_calling_it_an_error():
 
     assert selection.error is None
     assert selection.tables == sorted(RETAIL_TABLES)
+    assert selection.whole_schema
+
+
+def test_a_ranked_selection_is_a_choice_and_says_so():
+    selection = make_retriever(["fact_ad_performance", "dim_ad_channel"]).select(B15)
+    assert not selection.whole_schema
+    assert not SchemaSelection().whole_schema
 
 
 def test_a_catalog_that_will_not_answer_costs_the_bridges_not_the_run():
@@ -650,14 +661,18 @@ def test_closing_applies_the_cap_and_says_what_it_dropped():
     assert selection.dropped
 
 
-def test_closing_an_empty_set_falls_back_to_the_catalog():
+def test_closing_an_empty_set_falls_back_to_the_whole_schema_uncapped():
     """Every retriever failed. Schema-only is v1's behaviour and still
-    answers a good many questions, so it beats returning nothing.
+    answers a good many questions, so it beats returning nothing -- and it
+    is every table, as `select`'s fallback is: this one was capped, to the
+    first four by name here and the first ten in use, which in this schema
+    is dimensions and no fact.
     """
     retriever = make_retriever([], max_tables=4)
     selection = retriever.close_and_cap([])
-    assert selection.tables
-    assert len(selection.tables) <= 4
+    assert selection.tables == sorted(RETAIL_TABLES)
+    assert selection.whole_schema
+    assert any(table.startswith("fact_") for table in selection.tables)
 
 
 def test_close_and_cap_returns_no_bridge_for_an_unreachable_pair():
@@ -694,6 +709,7 @@ def test_asking_for_no_ranked_tables_returns_none_without_embedding():
     retriever = make_retriever(["dim_store", "dim_product"], top_k=0)
     selection = retriever.select("anything")
     assert selection.tables == sorted(RETAIL_TABLES)
+    assert selection.whole_schema
 
 
 def test_required_intermediates_is_empty_across_disconnected_components():

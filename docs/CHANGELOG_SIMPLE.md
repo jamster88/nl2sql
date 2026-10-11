@@ -43,6 +43,7 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 - The benchmark's scorer is the agent's (`compare.py`); `--compare` gains a fifth configuration, `ensemble`.
 
 **Fixed**
+- `--no-rag` and the benchmark's `schema-only` answer from the whole schema again. Since v4 the scope with nothing retrieved was the first ten tables by name, and since v5 the answer contract's tables alone -- no fact table either way, so a query that read the sales was refused as out of scope. The same fix lets `SCHEMA_TOP_K=0` and a vector store that is down use the tables the documents and examples chose.
 - `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
 - The web interface's run counter stays on one line beside a long step.
 - `arch_v7` has its PNG and TIFF; the stale PNG and TIFF of `arch_v1` and `arch_v2` are exported again.

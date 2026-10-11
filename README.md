@@ -138,6 +138,13 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   all of its runs where the Judge had been setting two of four aside ([the
   pipeline](agent/README.md#the-pipeline), [what it
   measured](docs/benchmark.md#the-grain-check)).
+- **`--no-rag` answers from the whole schema again.** With retrieval off,
+  or every store down, the tables in scope had been the first ten by name
+  since v4 and the answer contract's alone since v5 -- no fact table
+  either way, so a query that read the sales was refused as out of scope.
+  The scope is every table again, as v1's was, and the benchmark's
+  `schema-only` went from 1 of 15 to 10 ([the
+  measurement](docs/benchmark.md#schema-only-with-the-whole-schema)).
 
 ## What's new in 6.3
 

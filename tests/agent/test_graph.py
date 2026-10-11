@@ -747,6 +747,89 @@ def test_with_nothing_retrievable_the_whole_catalog_is_offered():
     assert set(state["selected_tables"]) == set(TABLES)
 
 
+# A catalog wider than the cap, and shaped as the retail one is: by name,
+# every dimension comes before the first fact.
+WIDE = [f"dim_{letter}" for letter in "abcdefghijkl"] + ["fact_pos_retail_sales", "fact_item_cogs"]
+
+
+def test_schema_only_is_the_whole_schema_and_the_cap_does_not_apply():
+    """`--no-rag`, and the benchmark's `schema-only`. With nothing ranked the
+    cap keeps the first tables by name, which in a star schema is dimensions
+    and no fact: the scope was ten tables no question about sales could be
+    answered from, and every draft that read the sales was refused as out of
+    scope until the attempts ran out (7.0: 1 of 15 on the benchmark).
+    """
+    db = FakeDatabase(tables=WIDE)
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_pos_retail_sales"]), schema_retriever=None, max_tables=10
+    ).run("q")
+
+    assert state["schema_tables"] == []
+    assert state["selected_tables"] == sorted(WIDE)
+    assert state["error"] is None and state["attempts"] == 1
+
+
+def test_the_contracts_tables_are_not_taken_for_the_whole_scope():
+    """What the answer is about is not what it is computed from. A question
+    about SKUs has `dim_product` in its contract; with retrieval off that was
+    the whole scope, and the sales the SKUs are ranked by were out of it.
+    The contract's tables still go first.
+    """
+    db = FakeDatabase(
+        tables=WIDE + ["dim_product"], run_select_result=product_rows("sku_id", "product_name", "net_sales")
+    )
+    llm = sku_llm(["SELECT sku_id, product_name, net_sales FROM dim_product JOIN fact_pos_retail_sales USING (k)"])
+    state = make_agent(
+        db, llm, schema_retriever=None, contract_resources=resources(), narrate_enabled=False, max_tables=10
+    ).run("top 10 SKUs")
+
+    assert state["selected_tables"][0] == "dim_product"
+    assert sorted(state["selected_tables"]) == sorted(WIDE + ["dim_product"])
+    assert state["error"] is None and state["attempts"] == 1
+
+
+def test_a_schema_retriever_with_its_store_down_proposes_nothing_and_the_scope_is_the_whole_schema():
+    """The other door to schema-only. The retriever's own fallback is every
+    table, uncapped, for the reason its module gives -- and the aggregator
+    then capped it, contract first and the rest by name. It is no proposal:
+    the trace says none, and the scope is every table.
+    """
+    db = FakeDatabase(tables=WIDE)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(error="vector store unreachable"), db, foreign_keys=lambda: [], max_tables=10
+    )
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_item_cogs"]), schema_retriever=retriever, max_tables=10
+    ).run("q")
+
+    assert "unreachable" in state["retrieval_errors"]["schema"]
+    assert state["schema_tables"] == []
+    assert next(e.detail for e in state["trace"] if e.node == "retrieve_schema") == "none"
+    assert state["selected_tables"] == sorted(WIDE)
+    assert state["error"] is None
+
+
+def test_with_the_ranking_down_what_the_others_chose_is_the_scope_and_is_capped():
+    """A table a knowledge chunk documents or a worked example queries is a
+    choice, so the cap applies to it as it always did. Before, the
+    retriever's every-table fallback stood ahead of these in the queue and
+    the cap never reached them: `SCHEMA_TOP_K=0`, which leaves the choice to
+    the hints, chose the first ten tables by name instead.
+    """
+    db = FakeDatabase(tables=WIDE)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(error="vector store unreachable"), db, foreign_keys=lambda: [], max_tables=2
+    )
+    kb = FakeKnowledgeBase(chunks=[make_chunk(meta={"table": "fact_item_cogs"})])
+    lib = FakeGoldenPairLibrary(pairs=[make_pair(tables="fact_pos_retail_sales, dim_a, dim_b")])
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_item_cogs"]), kb, lib, schema_retriever=retriever, max_tables=2
+    ).run("q")
+
+    assert state["schema_tables"] == []
+    assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
+
+
 def test_a_bridge_table_is_named_in_the_progress_line(progress_log):
     """The aggregator's detail is how a reader sees the closure working; a
     bridge added silently looks like the vector search having found it.

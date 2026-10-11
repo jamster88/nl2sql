@@ -112,7 +112,7 @@ from .state import (
     new_state,
 )
 from .tools import TableSelection, build_tools
-from .validate import validate as validate_sql_statically
+from .validate import out_of_scope, validate as validate_sql_statically
 from nl2sql_common.errors import DATABASE_ERRORS, Invalid, MODEL_ERRORS
 
 #: `on_progress(step, detail)`, as each node finishes. Under the ensemble
@@ -283,7 +283,7 @@ TRACE_SPANS = {
         ("answer_contract", "schema_tables", "knowledge_tables", "example_tables", "snippet_hits"),
     ),
     "generate_sql": ("SQL Generator", "AGENT", ("question", "attempts", "generation_rung", "issues")),
-    "validate_static": ("Static Validator", "GUARDRAIL", ("sql", "selected_tables")),
+    "validate_static": ("Static Validator", "GUARDRAIL", ("sql", "selected_tables", "knowledge_about")),
     "planner_gate": ("Planner Gate", "GUARDRAIL", ("sql",)),
     "execute_query": ("Safe Executor", "TOOL", ("sql", "principal")),
     "review": ("Completeness Reviewer", "EVALUATOR", ("sql", "result", "answer_contract")),
@@ -854,6 +854,7 @@ class Nl2SqlAgent:
             return {
                 "knowledge": "",
                 "knowledge_tables": [],
+                "knowledge_about": [],
                 "knowledge_chunks": [],
                 "retrieval_errors": {"knowledge": retrieved["error"]},
                 _DETAIL: _skipped(retrieved["error"]),
@@ -865,6 +866,7 @@ class Nl2SqlAgent:
         return {
             "knowledge": retrieved["context"],
             "knowledge_tables": retrieved["tables"],
+            "knowledge_about": retrieved["about"],
             "knowledge_chunks": chunks,
             _DETAIL: f"{len(chunks)} chunk(s) -- {summary}",
         }
@@ -1034,13 +1036,43 @@ class Nl2SqlAgent:
         with the grain check on, no two tables of different grains joined on
         the date or on no date at all (arch7.3 section 22.14)."""
         grains = self._contract_resources().grains if self.settings.grain_check_enabled else None
-        issues = validate_sql_statically(
-            state.get("sql", ""), allowed_tables=state.get("selected_tables") or None, grains=grains or None
-        )
-        return {
-            "issues": issues,
-            _DETAIL: "valid" if not issues else "; ".join(i.message for i in issues),
-        }
+        widened, admitted = self._admit(state)
+        scope = widened.get("selected_tables", state.get("selected_tables"))
+        issues = validate_sql_statically(state.get("sql", ""), allowed_tables=scope or None, grains=grains or None)
+        detail = "valid" if not issues else "; ".join(i.message for i in issues)
+        if admitted:
+            detail += f" ({', '.join(admitted)} brought into scope: the knowledge shown is about it)"
+        return {**widened, "issues": issues, _DETAIL: detail}
+
+    def _admit(self, state: AgentState) -> tuple[dict, list[str]]:
+        """The scope widened by the tables a draft reads that the knowledge
+        it was shown is about, while the cap has room.
+
+        A recipe says to roll the sales up to the month; the generator does
+        as it says; and when the vectors did not rank the sales, the draft
+        was refused for reading a table out of scope -- at every attempt,
+        the scope being fixed for the run. The scope is where the generator
+        is told what it may read, and it had been shown that table by
+        another hand. So such a table is admitted when a draft reads it:
+        the scope grows by it, the schema is described again with it for
+        any draft to come, and this one goes on to the planner, which knows
+        whether its columns exist.
+
+        Admitted then, and not put in scope before the first draft: with
+        every table the shown knowledge is about described up front, the
+        prompt changed for questions that needed none of them, and one that
+        had been right came out wrong (the changelog's Fixed, 7.0).
+        """
+        scope = list(state.get("selected_tables") or [])
+        offered = [name for name in state.get("knowledge_about", []) if name not in scope]
+        if not scope or not offered:
+            return {}, []
+        read = out_of_scope(state.get("sql", ""), scope)
+        admitted = [name for name in offered if name in read][: max(0, self.settings.max_tables - len(scope))]
+        if not admitted:
+            return {}, []
+        tables = scope + admitted
+        return {"selected_tables": tables, "schema": self.tools["get_schema_and_data"].invoke({"tables": tables})}, admitted
 
     def _route_after_static(self, state: AgentState) -> str:
         return "repair" if state.get("issues") else "planner"

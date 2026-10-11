@@ -158,6 +158,19 @@ def validate(
     return issues
 
 
+def out_of_scope(sql: str, allowed_tables: Iterable[str]) -> list[str]:
+    """The tables `sql` reads that are not among `allowed_tables`, by bare
+    name. None for text that is not one SELECT: what is wrong with that is
+    `validate`'s to say."""
+    try:
+        statements = parse_sql(strip_sql(sql))
+    except ParseError:
+        return []
+    if len(statements) != 1 or not isinstance(statements[0].stmt, ast.SelectStmt):
+        return []
+    return [_bare(relation) for relation, _ in _outside(statements[0].stmt, allowed_tables)]
+
+
 # --- the individual checks ---------------------------------------------------
 
 
@@ -246,15 +259,7 @@ def _out_of_scope_issues(
     relation and `x` is not, and the rule has to survive nesting, shadowing
     and `WITH RECURSIVE`.
     """
-    allowed = list(allowed_tables)
-    # An allowed name may be written qualified or quoted on either side, so
-    # both spellings of both sides are compared.
-    by_bare = {_bare(name): name for name in allowed}
-    accepted = {_normalise(name) for name in allowed} | set(by_bare)
-
-    for relation in sorted(referenced_relations(statement)):
-        if _normalise(relation) in accepted or _bare(relation) in accepted:
-            continue
+    for relation, by_bare in _outside(statement, allowed_tables):
         message = f"{relation} is not in scope"
         near = get_close_matches(_bare(relation), list(by_bare), n=1, cutoff=0.6)
         if near:
@@ -262,6 +267,20 @@ def _out_of_scope_issues(
         else:
             message += "."
         yield Issue(source=STATIC, message=message)
+
+
+def _outside(statement: ast.SelectStmt, allowed_tables: Iterable[str]) -> Iterator[tuple[str, dict[str, str]]]:
+    """Each relation the statement reads that is not allowed, as written,
+    with the allowed names by their bare spelling."""
+    allowed = list(allowed_tables)
+    # An allowed name may be written qualified or quoted on either side, so
+    # both spellings of both sides are compared.
+    by_bare = {_bare(name): name for name in allowed}
+    accepted = {_normalise(name) for name in allowed} | set(by_bare)
+
+    for relation in sorted(referenced_relations(statement)):
+        if _normalise(relation) not in accepted and _bare(relation) not in accepted:
+            yield relation, by_bare
 
 
 # --- helpers -----------------------------------------------------------------

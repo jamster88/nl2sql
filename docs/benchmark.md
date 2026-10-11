@@ -42,9 +42,11 @@ All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
 | `multi-shot` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
 
 The first three rows are the pipeline before v4. Measured again on 7.0
-(2026-10-10), `schema-only` scores 10 of 15 -- 1 until its scope was
-fixed -- and `knowledge` 13, as set out under [Schema-only, with the whole
-schema](#schema-only-with-the-whole-schema); the paragraphs below read the
+(2026-10-11), `schema-only` scores 10 of 15 -- 1 until its scope was
+fixed -- and `knowledge` 14 -- 13 until a draft could be admitted to a
+table its knowledge is about -- as set out under [Schema-only, with the
+whole schema](#schema-only-with-the-whole-schema) and [What the knowledge
+is about](#what-the-knowledge-is-about); the paragraphs below read the
 table as it was measured.
 
 Three things this says, including one that is not flattering:
@@ -729,8 +731,7 @@ sales fact for B06 or B07; B07's first draft began `WITH sales AS (` and
 was refused for reading `fact_pos_retail_sales`, which was not in scope.
 In `multi-shot` and above the worked examples' tables bring it into scope.
 Nothing in this document measured these two configurations after v4,
-which is how it went unseen. `schema-only`'s is fixed since, below;
-`knowledge`'s is as it was.
+which is how it went unseen. Both are fixed since, below.
 
 ### Schema-only, with the whole schema
 
@@ -849,3 +850,60 @@ refusal in these measurements not to end right -- a refusal of a wrong
 query, repaired in what it was refused for, with a second mistake left
 that this check does not look for. It took 67.1s where the trap had taken
 7.9s.
+
+### What the knowledge is about
+
+The measurements above left `knowledge` at 13 of 15, B06 and B07 both
+refused for reading `fact_pos_retail_sales`: the vectors had not ranked it,
+and with no worked examples nothing else brought it into scope. In both,
+the knowledge shown to the generator said to read it -- "Sales metrics:
+gross, markdown and net" for B06, the gross-margin recipe for B07 -- and
+each of those chunks lists the table under `tables` in its metadata, which
+nothing read. A draft that reads a table the knowledge in its prompt lists
+is now admitted to it, while the cap has room (the changelog's Fixed,
+7.0). Measured 2026-10-11 on the same stack, the grain check on:
+
+| | Right, before | Right, now | Total |
+|---|---|---|---|
+| `schema-only` | 10/15 | 10/15 | 354.6s |
+| `knowledge` | 13/15 | **14/15** | 414.4s |
+| `multi-shot` | 15/15 | 15/15 | 418.7s |
+| `snippets` | 14/15 | 14/15 | 383.8s |
+| `ensemble` | 15/15 | 15/15 | 2322.8s |
+| `snippets`, the twelve wordings | 12/12 | 12/12 | 599.7s |
+| `ensemble`, the twelve wordings | 12/12 | 12/12 | 3041.4s |
+
+**Only `knowledge` moved, and in it only B06 and B07.** Every other answer
+is the SQL it was, at the attempt it was -- through the ensemble, every
+run's. Nothing is put in scope ahead of a draft, so no prompt changes
+until a draft has read such a table, and outside `knowledge` no draft
+did.
+
+**No draft of `knowledge` is refused for its scope now.** Five retries
+where there were ten, 414.4s where there were 720.4s.
+
+**B06 is right.** Its first draft sums the markdown column of the sales,
+its name misspelt, as it did before. The table is admitted, the planner
+says there is no such column, and the second draft -- the table now
+described -- spells it: 22,707.43, at its second attempt, where it had
+taken six and answered from the promotions.
+
+**B07 is no longer refused, and is still wrong.** Its first draft is
+admitted and runs: 33.99 for 34.20. It rolls the sales and the costs up to
+the fiscal month, which is the grain the recipe asks for and nothing the
+grain check objects to -- but by department, one average cost times all
+the department's units, where the recipe keeps the product and the store.
+Before, with that draft refused, it had answered from the costs alone: 0.
+So `knowledge` misses one question, and not for its scope.
+
+**Three other ways were measured first.** *The tables the knowledge
+lists, put in scope before the first draft* in whatever room the cap left:
+`knowledge` 14 of 15 the other way round -- B07 right, and B06 wrong, the
+generator at its light rung summing net sales once the sales were
+described (the same prompt at the standard and heavy rungs sums the
+markdown) -- and `multi-shot` 14, B15 going from right to wrong with one
+table more in scope that it had no use for. *The tables the knowledge
+names in its text*, fourteen a question to the lists' five: every scope
+filled to the cap. *The admitted draft sent back once*, to be written
+again with the table described: B07's second draft, at the heavy rung,
+was the first one over again, for an attempt spent.

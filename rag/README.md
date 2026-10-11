@@ -364,7 +364,7 @@ cluster — treat them as public and do not reuse them.
 | `source_doc` | document slug |
 | `ordinal` | position in the document |
 | `heading_path` | e.g. `DDL Index > dim_date` |
-| `chunk_meta` | JSONB, parsed from the ```` ```meta ```` block |
+| `chunk_meta` | JSONB, parsed from the ```` ```meta ```` block. The agent reads `table` (the one table a DDL chunk documents, which the Schema Retriever ranks by) and `tables` (the several a rule or recipe is about, comma-separated, which a draft that reads one is admitted to read) |
 | `content` | the chunk text, heading prefix included |
 | `token_estimate`, `content_hash`, `created_at`, `updated_at` | |
 

@@ -147,6 +147,12 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   The scope is every table again, as v1's was, and the benchmark's
   `schema-only` went from 1 of 15 to 10 ([the
   measurement](docs/benchmark.md#schema-only-with-the-whole-schema)).
+- **A query may read the tables its knowledge is about.** A business rule
+  or a recipe lists the tables it covers; a draft that reads one is
+  admitted to it, where it used to be refused as out of scope whenever
+  the table ranking had missed that table. With the knowledge base and no
+  worked examples the benchmark goes from 13 of 15 to 14, and nothing else
+  moves ([the measurement](docs/benchmark.md#what-the-knowledge-is-about)).
 
 ## What's new in 6.3
 

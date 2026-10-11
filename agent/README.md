@@ -1068,7 +1068,7 @@ truncated rather than silently cutting it off.
 The knowledge base is a pgvector database with one collection per document in
 [`knowledge/`](../knowledge), each row a semantically chunked section with its
 bge-m3 embedding, the heading path it came from, and the authored `chunk_meta`
-(`table`, `domain`, `grain`, `keywords`).
+(`table` or `tables`, `domain`, `grain`, `keywords`).
 
 `retrieval.py` embeds the question once and runs a cosine search against every
 collection, so one question picks up DDL detail, dictionary context and
@@ -1086,6 +1086,26 @@ What the retrieved chunks feed:
 
 `--json` includes the `chunk_id`, source document and distance of every chunk
 used, so an answer can be traced back to the text that shaped it.
+
+**A table the shown knowledge is about is admitted when a draft reads it**
+(7.0). A DDL chunk documents one table and says so under `table`; a
+business rule or a recipe covers several and lists them under `tables` --
+the gross-margin recipe's is `fact_pos_retail_sales, fact_item_cogs,
+dim_date`. That list went unread: a generator shown the recipe wrote the
+roll-up it describes and, when the vectors had not ranked the sales, was
+refused for reading a table out of scope -- at every attempt, since the
+scope is fixed for a run. The Static Validator now admits such a table:
+when a draft reads one that the knowledge in its prompt lists, and
+`MAX_TABLES` has room, the table joins the scope, the schema is described
+again with it for any draft to come, and this draft goes on to the planner,
+which knows whether its columns exist. The trace says so: "valid
+(fact_pos_retail_sales brought into scope: the knowledge shown is about
+it)". Nothing is put in scope ahead of the first draft, so every prompt is
+the prompt it was: described up front, the tables the shown knowledge lists
+-- five a question -- changed what the generator wrote for questions that
+needed none of them. A chunk that lists no table, as the data dictionary's
+sections do not, admits none; when writing a rule, list in `tables` what a
+reader of it will need.
 
 ### Why retrieval
 

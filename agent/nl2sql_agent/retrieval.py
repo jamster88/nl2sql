@@ -8,7 +8,8 @@ came from, and a `chunk_meta` JSON blob carrying the authored metadata
 Retrieval embeds the question once and runs a cosine-distance search against
 every collection, so a question picks up DDL detail, data-dictionary context and
 business rules together. The `table` key in `chunk_meta` doubles as a table-name
-hint for the selection step.
+hint for the selection step. `tables`, under which a business rule or a recipe
+lists the several it is about, says what a draft may be admitted to read.
 
 Everything here degrades gracefully: if the vector database or the embedding
 model is unreachable, the agent falls back to schema-only behavior rather than
@@ -53,6 +54,33 @@ class RetrievedChunk:
         value = self.meta.get("table")
         return value if isinstance(value, str) and value else None
 
+    @property
+    def tables(self) -> list[str]:
+        """Every table this chunk says it is about, in its author's order.
+
+        A DDL chunk documents one and says so under `table`. A business rule
+        or a recipe covers several and lists them under `tables` --
+        "fact_pos_retail_sales, fact_item_cogs, dim_date" -- which is the
+        author saying which tables a reader of the chunk will need.
+
+        That second key went unread from the day it was written to 7.0: a
+        generator shown the gross-margin recipe wrote what it says and was
+        refused the sales, which its scope did not hold. It is read now for
+        what a draft may be admitted to read (`graph._admit`), and for
+        nothing else -- what a chunk documents (`table`) is still what the
+        Context Aggregator queues.
+        """
+        listed = self.meta.get("tables")
+        if isinstance(listed, str):
+            listed = listed.split(",")
+        names = [self.table, *(listed if isinstance(listed, (list, tuple)) else ())]
+        found: list[str] = []
+        for name in names:
+            name = name.strip() if isinstance(name, str) else ""
+            if name and name not in found:
+                found.append(name)
+        return found
+
 
 def build_embedder(settings) -> Embedder:
     """An Ollama embedding client for the configured model.
@@ -65,18 +93,28 @@ def build_embedder(settings) -> Embedder:
     return OllamaEmbeddings(model=settings.embed_model, base_url=settings.embed_base_url)
 
 
-def format_chunks(chunks: list[RetrievedChunk], max_chars: int = 12000) -> str:
-    """Render retrieved chunks for a prompt, newest-best first, under a budget."""
-    blocks: list[str] = []
+def _block(chunk: RetrievedChunk) -> str:
+    header = f"--- {chunk.source_doc}: {chunk.heading_path} (distance {chunk.distance:.3f})"
+    return f"{header}\n{chunk.content.strip()}"
+
+
+def chunks_shown(chunks: list[RetrievedChunk], max_chars: int = 12000) -> list[RetrievedChunk]:
+    """The chunks a prompt has room for, best first: every one up to the
+    first that would overrun the budget. What `format_chunks` renders."""
+    shown: list[RetrievedChunk] = []
     used = 0
     for chunk in chunks:
-        header = f"--- {chunk.source_doc}: {chunk.heading_path} (distance {chunk.distance:.3f})"
-        block = f"{header}\n{chunk.content.strip()}"
-        if used + len(block) > max_chars:
+        size = len(_block(chunk))
+        if used + size > max_chars:
             break
-        blocks.append(block)
-        used += len(block)
-    return "\n\n".join(blocks)
+        shown.append(chunk)
+        used += size
+    return shown
+
+
+def format_chunks(chunks: list[RetrievedChunk], max_chars: int = 12000) -> str:
+    """Render retrieved chunks for a prompt, newest-best first, under a budget."""
+    return "\n\n".join(_block(chunk) for chunk in chunks_shown(chunks, max_chars))
 
 
 def tables_mentioned(chunks: list[RetrievedChunk]) -> list[str]:
@@ -86,6 +124,17 @@ def tables_mentioned(chunks: list[RetrievedChunk]) -> list[str]:
         name = chunk.table
         if name and name not in seen:
             seen.append(name)
+    return seen
+
+
+def tables_about(chunks: list[RetrievedChunk]) -> list[str]:
+    """Every table the retrieved chunks say they are about, best match
+    first: each chunk's own list (`RetrievedChunk.tables`), in its order."""
+    seen: list[str] = []
+    for chunk in chunks:
+        for name in chunk.tables:
+            if name not in seen:
+                seen.append(name)
     return seen
 
 

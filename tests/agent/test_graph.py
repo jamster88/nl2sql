@@ -830,6 +830,94 @@ def test_with_the_ranking_down_what_the_others_chose_is_the_scope_and_is_capped(
     assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
 
 
+#: The gross-margin recipe, as the business index declares what it is about.
+RECIPE = {"tables": "fact_pos_retail_sales, fact_item_cogs", "type": "recipe"}
+
+
+def recipe_agent(sql: list[str], *, ranked: str = "fact_item_cogs", **kwargs):
+    """The vectors rank one table; the knowledge shown is the recipe."""
+    db = FakeDatabase(tables=WIDE)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": ranked})]), db, foreign_keys=lambda: [],
+        max_tables=kwargs.get("max_tables", 10),
+    )
+    kb = FakeKnowledgeBase(chunks=[make_chunk(meta=RECIPE)])
+    return db, make_agent(db, scripted(sql), kb, schema_retriever=retriever, **kwargs)
+
+
+def test_a_draft_that_reads_a_table_the_shown_knowledge_is_about_brings_it_into_scope():
+    """The benchmark's B07 with the knowledge base and no worked examples.
+    The vectors ranked the costs and not the sales; the generator was shown
+    the recipe, wrote the roll-up it describes, and was refused for reading
+    a table out of scope -- at every attempt, the scope being fixed -- until
+    it wrote a margin from the costs alone. The recipe lists its tables
+    under `tables`, which nothing read. A draft that reads one of them is
+    now admitted: the scope grows by it and the schema is described again."""
+    db, agent = recipe_agent(["SELECT 1 AS n FROM fact_pos_retail_sales JOIN fact_item_cogs USING (k)"])
+    state = agent.run("gross margin")
+
+    assert state["schema_tables"] == ["fact_item_cogs"]
+    assert state["knowledge_tables"] == []
+    assert state["knowledge_about"] == ["fact_pos_retail_sales", "fact_item_cogs"]
+    assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
+    assert state["error"] is None and state["attempts"] == 1
+    assert [tables for tables, _ in db.schema_and_samples_calls] == [
+        ["fact_item_cogs"], ["fact_item_cogs", "fact_pos_retail_sales"]]
+    detail = next(e.detail for e in state["trace"] if e.node == "validate_static")
+    assert detail == "valid (fact_pos_retail_sales brought into scope: the knowledge shown is about it)"
+
+
+def test_what_the_knowledge_is_about_is_not_in_scope_until_a_draft_reads_it():
+    """Put in scope before the first draft, every table the shown knowledge
+    lists changed the prompt for questions that needed none of them, and the
+    benchmark's B15 went from right to wrong under `multi-shot`. A draft
+    that keeps to its scope leaves it, and the one description of the
+    schema, as they were."""
+    db, agent = recipe_agent(["SELECT 1 AS n FROM fact_item_cogs"])
+    state = agent.run("average cost")
+
+    assert state["knowledge_about"] == ["fact_pos_retail_sales", "fact_item_cogs"]
+    assert state["selected_tables"] == ["fact_item_cogs"]
+    assert len(db.schema_and_samples_calls) == 1
+    assert next(e.detail for e in state["trace"] if e.node == "validate_static") == "valid"
+
+
+def test_a_table_is_admitted_only_while_the_cap_has_room():
+    """A full scope is the scope: the draft is refused as it always was."""
+    db, agent = recipe_agent(
+        ["SELECT 1 AS n FROM fact_pos_retail_sales", "SELECT 1 AS n FROM fact_item_cogs"], max_tables=1
+    )
+    state = agent.run("gross margin")
+
+    assert state["selected_tables"] == ["fact_item_cogs"]
+    assert state["attempts"] == 2
+    assert state["attempt_history"][0].issues[0].message.startswith("fact_pos_retail_sales is not in scope")
+
+
+def test_a_table_the_knowledge_is_not_about_is_still_refused_beside_one_it_is():
+    """Each table is admitted or not on its own: the one the recipe is about
+    comes in, described for the next draft, and the other is out of scope."""
+    db, agent = recipe_agent([
+        "SELECT 1 AS n FROM fact_pos_retail_sales JOIN dim_a USING (k)",
+        "SELECT 1 AS n FROM fact_pos_retail_sales",
+    ])
+    state = agent.run("gross margin")
+
+    [issue] = state["attempt_history"][0].issues
+    assert issue.message.startswith("dim_a is not in scope")
+    assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
+    assert state["attempts"] == 2 and state["error"] is None
+
+
+def test_nothing_is_admitted_to_a_run_with_no_scope_or_no_knowledge():
+    _, agent = recipe_agent(["SELECT 1 AS n FROM fact_item_cogs"])
+    draft = "SELECT 1 FROM fact_pos_retail_sales"
+    assert agent._admit({"sql": draft, "selected_tables": [], "knowledge_about": ["fact_pos_retail_sales"]}) == ({}, [])
+    assert agent._admit({"sql": draft, "selected_tables": ["fact_item_cogs"], "knowledge_about": []}) == ({}, [])
+    assert agent._admit({"sql": draft, "selected_tables": ["fact_item_cogs"]}) == ({}, [])
+    assert agent._admit({"sql": "not sql", "selected_tables": ["fact_item_cogs"], "knowledge_about": ["fact_pos_retail_sales"]}) == ({}, [])
+
+
 def test_a_bridge_table_is_named_in_the_progress_line(progress_log):
     """The aggregator's detail is how a reader sees the closure working; a
     bridge added silently looks like the vector search having found it.

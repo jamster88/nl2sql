@@ -361,6 +361,10 @@ class AgentState(TypedDict, total=False):
     literal_map: list[LiteralMatch]
     knowledge: str
     knowledge_tables: list[str]
+    #: Every table the knowledge shown to the generator says it is about --
+    #: a recipe's `tables`. Not scope: what a draft that reads one is
+    #: admitted to read (the Static Validator, 7.0).
+    knowledge_about: list[str]
     knowledge_chunks: list[dict[str, Any]]
     example_shots: list[Shot]
     example_tables: list[str]
@@ -454,6 +458,7 @@ def new_state(
         "literal_map": [],
         "knowledge": "",
         "knowledge_tables": [],
+        "knowledge_about": [],
         "knowledge_chunks": [],
         "example_shots": [],
         "example_tables": [],
@@ -524,6 +529,7 @@ LIFETIMES: dict[str, str] = {
     "literal_map": RUN,
     "knowledge": RUN,
     "knowledge_tables": RUN,
+    "knowledge_about": RUN,
     "knowledge_chunks": RUN,
     "example_shots": RUN,
     "example_tables": RUN,

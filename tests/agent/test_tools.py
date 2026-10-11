@@ -39,19 +39,39 @@ def test_search_knowledge_returns_context_tables_and_provenance(fake_db, scripte
     assert result["chunks"][0]["distance"] == 0.2
 
 
+def test_search_knowledge_says_which_tables_the_shown_knowledge_is_about(fake_db, scripted_llm):
+    """A rule or a recipe lists the tables it is about; of the chunks the
+    prompt has room for, those are what the generator has been told of. One
+    cut by the budget is not shown, so what it lists is not among them."""
+    kb = FakeKnowledgeBase([
+        make_chunk(meta={"tables": "fact_pos_retail_sales, fact_item_cogs"}, content="Roll the sales up first.", distance=0.2),
+        make_chunk(meta={"tables": "fact_vendor_allowances"}, content="Allowances are monthly. " + "x" * 400, distance=0.4),
+    ])
+    tools = build_tools(fake_db, scripted_llm, Settings(rag_max_context_chars=300), kb)
+    result = tools["search_knowledge"].invoke({"question": "gross margin"})
+
+    assert result["about"] == ["fact_pos_retail_sales", "fact_item_cogs"]
+    assert result["tables"] == []
+    assert "Allowances are monthly" not in result["context"]
+    assert len(result["chunks"]) == 2
+
+    everything = build_tools(fake_db, scripted_llm, Settings(), kb)["search_knowledge"].invoke({"question": "gross margin"})
+    assert everything["about"] == ["fact_pos_retail_sales", "fact_item_cogs", "fact_vendor_allowances"]
+
+
 def test_search_knowledge_reports_an_unreachable_store_instead_of_raising(fake_db, scripted_llm):
     kb = FakeKnowledgeBase(error="connection refused")
     tools = build_tools(fake_db, scripted_llm, Settings(), kb)
     result = tools["search_knowledge"].invoke({"question": "q"})
     assert result["context"] == ""
-    assert result["tables"] == []
+    assert result["tables"] == [] and result["about"] == []
     assert "connection refused" in result["error"]
 
 
 def test_search_knowledge_without_a_knowledge_base_reports_disabled(fake_db, scripted_llm):
     tools = build_tools(fake_db, scripted_llm, Settings())
     result = tools["search_knowledge"].invoke({"question": "q"})
-    assert result["context"] == ""
+    assert result["context"] == "" and result["about"] == []
     assert result["error"] == "retrieval is disabled"
 
 

@@ -131,8 +131,10 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   `GRAIN_CHECK_ENABLED=false` turns it off, and `GRAIN_PERIODS` names the
   periods for another calendar. Measured through all five benchmark
   configurations with it and without: it fired only on the trap it was
-  built for, every run it refused ended right, and it refused nothing that
-  was right. One run a question, the grain questions in all their wordings
+  built for, every run it refused came back with its grain right -- all
+  but one the right answer, the one a run with the schema alone that also
+  divided by the wrong figure -- and it refused nothing that was right.
+  One run a question, the grain questions in all their wordings
   went from 11 of 12 right to 12; through the ensemble they were right
   either way, and the question that fell into the trap is now agreed by
   all of its runs where the Judge had been setting two of four aside ([the

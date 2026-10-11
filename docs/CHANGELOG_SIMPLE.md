@@ -43,6 +43,7 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 - The benchmark's scorer is the agent's (`compare.py`); `--compare` gains a fifth configuration, `ensemble`.
 
 **Fixed**
+- The grain check no longer passes a query just because it reads one of the two tables twice: when the SELECT that joins the two dates reads the finer table itself, that is the trap whatever else the statement does. It also refuses the same join inside a CTE that groups by the month afterwards, which it had only refused in the outermost SELECT. Measured again: every other answer unchanged; `schema-only`'s B07, which had delivered the trap, is refused and its grain repaired, though it is still wrong for dividing by gross sales.
 - `--no-rag` and the benchmark's `schema-only` answer from the whole schema again. Since v4 the scope with nothing retrieved was the first ten tables by name, and since v5 the answer contract's tables alone -- no fact table either way, so a query that read the sales was refused as out of scope. The same fix lets `SCHEMA_TOP_K=0` and a vector store that is down use the tables the documents and examples chose.
 - `run_benchmark.py` and `calibrate.py` run on a host again: since 6.2 neither could import the shared package.
 - The web interface's run counter stays on one line beside a long step.

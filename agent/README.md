@@ -198,8 +198,13 @@ tables that are added up and whose grains differ:
 Each is an ordinary static issue whose message names the two tables, their
 grains and the columns to join on, and the Repair Agent passes it on to the
 generator without a model call. The rule refuses only what it can read: a
-join it cannot follow, a table read twice, a coarser table held to one
-period or rolled up past its period all pass. A grain is what the data
+join it cannot follow, a coarser table held to one period or rolled up
+past its period, and a table read twice wherever the answer would hang on
+the whole statement all pass. What one SELECT shows by itself is read
+whatever else the statement does: a SELECT that reads the finer table as
+stored and joins it to the coarser on the date has rolled nothing up
+first, though it group by the month afterwards and though another SELECT
+read the same table again. A grain is what the data
 shows today -- a table loaded once a month so far reads as monthly -- and
 is read again at the next start. When the grains cannot be read -- no date
 dimension, a period column it does not have, a database error -- the check
@@ -208,8 +213,9 @@ stands down for the process and the log says so once.
 part of arch7 that changes the pipeline itself, so it applies with
 `ENSEMBLE_ENABLED=false` as well. Measured with it and without through
 every benchmark configuration, it fired only on that trap, every run it
-refused ended right, and no right query was refused; a join on a computed
-key is one it cannot read, and it passed
+refused came back with its grain right -- one of them, with the schema
+alone to go on, still wrong for another reason -- and no right query was
+refused; a join on a computed key is one it cannot read, and it passed
 ([`docs/benchmark.md`](../docs/benchmark.md#the-grain-check)).
 
 **One retry budget.** A failure from any gate -- the AST check, the planner, a

@@ -785,5 +785,67 @@ two tables twice, since which reading a roll-up or a filter belongs to
 cannot be told from the reading alone. Of the 230 distinct queries the
 measurements in this section and the ones before it wrote, 18 join two
 facts of different grains; the rule refused six, and that caution passed
-exactly one, this one, which was wrong. It is recorded, and the rule is as
-it was measured.
+exactly one, this one, which was wrong. The rule is narrowed since, below.
+
+### A table read twice
+
+The rule passed any query that read one of its two tables twice, because
+what the reading says of a table -- what it is rolled up to, how its time
+is filtered -- is then said of one reading or the other. But the first
+shape needs none of that when the SELECT that joins the two dates reads
+the finer table itself: it joins the table's rows as stored, so nothing
+rolled them up first, whatever another SELECT does with the same table.
+The rule now reads that much from the one SELECT (the changelog's Fixed,
+7.0). A table read twice still passes where the whole statement would
+have to be read: joined on no date, or reaching the date join through a
+CTE that may have rolled it up.
+
+The same reading closes a second gap, which no measured query fell into.
+A SELECT that joins on the date and then groups by the month was refused
+when it was the outermost and passed inside a CTE, its grouping taken for
+the roll-up the message asks for. A roll-up after the join rolls up what
+the join already lost, and both are refused.
+
+**Before anything ran**, the rule as it was and the rule as it is were
+both given the 230 queries above, the 48 golden pairs and the 15
+references. They refuse the same six of the 230, and the narrowed rule
+one more -- `schema-only`'s B07. Neither refuses a golden pair or a
+reference.
+
+**Measured 2026-10-10** on the same stack, the grain check on: the fifteen
+through all five configurations, and the grain questions' twelve wordings
+through `snippets` and `ensemble`.
+
+| | Right, before | Right, now | Runs it sent to repair | Total |
+|---|---|---|---|---|
+| `schema-only` | 10/15 | 10/15 | 1, from none | 334.9s |
+| `knowledge` | 13/15 | 13/15 | 0 | 720.4s |
+| `multi-shot` | 15/15 | 15/15 | 0 | 452.9s |
+| `snippets` | 14/15 | 14/15 | 0 | 387.7s |
+| `ensemble` | 15/15 | 15/15 | 2 of 60, both ending right | 2370.2s |
+| `snippets`, the twelve wordings | 12/12 | 12/12 | 3, all ending right | 647.4s |
+| `ensemble`, the twelve wordings | 12/12 | 12/12 | 10 of 47, all ending right | 3099.8s |
+
+**Nothing moved but the one query.** Every other answer is the SQL it was
+before the change: the other fourteen of `schema-only`, the forty-five of
+the three configurations above it, the twelve wordings through
+`snippets`, and through the ensemble every one of its 60 runs on the
+fifteen and its 47 on the twelve wordings -- refused at the same places,
+repaired to the same queries. The narrowing refused nothing it had
+passed, save what it was made to refuse.
+
+**`schema-only`'s B07 is refused now and its grain repaired; it is still
+wrong, for a reason that is not its grain.** Before, it delivered the
+trap: 97.65 where the answer is 34.20, each month's cost having met one
+day's sales. Now that draft is refused. The generator wrote it again,
+word for word, and it was refused again; told that the approach itself
+had to change, it read the costs and the sales each through its own
+calendar, both held to the month -- a join at one grain, which the rule
+passes -- and answered 33.84. Over net sales the same query gives 34.20.
+It divides by gross sales, as every one of its drafts did: the measure's
+definition, which the knowledge base states and the schema does not. So
+the report's line for it is "refused 2 times, ended WRONG", the first
+refusal in these measurements not to end right -- a refusal of a wrong
+query, repaired in what it was refused for, with a second mistake left
+that this check does not look for. It took 67.1s where the trap had taken
+7.9s.

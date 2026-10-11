@@ -205,6 +205,77 @@ def test_weekly_prices_joined_to_monthly_costs_on_the_date_is_one_too():
     assert grain.mismatches(read_query(sql), GRAINS) == [Mismatch(finer=PRICES, coarser=COSTS, shape=ON_THE_DATE)]
 
 
+#: B07 as a run with the whole schema and nothing else wrote it: the sales
+#: read once for their total, and again beside the costs, on the date.
+TRAP_BESIDE_ANOTHER_READING = (
+    "WITH dept_sales AS (SELECT SUM(fps.net_sales_amt) AS total_net_sales FROM fact_pos_retail_sales fps "
+    "                    JOIN dim_date d ON fps.sales_date_key = d.date_key "
+    "                    WHERE d.fiscal_year = 2025 AND d.fiscal_month_num = 12), "
+    "dept_cogs AS (SELECT SUM(fic.net_item_cost * fps.quantity_sold) AS total_cogs FROM fact_item_cogs fic "
+    "              JOIN fact_pos_retail_sales fps ON fic.date_key = fps.sales_date_key "
+    "                AND fic.product_key = fps.product_key AND fic.store_key = fps.store_key "
+    "              JOIN dim_date d ON fps.sales_date_key = d.date_key "
+    "              WHERE d.fiscal_year = 2025 AND d.fiscal_month_num = 12) "
+    "SELECT ROUND(100.0 * (ds.total_net_sales - dc.total_cogs) / NULLIF(ds.total_net_sales, 0), 2) AS gross_margin_pct "
+    "FROM dept_sales ds CROSS JOIN dept_cogs dc"
+)
+#: The same with the two dates made equal through the date dimension's key.
+TRAP_BESIDE_ANOTHER_READING_THROUGH_THE_DATES = (
+    "WITH dept_sales AS (SELECT SUM(x.net_sales_amt) AS total_net_sales FROM fact_pos_retail_sales x), "
+    "dept_cogs AS (SELECT SUM(fic.net_item_cost * fps.quantity_sold) AS total_cogs FROM fact_pos_retail_sales fps "
+    "              JOIN dim_date d ON d.date_key = fps.sales_date_key "
+    "              JOIN fact_item_cogs fic ON fic.date_key = d.date_key AND fic.product_key = fps.product_key) "
+    "SELECT ds.total_net_sales - dc.total_cogs FROM dept_sales ds CROSS JOIN dept_cogs dc"
+)
+#: And with the costs the table read twice.
+TRAP_WITH_THE_COSTS_READ_TWICE = (
+    "WITH listed AS (SELECT AVG(k.net_item_cost) AS average_cost FROM fact_item_cogs k), "
+    "sold AS (SELECT SUM(s.net_sales_amt) AS net_sales, SUM(s.quantity_sold * c.net_item_cost) AS cost "
+    "         FROM fact_pos_retail_sales s "
+    "         JOIN fact_item_cogs c ON c.date_key = s.sales_date_key AND c.product_key = s.product_key) "
+    "SELECT sold.net_sales - sold.cost, listed.average_cost FROM sold CROSS JOIN listed"
+)
+
+
+@pytest.mark.parametrize(
+    "sql", [TRAP_BESIDE_ANOTHER_READING, TRAP_BESIDE_ANOTHER_READING_THROUGH_THE_DATES, TRAP_WITH_THE_COSTS_READ_TWICE],
+    ids=["the sales read twice", "through the date dimension", "the costs read twice"])
+def test_the_trap_is_the_trap_whatever_else_reads_the_table(sql):
+    """A table read twice used to pass whole: which reading a roll-up or a
+    filter belongs to cannot be told. But the SELECT that joins the two
+    dates reads both tables itself, so nothing here needs telling -- the
+    sales meet the costs row by row on the date, and no other SELECT's
+    reading of either table changes that join. Measured: of the 230 queries
+    the 7.0 benchmark runs wrote, the old caution passed one, this one, and
+    it answered 34.65 for 34.20."""
+    assert grain.mismatches(read_query(sql), GRAINS) == [Mismatch(finer=SALES, coarser=COSTS, shape=ON_THE_DATE)]
+    [issue] = grain.issues(sql, GRAINS)
+    assert issue == ON_THE_DATE_MESSAGE
+
+
+#: The trap inside a CTE that then groups by the month: joined first, on the
+#: date, and rolled up after.
+TRAP_ROLLED_UP_AFTER_THE_JOIN = (
+    "WITH m AS (SELECT d.fiscal_year, d.fiscal_month_num, SUM(s.net_sales_amt) AS net_sales, "
+    "                  SUM(s.quantity_sold * c.net_item_cost) AS cost "
+    "           FROM fact_pos_retail_sales s JOIN dim_date d ON d.date_key = s.sales_date_key "
+    "           JOIN fact_item_cogs c ON c.date_key = s.sales_date_key AND c.product_key = s.product_key "
+    "           GROUP BY 1, 2) "
+    "SELECT ROUND(100.0 * (SUM(m.net_sales) - SUM(m.cost)) / NULLIF(SUM(m.net_sales), 0), 2) FROM m"
+)
+
+
+def test_a_roll_up_after_the_join_is_not_a_roll_up_before_it():
+    """The SELECT that joins the two on the date reads the sales itself: its
+    own GROUP BY comes after its join, and rolls up what the join already
+    lost. The same join in the outermost SELECT was always refused; inside a
+    CTE that grouped by the month it passed, the grouping taken for the
+    roll-up the message asks for."""
+    assert shapes(TRAP_ROLLED_UP_AFTER_THE_JOIN) == [ON_THE_DATE]
+    outermost = TRAP + " GROUP BY d.fiscal_year, d.fiscal_month_num"
+    assert shapes(outermost) == [ON_THE_DATE]
+
+
 #: The repair that drops the date and stops: every month's cost meets each sale.
 NO_DATE = (
     MARGIN + "FROM fact_pos_retail_sales s "
@@ -495,8 +566,11 @@ def test_a_using_across_a_join_is_passed_and_one_between_two_tables_is_read():
     assert shapes(between) == [ON_NO_DATE]
 
 
-def test_a_table_read_twice_is_passed():
-    """Which reading a join or a filter belongs to cannot be told."""
+def test_a_table_read_twice_is_passed_where_the_whole_statement_would_have_to_be_read():
+    """Joined on no date, the question is whether the costs are still by
+    month -- rolled up past it, or held to one by a filter -- and of a table
+    read twice that is said of one reading or the other, and which cannot be
+    told."""
     sql = (
         "WITH now AS (SELECT x.product_key, SUM(x.quantity_sold) AS units FROM fact_pos_retail_sales x GROUP BY 1), "
         "then AS (SELECT x.product_key, SUM(x.quantity_sold) AS units FROM fact_pos_retail_sales x GROUP BY 1) "
@@ -504,6 +578,47 @@ def test_a_table_read_twice_is_passed():
         "JOIN fact_item_cogs c ON c.product_key = now.product_key"
     )
     assert shapes(sql) == []
+    costs_twice = (
+        MARGIN + "FROM fact_pos_retail_sales s JOIN fact_item_cogs c ON c.product_key = s.product_key "
+        "WHERE c.net_item_cost > (SELECT AVG(k.net_item_cost) FROM fact_item_cogs k)"
+    )
+    assert shapes(costs_twice) == []
+
+
+def test_read_twice_and_joined_on_the_date_through_a_roll_up_is_still_passed():
+    """Here the sales reach the join through a CTE, so whether they were
+    rolled up to the month first is the reading's to say -- and with the
+    sales read twice, the reading's one answer for the table may be the
+    other reading's. Read once, this is the trap rolled up by day, and
+    refused."""
+    by_day = (
+        "WITH daily AS (SELECT x.sales_date_key, x.product_key, SUM(x.quantity_sold) AS units "
+        "               FROM fact_pos_retail_sales x GROUP BY 1, 2), "
+        "total AS (SELECT SUM(y.net_sales_amt) AS net_sales FROM fact_pos_retail_sales y) "
+        "SELECT SUM(daily.units * c.net_item_cost) / MAX(total.net_sales) FROM daily "
+        "JOIN fact_item_cogs c ON c.date_key = daily.sales_date_key AND c.product_key = daily.product_key "
+        "CROSS JOIN total"
+    )
+    assert shapes(by_day) == []
+    assert shapes(TRAP_ROLLED_UP_BY_DAY) == [ON_THE_DATE]
+
+
+def test_a_right_query_that_reads_the_sales_again_passes():
+    """The roll-up to the month, joined on the month, and the sales read
+    once more for something else: nothing joins a date to a date."""
+    again = (
+        "WITH s AS (SELECT d.fiscal_year, d.fiscal_month_num, x.product_key, SUM(x.quantity_sold) AS units "
+        "           FROM fact_pos_retail_sales x JOIN dim_date d ON d.date_key = x.sales_date_key GROUP BY 1, 2, 3), "
+        "c AS (SELECT d.fiscal_year, d.fiscal_month_num, k.product_key, AVG(k.net_item_cost) AS unit_cost "
+        "      FROM fact_item_cogs k JOIN dim_date d ON d.date_key = k.date_key GROUP BY 1, 2, 3), "
+        "total AS (SELECT SUM(z.net_sales_amt) AS all_sales FROM fact_pos_retail_sales z) "
+        "SELECT SUM(s.units * c.unit_cost) / MAX(total.all_sales) FROM s "
+        "JOIN c ON c.fiscal_year = s.fiscal_year AND c.fiscal_month_num = s.fiscal_month_num "
+        "  AND c.product_key = s.product_key "
+        "CROSS JOIN total"
+    )
+    assert {SALES.table, COSTS.table} <= set(read_query(again).joined_on)
+    assert shapes(again) == []
 
 
 def test_only_tables_the_query_adds_up_are_held_to_it():

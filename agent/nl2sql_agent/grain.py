@@ -27,7 +27,9 @@ aggregates, joined to each other, whose grains differ, in one of two shapes:
 
 * **joined on the date** -- each one's date column is in the same join
   equality, directly or through the date dimension's key, and the finer one
-  was not rolled up to the coarser's period first;
+  was not rolled up to the coarser's period first. A SELECT that reads the
+  finer table itself and makes that join has rolled nothing up first,
+  whatever it groups by afterwards and whatever else reads the table;
 * **joined on no date** -- nothing about time is among the columns they are
   joined on, and the coarser still brings a row per period to the join:
   read row by row, or rolled up to columns that keep its date or a period.
@@ -46,7 +48,10 @@ question the reading cannot answer is answered "pass":
   an expression, a `NATURAL` join, a `USING` across several tables;
 * a column whose origin cannot be followed through a CTE or a subquery -- a
   `SELECT *`, a set operation;
-* a table read more than once;
+* a table read more than once, when the question is one the whole
+  statement answers -- which roll-up is which reading's, which filter holds
+  which -- and not when the SELECT that joins the two dates reads both
+  tables itself, which is the whole of the evidence in one place;
 * the coarser table held to what may be one period -- its date, or every
   column of its period, compared with a constant, or any filter on its time
   this cannot weigh: a range, a list, a subquery. One period's rows, joined
@@ -218,7 +223,7 @@ def mismatches(query: reading._Query, grains: Mapping[str, Grain], *, calendar: 
     found: list[Mismatch] = []
     for one, other in combinations(measured, 2):
         finer, coarser = sorted((grains[one], grains[other]), key=lambda grain: grain.order)
-        if finer.order == coarser.order or statement.read_twice(finer.table, coarser.table):
+        if finer.order == coarser.order:
             continue
         shape = statement.shape(finer, coarser, query.rolled_up)
         if shape:
@@ -352,8 +357,10 @@ class _Statement:
         )
 
     def read_twice(self, *tables: str) -> bool:
-        """Is any of these tables in more than one FROM? Then which reading
-        of it a join or a filter belongs to cannot be told."""
+        """Is any of these tables in more than one FROM? Then what the
+        reading says of the table -- what it is rolled up to, how its time
+        is filtered -- is said of one reading or the other, and which
+        cannot be told."""
         named = [source for scope in self.scopes.values() for source in scope.values() if isinstance(source, str)]
         return any(named.count(table) > 1 for table in tables)
 
@@ -361,25 +368,44 @@ class _Statement:
 
     def shape(self, finer: Grain, coarser: Grain, rolled_up: Mapping[str, tuple[str, ...]]) -> str | None:
         """How `finer` and `coarser` are wrongly joined, if they are."""
+        twice = self.read_twice(finer.table, coarser.table)
         for select in self.selects:
-            if self._on_the_date(select, finer, coarser, rolled_up):
+            if self._on_the_date(select, finer, coarser, rolled_up, twice):
                 return ON_THE_DATE
+        if twice:
+            # The second shape hangs on the whole statement: whether the
+            # coarser is rolled up past its period, whether a filter holds
+            # it to one. Of a table read twice neither can be said.
+            return None
         for select in self.selects:
             if self._on_no_date(select, finer, coarser, rolled_up):
                 return ON_NO_DATE
         return None
 
     def _on_the_date(self, select: ast.SelectStmt, finer: Grain, coarser: Grain,
-                     rolled_up: Mapping[str, tuple[str, ...]]) -> bool:
+                     rolled_up: Mapping[str, tuple[str, ...]], twice: bool) -> bool:
         """One join equality holds each one's date column -- so through the
         date dimension's key counts, the three being one class -- and the
-        finer was not rolled up to the coarser's period first."""
-        joined = any(
-            any(self._is_date(side, finer) for side in linked) and any(self._is_date(side, coarser) for side in linked)
-            for linked in self.joins[id(select)]
-        )
-        rolled = rolled_up.get(finer.table)
-        return joined and not (rolled is not None and all(column in rolled for column in coarser.columns))
+        finer was not rolled up to the coarser's period first.
+
+        Read from the table itself by this SELECT, it was not: the join is
+        on its rows as stored, and what the SELECT groups by afterwards, or
+        what another SELECT does with the same table, rolls up nothing
+        before it. That much is in this one SELECT, so it holds of a table
+        read twice as well. Reached through a CTE or a subquery it may have
+        been rolled up, which is the reading's to say (`rolled_up`) -- of a
+        table read once; read twice, which reading that is cannot be told.
+        """
+        for linked in self.joins[id(select)]:
+            dates = [side for side in linked if self._is_date(side, finer)]
+            if not dates or not any(self._is_date(side, coarser) for side in linked):
+                continue
+            if any(self.scopes[id(select)].get(side.qualifier) == finer.table for side in dates):
+                return True
+            rolled = rolled_up.get(finer.table)
+            if not twice and not (rolled is not None and all(column in rolled for column in coarser.columns)):
+                return True
+        return False
 
     def _on_no_date(self, select: ast.SelectStmt, finer: Grain, coarser: Grain,
                     rolled_up: Mapping[str, tuple[str, ...]]) -> bool:

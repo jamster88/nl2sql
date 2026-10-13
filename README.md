@@ -165,6 +165,14 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   ensemble all fifteen are unanimous; a value that begins with a digit or
   has a slash in it is matched in quotes ([the
   measurement](docs/benchmark.md#what-a-question-names)).
+- **A health check is not root's.** Docker runs a container's health check
+  as the user the container was started as, and nine of the stack's
+  containers start as root, to take their volumes before they drop to an
+  account. Each of those checks is now started as that account, so what
+  Docker runs in a container to ask after its health is not root's either:
+  watched for five minutes, a 6.3 stack showed a root process 43 times and
+  this one none ([what each container may
+  use](docs/hardening.md)).
 
 ## What's new in 6.3
 

@@ -59,6 +59,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.security.test_unprivileged import CHECKED_AS, drop_to
+
 pytestmark = pytest.mark.acceptance
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -79,6 +81,10 @@ PORTS = (
 #: secret: which host answers, with which models.
 MODEL_SETTINGS = ("OLLAMA_BASE_URL", "OLLAMA_MODEL", "EMBED_BASE_URL", "EMBED_MODEL")
 QUESTION = "How many stores are there?"
+#: How long every container is watched for a process of root's: three of the
+#: ten seconds between one health check and the next, so each is seen
+#: starting more than once.
+WATCH_SECONDS = 30
 
 
 def _dotenv(path: Path) -> dict[str, str]:
@@ -298,29 +304,82 @@ def test_every_container_is_up_healthy_and_has_never_restarted(stack: Stack):
             assert state["Health"]["Status"] == "healthy", name
 
 
+def _roots(name: str) -> list[str]:
+    """What root is running in a container this instant: each command line.
+
+    With the PID: Docker's `top` refuses a format without one. The user is
+    named as Docker's own machine names that uid -- nginx's 101 may read
+    `statd` -- so root is the one name that matters."""
+    processes = _docker("top", name, "-o", "pid,user,args", check=True).stdout.splitlines()[1:]
+    return [line.split(None, 2)[2] for line in processes if line.split()[1] in ("root", "0")]
+
+
 def test_nothing_runs_as_root_writes_its_image_or_shows_a_secret(stack: Stack):
     """6.3 (V6-34, V6-38), held across the whole stack as compose made it:
     no process in any container is root's -- those that start as root to hand
     over their volumes have dropped by now -- every root filesystem is
     read-only and every container has given up new privileges, and no
     password or token is in any container's environment or command line,
-    where `docker inspect` would show it."""
+    where `docker inspect` would show it.
+
+    Watched since 7.0, where it was one look. Docker runs a health check as
+    the user its container was started as, so in the nine that start as root
+    the check was root's for as long as it took, every ten seconds: a look
+    at one of them found a root process about once in a hundred and fifty,
+    and this test -- one look at each -- failed for it now and then. Each of
+    those checks is now started through `setpriv`, so what is left is the
+    instant that takes to stop being root -- which Docker starts as root,
+    and nothing here can change -- and a process of root's that is anything
+    else fails this."""
     secrets = [path.read_text().strip() for path in (stack.root / "secrets").iterdir()]
     assert len([value for value in secrets if value]) >= 15
     rows = _docker("ps", "--filter", f"label=com.docker.compose.project={stack.instance}",
                    "--format", "{{.Names}}", check=True).stdout.split()
+    seen: dict[str, set[str]] = {}
+    until = time.monotonic() + WATCH_SECONDS
+    while time.monotonic() < until:
+        for name in rows:
+            seen.setdefault(name, set()).update(_roots(name))
+    roots = {name: sorted(found) for name, found in seen.items()
+             if [args for args in found if not args.startswith("setpriv --reuid=")]}
+    assert not roots, f"root's, and not a health check giving root up: {roots}"
     for name in rows:
-        # With the PID: Docker's `top` refuses a format without one. The user
-        # is named as Docker's own machine names that uid -- nginx's 101 may
-        # read `statd` -- so root is the one name that matters.
-        processes = _docker("top", name, "-o", "pid,user,args", check=True).stdout.splitlines()[1:]
-        assert not [line for line in processes if line.split()[1] in ("root", "0")], f"{name}: {processes}"
         host = json.loads(_docker("inspect", "--format", "{{json .HostConfig}}", name, check=True).stdout)
         assert host["ReadonlyRootfs"] and "no-new-privileges:true" in host["SecurityOpt"], name
         assert "ALL" in host["CapDrop"] and host["Memory"] > 0 and host["PidsLimit"] > 0, name
     for name in rows + [f"{stack.instance}-dbprep", f"{stack.instance}-pki"]:
         shown = _docker("inspect", "--format", "{{json .Config.Env}} {{json .Config.Cmd}} {{json .Args}}", name).stdout
         assert not [value for value in secrets if value and value in shown], f"a secret is in {name}'s configuration"
+
+
+def test_a_health_check_is_the_services_account_from_its_first_instruction(stack: Stack):
+    """7.0, and what the watch above cannot show for certain: a check comes
+    and goes too fast to be sure of catching. Read from each container as
+    Docker made it instead -- every one that starts as root and has a health
+    check has one that begins by becoming the service's account -- and then
+    run: that drop, with the capabilities the container really has, comes
+    out as the account, in its group and no other, and the check behind it
+    passes as that account."""
+    rows = _docker("ps", "--filter", f"label=com.docker.compose.project={stack.instance}",
+                   "--format", "{{.Names}}", check=True).stdout.split()
+    checked = set()
+    for name in rows:
+        config = json.loads(_docker("inspect", "--format", "{{json .Config}}", name, check=True).stdout)
+        check = (config.get("Healthcheck") or {}).get("Test")
+        if not check or config["User"].split(":")[0] not in ("", "0", "root"):
+            continue
+        service = config["Labels"]["com.docker.compose.service"]
+        account = CHECKED_AS[service]
+        assert check[:5] == drop_to(account), f"{name}: {check}"
+        drop = check[1:5]
+        uid, gid = (_docker("exec", name, "id", flag, account, check=True).stdout.strip() for flag in ("-u", "-g"))
+        assert uid != "0", name
+        assert _docker("exec", name, *drop, "id", "-u", check=True).stdout.strip() == uid, name
+        assert _docker("exec", name, *drop, "id", "-G", check=True).stdout.split() == [gid], name
+        passed = _docker("exec", name, *check[1:])
+        assert passed.returncode == 0, f"{name}: {passed.stdout}{passed.stderr}"
+        checked.add(service)
+    assert checked == set(CHECKED_AS)
 
 
 def test_the_generated_administrator_signs_in_on_every_page_and_each_reaches_its_service(stack, sessions):

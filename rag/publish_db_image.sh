@@ -80,8 +80,12 @@ if [[ -n "$FROM_IMAGE" ]]; then
     SOURCE="nl2sql-rag-publish-$SERVICE"
     step "Starting $FROM_IMAGE to dump it"
     docker rm -f "$SOURCE" >/dev/null 2>&1 || true
+    # The check as `postgres`: Docker would run it as the root the container
+    # starts as, every two seconds. `exec`, because --health-cmd is a line
+    # for a shell, and the shell would stay root for as long as the check ran.
     docker run -d --name "$SOURCE" \
-        --health-cmd "pg_isready -U $DB_USER -d postgres" --health-interval 2s \
+        --health-cmd "exec setpriv --reuid=postgres --regid=postgres --clear-groups pg_isready -U $DB_USER -d postgres" \
+        --health-interval 2s \
         "$FROM_IMAGE" >/dev/null || die "could not start $FROM_IMAGE -- check the reference, and that it can be pulled."
     THROWAWAY=1
     wait_healthy "$SOURCE"

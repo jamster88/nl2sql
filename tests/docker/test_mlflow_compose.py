@@ -331,10 +331,14 @@ def test_the_benchmark_looks_for_mlflow_on_the_published_port(proxy: dict):
 
 
 def test_the_server_is_health_checked_without_curl(mlflow: dict):
-    """MLflow's image has no curl; the check is Python's."""
-    test = " ".join(mlflow["healthcheck"]["test"])
-    assert test.startswith("CMD-SHELL python -c")
-    assert f"127.0.0.1:{_flags(mlflow)['port']}/health" in test
+    """MLflow's image has no curl; the check is Python's. And the account's,
+    not root's (7.0): Docker runs a check as the user its container was
+    started as, and this one starts as root to take its artifact volume --
+    so the check is started through `setpriv` as `mlflow`, as a list, with
+    no shell in front of it to stay root while it runs."""
+    test = mlflow["healthcheck"]["test"]
+    assert test[:7] == ["CMD", "setpriv", "--reuid=mlflow", "--regid=mlflow", "--clear-groups", "python", "-c"]
+    assert f"127.0.0.1:{_flags(mlflow)['port']}/health" in test[7] and len(test) == 8
 
 
 def test_mlflow_does_not_collide_with_another_service(config: dict, proxy: dict):

@@ -43,6 +43,8 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 - The benchmark's scorer is the agent's (`compare.py`); `--compare` gains a fifth configuration, `ensemble`.
 
 **Fixed**
+- A health check runs as its service's account, not root. Docker runs one as the user its container was started as, and nine containers start as root to take their volumes; each of their checks is now started through `setpriv`, and the two checks this project wrote give root up themselves before they read anything. Watched for five minutes, a 6.3 stack showed a root process 43 times; this one, none.
+- The directory's image installs util-linux's `setpriv`, and its health check is run directly: the shell that ran it stayed root for as long as each check took.
 - The Literal Matcher resolves a phrase to a value only when the phrase names it -- every word of it, or a close spelling of the whole -- where sharing one word had been enough: "year" was a promotion called New Year New You, "products" the sub-category Paper Products. For the questions with a verified query it offered 466 values and now offers 80, with all 54 that the queries use kept. A value that begins with a digit or has a slash in it is now reached in quotes.
 - The generator's prompt gave the heading of its literal-values block twice; it gives it once.
 - Measured together: the default configuration answers all fifteen benchmark questions (14 before) and 59 of the paraphrase set's sixty wordings (58), and through the ensemble all fifteen are unanimous. The three configurations without the full context each score one question fewer, a different question each, which is what any change to their prompts moves them by.

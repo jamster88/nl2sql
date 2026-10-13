@@ -23,6 +23,10 @@
 # ldap/requirements.lock names -- not from Alpine's index at whatever version
 # it carried that day -- and the shared package (common/) beside them.
 #
+# util-linux's `setpriv` is here for the health check, which compose starts
+# through it as the `ldap` user: BusyBox's applet of that name cannot change
+# who a process is.
+#
 # No port is published in compose. Only the retail database and the auth
 # service talk to this, on the stack's own network.
 FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8
@@ -38,6 +42,7 @@ RUN apk add --no-cache \
         openldap-passwd-argon2~2.6.8 \
         openldap-passwd-sha2~2.6.8 \
         python3~3.12 \
+        setpriv~2.41 \
  && mkdir -p /var/lib/openldap/openldap-data /var/lib/openldap/run /etc/nl2sql/ldap-tls /seed \
  && chown -R ldap:ldap /var/lib/openldap /etc/nl2sql/ldap-tls
 
@@ -63,15 +68,20 @@ ENV PATH=/opt/venv/bin:$PATH \
 # is no root password. Not `USER ldap`: a named volume another container
 # mounts first -- the certificate's, when the retail database starts before
 # the directory, as it does under compose -- is created owned by root, and
-# only root can hand it over. A `docker exec` and the health check run as
-# root too, and the entry point gives root up for them the same way.
+# only root can hand it over. A `docker exec` and the health check are
+# started as root too, and the entry point gives root up for them the same
+# way -- for the check before it reads anything at all.
 
 # 389 for LDAP with StartTLS, 636 for LDAPS. Unprivileged ports would need
 # every client configured; Docker lets a container's user bind these.
 EXPOSE 389 636
 
+# Run directly, with no shell: one would stay root for as long as the check
+# takes. An image cannot know who it will be started as, so this is the check
+# that gives root up itself; compose, which does know, starts it through
+# `setpriv` and it is never root (docker-compose.yml).
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=5 \
-    CMD python3 -m nl2sql_ldap health || exit 1
+    CMD ["python3", "-m", "nl2sql_ldap", "health"]
 
 LABEL org.opencontainers.image.title="nl2sql directory" \
       org.opencontainers.image.description="OpenLDAP for the nl2sql stack: standalone, or a read-only replica of another directory" \

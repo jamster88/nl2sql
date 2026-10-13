@@ -60,6 +60,11 @@ ARG AUTH_VERSION=7.0.0
 ENV AUTH_VERSION=${AUTH_VERSION} \
     PYTHONUNBUFFERED=1
 
+# Docker runs this as the user the container was started as, which is root
+# unless someone says otherwise -- so the check becomes `nl2sql` before it
+# reads or asks anything (nl2sql_common.health). An image cannot know who it
+# will be started as; compose does, and starts the check through `setpriv`,
+# so that there it is never root at all (docker-compose.yml).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
     CMD ["python", "-m", "nl2sql_common.health", "AUTH"]
 

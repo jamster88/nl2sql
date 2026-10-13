@@ -260,8 +260,12 @@ def test_each_store_reports_when_it_is_ready(
     without a healthcheck the status is always `starting`.
     """
     health = compose["services"][service]["healthcheck"]
-    assert health["test"][0] == "CMD-SHELL"
-    assert "pg_isready" in health["test"][1]
+    # A list since 7.0, not a line for a shell: Docker runs a check as the
+    # root these containers start as, so each is started as `postgres`, and
+    # a shell in front of it would stay root for as long as it ran
+    # (tests/security/test_unprivileged.py holds the drop itself).
+    assert health["test"][0] == "CMD"
+    assert "pg_isready" in health["test"]
 
 
 @pytest.mark.parametrize(("service", "dockerfile", "arg", "base"), STORES)

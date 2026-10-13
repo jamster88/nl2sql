@@ -758,7 +758,11 @@ def test_from_dumps_a_published_image_in_a_throwaway_container(run_rag):
     assert result.returncode == 0, result.output
     run = result.calls_matching("run -d --name nl2sql-rag-publish-vectordb")
     assert run and run[0].endswith("someone/x:v3")
-    assert "--health-cmd pg_isready -U ragproc -d postgres" in run[0]
+    # As `postgres`: Docker would run the check as the root the container
+    # starts as. And `exec`: the option takes a line for a shell, which
+    # would otherwise stay root for as long as the check ran.
+    assert ("--health-cmd exec setpriv --reuid=postgres --regid=postgres --clear-groups "
+            "pg_isready -U ragproc -d postgres") in run[0]
     assert result.called("exec nl2sql-rag-publish-vectordb pg_dumpall")
     assert result.calls[-1] == "rm -f nl2sql-rag-publish-vectordb"
     assert not result.called("start nl2sql-rag-vectordb")

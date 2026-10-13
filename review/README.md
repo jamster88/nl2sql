@@ -699,7 +699,11 @@ started as root, it becomes the owner of the mounted `context_questions/`
 before it reads anything, so a promoted pair in the working tree is theirs,
 as if they had typed it. A directory root owns -- the copy in the image,
 with nothing mounted -- is written as the image's account, `nl2sql` (10001),
-which is also the group its TLS key is read through.
+which is also the group its TLS key is read through. Its health check runs
+as `nl2sql` whoever the service became (7.0): Docker would run it as the
+root the container starts as, so compose starts it through `setpriv`, and
+`python -m nl2sql_common.health REVIEW` gives root up itself, first, when it
+is started any other way.
 
 ### Fixes
 

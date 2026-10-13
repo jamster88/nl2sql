@@ -110,6 +110,17 @@ def test_every_standalone_setting_is_read(monkeypatch, tmp_path):
     )
 
 
+def test_the_base_can_be_read_on_its_own(monkeypatch, tmp_path):
+    """For the health check, which asks the directory for its base and has
+    no business opening a password file to find it."""
+    assert module.directory_base() == "dc=nl2sql,dc=local"
+    monkeypatch.setenv("LDAP_BASE_DN", "dc=example,dc=org")
+    monkeypatch.setenv("LDAP_SERVICE_PASSWORD_FILE", str(tmp_path / "not-there"))
+    assert module.directory_base() == "dc=example,dc=org"
+    with pytest.raises(FileNotFoundError):
+        DirectorySettings.from_env()
+
+
 def test_an_unknown_mode_is_refused(monkeypatch):
     monkeypatch.setenv("LDAP_MODE", "primary")
     with pytest.raises(SettingsError, match="standalone, replica"):

@@ -134,7 +134,8 @@ What `./setup.sh && ./start.sh` gives you:
 - TLS on every connection to the retail database, required by the server;
   a person's password accepted only over it, and verified end to end;
 - every service running as an account of its own, not root, and reading
-  only its own key (6.2); a session that can be ended -- by signing out, a
+  only its own key (6.2), and its health check running as that account too
+  (7.0); a session that can be ended -- by signing out, a
   password change, a lock or a removal -- for every service at once (6.2);
 - every container read-only, with no capability it does not use, no
   privilege it can gain, and a ceiling on its memory and processes; every
@@ -188,6 +189,7 @@ And the work in *Known limits*, which no setting replaces.
 | A session signed out, or from before a password change or set, a lock or a removal, is refused within a minute; the lists are the auth service's to write and nobody's to read | `tests/auth/test_auth_revocation.py`, `tests/auth/test_auth_live.py` (`--run-docker`) |
 | A service token is named and holds only the roles it is given; a header never names who did something | `tests/auth/test_identity_guard.py`, `tests/review/test_signin.py` |
 | Nothing runs as root but the one-shot pki service: every image names its account or drops to one, and each key is its account's | `tests/security/test_unprivileged.py`, `tests/auth/test_identity_pki.py` |
+| A health check is not root's either: in a container that starts as root it is started as the service's account, and the two this project wrote give root up before they read or ask anything (7.0) | `tests/security/test_unprivileged.py`, `tests/common/test_health.py`, `tests/ldap/test_service.py`; in the running stack, `tests/acceptance/test_stack.py` (`--run-acceptance`) |
 | Every broad `except` says why it is broad | `tests/security/test_error_taxonomy.py` |
 | Every Python image installs a hash-checked lock | `tests/security/test_supply_chain.py` |
 | A failure's own words -- hosts, drivers, configuration -- are an administrator's to see | `tests/api/test_signin.py`, `tests/auth/test_identity_guard.py` |

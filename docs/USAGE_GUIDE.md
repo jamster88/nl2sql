@@ -1132,7 +1132,11 @@ The defaults are its second, **a team on a trusted network**:
   `API_TOKEN_ROLES` and its siblings say what it may do, and nothing else.
 - **Nothing runs as root** (6.2) but the one-shot pki service: each service
   runs as an account of its own and reads only its own key, and the review
-  service writes the checkout's documents as the person who owns them.
+  service writes the checkout's documents as the person who owns them. Nor
+  does a health check (7.0): Docker runs one as the user its container was
+  started as, so in the nine that start as root to take their volumes each
+  is started as the service's account
+  ([what each container may use](hardening.md)).
 - **A failure's own words are an administrator's** (6.2): hosts, drivers and
   configuration in `/readyz` and in answers, to `nl2sql_admins` only
   (`API_DEBUG_DETAIL=true` shows everyone, for a development server).

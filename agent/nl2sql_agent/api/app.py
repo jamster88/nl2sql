@@ -120,6 +120,13 @@ def default_guard(settings: Settings, api: ApiSettings) -> Guard:
     )
 
 
+def routing_lines(agent: Any) -> list[str]:
+    """The routing table as the terminal prints it, from an agent that has
+    one -- the ensemble and the pipeline both carry a router."""
+    table = getattr(getattr(agent, "router", None), "table", None)
+    return table.lines() if table is not None else []
+
+
 class AgentHolder:
     """The pipeline, built once, on the first request that needs it.
 
@@ -143,6 +150,13 @@ class AgentHolder:
                 try:
                     self._agent = self._factory()
                     self._error = None
+                    # The routing table, once, in the container's log: the
+                    # pipeline logs it at INFO, which nothing here shows,
+                    # and a catalog from before 7.0 read with two tasks on
+                    # the anchor (arch7.3's S7) is a note worth more than a
+                    # field of `/v1/meta` nobody asks for.
+                    for line in routing_lines(self._agent):
+                        print(line, flush=True)
                 except LlmUnavailableError as exc:
                     self._error = str(exc)
                     raise

@@ -128,6 +128,34 @@ and `launch.sh` says so -- and no SQL console before `v5_3`, whose container
 then stops, saying the module is missing, which `launch.sh --console` passes
 on.
 
+Going to `v7_0` changes what a question costs and what one run answers,
+and moves nothing in the databases:
+
+* **Every question is asked several ways.** The default rewords it and runs
+  the pipeline four times, so an answer takes several times as long as
+  6.3's and makes several times the model calls; `ENSEMBLE_ENABLED=false`
+  is one run, as before.
+* **What one run answers changes too.** The grain check is in the pipeline
+  itself, on by default, with the ensemble off as well: a query that joins
+  two tables of different grains without rolling the finer up is refused
+  and repaired. `GRAIN_CHECK_ENABLED=false` is 6.3's validator.
+* **The API's two workers share one slot at the model host.** A host that
+  served two calls at once under 6.3 serves one until
+  `OLLAMA_PARALLEL_CALLS=2` says it may -- and only for a host with the
+  memory for its resident models times the slots.
+* **A verdict carries the record of its runs** once the review service has
+  started: it adds the column on its first start. A vote cast before then
+  is recorded without that record, and the API says so once in its log.
+* **A calibrated catalog from before 7.0 is read as it is** (schema 2): the
+  Paraphraser and the Judge go to `OLLAMA_MODEL` until
+  `python models/calibrate.py --tasks paraphraser judge` measures them, and
+  the API's start-up notes say so. The committed catalog is schema 3.
+* **The directory image must be this release's.** Every health check in a
+  container that starts as root now runs as the service's account, through
+  a `setpriv` the directory's image installs; `setup.sh` pins `v7_0`, and
+  an older `nl2sql-ldap` pinned by hand is unhealthy under this compose
+  file.
+
 Going to `v6_3` moves three things, and the first `launch.sh` after the
 pull does all three:
 
@@ -246,6 +274,7 @@ fixed -- both back to v1, including the versions that published no tag.
 
 | Tag | Use |
 |---|---|
+| `v7_0` | arch7, the ensemble. Every question is asked several ways -- reworded by a model, each rewording held to the original by a fidelity gate -- and the arch6 pipeline runs once per wording; a Judge reads every distinct answer before the vote, the largest agreeing group's answer is chosen, fused with what the others carried, and delivered with the record of every run, which every surface shows and a verdict is staged with. The grain check is in the pipeline itself, on by default, so what one run answers changes too; the Literal Matcher offers a value only when the question names it whole; the model catalog knows the Paraphraser and the Judge (schema 3) and reads a calibrated 6.3 catalog as it is; the API's workers share one slot at the model host unless told otherwise; every health check in a container that starts as root runs as the service's account. Pinned. |
 | `v6_3` | The second review's phase 5. Every container is read-only, holds no capability it does not use, cannot gain a privilege, and has a ceiling on its memory and its processes. Every password and token is a file in `secrets/`, mounted into only the services that read it, and in no container's environment. Every page and MLflow's front door are one image, `nl2sql-proxy`, whose health check -- like every service's -- verifies the certificate it is answered with. The feedback, corrections, completions and snippet stores are four databases in one server, `nl2sql-stores`, and `launch.sh` moves a store from before into it. A one-shot, `dbprep`, prepares every database in Python, over each database's own socket, so neither script runs SQL. Each service's database role has a statement timeout, a memory ceiling and a connection limit; every base image is pinned by digest. Twelve tags where `v6_2` had seventeen. Pinned. |
 | `v6_2` | The second review's phases 3 and 4. A session can be ended: signing out, a password changed or set, an account locked or removed ends the sessions it should for every service within a minute, from lists only the auth service writes. A service token is somebody -- named, recorded as `token:<name>`, holding only the roles it is given -- and a header never names who did something. Nothing runs as root but the one-shot `pki`: each service runs as an account of its own, each key is that account's, and the review service writes the checkout's documents as the person who owns them, loading the stores in its own process under a lock. Every route is on a router that carries its guard; a failure's own words are an administrator's; a person's name is in the transaction's `application_name`; the sign-in throttle believes only the page proxies' `X-Forwarded-For`; fix ids come from sequences; an administrator can make the agent read its catalogs again. What the services share is one installed package, `common/`, and what the pages share one source package, `web/`; every Python image installs a hash-checked lock. Pinned. |
 | `v6_1` | Hardening, from the second adversarial review (`v6_1_review`). The databases answer on this machine only unless `DB_BIND_ADDRESS` says otherwise, and `setup.sh` generates every store's password; the retail database is `v1_2`, with no password baked in, TLS on, and sign-in accepted only over TLS, verified by the auth service. Every service has its own certificate, issued by a development CA that a new one-shot service, `pki`, keeps; a client trusts `nl2sql-ca.crt` once. Sign-in is on in the code as well as in compose, CORS is closed until opened, the job queue is bounded and answers 429, `EXPLAIN` is time-boxed, tokens are scrubbed from the access log, and the directory's API answers on its own port, behind its page. A repair starts from a clean attempt, a narrator or supervisor that fails says so in `node_errors`, every wire model refuses a field it does not know, and each trace entry carries its model, rung, route and hops. `SECURITY.md` is the threat model; `Multi-Agent_NL2SQL_arch6.md` the architecture as built. Pinned. |

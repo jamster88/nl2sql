@@ -15,9 +15,9 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
-## v7_0 (7.0.0) -- 2026-10-08
+## v7_0 (7.0.0) -- 2026-10-12
 
-In progress: arch7, the ensemble -- the question asked several ways, the pipeline run once per wording, the answers voted on -- and the grain check, in the pipeline itself. Every phase is built; what is left is the release. Nothing is published yet; `setup.sh` already pins `v7_0`.
+arch7, the ensemble -- the question asked several ways, the pipeline run once per wording, the answers voted on -- and the grain check, in the pipeline itself, so what one run answers changes too. Published as `v7_0`, which `setup.sh` pins; `./start.sh` upgrades a 6.3 stack in place.
 
 **Added**
 - arch7's Phase 0: the fidelity gate's checks in code (`fidelity.py`), three hand-written rewordings of each benchmark question, and `run_benchmark.py --paraphrase-set`, which reports the stability -- 13 of 15 questions right in every wording, 57 of 60 wordings, on the running 6.3 stack. The checks' starting words discarded 8 of the 45 rewordings; four additions fixed that.
@@ -61,6 +61,11 @@ In progress: arch7, the ensemble -- the question asked several ways, the pipelin
 - `arch_v7` says what v7 changes inside the pipeline, the grain check.
 - The REST API's two workers take turns at the model host by default; a host that serves two calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them.
 - The version is 7.0.0 everywhere it is declared, and `setup.sh` pins `v7_0`.
+- The upgrade notes say what going to `v7_0` changes: what a question costs, what one run answers, the workers' one slot at the host, a verdict's record, an older catalog read as it is, and the directory image this compose file needs.
+- The API's log prints its routing table when the agent is built, so a catalog from before 7.0 read with two tasks on the anchor is said where a person looks.
+
+**Published**
+- All twelve tags as `v7_0`; the dataset images are unchanged. The upgrade was rehearsed on a 6.3 stack of its own first, in both orders of a vote and the review service's first start; then `start.sh` upgraded a running 6.3 stack with every check passing, and the release benchmark ran against it.
 
 ## v6_3 (6.3.0) -- 2026-10-05
 

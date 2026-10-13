@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 5542 tests, no Docker, npm, JDK or network needed
+pytest                                          # 5544 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 6382, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 6384, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -75,7 +75,9 @@ reads the question's own answer: it was asked
 several ways, every run in its record reported its own steps on the progress
 stream -- which is what the page draws its lanes from -- its verdict was
 staged with that record, and its trace in MLflow holds a span for every run
-with exactly the steps that run reported. Everything is removed
+with exactly the steps that run reported -- and the Judge read the answers
+before the vote, a verdict per group in the record and the trace's tag saying
+what it did. Everything is removed
 afterwards (`NL2SQL_ACCEPTANCE_KEEP=1` keeps it). It needs Docker with about
 3.5 GiB of its memory free -- it says so rather than starting -- and ten to
 twenty minutes; the tests that need an answer are skipped, saying why, when
@@ -126,7 +128,7 @@ coverage combine && coverage report --show-missing --skip-covered
 ```
 
 **100% of every Python file in the repository, statements and branches** --
-18,330 statements and 4,468 branches, none missed. `coverage report` fails below
+18,335 statements and 4,470 branches, none missed. `coverage report` fails below
 that (`fail_under = 100` in [`.coveragerc`](../.coveragerc)) rather than printing
 a number, the way the five web interfaces' vitest thresholds and the desktop
 client's JaCoCo rule already did. Not four packages with the scripts left out: the agent, its REST

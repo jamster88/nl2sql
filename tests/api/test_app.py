@@ -87,6 +87,31 @@ def test_readiness_is_ready_when_every_check_passes(make_client, fake_agent):
     assert body["checks"]["database"]["detail"] == "3 tables"
 
 
+def test_the_routing_table_is_printed_once_when_the_agent_is_built(make_client, fake_agent, capsys):
+    """7.0 (arch7.3's S7): the pipeline logs its routing table at INFO, which
+    the container's log never shows, so a deployer's catalog from before 7.0
+    -- read with the Paraphraser and the Judge on the anchor -- was a fact in
+    `/v1/meta` and nowhere a person looks. The table is printed where the
+    banner could not put it, when the agent is built, and once."""
+    from types import SimpleNamespace
+
+    lines = ["model routing on: 2 model(s), anchor m1",
+             "  note: the catalog is schema 2: paraphraser and judge are unmeasured, so OLLAMA_MODEL answers them"]
+    fake_agent.router = SimpleNamespace(table=SimpleNamespace(lines=lambda: list(lines)))
+    client = make_client(agent_factory=lambda: fake_agent)
+    assert client.get("/readyz").status_code == 200
+    assert client.get("/readyz").status_code == 200
+    out = capsys.readouterr().out
+    assert out.count("model routing on: 2 model(s), anchor m1") == 1
+    assert "note: the catalog is schema 2" in out
+
+
+def test_an_agent_with_no_router_prints_no_table(make_client, fake_agent, capsys):
+    client = make_client(agent_factory=lambda: fake_agent)
+    assert client.get("/readyz").status_code == 200
+    assert "model routing" not in capsys.readouterr().out
+
+
 def test_readiness_repeats_the_configuration_warnings(make_client):
     """The place an operator looks when something is odd, so the "TLS is off
     and there is no token" facts belong there and not only in the log.

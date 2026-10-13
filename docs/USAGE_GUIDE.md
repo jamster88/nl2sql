@@ -1225,6 +1225,32 @@ Upgrading to `v6_3` moves three things, and the first start does each:
 - **Every page is one image**, `nl2sql-proxy`; `start.sh` pins it in place
   of the six it replaces.
 
+Upgrading to `v7_0` changes what a question costs and what one run answers,
+and moves nothing in the databases:
+
+- **Every question is asked several ways** -- reworded, run four times,
+  judged and voted on -- so an answer takes several times as long as 6.3's
+  and makes several times the model calls ([Asking it several
+  ways](../agent/README.md#asking-it-several-ways-arch7)).
+  `ENSEMBLE_ENABLED=false` is one run, as before.
+- **What one run answers changes too**: the grain check is in the pipeline,
+  on by default, with the ensemble off as well. `GRAIN_CHECK_ENABLED=false`
+  is 6.3's validator.
+- **The API's two workers take turns at the model host.** A host that
+  served two calls at once under 6.3 serves one until you set
+  `OLLAMA_PARALLEL_CALLS=2`.
+- **A verdict carries the record of its runs** once the review service has
+  started at 7.0, which adds the column it is kept in; a vote cast before
+  then is recorded without it, and the API's log says so once.
+- **A calibrated catalog of your own from before 7.0** is read as it is:
+  the Paraphraser and the Judge go to `OLLAMA_MODEL` until
+  `python models/calibrate.py --tasks paraphraser judge` measures them, and
+  the API's start-up notes say so.
+- **Pin the images together.** Every health check in a container that
+  starts as root runs as the service's account now, through a `setpriv`
+  the directory's image installs; an older `nl2sql-ldap` under this
+  checkout's compose file is unhealthy.
+
 An agent from before `v6_0` does not check sessions, so pinned with
 `--agent-tag`, its API answers according to its own `API_TOKEN`, signed in
 or not. An agent or a page from before `v6_1` does not know the stack's CA,

@@ -52,9 +52,10 @@ docker compose --profile '*' down                 # stop; your data is kept
 
 ## What's new in 7.0
 
-7.0 is being built, and is not published yet. It answers a hard question
-several ways, has a Judge read the answers, and votes ([the
-design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
+7.0 answers a hard question several ways, has a Judge read the answers,
+and votes ([the design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)).
+Every image is published as `v7_0`, and `./start.sh` upgrades a 6.3 stack
+in place ([upgrading](docs/images.md#upgrading-an-existing-checkout)):
 
 - **The question, asked four ways.** Every question is screened once, then
   reworded by a model -- up to ten rewordings, each held to the original's

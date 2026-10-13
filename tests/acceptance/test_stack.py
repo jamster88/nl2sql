@@ -496,6 +496,13 @@ def test_the_question_was_asked_several_ways_and_every_run_reported_its_own_step
     assert 0 in runs and runs[0]["origin"] == "original", sorted(runs)
     assert ensemble["agreement"]["total"] == len(runs), ensemble["agreement"]
     assert ensemble["chosen"] in runs and ensemble["line"], ensemble["agreement"]
+    # The Judge read the answers before the vote (arch7.1), and its verdicts
+    # are in the record: one for each group of agreeing runs, from a model.
+    judged = ensemble["judged"]
+    assert judged is not None and not judged["error"], f"the Judge was not asked: {judged}"
+    assert judged["model"] and judged["verdicts"], judged
+    assert {verdict["group"] for verdict in judged["verdicts"]} == {
+        run["group"] for run in runs.values() if run["group"] is not None}, judged
 
     reported: dict[int | None, list[str]] = {}
     for event in answered["progress"]:
@@ -565,6 +572,15 @@ def test_mlflow_answers_only_through_its_front_door_and_holds_the_questions_trac
     # step in another run's span, is the worker threads losing the context
     # the span is found by -- the same fault an empty lane would be.
     [trace] = [trace for trace in traces if QUESTION in json.dumps(trace)]
+    # The trace says what the Judge did, in the words the record implies
+    # (`ensemble_state.judged`): a verdict on the trace and a record that
+    # disagree would be two accounts of one question.
+    judged = answered["answer"]["ensemble"]["judged"]
+    did = ("failed" if judged["error"]
+           else "accepted none" if judged["verdicts"] and not any(v["accepted"] for v in judged["verdicts"])
+           else "overruled" if judged["overruled"] else "set aside" if judged["set_aside"] else "accepted")
+    tags = {tag["key"]: tag["value"] for tag in trace["tags"]}
+    assert tags.get("nl2sql.judge") == did, (tags.get("nl2sql.judge"), did)
     spans = _call(stack, "GET", f"{door}/ajax-api/2.0/mlflow/get-trace-artifact?request_id={trace['request_id']}",
                   basic=f"admin:{stack.admin_password}").body["spans"]
     children: dict[str | None, list[dict]] = {}

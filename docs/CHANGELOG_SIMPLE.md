@@ -67,6 +67,10 @@ arch7, the ensemble -- the question asked several ways, the pipeline run once pe
 **Published**
 - All twelve tags as `v7_0`; the dataset images are unchanged. The upgrade was rehearsed on a 6.3 stack of its own first, in both orders of a vote and the review service's first start; then `start.sh` upgraded a running 6.3 stack with every check passing, and the release benchmark ran against it.
 
+**After publishing** (not in the images)
+- `launch.sh` says how many ways each question will be asked and how many calls the model host is asked at a time, beside the routing it reports.
+- The coverage and relevance audit: every compose variable new since 6.3 documented and tested, one coverage exclusion, every fake switch set, no test of a removed part, the tests' own unexecuted lines all skip and failure paths; every tier run and green, shell coverage 1,742 of 1,742.
+
 ## v6_3 (6.3.0) -- 2026-10-05
 
 **Added**

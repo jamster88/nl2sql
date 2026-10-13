@@ -998,6 +998,33 @@ def test_an_unpinned_checkout_looks_for_a_local_tag(run_launch):
 # ---------------------------------------------------------------------------
 
 
+def test_it_says_how_many_ways_a_question_is_asked_and_how_wide_the_host_gate_is(run_launch):
+    """7.0: a question is reworded and run four times by default, which is
+    most of what it now costs, and the model host is asked one call at a
+    time unless OLLAMA_PARALLEL_CALLS says it serves more. Said beside the
+    routing, as compose reads the settings -- the shell, then .env -- so a
+    slow answer reads as the setting it is."""
+    result = run_launch()
+    assert "every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)" in result.output
+    assert "the model host is asked 1 call(s) at a time (OLLAMA_PARALLEL_CALLS)" in result.output
+    wider = run_launch(env={"ENSEMBLE_PARAPHRASES": "5", "OLLAMA_PARALLEL_CALLS": "2"})
+    assert "every question is asked 6 ways" in wider.output
+    assert "the model host is asked 2 call(s) at a time" in wider.output
+
+
+def test_with_the_ensemble_off_it_says_one_run_answers_and_the_grain_check_stays(run_launch):
+    """Off is said in compose's own spelling of a false (`false`, `0`, `no`,
+    `off`, in any case), from .env as from the shell; and a count that is not
+    one is read as the default rather than breaking the arithmetic."""
+    for spelling in ("false", "OFF", "0"):
+        result = run_launch(env={"ENSEMBLE_ENABLED": spelling})
+        assert "every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies" in result.output
+        assert "asked 4 ways" not in result.output
+    assert "answered by one run" in run_launch(env_file="ENSEMBLE_ENABLED=no\n").output
+    odd = run_launch(env={"ENSEMBLE_PARAPHRASES": "many"})
+    assert "every question is asked 4 ways" in odd.output
+
+
 def test_the_routing_table_is_asked_of_the_agent_image_itself(run_launch):
     result = run_launch()
     # The probe is several lines of Python, so it is several lines of the

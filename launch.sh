@@ -633,6 +633,24 @@ else
     while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$routing_raw" | tail -3)
 fi
 
+# --- Asking it several ways (arch7) -----------------------------------------
+# Since 7.0 every question is reworded and the pipeline run once per wording,
+# the answers judged and voted on -- which is most of what a question costs.
+# Said here, beside the routing, so that one run per question
+# (ENSEMBLE_ENABLED=false) or a host allowed several calls at once
+# (OLLAMA_PARALLEL_CALLS) is seen as the setting it is rather than wondered
+# about as slowness. Read as compose reads them: the shell, then .env.
+ensemble_enabled=$(compose_env ENSEMBLE_ENABLED true | tr '[:upper:]' '[:lower:]')
+if [[ "$ensemble_enabled" =~ ^(false|0|no|off)$ ]]; then
+    info "every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies"
+else
+    paraphrases=$(compose_env ENSEMBLE_PARAPHRASES 3)
+    [[ "$paraphrases" =~ ^[0-9]+$ ]] || paraphrases=3
+    slots=$(compose_env OLLAMA_PARALLEL_CALLS 1)
+    info "every question is asked $((paraphrases + 1)) ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)"
+    info "the model host is asked $slots call(s) at a time (OLLAMA_PARALLEL_CALLS)"
+fi
+
 # --- The REST API ----------------------------------------------------------
 # The same image as the agent, started as a server instead of a command. It
 # is opt-in because most people ask questions from a terminal, and a port

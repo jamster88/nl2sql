@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 5544 tests, no Docker, npm, JDK or network needed
+pytest                                          # 5546 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 6384, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 6386, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -325,7 +325,7 @@ script, by a measurement of their own:
   `10-nl2sql-proxy.envsh` and `health.sh`, for every page, as the nginx
   entrypoint and Docker's health check run them.
   That tool re-runs those suites with `bash -x` on and counts which commands
-  the traces mention -- **1734 of 1734**.
+  the traces mention -- **1742 of 1742**.
 
   An inventory test compares those lists against `git ls-files`, because the
   lists are written by hand and a script that joins none of them is not

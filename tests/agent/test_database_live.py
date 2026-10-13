@@ -167,3 +167,54 @@ def test_a_schema_without_the_sales_calendar_raises_for_the_contract_to_absorb(d
     empty = Database(POSTGRES_URL, db_schema="pg_catalog")
     with pytest.raises(sqlalchemy.exc.SQLAlchemyError):
         empty.latest_complete_fiscal_year()
+
+
+# ---------------------------------------------------------------------------
+# arch7.3 section 22.14: the grains, read from the dates
+# ---------------------------------------------------------------------------
+
+
+def test_each_date_stamped_tables_grain_is_what_its_dates_measure_to(db: Database):
+    """Eight facts are stamped with a date: three have a row most days, three
+    once a fiscal week, two once a fiscal month. Read from the data, which is
+    what `tests/grain_fixture.py` writes down for the tests that have none --
+    so a dataset whose grains change fails here, not silently there."""
+    from nl2sql_agent import grain
+    from nl2sql_agent.config import Settings
+    from tests.grain_fixture import GRAINS
+
+    assert grain.read_grains(db, db.catalog(), Settings().grain_period_columns) == GRAINS
+
+
+def test_the_most_dates_a_period_holds_is_counted_per_period_in_the_order_given(db: Database):
+    week, month = ("fiscal_year", "fiscal_week_num"), ("fiscal_year", "fiscal_month_num")
+
+    by_week, by_month = db.dates_per_period("fact_pos_retail_sales", "sales_date_key", (week, month))
+    assert 7 <= by_week < by_month, "sold most days: several dates a week, more a month"
+    assert db.dates_per_period("fact_item_cogs", "date_key", (month, week)) == [1, 1], "one date a month"
+    assert db.dates_per_period("fact_item_prices", "date_key", (week, month))[0] == 1, "one date a week"
+    assert db.dates_per_period("fact_item_cogs", "date_key", ()) == [], "no periods, no question"
+
+
+def test_a_period_naming_no_column_of_the_calendar_is_the_databases_to_refuse(db: Database):
+    """`grain.read_grains` checks the names against the catalog first; this
+    is what stands behind it. Quoted, so it is a missing column and nothing
+    else."""
+    with pytest.raises(sqlalchemy.exc.ProgrammingError, match='column "fiscal"" ""week" does not exist|fiscal" "week'):
+        db.dates_per_period("fact_item_cogs", "date_key", (('fiscal" "week',),))
+    with pytest.raises(sqlalchemy.exc.ProgrammingError, match="does not exist"):
+        db.dates_per_period("fact_item_cogs", "date_key; DROP TABLE x", (("fiscal_year",),))
+
+
+def test_reading_every_grain_is_quick_enough_to_do_once_a_process(db: Database):
+    """The owner's condition for measuring rather than declaring (arch7.2's
+    open decision 34): one query a table over its distinct dates -- on the
+    sales fact an index's worth -- and all eight inside a few seconds."""
+    import time
+
+    from nl2sql_agent import grain
+    from nl2sql_agent.config import Settings
+
+    started = time.perf_counter()
+    grain.read_grains(db, db.catalog(), Settings().grain_period_columns)
+    assert time.perf_counter() - started < 5.0

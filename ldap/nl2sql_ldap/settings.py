@@ -36,6 +36,12 @@ MODES = (STANDALONE, REPLICA)
 
 DEFAULT_BASE_DN = "dc=nl2sql,dc=local"
 
+
+def directory_base() -> str:
+    """The directory's base, on its own: all the health check needs to know,
+    and it is asked for without a password file being opened."""
+    return _env_str("LDAP_BASE_DN", DEFAULT_BASE_DN)
+
 #: Where slapd keeps its database: a volume in compose.
 DATA_DIR = "/var/lib/openldap/openldap-data"
 #: The local socket (`ldapi`) and the pid file. Root-equivalent access to
@@ -237,7 +243,7 @@ class DirectorySettings:
             raise SettingsError(f"LDAP_MODE={mode} is not one of {', '.join(MODES)}")
         return cls(
             mode=mode,
-            base_dn=_env_str("LDAP_BASE_DN", DEFAULT_BASE_DN),
+            base_dn=directory_base(),
             organisation=_env_str("LDAP_ORGANISATION", "nl2sql"),
             service_password=secret("LDAP_SERVICE_PASSWORD"),
             admin_user=_env_str("LDAP_ADMIN_USER", "admin").lower(),

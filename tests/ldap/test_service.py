@@ -323,7 +323,7 @@ def no_env(monkeypatch):
 def test_main_dispatches_each_command(monkeypatch, no_env, capsys):
     calls = []
     became = []
-    monkeypatch.setattr(service, "become", lambda **kwargs: became.append(kwargs["own"]))
+    monkeypatch.setattr(service, "become", lambda **kwargs: became.append(kwargs.get("own")))
     monkeypatch.setattr(service, "health", lambda **kwargs: calls.append(("health", kwargs)) or 0)
     monkeypatch.setattr(service, "import_file", lambda path, settings: calls.append(("import", path)) or 0)
     monkeypatch.setattr(service, "sync", lambda settings: calls.append(("sync",)) or 0)
@@ -339,9 +339,30 @@ def test_main_dispatches_each_command(monkeypatch, no_env, capsys):
     ]
     assert service.main(["config"]) == 0
     assert capsys.readouterr().out.startswith("# Written by nl2sql_ldap")
-    # Every command gives root up; only serving hands the account what it writes.
+    # Every command gives root up; only serving hands the account what it
+    # writes, and the health check names nothing at all: it has read no
+    # setting yet.
     serving = ("/var/lib/openldap/run", "/var/lib/openldap/openldap-data", "/etc/nl2sql/ldap-tls", "/etc/nl2sql/ldap-tls")
-    assert became == [(), (), (), serving, serving, ()]
+    assert became == [None, (), (), serving, serving, ()]
+
+
+def test_the_health_check_gives_root_up_before_it_reads_anything(monkeypatch, tmp_path):
+    """Docker runs it every few seconds as whoever the container was started
+    as, which is root. Until 7.0 it read every setting first -- two password
+    files among them -- and only then gave root up. Now it is the account
+    before anything, and what it reads after is one variable: a password
+    file it cannot open, and a mode that stops every other command, do not
+    come into it."""
+    order: list = []
+    monkeypatch.setattr(service, "become", lambda **kwargs: order.append(("become", kwargs)))
+    monkeypatch.setattr(service, "health", lambda **kwargs: order.append(("health", kwargs)) or 0)
+    monkeypatch.setenv("LDAP_BASE_DN", "dc=example,dc=org")
+    monkeypatch.setenv("LDAP_SERVICE_PASSWORD_FILE", str(tmp_path / "root-alone"))
+    monkeypatch.setenv("LDAP_ADMIN_PASSWORD_FILE", str(tmp_path / "root-alone"))
+    monkeypatch.setenv("LDAP_MODE", "sideways")
+    assert service.main(["health"]) == 0
+    assert order == [("become", {}), ("health", {"base_dn": "dc=example,dc=org"})]
+    assert service.main(["sync"]) == 2, "the same settings stop a command that needs them"
 
 
 class _Entry:

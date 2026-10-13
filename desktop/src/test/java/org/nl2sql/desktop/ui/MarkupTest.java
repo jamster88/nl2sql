@@ -32,6 +32,20 @@ class MarkupTest {
     }
 
     @Test
+    void under_the_ensemble_the_prose_is_the_block_after_the_agreement_line() {
+        // The document opens with how the runs agreed, which the badge says.
+        assertEquals("Produce led.\n\n| a |",
+                Markup.afterLead("*3 of 4 runs agreed.*\n\nProduce led.\n\n| a |"));
+        assertEquals("Produce led.", Markup.afterLead("*3 of 4 runs agreed.*\n  \nProduce led."));
+    }
+
+    @Test
+    void a_document_that_is_only_the_agreement_line_has_nothing_after_it() {
+        assertEquals("", Markup.afterLead("*3 of 4 runs agreed.*"));
+        assertEquals("", Markup.afterLead(""));
+    }
+
+    @Test
     void an_answer_that_is_only_prose_is_all_lead() {
         assertEquals("There is nothing to report.", Markup.lead("  There is nothing to report.  "));
     }

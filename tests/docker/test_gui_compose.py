@@ -232,6 +232,6 @@ def test_it_can_be_built_here_as_well_as_pulled(gui: dict):
 def test_a_pinned_proxy_image_is_what_compose_runs(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("pinned"),
-        env={"PROXY_IMAGE_NAME": "mcfaddja/nl2sql-proxy", "PROXY_IMAGE_TAG": "v6_3"},
+        env={"PROXY_IMAGE_NAME": "mcfaddja/nl2sql-proxy", "PROXY_IMAGE_TAG": "v7_0"},
     )
-    assert config["services"]["gui"]["image"] == "mcfaddja/nl2sql-proxy:v6_3"
+    assert config["services"]["gui"]["image"] == "mcfaddja/nl2sql-proxy:v7_0"

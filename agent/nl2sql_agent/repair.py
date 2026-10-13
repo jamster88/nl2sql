@@ -218,6 +218,32 @@ COMPLETENESS_HINT = (
 )
 
 
+#: A grain issue, by its own words (`grain.message`): the Static Validator's
+#: finding that two tables of different grains are joined on the date, or on
+#: no date at all (arch7.3 section 22.14).
+GRAIN_ISSUE = re.compile(r"\bjoined on (the date|no date or period)\b")
+
+#: The grain hint. The message already names both grains and the way round,
+#: so the hint says what kind of fix it is: the tables and the measure were
+#: right, and a query rewritten from scratch is how a right filter gets lost
+#: on the way to a right join.
+GRAIN_HINT = (
+    "The tables, the filters and the measure are right; what is wrong is how these two tables are "
+    "joined. Keep the rest of the query and change that join as described above."
+)
+
+
+def _grain(failure: _Failure) -> str | None:
+    """A grain mismatch is already a diagnosis, written from the data.
+
+    The check measured each table's grain and read the join; the model
+    asked to diagnose it would be guessing at what the message states.
+    """
+    if failure.source == STATIC and GRAIN_ISSUE.search(failure.message):
+        return GRAIN_HINT
+    return None
+
+
 def _completeness(failure: _Failure) -> str | None:
     """A completeness gap is already a diagnosis, written by the reviewer.
 
@@ -391,6 +417,7 @@ def _plan_cost(failure: _Failure) -> str | None:
 _RULES = (
     _audit,
     _completeness,
+    _grain,
     _syntax,
     _group_by,
     _missing_column,

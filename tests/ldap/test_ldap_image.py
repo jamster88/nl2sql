@@ -67,9 +67,22 @@ def test_only_the_directory_package_its_lock_and_the_shared_package_are_copied(d
 
 
 def test_the_image_says_when_it_is_ready_and_what_version_it_is(dockerfile: str):
-    assert "HEALTHCHECK" in dockerfile and "python3 -m nl2sql_ldap health" in dockerfile
+    assert "HEALTHCHECK" in dockerfile and 'CMD ["python3", "-m", "nl2sql_ldap", "health"]' in dockerfile
     assert f'org.opencontainers.image.version="{__version__}"' in dockerfile
     assert 'ENTRYPOINT ["python3", "-m", "nl2sql_ldap"]' in dockerfile
+
+
+def test_nothing_stands_in_front_of_the_health_check_as_root(dockerfile: str):
+    """Until 7.0 it was `CMD python3 -m nl2sql_ldap health || exit 1`, which
+    Docker runs through a shell -- and that shell stayed root for as long as
+    the check took, every ten seconds, while the check itself gave root up.
+    Run directly there is no shell; and the program compose starts the check
+    through, so that it is never root at all, is util-linux's `setpriv`,
+    which has to be installed: BusyBox's applet of that name cannot change
+    who a process is."""
+    [check] = re.findall(r"^HEALTHCHECK [^\n]*\\\n\s+CMD (.*)$", dockerfile, re.MULTILINE)
+    assert check.startswith('["python3"'), "the exec form: a list, not a line for a shell"
+    assert re.search(r"^\s+setpriv~2\.\d+ \\$", dockerfile, re.MULTILINE)
 
 
 # --- run -----------------------------------------------------------------------
@@ -181,6 +194,21 @@ def test_a_certificate_volume_another_image_owned_last_is_still_written_and_noth
     assert running and all(line.split()[0] == "ldap" for line in running), processes
     # A command run with `docker exec`, as root, gives root up the same way.
     assert _docker("exec", ldap, "python3", "-m", "nl2sql_ldap", "health", check=False).returncode == 0
+    # The health check does before it reads anything: a password file that
+    # is not there, which stops every other command, is not its business.
+    blind = ("-e", "LDAP_SERVICE_PASSWORD_FILE=/nowhere", "-e", "LDAP_ADMIN_PASSWORD_FILE=/nowhere")
+    assert _docker("exec", *blind, ldap, "python3", "-m", "nl2sql_ldap", "health", check=False).returncode == 0
+    assert _docker("exec", *blind, ldap, "python3", "-m", "nl2sql_ldap", "config", check=False).returncode != 0
+    # Docker runs it directly, with no shell in front of it as root.
+    declared = _docker("inspect", "-f", "{{json .Config.Healthcheck.Test}}", ldap).stdout.strip()
+    assert declared == '["CMD","python3","-m","nl2sql_ldap","health"]'
+    # And as compose starts it (docker-compose.yml), it is `ldap` from its
+    # first instruction: the drop is the image's to carry, and the socket
+    # still knows its caller as the directory's root.
+    drop = ("setpriv", "--reuid=ldap", "--regid=ldap", "--clear-groups")
+    assert _docker("exec", ldap, *drop, "id", "-un").stdout.strip() == "ldap"
+    assert _docker("exec", ldap, *drop, "id", "-G").stdout.split() == _docker("exec", ldap, "id", "-g", "ldap").stdout.split()
+    assert _docker("exec", ldap, *drop, "python3", "-m", "nl2sql_ldap", "health", check=False).returncode == 0
     _docker("rm", "-f", ldap, other, check=False)
     _docker("volume", "rm", volume, check=False)
 

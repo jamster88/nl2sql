@@ -4,8 +4,9 @@ Fifteen questions, scored on **accuracy first and speed second**.
 
 ```bash
 ./launch.sh                               # the stack has to be up
-python benchmarks/run_benchmark.py        # the full agent
-python benchmarks/run_benchmark.py --compare   # schema-only vs knowledge vs multi-shot vs snippets
+python benchmarks/run_benchmark.py        # every retrieval stage, one run a question
+python benchmarks/run_benchmark.py --config ensemble   # the same, asked through the ensemble (arch7)
+python benchmarks/run_benchmark.py --compare   # schema-only vs knowledge vs multi-shot vs snippets vs ensemble
 ```
 
 ## What is measured
@@ -222,18 +223,70 @@ with the models warm and cold as they are in use. Above it, how the
 generator's task was scored across the set -- a rung nothing is ever routed
 at is visible there. `--json` carries both, and each question's routes.
 
+### What the grain check did (arch7.3)
+
+With the grain check on (`GRAIN_CHECK_ENABLED`, the default), every
+configuration's report ends with what it did:
+
+```
+GRAIN CHECK
+  references refused   none
+  runs sent to repair  2: ended right 2, wrong 0, failed 0
+    B07 run 0  refused once, ended ok
+    B07 run 2  refused once, ended ok
+```
+
+**References refused** is the check run over the benchmark's own reference
+queries with the grains this run read from the database. They are right by
+construction, so one named there is the check wrong about a right query,
+and the benchmark exits non-zero whatever the answers scored.
+**Runs sent to repair** counts the runs in which the Static Validator
+refused a query for its grain at least once -- a run is a question for the
+first four configurations and one wording of it through the ensemble --
+with how each ended against the reference: right, wrong, or no rows.
+"Ended wrong" is a query that was repaired and still missed, or a right
+query sent to repair and broken by it; the query and the message are in
+the question's trace, which tells the two apart. To measure the check's
+effect, run the same questions again with `GRAIN_CHECK_ENABLED=false` in
+the environment: the block is then left out. `--json` carries a `grain`
+block for each configuration (`rejected_references`, and `repairs` with
+the four counts; `null` with the check off) and each result's
+`grain_repairs`.
+
 ## Comparing configurations
 
-`--compare` runs the same questions through four configurations that differ
-**only** in what retrieval is switched on, so a difference between two rows is
-attributable to that stage and nothing else:
+`--compare` runs the same questions through five configurations, each the
+one before it plus **one** stage -- four of retrieval, then the ensemble --
+so a difference between two rows is attributable to that stage and nothing
+else:
 
-| | Knowledge base | Worked examples | SQL snippets | Equivalent to |
-|---|---|---|---|---|
-| `schema-only` | off | off | off | v1 |
-| `knowledge` | on | off | off | v2 |
-| `multi-shot` | on | on | off | v3 to v5.5 |
-| `snippets` | on | on | on | v5.6, the agent as it ships, and the default |
+| | Knowledge base | Worked examples | SQL snippets | Ensemble | Equivalent to |
+|---|---|---|---|---|---|
+| `schema-only` | off | off | off | off | v1 |
+| `knowledge` | on | off | off | off | v2 |
+| `multi-shot` | on | on | off | off | v3 to v5.5 |
+| `snippets` | on | on | on | off | v5.6 to 6.3, one run a question, and the default |
+| `ensemble` | on | on | on | on | 7.0, the agent as it ships: the question asked several ways (arch7) |
+
+Every configuration sets the ensemble on or off itself, so the first four
+are one run a question whatever `ENSEMBLE_ENABLED` says. An ensemble answer
+is scored on what it delivered -- its SQL and rows; its attempts, examples
+and rung are the delivered run's; and its time and model calls are every
+run's and the ensemble's own steps', the step that ran the candidates left
+out so its time is not counted twice. The report gains an ENSEMBLE block:
+how the runs agreed, by level; how often they agreed on a wrong answer; the
+runs per question; the rewordings the fidelity gate discarded, by check;
+how often a question's runs were scored at different rungs; the state's
+size; what the Judge did, question by question; and, where it overruled the
+runs, the runs' own choice scored as the delivered answer is -- "wrong ->
+right" and "right -> wrong" counted apart, so the Judge's effect shows both
+ways; how many questions took a second wave; and fusion's yield -- the
+columns joined from other agreeing runs and those declined, the claims they
+added and those of theirs the delivered rows did not bear out. `--json`
+carries each question's runs, rewordings, the Judge's verdicts, that second
+score (`without_judge`), whether a second wave ran (`wave2`) and what fusion
+joined, declined, added and dropped
+([`docs/benchmark.md`](../docs/benchmark.md#the-ensemble-configuration)).
 
 The snippet store is found on the runtime stores' published port,
 `localhost:5435` (6.3), unless `SNIPPET_DB_URL` says otherwise; each
@@ -241,22 +294,82 @@ database's password is the one the stack generated, read from `secrets/`
 when the URL's variable is unset. The measurements below predate the
 `snippets` configuration.
 
+## The paraphrase set
+
+```bash
+python benchmarks/run_benchmark.py --paraphrase-set
+```
+
+Each question asked four ways: as the benchmark asks it, and as each of the
+three rewordings in [`paraphrases.py`](paraphrases.py) asks it -- sixty
+wordings in all, each scored against its question's one reference query,
+since a rewording asks the same question and so has the same answer. The
+accuracy is then over sixty, and the report adds the **stability**: the
+fraction of questions every wording of which came out right, with each
+question's wordings marked in order, its own first:
+
+```
+STABILITY  (the paraphrase set: each question in its own words and three others)
+  stable questions     13/15  (86.7%)  every wording right
+  own wordings         14/15
+  rewordings           43/45
+
+  per question                    wordings 0 1 2 3
+    B06 calendar   4/4  ok ok ok ok
+    B07 grain      3/4  ok ok WRONG ok
+```
+
+It is Phase 0 of the next architecture
+([`Multi-Agent_NL2SQL_arch7.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md),
+section 10), which asks a question several ways and compares the answers --
+worth what that costs only if the pipeline's answer does depend on the
+wording. This measures how often, before anything is built on it; the
+number is in [`docs/benchmark.md`](../docs/benchmark.md#the-paraphrase-set).
+
+The rewordings follow the rules arch7 gives the model that will write them
+(section 22.3): every number, year, name and quoted value kept; the same
+entities, measure, period, direction and row count; no period, filter or
+measure added and none dropped; the words and the shape varied. Each was
+checked by hand against its question's reference SQL, and
+[`tests/benchmarks/test_paraphrases.py`](../tests/benchmarks/test_paraphrases.py)
+holds every one to the fidelity gate's checks in code
+([`fidelity.py`](../agent/nl2sql_agent/fidelity.py): numbers, literals,
+polarity, distinctness) against its question. A rewording a person judged
+faithful that the checks would discard is a failing test, and the checks'
+word lists grow from it, as they first did from these.
+
+`--json` gives each result its `wording` -- 0 the benchmark's own, 1 to 3 a
+rewording -- with the words asked as its `question`, and each configuration
+a `stability` block: the fraction, the stable count, and every question's
+outcomes in wording order; `null` for a run without the set.
+
 ## Options
 
 ```bash
 python benchmarks/run_benchmark.py --only B07 B08      # just these
 python benchmarks/run_benchmark.py --category grain    # just this category
+python benchmarks/run_benchmark.py --paraphrase-set    # each question four ways: the stability
 python benchmarks/run_benchmark.py --json results.json # machine-readable
 python benchmarks/run_benchmark.py --verbose           # every pipeline step
 python benchmarks/run_benchmark.py --model other-model --base-url http://host:11434
 ```
 
-It exits non-zero when anything was not correct, so CI can gate on it.
+It exits non-zero when anything was not correct, or when the grain check
+would refuse a reference query, so CI can gate on it.
 
 The database URLs default to the **published ports on localhost**, because the
 benchmark runs on the host while the agent normally runs inside compose, where
 the same names are service names. Set `DATABASE_URL`, `VECTOR_DB_URL`,
 `CONTEXT_DB_URL`, `SNIPPET_DB_URL` or `EMBED_BASE_URL` to override any of them.
+
+The chat model is the agent's own setting, as everywhere else: `OLLAMA_BASE_URL`
+and `OLLAMA_MODEL`, or `--base-url` and `--model`. Routing needs a catalog,
+which compose mounts for the stack and nothing names on the host: to measure
+the agent as the stack runs it, set `OLLAMA_BASE_URL` to what `.env` says and
+`MODEL_CATALOG=models/catalog.json`; without the catalog every call goes to
+`OLLAMA_MODEL`. The script puts the repository, `agent/` and the shared
+`common/` package on its own path, so nothing needs installing beyond
+`tests/requirements.txt`.
 
 ## MLflow
 
@@ -266,15 +379,16 @@ python benchmarks/run_benchmark.py --compare
 ```
 
 With MLflow answering, each configuration the benchmark measures is an MLflow
-run of its own, named `benchmark <configuration>`, in the agent's experiment
+run of its own, named `benchmark <configuration>` -- with ` (paraphrase set)`
+after it when the set was asked -- in the agent's experiment
 (`nl2sql-agent`, or `MLFLOW_EXPERIMENT_NAME`):
 
 | | |
 |---|---|
-| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids |
-| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had |
+| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`) |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
-| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category` and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
+| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
 
 So a wrong answer is one click from the trace that gave it -- which agent
 read what, which model wrote the SQL, what the repair said -- and two runs
@@ -313,3 +427,7 @@ exist to catch.
 The scorer is tested against both kinds of mistake it could make: too strict
 (rejecting a correct answer whose columns are ordered differently) and too loose
 (accepting the 5x fan-out or the calendar-year read).
+
+The paraphrase set is held offline: every question has three rewordings, no
+wording repeats another, and each rewording passes the fidelity checks
+against its question, all forty-five reported at once when any fails.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,8 @@ for _path in (REPO_ROOT, REPO_ROOT / "agent"):
         sys.path.insert(0, str(_path))
 
 from benchmarks import run_benchmark  # noqa: E402
-from benchmarks.questions import by_id  # noqa: E402
+from benchmarks.paraphrases import PARAPHRASES, wordings  # noqa: E402
+from benchmarks.questions import QUESTIONS, by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
 from tests.benchmarks.test_runner import result  # noqa: E402
 from tests import live_stores
@@ -57,26 +59,34 @@ def test_a_category_can_be_run_on_its_own():
 # ---------------------------------------------------------------------------
 
 
-def test_the_four_configurations_differ_only_in_what_retrieval_is_on():
+#: What a configuration may switch: the four retrieval stages, and the ensemble.
+SWITCHES = {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled", "ensemble_enabled"}
+
+
+def test_the_five_configurations_differ_only_in_which_stages_are_on():
     """That is what makes a difference between two rows attributable. If they
     differed in the model or the database too, the comparison would mean nothing.
     """
-    assert set(run_benchmark.CONFIGURATIONS) == {"schema-only", "knowledge", "multi-shot", "snippets"}
-    keys = [set(c) for c in run_benchmark.CONFIGURATIONS.values()]
-    assert all(k == keys[0] for k in keys)
-    assert keys[0] == {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled"}
+    assert list(run_benchmark.CONFIGURATIONS) == ["schema-only", "knowledge", "multi-shot", "snippets", "ensemble"]
+    assert all(set(c) == SWITCHES for c in run_benchmark.CONFIGURATIONS.values())
 
 
 def test_each_configuration_adds_one_stage_to_the_one_before():
-    schema, knowledge, multi, snippets = (
-        run_benchmark.CONFIGURATIONS[name]
-        for name in ("schema-only", "knowledge", "multi-shot", "snippets")
-    )
+    schema, knowledge, multi, snippets, ensemble = run_benchmark.CONFIGURATIONS.values()
     assert not any(schema.values())
     assert knowledge["rag_enabled"] and not knowledge["examples_enabled"]
     assert not knowledge["snippets_enabled"]
     assert multi["examples_enabled"] and multi["multi_shot_enabled"] and not multi["snippets_enabled"]
-    assert all(snippets.values())
+    assert snippets == {**multi, "snippets_enabled": True}
+    assert ensemble == {**snippets, "ensemble_enabled": True}
+
+
+def test_only_the_ensemble_configuration_asks_several_ways():
+    """ENSEMBLE_ENABLED is on by default, so a configuration that left it out
+    would be the ensemble in every row and the retrieval ladder would stop
+    measuring retrieval."""
+    on = [name for name, c in run_benchmark.CONFIGURATIONS.items() if c["ensemble_enabled"]]
+    assert on == ["ensemble"]
 
 
 def test_every_retrieval_switch_the_agent_has_is_set_by_each_configuration():
@@ -85,10 +95,9 @@ def test_every_retrieval_switch_the_agent_has_is_set_by_each_configuration():
     from nl2sql_agent.config import Settings
 
     switches = {name for name in vars(Settings()) if name.endswith("_enabled")}
-    retrieval = {"rag_enabled", "examples_enabled", "multi_shot_enabled", "snippets_enabled"}
-    assert retrieval <= switches
+    assert SWITCHES <= switches
     for configuration in run_benchmark.CONFIGURATIONS.values():
-        assert set(configuration) == retrieval
+        assert set(configuration) == SWITCHES
 
 
 def test_building_settings_applies_the_configuration_and_the_overrides():
@@ -129,9 +138,11 @@ def test_a_host_default_takes_the_password_the_stack_generated(monkeypatch, tmp_
     assert settings.embed_base_url == "http://localhost:11434"
 
 
-def test_the_default_configuration_is_the_full_agent():
+def test_the_default_configuration_is_every_retrieval_stage_asked_once():
+    """One run a question: the measurement every earlier release's numbers
+    are, and a quarter of the ensemble's cost once it asks four ways."""
     assert run_benchmark.parse_args([]).config == "snippets"
-    assert all(run_benchmark.CONFIGURATIONS["snippets"].values())
+    assert run_benchmark.CONFIGURATIONS["snippets"] == {**dict.fromkeys(SWITCHES, True), "ensemble_enabled": False}
 
 
 def test_the_snippet_store_is_found_on_its_published_port(monkeypatch, tmp_path):
@@ -291,6 +302,95 @@ def test_the_agent_is_asked_the_question_text_and_nothing_else(database):
     assert agent.asked == ["How many stores are there?"]
 
 
+class _Reference:
+    """A database that knows one thing: the reference answer."""
+
+    def __init__(self, rows) -> None:
+        self._rows = rows
+
+    def run_select(self, sql: str):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(rows=self._rows)
+
+
+def test_a_rewording_is_asked_in_its_own_words_and_scored_against_its_questions_reference():
+    """A rewording asks the same question, so it has the same answer: the
+    agent hears the rewording, and the reference is the question's."""
+    text = PARAPHRASES["B01"][1]
+    agent = FakeAgent({"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1})
+    result = run_benchmark.run_question(agent, _Reference([[10]]), by_id("B01"), StageTimer(), asked=text, wording=2)
+    assert agent.asked == [text]
+    assert (result.question, result.wording, result.label, result.outcome) == (text, 2, "B01.2", CORRECT)
+
+    crashed = run_benchmark.run_question(
+        FakeAgent(raises=RuntimeError("connection reset")), _Reference([[10]]), by_id("B01"), StageTimer(),
+        asked=text, wording=2,
+    )
+    assert (crashed.question, crashed.wording, crashed.outcome) == (text, 2, FAILED)
+
+
+def test_an_ensemble_answer_is_scored_from_what_it_delivered_and_timed_from_every_run():
+    """arch7: the rows and SQL scored are the delivered ones; the attempts,
+    the examples and the rung are the delivered run's; the time and the model
+    calls are every run's and the ensemble's own nodes', the node that ran
+    the candidates left out so its time is not counted twice."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.ensemble_state import Candidate, Decision, new_ensemble_state
+    from nl2sql_agent.state import TraceEntry, new_state
+
+    run = {**new_state("q"), "attempts": 3, "example_pairs": [{"pair_id": "Q07"}], "knowledge_chunks": [{}],
+           "complexity": SimpleNamespace(rung="standard"),
+           "trace": [TraceEntry(node="generate_sql", ms=800.0, model_calls=1, model="m", rung="standard")]}
+    state = {
+        **new_ensemble_state("q"),
+        "candidates": [Candidate(index=0, wording="q", origin="original", wave=1, state=run, outcome="answered")],
+        "decision": Decision(chosen=0),
+        "sql": "SELECT 10", "result": {"rows": [[10]]},
+        "trace": [TraceEntry(node="screen", ms=100.0, model_calls=1, model="m", rung="light"),
+                  TraceEntry(node="answer", ms=900.0), TraceEntry(node="deliver", ms=1.0)],
+    }
+    result = run_benchmark.run_question(FakeAgent(state), _Reference([[10]]), by_id("B01"), StageTimer())
+
+    assert (result.outcome, result.sql, result.attempts) == (CORRECT, "SELECT 10", 3)
+    assert (result.examples, result.knowledge_chunks, result.rung) == (["Q07"], 1, "standard")
+    assert (result.agreement, result.candidates, result.candidate_rungs) == ("none", 1, ["standard"])
+    assert result.rejections == {} and result.state_bytes > 0
+    assert result.timing.as_dict() == {"screen": 0.1, "deliver": 0.001, "generate_sql": 0.8}
+    assert result.model_calls == {"screen": 1, "generate_sql": 1}
+    assert [route["node"] for route in result.routes] == ["screen", "generate_sql"]
+
+
+def test_the_ensemble_configuration_asks_through_the_ensemble(monkeypatch, capsys):
+    from types import SimpleNamespace
+
+    import benchmarks.run_benchmark as rb
+    import nl2sql_agent.ensemble as ensemble_module
+
+    built = []
+
+    class _Ensemble:
+        def __init__(self, settings, *, agent, on_progress):
+            built.append((agent, on_progress))
+            self.inner = agent
+
+        def run(self, question, **kwargs):
+            return self.inner.run(question, **kwargs)
+
+        tracer = property(lambda self: self.inner.tracer)
+        settings = property(lambda self: self.inner.settings)
+
+    monkeypatch.setattr(ensemble_module, "EnsembleAgent", _Ensemble)
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: SimpleNamespace(
+        **{**vars(_settings()), "ensemble_enabled": configuration == "ensemble"}))
+    code, agents = _drive(monkeypatch, {"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1},
+                          argv=["--only", "B01", "--config", "ensemble"], keep_settings=True)
+    assert code == 0
+    [(agent, timer)] = built
+    assert agent is agents[0] and isinstance(timer, StageTimer)
+
+
 # ---------------------------------------------------------------------------
 # Output
 # ---------------------------------------------------------------------------
@@ -362,6 +462,21 @@ def test_the_comparison_table_lists_every_configuration(capsys):
     out = capsys.readouterr().out
     for name in ("schema-only", "knowledge", "multi-shot", "snippets"):
         assert name in out
+    assert "stable" not in out
+
+
+def test_comparing_the_paraphrase_set_adds_the_stable_questions(capsys):
+    reworded = result("B01", "schema", WRONG, 1.0)
+    reworded.wording = 1
+    reports = [
+        BenchmarkReport(label="snippets", results=[result("B01", "schema", CORRECT, 1.0), reworded]),
+        BenchmarkReport(label="knowledge", results=[result("B01", "schema", CORRECT, 1.0)]),
+    ]
+    run_benchmark.print_comparison(reports)
+    lines = capsys.readouterr().out.splitlines()
+    assert "stable" in next(line for line in lines if line.strip().startswith("configuration"))
+    assert next(line for line in lines if line.strip().startswith("snippets")).split()[-1] == "0/1"
+    assert next(line for line in lines if line.strip().startswith("knowledge")).split()[-1] == "1/1"
 
 
 # ---------------------------------------------------------------------------
@@ -423,11 +538,17 @@ def _settings():
         db_schema="public",
         statement_timeout_ms=30000,
         max_rows=50,
+        ensemble_enabled=False,
+        grain_check_enabled=True,
     )
 
 
 class _StubAgent:
     """An agent that answers every question with the same canned state."""
+
+    #: What the database's grains measure to, for the tests that say: with
+    #: none, the grain check has nothing to hold a reference to.
+    measured: dict = {}
 
     def __init__(self, state: dict, tracer=None) -> None:
         from nl2sql_agent.config import Settings
@@ -438,6 +559,9 @@ class _StubAgent:
         self.settings = Settings()
         # Untraced unless a test hands it a tracer: MLFLOW_TRACKING_URI unset.
         self.tracer = tracer or Tracer(self.settings)
+
+    def grains(self) -> dict:
+        return self.measured
 
     def run(self, question: str, **kwargs) -> dict:
         self.asked.append(question)
@@ -450,12 +574,13 @@ class _StubAgent:
         return state
 
 
-def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None, tracer=None):
+def _drive(monkeypatch, state: dict, *, argv: list[str], expected_rows=None, tracer=None, keep_settings=False):
     """Run `main` with the agent, the database and the reference rows faked."""
     import benchmarks.run_benchmark as rb
 
     monkeypatch.setattr(rb, "reference_rows", lambda db, q: expected_rows or [[10]])
-    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    if not keep_settings:
+        monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
 
     class _FakeDatabase:
         def __init__(self, *a, **k) -> None:
@@ -489,6 +614,7 @@ def test_a_run_where_every_answer_is_right_exits_zero(monkeypatch, capsys):
     assert code == 0
     assert "execution accuracy   1/1" in out
     assert agents[0].asked == ["How many stores are there?"]
+    assert "STABILITY" not in out
 
 
 def test_a_wrong_answer_exits_non_zero_and_is_named(monkeypatch, capsys):
@@ -533,9 +659,9 @@ def test_comparing_configurations_runs_each_one_and_prints_the_table(monkeypatch
     )
     out = capsys.readouterr().out
     assert code == 0
-    assert len(agents) == 4, "one agent per configuration"
+    assert len(agents) == 5, "one agent per configuration"
     assert "comparison" in out
-    for configuration in ("schema-only", "knowledge", "multi-shot", "snippets"):
+    for configuration in ("schema-only", "knowledge", "multi-shot", "snippets", "ensemble"):
         assert configuration in out
 
 
@@ -556,9 +682,63 @@ def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys,
     payload = json.loads(out_path.read_text())
     [result] = payload["configurations"][0]["results"]
     assert result["id"] == "B01"
+    assert result["wording"] == 0
+    assert payload["configurations"][0]["stability"] is None
     assert result["model_calls"] == {"generate_sql": 1}
     assert result["narrative_score"] == 1.0
     assert payload["configurations"][0]["stage_totals"]["generate_sql"] == 1.5
+
+
+RIGHT = {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False}, "attempts": 1}
+
+
+def test_the_paraphrase_set_asks_each_question_its_own_way_then_three_others(monkeypatch, capsys):
+    code, agents = _drive(monkeypatch, RIGHT, argv=["--only", "B01", "B02", "--paraphrase-set"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert agents[0].asked == [*wordings(by_id("B01")), *wordings(by_id("B02"))]
+    assert "  B01.3 [schema] " in out, "each wording is named as it is asked"
+    assert "execution accuracy   8/8" in out
+    assert "stable questions     2/2  (100.0%)" in out
+    assert "s for 8 wordings" in out
+
+
+def test_one_wrong_rewording_makes_its_question_unstable_and_fails_the_run(monkeypatch, capsys, tmp_path):
+    """Every wording scored against the question's one reference; the report
+    names the wording that missed, per question and in the misses."""
+    import benchmarks.run_benchmark as rb
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+
+    missed = PARAPHRASES["B01"][1]
+    wrong = {**RIGHT, "result": {"rows": [[11]], "columns": ["n"], "truncated": False}}
+
+    class _ByWording(_StubAgent):
+        def run(self, question: str, **kwargs) -> dict:
+            self._state = wrong if question == missed else RIGHT
+            return super().run(question, **kwargs)
+
+    monkeypatch.setattr(rb, "reference_rows", lambda db, q: [[10]])
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    monkeypatch.setattr(db_module, "Database", lambda *a, **k: None)
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", lambda settings, **kwargs: _ByWording(RIGHT))
+    out_path = tmp_path / "paraphrase.json"
+
+    code = rb.main(["--only", "B01", "B02", "--paraphrase-set", "--json", str(out_path)])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "stable questions     1/2  (50.0%)" in out
+    assert "own wordings         2/2" in out and "rewordings           5/6" in out
+    assert "B01 schema     3/4  ok ok WRONG ok" in out
+    assert "    B01.2 wrong" in out
+
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["stability"] == {
+        "fraction": 0.5, "stable": 1, "questions": 2,
+        "by_question": {"B01": [CORRECT, CORRECT, WRONG, CORRECT], "B02": [CORRECT] * 4},
+    }
+    assert [(r["id"], r["wording"]) for r in payload["results"][:4]] == [("B01", w) for w in range(4)]
+    assert payload["results"][2]["question"] == missed
 
 
 def test_verbose_puts_each_agent_step_on_stderr(monkeypatch, capsys):
@@ -661,16 +841,17 @@ def test_the_database_url_flag_overrides_the_settings(monkeypatch):
 
 def test_the_script_puts_the_repository_on_the_path_for_itself():
     """`python benchmarks/run_benchmark.py` is how this is actually invoked,
-    and then nothing has arranged the imports: `benchmarks` and `agent` are
-    not on `sys.path` and the first import fails. The bootstrap at the top of
-    the file is the fix, and under pytest it never runs -- conftest has
-    already done the same job -- so it is exercised here with the path put
-    back the way a bare interpreter leaves it.
+    and then nothing has arranged the imports: `benchmarks`, `agent` and the
+    `common` package the agent imports are not on `sys.path` and the first
+    import fails. The bootstrap at the top of the file is the fix, and under
+    pytest it never runs -- conftest has already done the same job -- so it
+    is exercised here with the path put back the way a bare interpreter
+    leaves it.
     """
     import runpy
 
     script = REPO_ROOT / "benchmarks" / "run_benchmark.py"
-    stripped = {str(REPO_ROOT), str(REPO_ROOT / "agent")}
+    stripped = {str(REPO_ROOT), str(REPO_ROOT / "agent"), str(REPO_ROOT / "common")}
     # Every occurrence, not the first: pytest inserts the rootdir and so does
     # this module, so removing one entry leaves the bootstrap still satisfied
     # and half of it unexercised.
@@ -685,11 +866,34 @@ def test_the_script_puts_the_repository_on_the_path_for_itself():
         namespace = runpy.run_path(str(script), run_name="not_main")
         assert str(REPO_ROOT) in sys.path
         assert str(REPO_ROOT / "agent") in sys.path
+        assert str(REPO_ROOT / "common") in sys.path
     finally:
         sys.path[:] = saved_path
         sys.modules.update(saved_modules)
 
     assert callable(namespace["main"])
+
+
+@pytest.mark.parametrize("script,then", [
+    ("benchmarks/run_benchmark.py", "import nl2sql_agent.config"),
+    ("models/calibrate.py", "pass"),
+])
+def test_a_bare_interpreter_can_reach_the_agent_through_the_scripts_own_bootstrap(script, then, tmp_path):
+    """Since 6.2 the agent imports `nl2sql_common`, which the images install
+    and a checkout does not, and both scripts that run the agent on the host
+    left `common/` off the path: each stopped at its first import of the
+    agent with "No module named 'nl2sql_common'" -- found by the first live
+    run of the paraphrase set. Every test above runs where conftest has put
+    `common/` on the path already, so only an interpreter of its own sees
+    what a person typing the command gets."""
+    import os
+    import subprocess
+
+    code = f"import runpy; runpy.run_path({str(REPO_ROOT / script)!r}, run_name='bootstrap'); {then}"
+    environment = {name: value for name, value in os.environ.items() if name != "PYTHONPATH"}
+    ran = subprocess.run([sys.executable, "-c", code], cwd=tmp_path, env=environment,
+                         capture_output=True, text=True, timeout=300)
+    assert ran.returncode == 0, ran.stderr[-1500:]
 
 
 def test_running_it_as_a_script_calls_main_and_exits_with_its_code():
@@ -707,3 +911,289 @@ def test_running_it_as_a_script_calls_main_and_exits_with_its_code():
     finally:
         sys.argv = saved_argv
     assert raised.value.code == 0
+
+
+def test_what_the_ensemble_did_with_a_question_is_measured():
+    """arch7 section 11 and the risks document: the agreement, the rewordings
+    discarded by check, the rung each run was scored at, the state's size."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.ensemble_state import Agreement, Candidate, Paraphrase, new_ensemble_state
+    from nl2sql_agent.state import new_state
+
+    def run(index, rung):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state={**new_state("w"), "complexity": SimpleNamespace(rung=rung)})
+
+    state = {
+        **new_ensemble_state("q"),
+        "agreement": Agreement(admissible=3, agreed=3, total=3, level="unanimous"),
+        "paraphrases": [Paraphrase(1, "a", "x", status="faithful"),
+                        Paraphrase(2, "b", "y", status="discarded", reason="F4 contract: period"),
+                        Paraphrase(3, "c", "z", status="discarded", reason="F1 numbers: 5 added"),
+                        Paraphrase(4, "d", "z", status="discarded", reason="F4 verdict: injection")],
+        "candidates": [run(2, "standard"), run(0, "light"), run(1, "light")],
+    }
+    measured = run_benchmark.ensemble_measures(state)
+    assert (measured["agreement"], measured["agreed"], measured["candidates"]) == ("unanimous", 3, 3)
+    assert measured["rejections"] == {"F4": 2, "F1": 1}
+    assert measured["rewordings"][1] == {"index": 2, "text": "b", "changed": "y", "status": "discarded",
+                                         "reason": "F4 contract: period"}
+    assert [(run["index"], run["outcome"], run["chosen"]) for run in measured["runs"]] == [
+        (0, "answered", False), (1, "answered", False), (2, "answered", False)]
+    assert measured["candidate_rungs"] == ["light", "light", "standard"]
+    assert measured["state_bytes"] > 0
+    assert (measured["judged"], measured["verdicts"]) == ("not asked", [])
+    assert (measured["wave2"], measured["columns_fused"], measured["joined"], measured["declined"]) == (
+        False, True, [], [])
+    assert (measured["claims_added"], measured["claims_dropped"]) == (0, 0)
+    assert run_benchmark.ensemble_measures(new_state("q")) == {}
+
+
+def test_a_second_wave_and_what_fusion_did_are_measured():
+    from nl2sql_agent.ensemble_state import Decision, DeclinedColumn, JoinedColumn, new_ensemble_state
+
+    state = {
+        **new_ensemble_state("q"),
+        "waves": 2,
+        "decision": Decision(
+            chosen=0, columns_fused=False, claims_added=2, claims_dropped=1,
+            joined_columns=[JoinedColumn(column="region_name", from_candidate=1, key="store_key", table="dim_store")],
+            declined_columns=[DeclinedColumn(column="brand_name", from_candidate=3, why="row 2 has no match in run 3")],
+        ),
+    }
+    measured = run_benchmark.ensemble_measures(state)
+    assert (measured["wave2"], measured["columns_fused"]) == (True, False)
+    assert measured["joined"] == [{"column": "region_name", "from_candidate": 1, "key": "store_key", "table": "dim_store"}]
+    assert measured["declined"] == [{"column": "brand_name", "from_candidate": 3, "why": "row 2 has no match in run 3"}]
+    assert (measured["claims_added"], measured["claims_dropped"]) == (2, 1)
+
+
+def test_the_judges_verdicts_are_measured_beside_each_run():
+    from nl2sql_agent.ensemble_state import Candidate, GroupVerdict, Judgement, new_ensemble_state
+    from nl2sql_agent.state import new_state
+
+    def run(index, group):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state=new_state("w"), group=group)
+
+    state = {
+        **new_ensemble_state("q"),
+        "candidates": [run(0, 1), run(1, 0), run(2, None)],
+        "judgement": Judgement(verdicts=[GroupVerdict(0, False, "wrong grain"), GroupVerdict(1, True, "right")],
+                               set_aside=[1], overruled=True, instead_of=1),
+    }
+    measured = run_benchmark.ensemble_measures(state)
+    assert measured["judged"] == "overruled"
+    assert measured["verdicts"] == [{"group": 0, "accepted": False, "why": "wrong grain"},
+                                    {"group": 1, "accepted": True, "why": "right"}]
+    assert [run["accepted"] for run in measured["runs"]] == [True, False, None]
+
+
+def test_the_answer_the_runs_alone_would_have_chosen_is_scored_when_the_judge_overrules_them():
+    from nl2sql_agent.ensemble_state import Candidate, Judgement, new_ensemble_state
+    from nl2sql_agent.state import QueryResult, new_state
+
+    def run(index, value):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state={**new_state("w"), "result": QueryResult(columns=["n"], rows=[[value]])})
+
+    state = {**new_ensemble_state("q"), "candidates": [run(0, 10), run(1, 99)],
+             "judgement": Judgement(overruled=True, instead_of=1)}
+    assert run_benchmark.without_judge(state, [[10]], False, CORRECT) == WRONG
+    assert run_benchmark.without_judge(state, [[99]], False, WRONG) == CORRECT
+    gone = {**state, "judgement": Judgement(overruled=True, instead_of=7)}
+    assert run_benchmark.without_judge(gone, [[10]], False, CORRECT) == FAILED
+    kept = {**state, "judgement": Judgement()}
+    assert run_benchmark.without_judge(kept, [[10]], False, CORRECT) == CORRECT
+    assert run_benchmark.without_judge(new_state("q"), [[10]], False, CORRECT) == ""
+
+
+def test_the_report_and_its_json_say_what_the_ensemble_did(capsys):
+    from tests.benchmarks.test_runner import _ensembled
+
+    report = BenchmarkReport(label="ensemble", results=[
+        _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard"), size=2048),
+        _ensembled("B02", WRONG, "majority", size=1024, runs=3, judged="overruled", without=CORRECT, wave2=True,
+                   joined=("region_name",), declined=("brand_name",), added=2, dropped=1),
+    ])
+    run_benchmark.print_report(report)
+    out = capsys.readouterr().out
+    assert "ENSEMBLE" in out
+    assert "agreement            majority 1, unanimous 1" in out
+    assert "agreed, but wrong    1" in out
+    assert "runs per question    4 (median), 3 to 4" in out
+    assert "rewordings discarded 2: F4 2" in out
+    assert "runs at mixed rungs  1 of 2 question(s)" in out
+    assert "state, as JSON       2.0 KB median, 2.0 KB largest" in out
+    assert "the Judge            accepted 1, overruled 1" in out
+    assert "overruled the runs   1: wrong -> right 0, right -> wrong 1" in out
+    assert "second wave          1 of 2 question(s)" in out
+    assert "fusion               columns joined 1, declined 1; claims added 2, dropped 1" in out
+    [config] = run_benchmark.as_json([report])["configurations"]
+    assert config["ensemble"]["agreement"] == {"unanimous": 1, "majority": 1}
+    assert config["ensemble"]["judge"] == {"accepted": 1, "overruled": 1, "fixed": 0, "broke": 1}
+    assert config["results"][0]["candidate_rungs"] == ["light", "standard"]
+    assert (config["results"][1]["judged"], config["results"][1]["without_judge"]) == ("overruled", CORRECT)
+    assert config["ensemble"]["second_waves"] == 1
+    assert config["ensemble"]["fusion"] == {"columns joined": 1, "columns declined": 1, "claims added": 2,
+                                            "claims dropped": 1}
+    second = config["results"][1]
+    assert (second["wave2"], second["columns_fused"], second["claims_added"], second["claims_dropped"]) == (
+        True, True, 2, 1)
+    assert [c["column"] for c in second["joined"]] == ["region_name"]
+    assert [c["column"] for c in second["declined"]] == ["brand_name"]
+    plain = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0, [])])
+    assert run_benchmark.as_json([plain])["configurations"][0]["ensemble"] is None
+
+
+def test_a_report_with_no_state_measured_says_nothing_of_its_size(capsys):
+    from tests.benchmarks.test_runner import _ensembled
+
+    run_benchmark.print_report(
+        BenchmarkReport(label="ensemble", results=[_ensembled("B01", CORRECT, "single", size=0, judged="")])
+    )
+    out = capsys.readouterr().out
+    assert "ENSEMBLE" in out and "state, as JSON" not in out
+    assert "the Judge" not in out, "a run with no Judge says nothing of one"
+
+
+# ---------------------------------------------------------------------------
+# arch7.3 section 22.14: what the grain check did, measured
+# ---------------------------------------------------------------------------
+
+
+def _attempts(*messages):
+    """A run's history: one refused attempt per message, by the Static Validator."""
+    from nl2sql_agent.state import Attempt, Issue
+
+    return [Attempt(sql="SELECT 1", issues=[Issue(source="static", message=message)]) for message in messages]
+
+
+def _grain_messages():
+    from tests.agent import test_grain
+
+    return test_grain.ON_THE_DATE_MESSAGE, test_grain.ON_NO_DATE_MESSAGE
+
+
+def test_a_run_the_grain_check_sent_to_repair_is_counted_with_how_it_ended():
+    """Scored against the reference, as the answer is: what the check bought
+    is counted beside what it cost."""
+    from types import SimpleNamespace
+
+    on_the_date, on_no_date = _grain_messages()
+    repaired = {"attempt_history": _attempts(on_the_date, on_no_date), "result": SimpleNamespace(rows=[[10]])}
+    assert run_benchmark.grain_repairs(repaired, [[10]], False) == [{"run": 0, "sent": 2, "ended": CORRECT}]
+    assert run_benchmark.grain_repairs(repaired, [[11]], False) == [{"run": 0, "sent": 2, "ended": WRONG}]
+    # As the benchmark's stubs and a JSON state give a result: a dict.
+    as_dict = {**repaired, "result": {"rows": [[10]]}}
+    assert run_benchmark.grain_repairs(as_dict, [[10]], False)[0]["ended"] == CORRECT
+
+
+def test_a_run_it_sent_to_repair_that_never_answered_is_counted_as_failed():
+    on_the_date, _ = _grain_messages()
+    gave_up = {"attempt_history": _attempts(on_the_date), "result": None, "error": "Could not produce a valid query"}
+    assert run_benchmark.grain_repairs(gave_up, [[10]], False) == [{"run": 0, "sent": 1, "ended": FAILED}]
+    errored = {"attempt_history": _attempts(on_the_date), "result": {"rows": [[10]]}, "error": "timeout"}
+    assert run_benchmark.grain_repairs(errored, [[10]], False)[0]["ended"] == FAILED
+
+
+def test_a_run_refused_for_anything_else_is_not_the_grain_checks():
+    from nl2sql_agent.state import new_state
+
+    other = {"attempt_history": _attempts('column "nope" does not exist', "fact_x is not in scope."),
+             "result": {"rows": [[10]]}}
+    assert run_benchmark.grain_repairs(other, [[10]], False) == []
+    assert run_benchmark.grain_repairs(new_state("q"), [[10]], False) == []
+
+
+def test_under_the_ensemble_each_candidates_run_is_counted_on_its_own():
+    """The trap is repaired inside the run that falls into it, so that is
+    where it is counted: by run, each scored on what that run returned."""
+    from types import SimpleNamespace
+
+    from nl2sql_agent.ensemble_state import Candidate, new_ensemble_state
+    from nl2sql_agent.state import new_state
+
+    on_the_date, _ = _grain_messages()
+
+    def run(index, rows, *refused):
+        return Candidate(index=index, wording="w", origin="original", wave=1, outcome="answered",
+                         state={**new_state("w"), "attempt_history": _attempts(*refused),
+                                "result": SimpleNamespace(rows=rows)})
+
+    state = {**new_ensemble_state("q"), "candidates": [
+        run(2, [[11]], on_the_date), run(0, [[10]]), run(1, [[10]], on_the_date, on_the_date)]}
+    assert run_benchmark.grain_repairs(state, [[10]], False) == [
+        {"run": 1, "sent": 2, "ended": CORRECT}, {"run": 2, "sent": 1, "ended": WRONG}]
+
+
+def test_a_reference_the_check_would_refuse_is_named_and_none_is_with_the_catalogs_grains():
+    from tests.agent import test_grain
+    from tests.grain_fixture import GRAINS
+
+    assert run_benchmark.rejected_references(GRAINS, list(QUESTIONS)) == []
+    assert run_benchmark.rejected_references({}, list(QUESTIONS)) == [], "nothing measured, nothing held"
+    trapped = replace(QUESTIONS[6], reference_sql=test_grain.TRAP)
+    assert run_benchmark.rejected_references(GRAINS, [QUESTIONS[0], trapped]) == ["B07"]
+
+
+def test_the_report_and_its_json_say_what_the_grain_check_did(capsys):
+    from tests.benchmarks.test_runner import result
+
+    repaired = result("B07", "grain", CORRECT, 1.0)
+    repaired.grain_repairs = [{"run": 0, "sent": 1, "ended": CORRECT}, {"run": 2, "sent": 2, "ended": WRONG},
+                              {"run": 3, "sent": 1, "ended": FAILED}]
+    report = BenchmarkReport(label="ensemble", grain_checked=True,
+                             results=[result("B01", "schema", CORRECT, 1.0), repaired])
+    run_benchmark.print_report(report)
+    out = capsys.readouterr().out
+
+    assert "GRAIN CHECK" in out
+    assert "references refused   none" in out
+    assert "runs sent to repair  3: ended right 1, wrong 1, failed 1" in out
+    assert "B07 run 0  refused once, ended ok" in out
+    assert "B07 run 2  refused 2 times, ended WRONG" in out
+    [config] = run_benchmark.as_json([report])["configurations"]
+    assert config["grain"] == {"rejected_references": [],
+                               "repairs": {"runs": 3, "right": 1, "wrong": 1, "failed": 1}}
+    assert config["results"][1]["grain_repairs"] == repaired.grain_repairs
+    assert config["results"][0]["grain_repairs"] == []
+
+
+def test_with_the_check_off_the_report_says_nothing_of_it(capsys):
+    from tests.benchmarks.test_runner import result
+
+    report = BenchmarkReport(label="snippets", results=[result("B01", "schema", CORRECT, 1.0)])
+    run_benchmark.print_report(report)
+    assert "GRAIN CHECK" not in capsys.readouterr().out
+    assert run_benchmark.as_json([report])["configurations"][0]["grain"] is None
+
+
+def test_a_refused_reference_is_said_loudly_and_fails_the_run_whatever_the_answers_scored(monkeypatch, capsys):
+    """A release blocker: every answer right, and the gate still wrong."""
+    from tests.agent import test_grain
+    from tests.grain_fixture import GRAINS
+
+    import benchmarks.run_benchmark as rb
+
+    trapped = replace(by_id("B07"), reference_sql=test_grain.TRAP)
+    monkeypatch.setattr(rb, "QUESTIONS", tuple(trapped if q.id == "B07" else q for q in QUESTIONS))
+    monkeypatch.setattr(_StubAgent, "measured", GRAINS)
+    code, _ = _drive(monkeypatch, {"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1},
+                     argv=["--only", "B07"])
+    out = capsys.readouterr().out
+    assert "execution accuracy   1/1" in out
+    assert "references refused   B07  <-- a right query, refused" in out
+    assert code == 1
+
+
+def test_a_run_reports_the_check_as_on_and_the_references_as_passing_by_default(monkeypatch, capsys):
+    from tests.grain_fixture import GRAINS
+
+    monkeypatch.setattr(_StubAgent, "measured", GRAINS)
+    code, _ = _drive(monkeypatch, {"sql": "SELECT 1", "result": {"rows": [[10]]}, "attempts": 1},
+                     argv=["--only", "B01", "B07"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "references refused   none" in out and "runs sent to repair  0: ended right 0, wrong 0, failed 0" in out

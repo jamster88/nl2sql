@@ -20,6 +20,7 @@ import pytest
 from nl2sql_agent.config import Settings
 from nl2sql_agent.router import (
     CATALOG_SCHEMA,
+    ENSEMBLE_TASKS,
     RoutingError,
     Router,
     build_table,
@@ -35,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 HOST = "http://192.168.10.82:11434"
 ANCHOR = "qwen3.8-256k:latest"
 RUNGS = ("light", "standard", "heavy")
-TASKS = ("supervisor", "generator", "reflection", "narrator", "repair")
+TASKS = ("supervisor", "generator", "reflection", "narrator", "repair", "paraphraser", "judge")
 
 
 def settings(**overrides) -> Settings:
@@ -118,6 +119,7 @@ def test_a_catalog_is_read(tmp_path):
     ("not json", "is not a model catalog"),
     ("[1, 2]", "a catalog of schema None"),
     ('{"schema": 1, "models": []}', "a catalog of schema 1"),
+    ('{"schema": 4, "models": []}', "a catalog of schema 4; this agent reads schema 3"),
 ])
 def test_a_catalog_that_cannot_be_used_stops_the_agent(tmp_path, content, message):
     """Routing everything to one model the operator did not choose, silently,
@@ -223,6 +225,21 @@ def test_no_more_models_than_the_host_keeps_loaded():
     assert table.models() == [ANCHOR, "broad:14b"]
     assert models_of(table, "narrator") == ["broad:14b"] * 3
     assert build_table(settings(model_max_loaded=1), catalog(entry("broad:14b", p50=2.0))).models() == [ANCHOR]
+
+
+def test_a_rung_no_task_is_called_at_wins_no_model_a_place():
+    """The Judge is called only at heavy: a model suited to all three of its
+    rungs takes one that counts, and loses the place to one that takes two
+    the Supervisor and the reflection are called at. Its other two rungs
+    are still filled in the table, by the models chosen."""
+    table = build_table(settings(model_max_loaded=2), catalog(
+        entry(ANCHOR, p50=9.0),
+        entry("judge-only:12b", p50=1.0, tasks=("judge",)),
+        entry("light:7b", p50=2.0, suited="light", tasks=("supervisor", "reflection")),
+    ))
+    assert table.models() == [ANCHOR, "light:7b"]
+    assert models_of(table, "judge") == [ANCHOR] * 3
+    assert table.cells[("supervisor", "light")].model == "light:7b"
 
 
 def test_an_unmeasured_candidate_follows_every_timed_one_smallest_first():
@@ -459,3 +476,115 @@ def test_a_chain_names_each_model_once():
     with pytest.raises(ConnectionError):
         routed.invoke([])
     assert clients[ANCHOR].calls == 1 and routed.hops == []
+
+
+# ---------------------------------------------------------------------------
+# arch7: the host gate, and the two tasks the router does not have yet
+# ---------------------------------------------------------------------------
+
+
+def test_every_routed_call_waits_for_a_slot_of_the_hosts_gate():
+    """With one slot, a call another thread is making holds this one back
+    until it is done -- whichever job or candidate either belongs to."""
+    clients = {"light:7b": Client("light:7b")}
+    routed = router(clients)
+    answered = threading.Event()
+
+    def call() -> None:
+        routed.model("generator", "light").invoke([])
+        answered.set()
+
+    with routed.gate.slot():
+        worker = threading.Thread(target=call)
+        worker.start()
+        assert not answered.wait(0.2), "the call went to the host while the only slot was held"
+    assert answered.wait(5)
+    worker.join()
+
+
+def test_a_call_that_hops_gives_its_slot_back_before_the_next_model_is_asked():
+    clients = {"light:7b": Client("light:7b", fail="model 'light:7b' not found"),
+               ANCHOR: Client(ANCHOR, content="SELECT 2")}
+    routed = router(clients)
+    assert routed.model("generator", "light").invoke([]).content == "SELECT 2"
+    assert routed.gate.waiting == 0
+    with routed.gate.slot():
+        pass  # free: neither attempt kept it
+
+
+# ---------------------------------------------------------------------------
+# The ensemble's two tasks (arch7 section 22.10), and catalogs that predate them
+# ---------------------------------------------------------------------------
+
+
+def _schema_2(*models) -> dict:
+    """A catalog as models/build_catalog.py wrote one before 7.0: five tasks."""
+    five = TASKS[:5]
+    for model in models:
+        for part in ("suited", "suited_from"):
+            model[part] = {task: value for task, value in model[part].items() if task in five}
+        model["prior"] = {task: "heavy" for task in five}
+    return {**catalog(*models), "schema": 2, "tasks": list(five),
+            "task_budgets": {task: 8192 for task in five}}
+
+
+def test_a_schema_2_catalog_is_read_with_the_two_tasks_unmeasured(tmp_path):
+    """R4: every calibrated host's catalog predates the two tasks. It is read,
+    not refused, and nothing is routed for them -- they go to OLLAMA_MODEL,
+    routing on measured suitability only, as everything else is."""
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(_schema_2(entry("middle:14b", p50=1.0, tasks=TASKS[:5]))))
+    read = load_catalog(str(path))
+
+    assert read["schema"] == 2 and read["tasks"] == [*TASKS[:5], *ENSEMBLE_TASKS]
+    assert read["task_budgets"]["paraphraser"] == 8192 and read["task_budgets"]["judge"] == 16384
+    [model] = read["models"]
+    assert {task: model["suited"][task] for task in ENSEMBLE_TASKS} == {"paraphraser": None, "judge": None}
+    assert model["suited_from"]["judge"] == "unmeasured" and model["prior"]["paraphraser"] is None
+    table = build_table(settings(), read, catalog_path=str(path), host={ANCHOR, "middle:14b"})
+    assert models_of(table, "generator") == ["middle:14b"] * 3
+    assert models_of(table, "paraphraser") == models_of(table, "judge") == [ANCHOR] * 3
+    assert any("schema 2: paraphraser and judge are unmeasured" in note for note in table.notes)
+
+
+def test_the_committed_catalog_is_calibrated_for_the_two_tasks():
+    """arch7's Phase 4 rebuilt the checkout's own catalog at schema 3 and
+    calibrated the Paraphraser and the Judge on the host, so it is read as it
+    is, and each of the two tasks has a model measured suited to it."""
+    read = load_catalog(str(REPO_ROOT / "models" / "catalog.json"))
+    assert read["schema"] == CATALOG_SCHEMA and read["tasks"][-2:] == list(ENSEMBLE_TASKS)
+    [reference] = [model for model in read["models"] if model["name"] == read["reference"]]
+    assert all(task in reference["measured"] for task in ENSEMBLE_TASKS)
+    for task in ENSEMBLE_TASKS:
+        assert any(
+            model["suited"][task] and model["suited_from"][task] == "calibration" for model in read["models"]
+        ), task
+
+
+def test_a_schema_3_catalog_is_read_as_it_is(tmp_path):
+    path = tmp_path / "catalog.json"
+    path.write_text(json.dumps(catalog(entry("middle:14b", p50=1.0))))
+    read = load_catalog(str(path))
+    assert read["schema"] == CATALOG_SCHEMA == 3
+    table = build_table(settings(), read, host={ANCHOR, "middle:14b"})
+    assert models_of(table, "judge") == ["middle:14b"] * 3, "a measured task is routed like any other"
+    assert not any("unmeasured" in note for note in table.notes)
+
+
+def test_the_routing_table_shows_all_seven_tasks():
+    table = build_table(settings(), _schema_2(entry("middle:14b", p50=1.0, tasks=TASKS[:5])),
+                        host={ANCHOR, "middle:14b"})
+    assert {task for task, _ in table.cells} == set(TASKS)
+    lines = table.lines()
+    assert any(line.strip().startswith("paraphraser") for line in lines)
+    assert any(line.strip().startswith("judge") for line in lines)
+    assert set(table.describe()["table"]) == set(TASKS)
+
+
+@pytest.mark.parametrize("variable,task", [("model_route_paraphraser", "paraphraser"), ("model_route_judge", "judge")])
+def test_the_ensembles_tasks_take_a_pin_as_the_five_do(variable, task):
+    with pytest.raises(RoutingError, match=variable.upper()):
+        build_table(settings(**{variable: "nonsense=x"}), catalog(entry("middle:14b", p50=1.0)))
+    table = build_table(settings(**{variable: "light=middle:14b"}), catalog(entry("middle:14b", p50=1.0)),
+                        host={ANCHOR, "middle:14b"})
+    assert table.cells[(task, "light")].why == f"pinned by {variable.upper()}"

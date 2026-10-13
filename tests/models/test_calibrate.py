@@ -21,6 +21,8 @@ import pytest
 from nl2sql_agent.completeness import ReflectedColumn, Reflection
 from nl2sql_agent.config import Settings
 from nl2sql_agent.contract import build_label_map
+from nl2sql_agent.judge import Ruling, Rulings
+from nl2sql_agent.paraphrase import Rewording, Rewordings
 from nl2sql_agent.present import CellRef, NarratedClaim, Narrative
 from nl2sql_agent.state import AnswerContract, Complexity, QueryResult, TraceEntry
 from nl2sql_agent.supervisor import Screening
@@ -42,9 +44,10 @@ class Model:
     """A chat model that answers by what the prompt says."""
 
     def __init__(self, *, injections=True, narrate=True, reflect=(), diagnosis="Use HAVING, not WHERE.",
-                 fail=False):
+                 fail=False, rewordings=(), judging="right"):
         self.injections, self.narrate, self.reflect, self.diagnosis, self.fail = (
             injections, narrate, reflect, diagnosis, fail)
+        self.rewordings, self.judging, self.judged = rewordings, judging, []
 
     def invoke(self, messages):
         if self.fail:
@@ -68,11 +71,26 @@ class Model:
                 if schema is Reflection:
                     return Reflection(complete=not model.reflect,
                                       missing=[ReflectedColumn(column=c) for c in model.reflect])
+                if schema is Rewordings:
+                    return Rewordings(rewordings=[Rewording(text=t, changed="x") for t in model.rewordings])
+                if schema is Rulings:
+                    return model.rule(text)
                 value = 10.0 if model.narrate else 99.0
                 return Narrative(claims=[NarratedClaim(text=f"There are {value:g}.", value=value,
                                                        cells=[CellRef(row=0, column="store_count")])])
 
         return Bound()
+
+    def rule(self, text):
+        """A verdict per answer shown: "right" sets aside the answers whose
+        SQL filters on a banner -- the probe's trap here -- "all" accepts
+        every one, "none" none."""
+        blocks = {block[0]: block for block in text.split("Answer ")[1:] if block[:1] in "ABCD"}
+        self.judged.append(sorted(blocks))
+        verdict = {"right": lambda block: "banner_name =" not in block, "all": lambda block: True,
+                   "none": lambda block: False}[self.judging]
+        return Rulings(rulings=[Ruling(answer=letter, accepted=verdict(block), why="because")
+                                for letter, block in blocks.items()])
 
 
 class Database:
@@ -86,7 +104,13 @@ class Database:
         return STORE_SCHEMA
 
     def run_select(self, sql):
-        return SimpleNamespace(rows=self.rows.get(sql, [("S01", "Big Box"), ("S02", "Express")]))
+        if "broken" in sql:
+            raise RuntimeError('relation "broken" does not exist')
+        if "banner_name =" in sql:
+            return SimpleNamespace(columns=["store_count"], rows=[(3,)], truncated=False)
+        rows = self.rows.get(sql, [("S01", "Big Box"), ("S02", "Express")])
+        columns = ["store_count"] if len(rows[0]) == 1 else ["store_id", "store_name"]
+        return SimpleNamespace(columns=columns, rows=rows, truncated=False)
 
 
 def state_for(question, model, *, correct=True, hop=False, error=None, rung="light"):
@@ -103,13 +127,23 @@ def state_for(question, model, *, correct=True, hop=False, error=None, rung="lig
         "sql": "SELECT count(*) AS store_count FROM dim_store" if count else
         "SELECT store_id, store_name FROM dim_store",
         "schema": STORE_SCHEMA, "example_shots": [SimpleNamespace(reasoning_target="count the rows")],
-        "assumptions": [], "chart": None,
+        "assumptions": [], "chart": None, "knowledge": "Stores are counted in dim_store.",
     }
 
 
 class Agent:
+    screened: list[str] = []
+
     def __init__(self, settings, behaviour):
         self.settings, self.behaviour = settings, behaviour
+
+    def screen(self, text, *, shaped_by=None):
+        """The reference's reading of a rewording, for F4: anything about the
+        weather is out of domain, the rest proceeds with the question's
+        contract."""
+        Agent.screened.append(text)
+        verdict = "out_of_domain" if "weather" in text else "proceed"
+        return {"verdict": verdict, "answer_contract": AnswerContract()}, {}
 
     def run(self, question_text):
         from benchmarks.questions import QUESTIONS
@@ -142,6 +176,9 @@ def calibrator(calibrate, catalog, *, models=None, behaviour=None, host=None, qu
                 {"question": "What is the weather?", "verdict": "out_of_domain"}],
         repair=[{"question": "q", "sql": "SELECT 1", "error": "aggregate functions are not allowed in WHERE",
                  "tables": ["dim_store"], "expect": ["having"]}],
+        judge=[{"id": "B01", "traps": [{"sql": "SELECT count(*) FROM dim_store WHERE banner_name = 'X'"},
+                                       {"sql": "SELECT broken"}]},
+               {"id": "B03", "traps": [{"sql": "SELECT store_id, store_name FROM dim_store ORDER BY 1"}]}],
     )
     said = []
     engine = calibrate.Calibrator(
@@ -648,3 +685,85 @@ def test_a_repair_probe_can_only_be_passed_by_naming_the_fix():
 def test_the_triage_probes_ask_for_every_verdict_a_screen_can_give():
     cases = json.loads((REPO_ROOT / "models" / "probes" / "triage.json").read_text())["cases"]
     assert {case["verdict"] for case in cases} == {"proceed", "out_of_domain", "injection"}
+
+
+# ---------------------------------------------------------------------------
+# The ensemble's two tasks (7.0)
+# ---------------------------------------------------------------------------
+
+FAITHFUL = ("count the stores we operate", "what is our store count", "tell me the number of stores in total")
+
+
+def test_a_paraphraser_is_right_when_enough_of_its_rewordings_pass_the_gate(calibrate):
+    """Three faithful of what it wrote -- a full first wave -- is right; a
+    rewording that changes a number (F1) or that the reference reads as
+    another question (F4) does not count."""
+    Agent.screened.clear()
+    good = Model(rewordings=("how many of the 10 stores are there", *FAITHFUL, "give me the total store count"))
+    short = Model(rewordings=("what is the weather at our stores", FAITHFUL[0], FAITHFUL[1]))
+    engine = calibrator(calibrate, a_catalog(), questions=("B01",),
+                        models={REFERENCE: good, "short:7b": short})
+
+    assert [(s.rungs, s.correct) for s in engine.paraphraser(REFERENCE, good)] == [(("light",), True)]
+    assert [s.correct for s in engine.paraphraser("short:7b", short)] == [False]
+    assert [s.correct for s in engine.paraphraser("down:7b", Model(fail=True))] == [False]
+    assert Agent.screened.count(FAITHFUL[0]) == 1, "the reference reads a rewording once, whoever wrote it"
+    assert "how many of the 10 stores are there" not in Agent.screened, "F1 in code first: no reading"
+    assert "give me the total store count" not in Agent.screened, "three faithful is enough: no fourth reading"
+
+
+def test_a_judge_is_right_when_it_accepts_the_reference_and_sets_every_trap_aside(calibrate):
+    right, lenient, harsh = Model(), Model(judging="all"), Model(judging="none")
+    engine = calibrator(calibrate, a_catalog(), questions=("B01", "B03"))
+
+    [sample] = engine.judge(REFERENCE, right)
+    assert (sample.rungs, sample.correct, sample.rejected) == (("heavy",), True, False)
+    assert right.judged == [["A", "B"]], "B03's one trap returns its rows, and B01's broken one cannot run"
+    assert [(s.correct, s.rejected) for s in engine.judge("lenient:7b", lenient)] == [(False, False)]
+    assert [(s.correct, s.rejected) for s in engine.judge("harsh:7b", harsh)] == [(False, True)]
+    assert [(s.correct, s.rejected) for s in engine.judge("down:7b", Model(fail=True))] == [(False, False)]
+    said = " ".join(engine.said)
+    assert "B01: a wrong answer cannot run, left out" in said
+    assert "B03: a wrong answer returns the reference's rows, left out" in said
+
+
+def test_the_reference_answer_is_shown_first_on_one_question_and_last_on_the_next(calibrate):
+    engine = calibrator(calibrate, a_catalog(), questions=("B01", "B03"))
+    first = engine._judged_answers(engine.probes.questions[0], engine.probes.judge[0]["traps"])
+    assert [reference for _, _, reference in first] == [True, False]
+
+    class Shown(Model):
+        def rule(self, text):
+            self.texts = getattr(self, "texts", []) + [text]
+            return super().rule(text)
+
+    engine.probes.judge = [engine.probes.judge[0], {"id": "B03", "traps": [
+        {"sql": "SELECT count(*) FROM dim_store WHERE banner_name = 'Y'"}]}]
+    judge = Shown()
+    samples = engine.judge(REFERENCE, judge)
+    assert [s.correct for s in samples] == [True, True]
+    a_first, a_second = (text.split("Answer B")[0] for text in judge.texts)
+    assert "banner_name =" not in a_first and "banner_name =" in a_second
+
+
+def test_the_judges_rejections_of_the_right_answer_are_counted_apart(calibrate):
+    samples = [calibrate.Sample(("heavy",), False, 1.0, rejected=True), calibrate.Sample(("heavy",), True, 2.0)]
+    assert calibrate.tally(samples) == {"heavy": {"correct": 1, "of": 2, "p50_s": 1.5, "rejected_reference": 1}}
+
+
+def test_measuring_a_judge_says_how_often_it_set_the_right_answer_aside(calibrate):
+    harsh, model = Model(judging="none"), entry("harsh:7b")
+    model["prior"]["judge"] = "heavy"
+    engine = calibrator(calibrate, a_catalog(model), questions=("B01", "B03"), models={"harsh:7b": harsh})
+    engine.measure("harsh:7b", ["judge"])
+    [line] = [line for line in engine.said if line.startswith("  judge:")]
+    assert line.startswith("  judge: heavy 0/1 (") and line.endswith("; the right answer set aside on 1)")
+
+
+def test_the_judges_probe_file_holds_a_wrong_answer_for_every_question(calibrate):
+    from benchmarks.questions import QUESTIONS
+
+    probes = calibrate.Probes.load(list(QUESTIONS))
+    assert [case["id"] for case in probes.judge] == [q.id for q in QUESTIONS]
+    assert all(case["traps"] and all(trap["sql"] and trap["mistake"] for trap in case["traps"])
+               for case in probes.judge)

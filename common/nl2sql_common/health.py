@@ -16,6 +16,15 @@ answer against:
 
 Plain HTTP when `<PREFIX>_TLS_ENABLED` says so: there is nothing to verify.
 Exits 0 when the service answered, 1 with the reason when it did not.
+
+Docker runs a health check as the user its container was started as, and
+the auth and review services start as root, to take what they write before
+they drop to an account. So a check that finds itself root becomes the
+account `nl2sql` first -- before it reads a setting or a certificate, or
+opens a connection -- as the directory's check has since 6.0.1, and one
+that cannot says so and fails: nothing here is root's to ask. Under compose
+it is never root at all: there each such service's check is started through
+`setpriv` (docker-compose.yml), so not even the interpreter's start is.
 """
 
 from __future__ import annotations
@@ -24,11 +33,17 @@ import ssl
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Callable
 
+from . import privileges
 from .env import env, env_bool, env_str
 
 #: Each service's port when its settings name none.
 PORTS = {"API": 8443, "REVIEW": 8444, "CONSOLE": 8445, "AUTH": 8446}
+
+#: The account a check started as root becomes: uid 10001 in every Python
+#: image of the stack, and the owner of each service's certificate.
+ACCOUNT = "nl2sql"
 
 
 def target(prefix: str) -> tuple[str, ssl.SSLContext | None]:
@@ -42,7 +57,13 @@ def target(prefix: str) -> tuple[str, ssl.SSLContext | None]:
     return f"https://localhost:{port}/healthz", ssl.create_default_context(cafile=ca)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, become: Callable | None = None) -> int:
+    # First, and before anything is read or asked: root given up.
+    try:
+        (become or privileges.become)(ACCOUNT)
+    except (KeyError, OSError) as exc:
+        print(f"unhealthy: started as root, and could not become {ACCOUNT}: {exc}", file=sys.stderr)
+        return 1
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 1:
         print("usage: python -m nl2sql_common.health PREFIX   (API, REVIEW, CONSOLE or AUTH)", file=sys.stderr)

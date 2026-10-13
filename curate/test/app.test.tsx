@@ -51,7 +51,7 @@ describe("the status bar", () => {
   it("says what the service is, and its warnings", async () => {
     mount({ meta: vi.fn().mockResolvedValue(makeMeta({ golden_count: 1, warnings: ["No REVIEW_TOKEN is set"] })) });
     const bar = await screen.findByRole("contentinfo");
-    expect(await within(bar).findByText("nl2sql-review 6.3.0")).toBeInTheDocument();
+    expect(await within(bar).findByText("nl2sql-review 7.0.0")).toBeInTheDocument();
     expect(within(bar).getByText("1 golden pair")).toBeInTheDocument();
     expect(within(bar).getByText("2 corrections · 1 completion")).toBeInTheDocument();
     expect(within(bar).getByText("auth bearer")).toBeInTheDocument();
@@ -71,7 +71,7 @@ describe("the status bar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Validate against the live database" }));
     await screen.findByText(/It runs\./);
     await userEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(await screen.findByText("nl2sql-review 6.3.0")).toBeInTheDocument();
+    expect(await screen.findByText("nl2sql-review 7.0.0")).toBeInTheDocument();
     expect(screen.queryByText(/Cannot reach the review service/)).not.toBeInTheDocument();
   });
 
@@ -88,7 +88,7 @@ describe("its default client", () => {
     vi.stubGlobal("fetch", fetch);
     try {
       render(<App />);
-      expect(await screen.findByText("nl2sql-review 6.3.0")).toBeInTheDocument();
+      expect(await screen.findByText("nl2sql-review 7.0.0")).toBeInTheDocument();
       expect(fetch.mock.calls.map((call) => call[0])).toContain("/v1/meta");
     } finally {
       vi.unstubAllGlobals();

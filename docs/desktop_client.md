@@ -21,6 +21,19 @@ because a browser discovers those from a 422 in its network tab and a desktop
 application shows the user whatever it was handed. Both are now in `limits`,
 and this client reads them before it will let a question be sent.
 
+**The runs behind an answer are shown as the web interface shows them.**
+Since 7.0 the agent asks a question several ways and runs the pipeline once
+per wording, and this client draws what the web interface draws, by the
+same rules, from the same fields: a lane for every run in the progress
+panel, between the steps the ensemble takes before the runs and the ones it
+takes with their answers; a badge with the sentence, saying how the runs
+agreed in the server's own words; the answers that lost among the notes;
+and a folded pane, "The question, asked 4 ways", with every wording, its
+outcome and its SQL, the Judge's verdict on each answer, and the rewordings
+that were not run. Everything a model wrote is drawn by a label or a text
+area, which draw a string as text. [The web
+interface](web_interface.md#the-web-interface) describes each part.
+
 **Verdicts take the same route as the web interface's.** The same endpoint,
 the same staging table, the same row-level security fence, the same review
 queue. A reviewer sees one queue because there is only one -- not because two
@@ -73,11 +86,11 @@ per platform --
 
 | Tag | For |
 |---|---|
-| `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64` | Apple silicon |
-| `mcfaddja/nl2sql-desktop-build:v6_3-mac` | Intel Macs |
-| `mcfaddja/nl2sql-desktop-build:v6_3-linux` | x86-64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v6_3-linux-aarch64` | arm64 Linux |
-| `mcfaddja/nl2sql-desktop-build:v6_3-win` | Windows |
+| `mcfaddja/nl2sql-desktop-build:v7_0-mac-aarch64` | Apple silicon |
+| `mcfaddja/nl2sql-desktop-build:v7_0-mac` | Intel Macs |
+| `mcfaddja/nl2sql-desktop-build:v7_0-linux` | x86-64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v7_0-linux-aarch64` | arm64 Linux |
+| `mcfaddja/nl2sql-desktop-build:v7_0-win` | Windows |
 
 -- and why `launch.sh` records which platform the jar beside it was built
 for, and fetches again when that or a source file changes.

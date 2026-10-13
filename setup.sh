@@ -29,31 +29,31 @@ POSTGRES_IMAGE="mcfaddja/nl2sql-retail-postgres"
 # the owner's and the reader's from .env on every start.
 POSTGRES_TAG="v1_2"
 AGENT_IMAGE="mcfaddja/nl2sql-agent"
-AGENT_TAG="v6_3"
+AGENT_TAG="v7_0"
 REVIEW_IMAGE="mcfaddja/nl2sql-review"
-REVIEW_TAG="v6_3"
+REVIEW_TAG="v7_0"
 # Every page -- the web interface, and the review, curation, console and
 # directory pages -- and MLflow's front door: one image since 6.3 (V6-37),
 # each container told which page it serves. The console behind its page runs
 # from the agent image above, started with a different command.
 PROXY_IMAGE="mcfaddja/nl2sql-proxy"
-PROXY_TAG="v6_3"
+PROXY_TAG="v7_0"
 # MLflow, where the agent's runs are traced: its server and the Postgres it
 # keeps traces in, both published with the release. --mlflow adds them.
 MLFLOW_IMAGE="mcfaddja/nl2sql-mlflow"
-MLFLOW_TAG="v6_3"
+MLFLOW_TAG="v7_0"
 MLFLOW_DB_IMAGE="mcfaddja/nl2sql-mlflowdb"
-MLFLOW_DB_TAG="v6_3"
+MLFLOW_DB_TAG="v7_0"
 # The desktop client's jar, one published tag per JavaFX platform. Nothing is
 # pulled here: launch.sh --desktop is what fetches it, and only for the
 # platform this machine turns out to be. Pinning it costs two lines of .env
 # and saves everyone who asks for it a Maven build.
 DESKTOP_IMAGE="mcfaddja/nl2sql-desktop-build"
-DESKTOP_TAG="v6_3"
+DESKTOP_TAG="v7_0"
 LDAP_IMAGE="mcfaddja/nl2sql-ldap"
-LDAP_TAG="v6_3"
+LDAP_TAG="v7_0"
 AUTH_IMAGE="mcfaddja/nl2sql-auth"
-AUTH_TAG="v6_3"
+AUTH_TAG="v7_0"
 # The release this checkout ships: the agent's tag before any flag changes
 # it. Written into .env, so start.sh can tell a tag someone chose for this
 # checkout from one an older checkout left behind.
@@ -100,14 +100,14 @@ Usage: ./setup.sh [options]
   -p, --port PORT        Host port to publish Postgres on (default: 5432)
       --agent-image NAME Agent image repository
                          (default: mcfaddja/nl2sql-agent)
-      --agent-tag TAG    Agent image tag to pull (default: v6_3)
+      --agent-tag TAG    Agent image tag to pull (default: v7_0)
       --build-agent      Build the agent image from source instead of pulling
       --gui              Also pull and pin the pages' image, so ./launch.sh
                          --gui starts the web interface instead of building it
       --review           Also pull and pin the feedback review service and
                          the pages' image (implies --gui)
       --review-image N   Review service image (default: mcfaddja/nl2sql-review)
-      --review-tag TAG   Review service image tag (default: v6_3)
+      --review-tag TAG   Review service image tag (default: v7_0)
       --curate           Also pull and pin the pages' image for the curation
                          interface, where SQL snippets, golden pairs and fixes
                          are written directly, each run against the retail
@@ -118,21 +118,21 @@ Usage: ./setup.sh [options]
                          runs from the agent image)
       --proxy-image N    The pages' image: every page and MLflow's front door
                          (default: mcfaddja/nl2sql-proxy)
-      --proxy-tag TAG    The pages' image tag (default: v6_3)
+      --proxy-tag TAG    The pages' image tag (default: v7_0)
       --mlflow           Also pull and pin MLflow -- its server and the
                          Postgres it keeps traces in -- so ./launch.sh
                          --mlflow starts it instead of building it here
       --mlflow-image N   MLflow server image (default: mcfaddja/nl2sql-mlflow)
-      --mlflow-tag TAG   MLflow server image tag (default: v6_3)
+      --mlflow-tag TAG   MLflow server image tag (default: v7_0)
       --mlflow-db-image N    MLflow store image
                          (default: mcfaddja/nl2sql-mlflowdb)
-      --mlflow-db-tag TAG    MLflow store image tag (default: v6_3)
+      --mlflow-db-tag TAG    MLflow store image tag (default: v7_0)
       --desktop          Also pull and pin the desktop client's jar, for this
                          machine's platform, so ./launch.sh --desktop takes it
                          from the image instead of building it here
       --desktop-image N  Desktop client image
                          (default: mcfaddja/nl2sql-desktop-build)
-      --desktop-tag TAG  Desktop client image tag (default: v6_3). The JavaFX
+      --desktop-tag TAG  Desktop client image tag (default: v7_0). The JavaFX
                          platform is appended to it
       --vector-image N   Vector store image (default: mcfaddja/nl2sql-rag-vectordb)
       --vector-tag TAG   Vector store image tag (default: v3_2)

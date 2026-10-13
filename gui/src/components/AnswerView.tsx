@@ -27,6 +27,13 @@
  * one lights up its cells in the table. That is the clearest thing this API
  * makes possible, and it costs a `Set`.
  *
+ * Under the ensemble (7.0) the sentence is what several runs of the question
+ * agreed on, and how they agreed is shown beside it: a badge with the count
+ * and the agent's own line about the vote, the answers that lost among the
+ * notes, and every wording's run folded away with the SQL (`Candidates.tsx`).
+ * The markdown `answer` opens with that same line, so the prose this falls
+ * back to is the block after it.
+ *
  * Three cases are not an answer at all and are handled before any of it:
  *
  * * **A refusal is a success.** The agent decided the question was out of
@@ -42,11 +49,12 @@
 import { useState } from "react";
 
 import { Chart } from "../charts/Chart";
+import { AgreementBadge, Candidates, EnsembleNotes } from "./Candidates";
 import { Disclosure } from "./Disclosure";
 import { FeedbackBar } from "./FeedbackBar";
 import { ResultTable, cellKey } from "./ResultTable";
 import { useFeedback } from "../feedback/useFeedback";
-import { leadParagraph, plainText } from "../api/text";
+import { afterLead, leadParagraph, plainText } from "../api/text";
 import type { FeedbackStore } from "../feedback/store";
 import type { Answer, Job, Pipeline } from "../api/types";
 
@@ -77,6 +85,8 @@ export function AnswerView({ job, store, pipeline }: AnswerViewProps) {
         <Refusal answer={answer} />
       ) : (
         <>
+          {answer.ensemble && <AgreementBadge ensemble={answer.ensemble} />}
+
           <Narrative answer={answer} onHighlight={setHighlight} />
 
           {answer.result && answer.chart && (
@@ -86,6 +96,8 @@ export function AnswerView({ job, store, pipeline }: AnswerViewProps) {
           {answer.result && <ResultTable result={answer.result} highlight={highlight} />}
 
           {pipeline?.audit !== false && <Audit answer={answer} />}
+
+          {answer.ensemble && <EnsembleNotes ensemble={answer.ensemble} />}
         </>
       )}
 
@@ -101,6 +113,8 @@ export function AnswerView({ job, store, pipeline }: AnswerViewProps) {
             )}
           </Disclosure>
         )}
+
+        {answer?.ensemble && <Candidates ensemble={answer.ensemble} />}
 
         {answer && answer.literals.length > 0 && (
           <Disclosure summary="Matched values" badge={String(answer.literals.length)}>
@@ -152,7 +166,10 @@ interface NarrativeProps {
  */
 function Narrative({ answer, onHighlight }: NarrativeProps) {
   if (answer.claims.length === 0) {
-    const text = plainText(answer.narrative) || leadParagraph(answer.answer);
+    // Under the ensemble the document opens with the agreement line, which
+    // the badge above already says.
+    const document = answer.ensemble?.line ? afterLead(answer.answer) : answer.answer;
+    const text = plainText(answer.narrative) || leadParagraph(document);
     return text ? <p className="answer-headline">{text}</p> : null;
   }
 

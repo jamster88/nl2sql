@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 from nl2sql_agent.state import STATIC
-from nl2sql_agent.validate import FUNCTION_DENYLIST, validate
+from nl2sql_agent.validate import FUNCTION_DENYLIST, out_of_scope, validate
 
 RETAIL_TABLES = ["fact_pos_retail_sales", "dim_date", "dim_store", "dim_product"]
 
@@ -463,3 +463,24 @@ def test_a_syntax_error_far_from_the_end_quotes_both_sides_with_ellipses():
     # The window is the configured one, plus the marker and the two ellipses.
     quoted = issue.message.split("Here: ")[1]
     assert len(quoted) <= 2 * _ERROR_CONTEXT + len(">>>") + 6
+
+
+# ---------------------------------------------------------------------------
+# out_of_scope: which tables, for whoever may widen the scope
+# ---------------------------------------------------------------------------
+
+
+def test_out_of_scope_names_the_tables_a_statement_reads_beyond_its_scope():
+    sql = ("WITH monthly AS (SELECT * FROM public.fact_pos_retail_sales) "
+           'SELECT * FROM monthly JOIN "fact_item_cogs" c USING (product_key) JOIN dim_date d ON true')
+    assert out_of_scope(sql, ["dim_date"]) == ["fact_item_cogs", "fact_pos_retail_sales"]
+    assert out_of_scope(sql, ["dim_date", "fact_item_cogs", "public.fact_pos_retail_sales"]) == []
+
+
+@pytest.mark.parametrize("sql", [
+    "", "not sql at all", "SELECT 1; SELECT 2", "DELETE FROM dim_store", "SELECT 1",
+])
+def test_out_of_scope_has_nothing_to_say_of_what_is_not_one_select_over_tables(sql):
+    """What is wrong with those is `validate`'s to say."""
+    assert out_of_scope(sql, ["dim_date"]) == []
+

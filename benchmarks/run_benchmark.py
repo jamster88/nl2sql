@@ -5,20 +5,28 @@
     python benchmarks/run_benchmark.py --compare          # v1 vs v2 vs v3 vs v5.6
     python benchmarks/run_benchmark.py --only B07 B08
     python benchmarks/run_benchmark.py --json out.json
+    python benchmarks/run_benchmark.py --paraphrase-set   # each question four ways: the stability
 
 Accuracy is execution accuracy: the agent's SQL is run and its rows compared
 against reference SQL whose answer was verified against the shipped dataset.
 Speed is reported per question and per pipeline stage, because "slow" and "slow
 in generate_sql" call for different fixes.
 
-`--compare` runs the same questions through four configurations that differ
-only in what retrieval is switched on, which is the measurement the whole
-project is for:
+`--paraphrase-set` asks each question as the benchmark does and as each of
+its three hand-written rewordings does (`benchmarks/paraphrases.py`), scores
+all four against the question's one reference, and reports the stability:
+the fraction of questions every wording of which came out right -- arch7's
+premise, measured.
+
+`--compare` runs the same questions through five configurations, each the
+one before it plus one stage -- four of retrieval, which is the measurement
+the whole project is for, then the ensemble:
 
     schema-only   no knowledge, no examples          (v1 behaviour)
     knowledge     knowledge base, no examples        (v2 behaviour)
     multi-shot    knowledge + reranked examples      (v3 behaviour)
-    snippets      all of that + SQL snippets         (v5.6, the default)
+    snippets      all of that + SQL snippets         (v5.6, the default: one run a question)
+    ensemble      snippets, asked several ways       (arch7, the agent as 7.0 ships)
 """
 
 from __future__ import annotations
@@ -28,15 +36,18 @@ import json
 import os
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT / "agent") not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT / "agent"))
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# The repository, the agent, and the shared package the agent imports since
+# 6.2 (`common/`), which the images install and a checkout does not.
+for _path in (REPO_ROOT / "common", REPO_ROOT / "agent", REPO_ROOT):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from benchmarks import tracking  # noqa: E402
+from benchmarks.paraphrases import wordings  # noqa: E402
 from benchmarks.questions import CATEGORIES, QUESTIONS, BenchmarkQuestion  # noqa: E402
 from benchmarks.runner import (  # noqa: E402
     CORRECT,
@@ -51,6 +62,13 @@ from benchmarks.runner import (  # noqa: E402
     routes_from_trace,
     timing_from_trace,
 )
+from nl2sql_agent import grain  # noqa: E402
+from nl2sql_agent.completeness import read_query  # noqa: E402
+from nl2sql_agent.ensemble_state import is_ensemble, judged, run_state, whole_trace  # noqa: E402
+from nl2sql_agent.state import to_jsonable  # noqa: E402
+
+#: How the report marks each outcome: a miss in capitals, so it stands out.
+MARKS = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}
 
 # The agent's own defaults are compose service names -- `postgres`, `vectordb`,
 # `chunkdb`, `host.docker.internal` -- because that is where it normally runs.
@@ -101,25 +119,31 @@ def host_default(field: str, url: str) -> str:
     return with_password(url, password) if password else url
 
 
-# The four configurations --compare measures. Each is the one before it plus a
-# retrieval stage, so a difference between two rows is attributable to that
-# stage and nothing else. The last is the agent as it ships.
+# The five configurations --compare measures. Each is the one before it plus
+# one stage, so a difference between two rows is attributable to that stage
+# and nothing else: four of retrieval, then the ensemble (arch7). Every one
+# says whether the ensemble is on, so the first four are one run a question
+# whatever ENSEMBLE_ENABLED says. The last is the agent as it ships.
 CONFIGURATIONS = {
     "schema-only": {
         "rag_enabled": False, "examples_enabled": False, "multi_shot_enabled": False,
-        "snippets_enabled": False,
+        "snippets_enabled": False, "ensemble_enabled": False,
     },
     "knowledge": {
         "rag_enabled": True, "examples_enabled": False, "multi_shot_enabled": False,
-        "snippets_enabled": False,
+        "snippets_enabled": False, "ensemble_enabled": False,
     },
     "multi-shot": {
         "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
-        "snippets_enabled": False,
+        "snippets_enabled": False, "ensemble_enabled": False,
     },
     "snippets": {
         "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
-        "snippets_enabled": True,
+        "snippets_enabled": True, "ensemble_enabled": False,
+    },
+    "ensemble": {
+        "rag_enabled": True, "examples_enabled": True, "multi_shot_enabled": True,
+        "snippets_enabled": True, "ensemble_enabled": True,
     },
 }
 
@@ -135,6 +159,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run every configuration in CONFIGURATIONS and print them side by side",
     )
     p.add_argument("--config", choices=sorted(CONFIGURATIONS), default="snippets")
+    p.add_argument(
+        "--paraphrase-set", action="store_true",
+        help="ask each question its own way and its three rewordings (benchmarks/paraphrases.py), "
+             "and report the stability",
+    )
     p.add_argument("--json", metavar="PATH", help="also write the full results as JSON")
     p.add_argument("--database-url", help="override the retail database URL")
     p.add_argument("--model", help="override the chat model")
@@ -210,19 +239,27 @@ def narrative_score(state) -> float | None:
     return round((len(claims) - unsupported) / len(claims), 4)
 
 
-def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer) -> QuestionResult:
-    """Ask one question, score it, and record where the time went."""
+def run_question(
+    agent, database, question: BenchmarkQuestion, timer: StageTimer, *, asked: str | None = None, wording: int = 0,
+) -> QuestionResult:
+    """Ask one question, score it, and record where the time went.
+
+    `asked` is the words put to the agent, the question's own unless the
+    paraphrase set gives a rewording -- `wording` its number -- which is
+    scored against the same reference: a rewording asks the same question.
+    """
     expected = reference_rows(database, question)
+    asked = asked or question.question
 
     timer.start()
     started = time.perf_counter()
     try:
-        state = agent.run(question.question)
+        state = agent.run(asked)
     except Exception as exc:  # noqa: BLE001 - a crash is a benchmark result, not a benchmark failure
         return QuestionResult(
-            question_id=question.id, category=question.category, question=question.question,
+            question_id=question.id, category=question.category, question=asked,
             outcome=FAILED, wall_seconds=time.perf_counter() - started, timing=timer.timing,
-            error=str(exc)[:400], expected_row_count=len(expected),
+            error=str(exc)[:400], expected_row_count=len(expected), wording=wording,
         )
     wall = time.perf_counter() - started
 
@@ -230,20 +267,26 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
     # progress callbacks, which cannot attribute time across Stage 1's
     # parallel branches -- the four retrievers overlap, so the gap after one
     # of them is not its duration.
-    trace = state.get("trace") or []
+    # Under the ensemble (arch7) the trace is every run's and the ensemble's
+    # own nodes', and what retrieval found and how many attempts it took are
+    # the delivered run's; for one run, both are the state itself.
+    trace = whole_trace(state)
     timing = timing_from_trace(trace) if trace else timer.timing
+    run = run_state(state)
 
     common = dict(
-        question_id=question.id, category=question.category, question=question.question,
+        question_id=question.id, category=question.category, question=asked, wording=wording,
         wall_seconds=wall, timing=timing, sql=state.get("sql"),
-        attempts=state.get("attempts", 0), expected_row_count=len(expected),
-        examples=[p["pair_id"] for p in state.get("example_pairs", [])],
-        knowledge_chunks=len(state.get("knowledge_chunks", [])),
+        attempts=run.get("attempts", 0), expected_row_count=len(expected),
+        examples=[p["pair_id"] for p in run.get("example_pairs", [])],
+        knowledge_chunks=len(run.get("knowledge_chunks", [])),
         model_calls=model_calls_from_trace(trace),
         narrative_score=narrative_score(state),
         routes=routes_from_trace(trace),
-        rung=getattr(state.get("complexity"), "rung", None),
+        rung=getattr(run.get("complexity"), "rung", None),
         trace_id=state.get("trace_id", ""),
+        grain_repairs=grain_repairs(state, expected, question.ordered),
+        **ensemble_measures(state),
     )
 
     if state.get("error"):
@@ -267,15 +310,116 @@ def run_question(agent, database, question: BenchmarkQuestion, timer: StageTimer
         )
     rows = result["rows"] if isinstance(result, dict) else result.rows
     matched = result_matches(expected, rows, ordered=question.ordered)
+    outcome = CORRECT if matched else WRONG
     return QuestionResult(
-        outcome=CORRECT if matched else WRONG, row_count=len(rows), **common
+        outcome=outcome, row_count=len(rows),
+        without_judge=without_judge(state, expected, question.ordered, outcome), **common
     )
 
 
+def without_judge(state, expected, ordered: bool, outcome: str) -> str:
+    """How the answer the runs alone would have chosen scores: the delivered
+    one's outcome, unless the Judge overruled them (arch7.1) -- then the run
+    it set aside, scored as the delivered one is. Empty for one run."""
+    if not is_ensemble(state):
+        return ""
+    judgement = state.get("judgement")
+    if not getattr(judgement, "overruled", False):
+        return outcome
+    run = next((c for c in state.get("candidates") or [] if c.index == judgement.instead_of), None)
+    result = run.state.get("result") if run is not None else None
+    if result is None:
+        return FAILED
+    return CORRECT if result_matches(expected, result.rows, ordered=ordered) else WRONG
+
+
+def grain_repairs(state, expected, ordered: bool) -> list[dict]:
+    """The runs the grain check sent to repair, and how each ended (arch7.3
+    section 22.14): scored against the reference, run by run, as the Judge's
+    overrulings are -- so what the check bought is counted beside what it
+    cost. One run, or under the ensemble every candidate's."""
+    if is_ensemble(state):
+        runs = [(c.index, c.state) for c in sorted(state.get("candidates") or [], key=lambda c: c.index)]
+    else:
+        runs = [(0, state)]
+    repairs = []
+    for index, run in runs:
+        sent = sum(
+            1 for attempt in run.get("attempt_history") or []
+            if any(grain.describes(issue.message) for issue in attempt.issues)
+        )
+        if not sent:
+            continue
+        result = run.get("result")
+        if result is None or run.get("error"):
+            ended = FAILED
+        else:
+            rows = result["rows"] if isinstance(result, dict) else result.rows
+            ended = CORRECT if result_matches(expected, rows, ordered=ordered) else WRONG
+        repairs.append({"run": index, "sent": sent, "ended": ended})
+    return repairs
+
+
+def rejected_references(grains, questions: list[BenchmarkQuestion]) -> list[str]:
+    """The questions whose reference query the grain check would refuse,
+    against these grains. None is the only acceptable answer: a reference is
+    right by definition, and a gate that rejects it is wrong."""
+    return [q.id for q in questions if grains and grain.mismatches(read_query(q.reference_sql), grains)]
+
+
+def ensemble_measures(state) -> dict:
+    """What the ensemble did with the question (arch7 section 11): how its
+    runs agreed, the rewordings its gate discarded by check, the rung each
+    run's generator was scored at, the state's size, whether a second wave
+    ran and what fusion did. Nothing for one run."""
+    if not is_ensemble(state):
+        return {}
+    agreement = state.get("agreement")
+    rejections: dict[str, int] = {}
+    for paraphrase in state.get("paraphrases") or []:
+        if paraphrase.status == "discarded":
+            check = paraphrase.reason.split(" ", 1)[0]
+            rejections[check] = rejections.get(check, 0) + 1
+    candidates = state.get("candidates") or []
+    judgement = state.get("judgement")
+    decision = state.get("decision")
+    verdicts = {v.group: v.accepted for v in getattr(judgement, "verdicts", None) or []}
+    return {
+        "wave2": state.get("waves", 0) > 1,
+        "columns_fused": getattr(decision, "columns_fused", False),
+        "joined": [asdict(column) for column in getattr(decision, "joined_columns", None) or []],
+        "declined": [asdict(column) for column in getattr(decision, "declined_columns", None) or []],
+        "claims_added": getattr(decision, "claims_added", 0),
+        "claims_dropped": getattr(decision, "claims_dropped", 0),
+        "judged": judged(judgement),
+        "verdicts": [
+            {"group": v.group, "accepted": v.accepted, "why": v.why} for v in getattr(judgement, "verdicts", None) or []
+        ],
+        "agreement": getattr(agreement, "level", ""),
+        "agreed": getattr(agreement, "agreed", 0),
+        "candidates": len(candidates),
+        "rejections": rejections,
+        "candidate_rungs": [
+            getattr(c.state.get("complexity"), "rung", "") for c in sorted(candidates, key=lambda c: c.index)
+        ],
+        "state_bytes": len(json.dumps(to_jsonable(state), default=str).encode()),
+        "rewordings": [
+            {"index": p.index, "text": p.text, "changed": p.changed, "status": p.status, "reason": p.reason}
+            for p in state.get("paraphrases") or []
+        ],
+        "runs": [
+            {"index": c.index, "wording": c.wording, "outcome": c.outcome, "admissible": c.admissible,
+             "reasons": list(c.reasons), "group": c.group, "signature": c.signature,
+             "accepted": verdicts.get(c.group),
+             "chosen": c.index == getattr(state.get("decision"), "chosen", None), "sql": c.state.get("sql", "")}
+            for c in sorted(candidates, key=lambda c: c.index)
+        ],
+    }
+
+
 def run_configuration(args, configuration: str, questions: list[BenchmarkQuestion]) -> BenchmarkReport:
-    from nl2sql_agent import tracing
+    from nl2sql_agent import ensemble, graph, tracing
     from nl2sql_agent.database import Database
-    from nl2sql_agent.graph import Nl2SqlAgent
     from nl2sql_agent.llm import LlmUnavailableError
 
     settings = build_settings(args, configuration)
@@ -290,23 +434,30 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
 
     timer = StageTimer(show)
     try:
-        agent = Nl2SqlAgent(settings, on_progress=timer)
+        agent = pipeline = graph.Nl2SqlAgent(settings, on_progress=timer)
+        if settings.ensemble_enabled:
+            agent = ensemble.EnsembleAgent(settings, agent=agent, on_progress=timer)
     except LlmUnavailableError as exc:
         raise SystemExit(f"error: {exc}")
 
-    report = BenchmarkReport(label=configuration)
-    tracked = tracking.open_run(agent, configuration, questions)
+    report = BenchmarkReport(label=configuration, grain_checked=settings.grain_check_enabled)
+    # Before anything is asked: the check held to the references, against
+    # the grains this database measures to.
+    report.rejected_references = rejected_references(pipeline.grains(), questions)
+    tracked = tracking.open_run(agent, configuration, questions, paraphrase_set=args.paraphrase_set)
     complete = False
     try:
         for question in questions:
-            print(f"  {question.id} [{question.category}] {question.question[:64]}...", flush=True)
-            with tracing.tagged(tracking.question_tags(question, configuration)):
-                result = run_question(agent, database, question, timer)
-            report.results.append(result)
-            if tracked is not None:
-                tracked.score(result)
-            mark = {CORRECT: "ok", WRONG: "WRONG", ERROR: "ERROR", FAILED: "FAILED"}[result.outcome]
-            print(f"       -> {mark} in {result.wall_seconds:.1f}s", flush=True)
+            asked = wordings(question) if args.paraphrase_set else (question.question,)
+            for wording, text in enumerate(asked):
+                label = f"{question.id}.{wording}" if wording else question.id
+                print(f"  {label} [{question.category}] {text[:64]}...", flush=True)
+                with tracing.tagged(tracking.question_tags(question, configuration, wording=wording)):
+                    result = run_question(agent, database, question, timer, asked=text, wording=wording)
+                report.results.append(result)
+                if tracked is not None:
+                    tracked.score(result)
+                print(f"       -> {MARKS[result.outcome]} in {result.wall_seconds:.1f}s", flush=True)
         complete = True
     finally:
         if tracked is not None:
@@ -338,14 +489,24 @@ def print_report(report: BenchmarkReport) -> None:
         print("\n  not correct")
         for result in missed:
             detail = result.error or f"{result.row_count} rows, expected {result.expected_row_count}"
-            print(f"    {result.question_id} {result.outcome:<7} {detail[:60]}")
+            print(f"    {result.label} {result.outcome:<7} {detail[:60]}")
+
+    if report.paraphrased:
+        print_stability(report)
+
+    if report.ensembled:
+        print_ensemble(report)
+
+    if report.grain_checked:
+        print_grain(report)
 
     print("\nSPEED")
-    print(f"  total                {report.total_seconds:.1f}s for {report.total} questions")
+    asked = "wordings" if report.paraphrased else "questions"
+    print(f"  total                {report.total_seconds:.1f}s for {report.total} {asked}")
     print(f"  median per question  {report.median_seconds:.1f}s")
     print("\n  slowest")
     for result in report.slowest(3):
-        print(f"    {result.question_id}  {result.wall_seconds:6.1f}s  {result.question[:52]}")
+        print(f"    {result.label}  {result.wall_seconds:6.1f}s  {result.question[:52]}")
 
     calls: dict[str, int] = {}
     for result in report.results:
@@ -384,15 +545,84 @@ def print_report(report: BenchmarkReport) -> None:
             print(f"    {stage:<20} {seconds:7.1f}s  {share:5.1f}%  {'#' * int(share / 3)}")
 
 
+def print_ensemble(report: BenchmarkReport) -> None:
+    """What the ensemble did (arch7 section 11): how the runs agreed, how often
+    they agreed on a wrong answer, which checks discarded rewordings, how
+    often a question's runs were scored at different rungs, how large a
+    question's state grew, what the Judge did, how often a second wave ran
+    and what fusion added."""
+    print("\nENSEMBLE")
+    levels = report.agreement_levels()
+    print(f"  agreement            {', '.join(f'{level} {n}' for level, n in sorted(levels.items()))}")
+    print(f"  agreed, but wrong    {report.agreed_on_wrong}")
+    runs = sorted(r.candidates for r in report.results if r.candidates)
+    print(f"  runs per question    {runs[len(runs) // 2]} (median), {runs[0]} to {runs[-1]}")
+    rejections = report.fidelity_rejections()
+    shown = ", ".join(f"{check} {n}" for check, n in rejections.items()) or "none"
+    print(f"  rewordings discarded {sum(rejections.values())}: {shown}")
+    print(f"  runs at mixed rungs  {report.rung_spread} of {report.total} question(s)")
+    sizes = report.state_sizes()
+    if sizes:
+        print(f"  state, as JSON       {sizes[len(sizes) // 2] / 1024:.1f} KB median, {sizes[-1] / 1024:.1f} KB largest")
+    actions = report.judge_actions()
+    if actions:
+        print(f"  the Judge            {', '.join(f'{action} {n}' for action, n in actions.items())}")
+        effect = report.judge_effect()
+        print(f"  overruled the runs   {effect['overruled']}: wrong -> right {effect['fixed']}, "
+              f"right -> wrong {effect['broke']}")
+    print(f"  second wave          {report.second_waves} of {report.total} question(s)")
+    fusion = report.fusion()
+    print(f"  fusion               columns joined {fusion['columns joined']}, declined {fusion['columns declined']}; "
+          f"claims added {fusion['claims added']}, dropped {fusion['claims dropped']}")
+
+
+def print_grain(report: BenchmarkReport) -> None:
+    """What the grain check did (arch7.3 section 22.14): the references it
+    would refuse, which must be none, and the runs it sent to repair with
+    how each ended."""
+    print("\nGRAIN CHECK")
+    rejected = ", ".join(report.rejected_references)
+    print(f"  references refused   {rejected + '  <-- a right query, refused' if rejected else 'none'}")
+    repairs = report.grain_repairs()
+    print(f"  runs sent to repair  {repairs['runs']}: ended right {repairs['right']}, wrong {repairs['wrong']}, "
+          f"failed {repairs['failed']}")
+    for result in report.results:
+        for repair in result.grain_repairs:
+            times = "once" if repair["sent"] == 1 else f"{repair['sent']} times"
+            print(f"    {result.label} run {repair['run']}  refused {times}, ended {MARKS[repair['ended']]}")
+
+
+def print_stability(report: BenchmarkReport) -> None:
+    """The paraphrase set's verdict: how many questions were right however
+    they were worded, and per question, which wordings were."""
+    questions = report.by_question()
+    own = [r for r in report.results if not r.wording]
+    reworded = [r for r in report.results if r.wording]
+    print("\nSTABILITY  (the paraphrase set: each question in its own words and three others)")
+    print(f"  stable questions     {report.stable}/{len(questions)}  ({100 * report.stability:.1f}%)  "
+          "every wording right")
+    print(f"  own wordings         {sum(r.correct for r in own)}/{len(own)}")
+    print(f"  rewordings           {sum(r.correct for r in reworded)}/{len(reworded)}")
+    print("\n  per question                    wordings 0 1 2 3")
+    for question_id, results in questions.items():
+        right = sum(r.correct for r in results)
+        marks = " ".join(MARKS[r.outcome] for r in results)
+        print(f"    {question_id} {results[0].category:<10} {right}/{len(results)}  {marks}")
+
+
 def print_comparison(reports: list[BenchmarkReport]) -> None:
+    # The stability column only where a question was asked more than one way.
+    paraphrased = any(report.paraphrased for report in reports)
     print(f"\n{'=' * 72}\ncomparison\n{'=' * 72}\n")
-    print(f"  {'configuration':<14} {'accuracy':>12} {'answered':>10} {'total':>9} {'median':>9}")
-    print(f"  {'-' * 14} {'-' * 12} {'-' * 10} {'-' * 9} {'-' * 9}")
+    print(f"  {'configuration':<14} {'accuracy':>12} {'answered':>10} {'total':>9} {'median':>9}"
+          + (f" {'stable':>8}" if paraphrased else ""))
+    print(f"  {'-' * 14} {'-' * 12} {'-' * 10} {'-' * 9} {'-' * 9}" + (f" {'-' * 8}" if paraphrased else ""))
     for report in reports:
         print(
             f"  {report.label:<14} {report.correct:>4}/{report.total} "
             f"({100 * report.accuracy:>4.0f}%) {report.answered:>10} "
             f"{report.total_seconds:>8.1f}s {report.median_seconds:>8.1f}s"
+            + (f" {report.stable:>5}/{len(report.by_question()):<2}" if paraphrased else "")
         )
 
     categories = sorted({c for r in reports for c in r.by_category()})
@@ -420,9 +650,36 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                 "by_category": {k: list(v) for k, v in report.by_category().items()},
                 "by_model": report.by_model(),
                 "rungs": report.rungs(),
+                # The paraphrase set's: None for a run of each question's own words.
+                "stability": {
+                    "fraction": report.stability,
+                    "stable": report.stable,
+                    "questions": len(report.by_question()),
+                    "by_question": {
+                        question_id: [r.outcome for r in results]
+                        for question_id, results in report.by_question().items()
+                    },
+                } if report.paraphrased else None,
+                # The ensemble's: None for one run a question.
+                "ensemble": {
+                    "agreement": report.agreement_levels(),
+                    "agreed_on_wrong": report.agreed_on_wrong,
+                    "fidelity_rejections": report.fidelity_rejections(),
+                    "rung_spread": report.rung_spread,
+                    "state_bytes": report.state_sizes(),
+                    "judge": {**report.judge_actions(), **report.judge_effect()},
+                    "second_waves": report.second_waves,
+                    "fusion": report.fusion(),
+                } if report.ensembled else None,
+                # The grain check's: None with it off.
+                "grain": {
+                    "rejected_references": report.rejected_references,
+                    "repairs": report.grain_repairs(),
+                } if report.grain_checked else None,
                 "results": [
                     {
                         "id": r.question_id,
+                        "wording": r.wording,
                         "category": r.category,
                         "question": r.question,
                         "outcome": r.outcome,
@@ -440,6 +697,24 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "trace_id": r.trace_id,
                         "sql": r.sql,
                         "error": r.error,
+                        "agreement": r.agreement,
+                        "candidates": r.candidates,
+                        "agreed": r.agreed,
+                        "rejections": r.rejections,
+                        "candidate_rungs": r.candidate_rungs,
+                        "state_bytes": r.state_bytes,
+                        "rewordings": r.rewordings,
+                        "runs": r.runs,
+                        "judged": r.judged,
+                        "verdicts": r.verdicts,
+                        "without_judge": r.without_judge,
+                        "wave2": r.wave2,
+                        "columns_fused": r.columns_fused,
+                        "joined": r.joined,
+                        "declined": r.declined,
+                        "claims_added": r.claims_added,
+                        "claims_dropped": r.claims_dropped,
+                        "grain_repairs": r.grain_repairs,
                     }
                     for r in report.results
                 ],
@@ -468,8 +743,10 @@ def main(argv: list[str] | None = None) -> int:
         Path(args.json).write_text(json.dumps(as_json(reports), indent=2, default=str))
         print(f"\nwrote {args.json}")
 
-    # Non-zero when anything was not correct, so CI can gate on it.
-    return 0 if all(r.accuracy == 1.0 for r in reports) else 1
+    # Non-zero when anything was not correct, so CI can gate on it -- and
+    # when the grain check would refuse a reference: a gate that rejects a
+    # right query is wrong whatever the answers scored.
+    return 0 if all(r.accuracy == 1.0 and not r.rejected_references for r in reports) else 1
 
 
 if __name__ == "__main__":

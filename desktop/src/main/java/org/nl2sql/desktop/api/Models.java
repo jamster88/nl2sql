@@ -108,8 +108,14 @@ public final class Models {
         }
     }
 
-    /** One step of the pipeline, as it happens. */
-    public record ProgressEvent(int seq, String step, String label, String detail, String at) {
+    /**
+     * One step of the pipeline, as it happens. {@code candidate} says which
+     * wording's run reported it under the ensemble (7.0): 0 the question as
+     * asked, 1 and up a rewording, null for the ensemble's own steps and for
+     * a server older than 7.0.
+     */
+    public record ProgressEvent(int seq, String step, String label, String detail, String at,
+                                Integer candidate) {
         public ProgressEvent {
             step = text(step);
             label = text(label);
@@ -195,12 +201,121 @@ public final class Models {
         }
     }
 
+    /** How the ensemble's vote went: {@code agreed} of the {@code admissible} runs, of {@code total}. */
+    public record EnsembleAgreement(int admissible, int agreed, int total, String level, String why,
+                                    int set_aside) {
+        public EnsembleAgreement {
+            level = text(level);
+            why = text(why);
+        }
+    }
+
+    /** The Judge's verdict on one group's answer. */
+    public record EnsembleVerdict(int group, boolean accepted, String why) {
+        public EnsembleVerdict {
+            why = text(why);
+        }
+    }
+
+    /** The Judge's verdicts on the answers, given on every question before the vote. */
+    public record EnsembleJudgement(List<EnsembleVerdict> verdicts, List<Integer> set_aside, boolean overruled,
+                                    Integer instead_of, String model, String error) {
+        public EnsembleJudgement {
+            verdicts = list(verdicts);
+            set_aside = list(set_aside);
+            model = text(model);
+            error = text(error);
+        }
+    }
+
+    /** A column another agreeing run carried, joined onto the delivered rows. */
+    public record JoinedColumn(String column, int from_candidate, String key, String table) {
+        public JoinedColumn {
+            column = text(column);
+            key = text(key);
+            table = text(table);
+        }
+    }
+
+    /** A column another agreeing run carried that would not join cleanly, and why. */
+    public record DeclinedColumn(String column, int from_candidate, String why) {
+        public DeclinedColumn {
+            column = text(column);
+            why = text(why);
+        }
+    }
+
+    /** A group of runs that lost the vote: its key fact, and how its query differs. */
+    public record EnsembleDissent(int group, List<Integer> members, String signature, String differs) {
+        public EnsembleDissent {
+            members = list(members);
+            signature = text(signature);
+            differs = text(differs);
+        }
+    }
+
+    /** One wording's run: what it was asked, what it wrote, how it ended. */
+    public record EnsembleCandidate(int index, String wording, String origin, int wave, String changed,
+                                    String outcome, boolean admissible, List<String> reasons, String sql,
+                                    String signature, int attempts, Integer group, double duration_ms,
+                                    List<TraceEntry> trace) {
+        public EnsembleCandidate {
+            wording = text(wording);
+            origin = text(origin);
+            changed = text(changed);
+            outcome = text(outcome);
+            reasons = list(reasons);
+            sql = text(sql);
+            signature = text(signature);
+            trace = list(trace);
+        }
+    }
+
+    /** A rewording the fidelity gate would not run, and the check it failed. */
+    public record DiscardedRewording(int index, String text, String changed, String reason) {
+        public DiscardedRewording {
+            // Qualified: the component `text` hides the helper of that name.
+            text = Models.text(text);
+            changed = Models.text(changed);
+            reason = Models.text(reason);
+        }
+    }
+
+    /**
+     * The question asked several ways (7.0): the vote, the delivered run and
+     * every run's record. Null on an answer from a server with the ensemble
+     * off, or older than 7.0.
+     *
+     * <p>{@code line} is the agreement as the sentence the answer opens with,
+     * written by the server so that no client composes its own from the
+     * counts; empty when no run could be delivered.
+     */
+    public record Ensemble(EnsembleAgreement agreement, String line, Integer chosen,
+                           List<Integer> fused_from,
+                           boolean columns_fused, List<JoinedColumn> joined_columns,
+                           List<DeclinedColumn> declined_columns, int claims_added, int claims_dropped,
+                           List<EnsembleDissent> dissent, EnsembleJudgement judged,
+                           List<EnsembleCandidate> candidates, List<DiscardedRewording> discarded,
+                           int parallel_calls) {
+        public Ensemble {
+            agreement = agreement == null ? NO_AGREEMENT : agreement;
+            line = text(line);
+            fused_from = list(fused_from);
+            joined_columns = list(joined_columns);
+            declined_columns = list(declined_columns);
+            dissent = list(dissent);
+            candidates = list(candidates);
+            discarded = list(discarded);
+        }
+    }
+
     /** Everything the pipeline produced for one question. */
     public record Answer(String answer, String narrative, String sql, String verdict, String intent,
                          String clarification, List<String> tables, List<LiteralMatch> literals,
                          ResultTable result, ChartSpec chart, List<Claim> claims, AuditReport audit,
                          Double plan_cost, int attempts, List<TraceEntry> trace,
-                         Map<String, String> retrieval_errors, Map<String, String> node_errors) {
+                         Map<String, String> retrieval_errors, Map<String, String> node_errors,
+                         Ensemble ensemble) {
         public Answer {
             answer = text(answer);
             narrative = text(narrative);
@@ -268,9 +383,25 @@ public final class Models {
                          int max_question_length, int max_metadata_entries) {
     }
 
+    /**
+     * How this server asks a question several ways (7.0).
+     *
+     * <p>{@code nodes} is the ensemble's own nodes, in order. The pipeline's
+     * {@code nodes} lists these first and each run's after them, so this is
+     * where a client divides the two: the steps around the runs, and the
+     * steps of every run.
+     */
+    public record EnsembleSettings(boolean enabled, int paraphrases, int max_paraphrases, int waves,
+                                   int parallel_calls, boolean judge, boolean fuse_columns,
+                                   List<String> nodes) {
+        public EnsembleSettings {
+            nodes = list(nodes);
+        }
+    }
+
     /** Which optional stages this server is running with. */
     public record Pipeline(boolean supervisor, boolean literals, boolean narrate, boolean audit,
-                           String schema_retrieval, List<String> nodes) {
+                           String schema_retrieval, List<String> nodes, EnsembleSettings ensemble) {
         public Pipeline {
             schema_retrieval = text(schema_retrieval);
             nodes = list(nodes);
@@ -398,6 +529,9 @@ public final class Models {
             new AuditReport(true, List.of(), List.of(), List.of(), null);
 
     private static final JobLinks NO_LINKS = new JobLinks("", "");
+
+    private static final EnsembleAgreement NO_AGREEMENT =
+            new EnsembleAgreement(0, 0, 0, "none", "", 0);
 
     /**
      * The three normalisers the compact constructors above are written in

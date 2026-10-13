@@ -25,7 +25,9 @@ from .config import Settings
 from .database import Database
 from .examples import ExamplesUnavailableError, GoldenPairLibrary, format_examples
 from .examples import tables_mentioned as example_tables
-from .retrieval import KnowledgeBase, KnowledgeUnavailableError, format_chunks, tables_mentioned
+from .retrieval import (
+    KnowledgeBase, KnowledgeUnavailableError, chunks_shown, format_chunks, tables_about, tables_mentioned,
+)
 from .snippets import SnippetLibrary, SnippetsUnavailableError
 
 
@@ -57,14 +59,17 @@ def build_tools(
     def search_knowledge(question: str) -> dict[str, Any]:
         """Retrieve business rules, table docs, and query recipes for a question."""
         if knowledge_base is None:
-            return {"context": "", "tables": [], "chunks": [], "error": "retrieval is disabled"}
+            return {"context": "", "tables": [], "about": [], "chunks": [], "error": "retrieval is disabled"}
         try:
             chunks = knowledge_base.search(question, settings.rag_top_k)
         except KnowledgeUnavailableError as exc:
-            return {"context": "", "tables": [], "chunks": [], "error": str(exc)}
+            return {"context": "", "tables": [], "about": [], "chunks": [], "error": str(exc)}
         return {
             "context": format_chunks(chunks, settings.rag_max_context_chars),
             "tables": tables_mentioned(chunks),
+            # What the knowledge the generator will read says it is about:
+            # of the chunks its prompt has room for, and no others.
+            "about": tables_about(chunks_shown(chunks, settings.rag_max_context_chars)),
             "chunks": [
                 {
                     "chunk_id": c.chunk_id,

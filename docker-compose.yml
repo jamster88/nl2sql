@@ -27,6 +27,22 @@ x-hardened: &hardened
 x-postgres-caps: &postgres-caps
   cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
 
+# --- who a health check is ------------------------------------------------------
+#
+# Docker runs a container's health check as the user the container was
+# started as. Nine services here start as root, to hand what they write to
+# an account and drop to it: the five Postgres servers, the directory, the
+# auth and review services and MLflow. Left alone, their checks would be
+# root's every ten seconds for as long as the stack is up.
+#
+# So each of those checks is started through `setpriv`, which becomes the
+# service's own account -- user, group, and no other group -- and then is
+# the check: `pg_isready`, or the interpreter, never runs as root, and all
+# that does is the instant it takes to stop being root. Each is a list
+# (`CMD`), so that no shell stands in front of it as root for as long as it
+# runs. util-linux's `setpriv` is in every image these nine start from, and
+# SETUID and SETGID, which the drop takes, are among what each is given back.
+
 # Every page, and MLflow's front door: one image (V6-37), told which page it
 # serves by NL2SQL_PAGE. Its health check verifies the certificate the page
 # serves, and is in the image.
@@ -104,9 +120,9 @@ services:
       # Over TCP: on every start the entrypoint sets the passwords through a
       # server that listens on the socket alone, and a socket check would
       # call that one healthy just before it stops.
-      test:
-        - CMD-SHELL
-        - pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-nl2sql} -d ${POSTGRES_DB:-nl2sql_retail}
+      # As `postgres`, never root ("who a health check is", above).
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-h", "127.0.0.1", "-U", "${POSTGRES_USER:-nl2sql}", "-d", "${POSTGRES_DB:-nl2sql_retail}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -134,9 +150,9 @@ services:
       # from the secret on every start.
       - vectorsocket:/var/run/postgresql
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -h 127.0.0.1 -U ${VECTOR_DB_USER:-ragproc} -d ${VECTOR_DB_NAME:-nl2sql_vectors}
+      # As `postgres`, never root ("who a health check is", above).
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-h", "127.0.0.1", "-U", "${VECTOR_DB_USER:-ragproc}", "-d", "${VECTOR_DB_NAME:-nl2sql_vectors}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -168,9 +184,9 @@ services:
       - chunkdata:/var/lib/pgdata
       - contextsocket:/var/run/postgresql
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -h 127.0.0.1 -U ${CONTEXT_DB_USER:-ragproc} -d ${CONTEXT_DB_NAME:-nl2sql_chunks}
+      # As `postgres`, never root ("who a health check is", above).
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-h", "127.0.0.1", "-U", "${CONTEXT_DB_USER:-ragproc}", "-d", "${CONTEXT_DB_NAME:-nl2sql_chunks}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -233,9 +249,11 @@ services:
       - storesdata:/var/lib/postgresql/data
       - storessocket:/var/run/postgresql
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -h 127.0.0.1 -U postgres -d postgres
+      # As `postgres`, never root ("who a health check is", above). The
+      # stock image carries `setpriv`, as every Debian image does; one put in
+      # its place through STORES_IMAGE has to as well.
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -542,6 +560,31 @@ services:
       # runs untraced when it is not. Empty is off.
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-}
       MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-}
+      # --- arch7: asking it several ways -----------------------------
+      # The question screened once, reworded, run once per wording and the
+      # answers voted on (agent/README.md, "Configuration"); false is arch6
+      # to the answer. OLLAMA_PARALLEL_CALLS is how many model calls the
+      # Ollama host serves at once -- one unless its own OLLAMA_NUM_PARALLEL
+      # is higher -- and every call the agent makes takes one of them.
+      ENSEMBLE_ENABLED: ${ENSEMBLE_ENABLED:-true}
+      ENSEMBLE_PARAPHRASES: ${ENSEMBLE_PARAPHRASES:-3}
+      ENSEMBLE_MAX_PARAPHRASES: ${ENSEMBLE_MAX_PARAPHRASES:-10}
+      ENSEMBLE_WAVES: ${ENSEMBLE_WAVES:-2}
+      ENSEMBLE_DEADLINE_SECONDS: ${ENSEMBLE_DEADLINE_SECONDS:-0}
+      ENSEMBLE_JUDGE_ENABLED: ${ENSEMBLE_JUDGE_ENABLED:-true}
+      ENSEMBLE_MAX_CLAIMS: ${ENSEMBLE_MAX_CLAIMS:-8}
+      ENSEMBLE_FUSE_COLUMNS: ${ENSEMBLE_FUSE_COLUMNS:-true}
+      OLLAMA_PARALLEL_CALLS: ${OLLAMA_PARALLEL_CALLS:-1}
+      MODEL_ROUTE_PARAPHRASER: ${MODEL_ROUTE_PARAPHRASER:-}
+      MODEL_ROUTE_JUDGE: ${MODEL_ROUTE_JUDGE:-}
+      # The grain check (7.0): the Static Validator refuses a query that
+      # joins tables of different grains -- daily sales, monthly costs -- on
+      # the date, or on no date at all, and the Repair Agent is told why.
+      # For every run, with the ensemble or without: false is 6.3's
+      # validator. GRAIN_PERIODS is the periods a grain can be, finest first,
+      # each the date dimension's columns that name one, joined by '+'.
+      GRAIN_CHECK_ENABLED: ${GRAIN_CHECK_ENABLED:-true}
+      GRAIN_PERIODS: ${GRAIN_PERIODS:-fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     secrets: &agent-secrets
@@ -884,7 +927,11 @@ services:
       # can see.
       - ./context_questions:/app/context_questions
     healthcheck:
-      test: ["CMD", "python", "-m", "nl2sql_common.health", "REVIEW"]
+      # As `nl2sql`, never root ("who a health check is", above): the
+      # account that owns its certificate, whoever the service itself became
+      # to write the checkout.
+      test: ["CMD", "setpriv", "--reuid=nl2sql", "--regid=nl2sql", "--clear-groups",
+             "python", "-m", "nl2sql_common.health", "REVIEW"]
       interval: 10s
       timeout: 8s
       retries: 5
@@ -1224,6 +1271,16 @@ services:
       - ldaptls:/etc/nl2sql/ldap-tls
       # Seed files, and the upstream's CA certificate for a replica. Read-only.
       - ./ldap/seed:/seed:ro
+    healthcheck:
+      # The image's own check -- the directory answering on its socket for
+      # its base -- started as `ldap`, never root ("who a health check is",
+      # above). The socket knows a caller by who it is, so `ldap` it must be.
+      test: ["CMD", "setpriv", "--reuid=ldap", "--regid=ldap", "--clear-groups",
+             "python3", "-m", "nl2sql_ldap", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     profiles: ["auth"]
 
   # The auth service: signing in, the session, turning the directory's
@@ -1332,7 +1389,9 @@ services:
       # a session.
       - authkeys:/etc/nl2sql/auth
     healthcheck:
-      test: ["CMD", "python", "-m", "nl2sql_common.health", "AUTH"]
+      # As `nl2sql`, never root ("who a health check is", above).
+      test: ["CMD", "setpriv", "--reuid=nl2sql", "--regid=nl2sql", "--clear-groups",
+             "python", "-m", "nl2sql_common.health", "AUTH"]
       interval: 10s
       timeout: 8s
       retries: 5
@@ -1420,9 +1479,9 @@ services:
       # start when MLflow is up.
       - mlflowsocket:/var/run/postgresql
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -h 127.0.0.1 -U ${MLFLOW_DB_USER:-mlflow} -d ${MLFLOW_DB_NAME:-mlflow}
+      # As `postgres`, never root ("who a health check is", above).
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-h", "127.0.0.1", "-U", "${MLFLOW_DB_USER:-mlflow}", "-d", "${MLFLOW_DB_NAME:-mlflow}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -1495,10 +1554,10 @@ services:
     volumes:
       - mlflowartifacts:/mlflow/artifacts
     healthcheck:
-      # Python, because the image has no curl.
-      test:
-        - CMD-SHELL
-        - python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=5).read()"
+      # Python, because the image has no curl -- and as `mlflow`, never root
+      # ("who a health check is", above).
+      test: ["CMD", "setpriv", "--reuid=mlflow", "--regid=mlflow", "--clear-groups",
+             "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=5).read()"]
       interval: 10s
       timeout: 8s
       retries: 6

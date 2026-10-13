@@ -239,3 +239,74 @@ def test_the_grain_reference_reconciles_rather_than_joining_on_date_key(database
     # Both produce a percentage; what differs is how much sales they are computed
     # over, so the reference must not simply be the naive query in disguise.
     assert correct != wrong, "the reference and the naive join agree, so B07 tests nothing"
+
+
+# ---------------------------------------------------------------------------
+# The grain check, held to the references (arch7.3 section 22.14)
+# ---------------------------------------------------------------------------
+#
+# 7.0.0 ships the check on by default, so a reference it refuses blocks the
+# release: a reference is right by definition, and a gate that rejects it is
+# arch6 section 1's warning about validation gates, made in code. Offline
+# against the grains the catalog measures to, written down in
+# `tests/grain_fixture.py`; under `--run-docker` against the grains read from
+# the database itself.
+
+
+@pytest.mark.parametrize("question", QUESTIONS, ids=[q.id for q in QUESTIONS])
+def test_the_grain_check_refuses_no_reference(question: BenchmarkQuestion):
+    from nl2sql_agent import grain
+    from nl2sql_agent.completeness import read_query
+    from tests.grain_fixture import GRAINS
+
+    assert grain.mismatches(read_query(question.reference_sql), GRAINS) == []
+
+
+def test_the_references_that_join_two_facts_are_among_them():
+    """So that "refuses none" is not said of fifteen queries the check never
+    reads: B07 joins daily sales to monthly costs, at the month; B13 joins
+    two weekly facts on their date."""
+    from nl2sql_agent.completeness import read_query
+    from tests.grain_fixture import GRAINS
+
+    joined = {q.id: sorted(set(read_query(q.reference_sql).joined_on) & set(GRAINS)) for q in QUESTIONS}
+    assert {id_: tables for id_, tables in joined.items() if len(tables) > 1} == {
+        "B07": ["fact_item_cogs", "fact_pos_retail_sales"],
+        "B13": ["fact_competitor_pricing", "fact_item_prices"],
+    }
+
+
+def test_the_grain_check_refuses_the_trap_the_judge_is_calibrated_on():
+    """The Judge's probe for B07 shows it the reference beside the trap a
+    live run fell into. The check passes the one and refuses the other, in
+    the trap's own shape."""
+    import json
+
+    from nl2sql_agent import grain
+    from nl2sql_agent.completeness import read_query
+    from tests.grain_fixture import GRAINS
+
+    probes = json.loads((REPO_ROOT / "models" / "probes" / "judge.json").read_text())["cases"]
+    [probe] = [case for case in probes if case["id"] == "B07"]
+    assert [m.shape for trap in probe["traps"] for m in grain.mismatches(read_query(trap["sql"]), GRAINS)] == [
+        grain.ON_THE_DATE]
+
+
+@pytest.mark.docker
+def test_the_grain_check_refuses_no_reference_against_the_catalogs_own_grains():
+    """The same, with nothing written down: the grains as this database's
+    dates measure them today."""
+    import sqlalchemy
+
+    from nl2sql_agent import grain
+    from nl2sql_agent.completeness import read_query
+    from nl2sql_agent.config import Settings
+    from nl2sql_agent.database import Database
+
+    database = Database(DATABASE_URL)
+    try:
+        grains = grain.read_grains(database, database.catalog(), Settings().grain_period_columns)
+    except sqlalchemy.exc.SQLAlchemyError as exc:
+        live_stores.unreachable("Postgres", DATABASE_URL, exc)
+    assert len(grains) >= 8, sorted(grains)
+    assert [q.id for q in QUESTIONS if grain.mismatches(read_query(q.reference_sql), grains)] == []

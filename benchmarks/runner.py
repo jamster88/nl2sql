@@ -25,6 +25,9 @@ values:
   errors -- a 5x fan-out or a 30x grain miss -- without failing on the last
   decimal place.
 
+The comparison itself is `nl2sql_agent.compare` since 7.0, where the
+ensemble's agreement step reads it too; it is imported back here by name.
+
 **Speed is measured per stage, not just per question.** The graph reports each
 node as it finishes, so the gaps between those callbacks are the stage
 durations. That is the difference between "slow" and "slow because the chat
@@ -33,125 +36,29 @@ model is doing three passes".
 
 from __future__ import annotations
 
-import math
 import statistics
 import time
 from dataclasses import dataclass, field
-from decimal import Decimal
-from itertools import permutations
-from typing import Any, Callable, Iterable, Sequence
+from typing import Any, Callable, Sequence
 
-# Relative tolerance for numeric comparison, for values that agree closely in
-# their own right.
-RELATIVE_TOLERANCE = 1e-6
-ABSOLUTE_TOLERANCE = 1e-9
-
-# Two numbers also match when they agree once rounded to this many decimals.
-# The reference queries round to 2 for legibility and agents usually do not, so
-# a pure relative tolerance rejects correct answers: 48.6076 against a reference
-# 48.61 is off by 5e-5 relative, which is thirty times 1e-6 and yet obviously
-# the same number. Rounding both sides is the comparison a person would make.
-# It stays far from the real mistakes, which are wrong by multiples: the grain
-# trap returns 98.81 against 34.20 and the fan-out 5x.
-ROUNDING_DECIMALS = 2
+from nl2sql_agent.compare import (  # noqa: F401 - the scorer, moved into the agent (arch7); imported back by name
+    ABSOLUTE_TOLERANCE,
+    MAX_COLUMN_ASSIGNMENTS,
+    RELATIVE_TOLERANCE,
+    ROUNDING_DECIMALS,
+    _is_number,
+    _row_matches,
+    _sort_key,
+    _sorted_rows,
+    result_matches,
+    values_match,
+)
 
 # Outcomes, worst last so a report can sort by them.
 CORRECT = "correct"
 WRONG = "wrong"
 FAILED = "failed"  # the agent produced no runnable SQL
 ERROR = "error"  # the agent's SQL was rejected by the database
-
-
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float, Decimal)) and not isinstance(value, bool)
-
-
-def values_match(expected: Any, actual: Any) -> bool:
-    """One cell against another, tolerant of how the number was produced."""
-    if expected is None or actual is None:
-        return expected is None and actual is None
-    if _is_number(expected) and _is_number(actual):
-        left, right = float(expected), float(actual)
-        if abs(left - right) <= max(
-            ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE * max(abs(left), abs(right))
-        ):
-            return True
-        return round(left, ROUNDING_DECIMALS) == round(right, ROUNDING_DECIMALS)
-    # Booleans and strings compare after normalising case and padding, because
-    # CHAR columns come back space-padded and 't'/'true' are the same answer.
-    return str(expected).strip().lower() == str(actual).strip().lower()
-
-
-def _row_matches(expected: Sequence[Any], actual: Sequence[Any]) -> bool:
-    return all(values_match(e, a) for e, a in zip(expected, actual))
-
-
-# Guard against a pathologically wide result turning the search below into a
-# combinatorial one. Nothing in the benchmark returns more than a few columns.
-MAX_COLUMN_ASSIGNMENTS = 5000
-
-
-def result_matches(
-    expected_rows: Sequence[Sequence[Any]],
-    actual_rows: Sequence[Sequence[Any]],
-    *,
-    ordered: bool = False,
-) -> bool:
-    """Does the agent's result contain the reference answer?
-
-    Column order and naming are presentation, extra columns are allowed, and
-    row order only counts when the question asked for one. What is left after
-    all that is the real question: is there a way of reading the agent's
-    columns under which its rows *are* the reference rows?
-
-    So the search is over column assignments. For each way of picking one agent
-    column per reference column, the agent's rows are projected onto those
-    columns and compared. Matching columns independently -- checking each
-    reference column against some agent column on its own -- is the tempting
-    shortcut and is wrong: it accepts a result whose values are all present but
-    attached to the wrong rows, which is exactly what a join on the wrong key
-    produces.
-    """
-    expected_rows = [list(r) for r in expected_rows]
-    actual_rows = [list(r) for r in actual_rows]
-
-    if not expected_rows:
-        return not actual_rows
-    if len(expected_rows) != len(actual_rows):
-        return False
-
-    expected_width = len(expected_rows[0])
-    actual_width = len(actual_rows[0])
-    if actual_width < expected_width:
-        return False
-
-    if math.perm(actual_width, expected_width) > MAX_COLUMN_ASSIGNMENTS:
-        # Fall back to the reference's own column order rather than guessing.
-        assignments: Iterable[tuple[int, ...]] = [tuple(range(expected_width))]
-    else:
-        assignments = permutations(range(actual_width), expected_width)
-
-    reference = expected_rows if ordered else _sorted_rows(expected_rows)
-    for assignment in assignments:
-        projected = [[row[i] for i in assignment] for row in actual_rows]
-        candidate = projected if ordered else _sorted_rows(projected)
-        if all(_row_matches(e, a) for e, a in zip(reference, candidate)):
-            return True
-    return False
-
-
-def _sorted_rows(rows: list[list[Any]]) -> list[list[Any]]:
-    """A stable order that does not depend on a column's values being mutually
-    comparable -- NULLs, numbers and strings arrive in the same column."""
-    return sorted(rows, key=lambda row: [_sort_key(v) for v in row])
-
-
-def _sort_key(value: Any) -> tuple:
-    if value is None:
-        return (0, 0.0, "")
-    if _is_number(value):
-        return (1, float(value), "")
-    return (2, 0.0, str(value))
 
 
 @dataclass
@@ -250,7 +157,9 @@ class StageTimer:
         self._last = time.perf_counter()
         self.timing = StageTiming()
 
-    def __call__(self, step: str, detail: str) -> None:
+    def __call__(self, step: str, detail: str, candidate: int | None = None) -> None:
+        """One node finished. Under the ensemble a candidate's steps carry
+        its index; the timer times them all the same."""
         now = time.perf_counter()
         self.timing.stages.append((step, now - self._last))
         self._last = now
@@ -286,6 +195,57 @@ class QuestionResult:
     rung: str | None = None
     #: The run's MLflow trace, when it was traced (`benchmarks/tracking.py`).
     trace_id: str = ""
+    #: Which wording asked it: 0 the benchmark's own, 1 to 3 the paraphrase
+    #: set's rewordings (`benchmarks/paraphrases.py`), whose words `question`
+    #: then holds.
+    wording: int = 0
+    #: Under the ensemble (arch7): how the runs agreed -- `unanimous`,
+    #: `majority`, `contested`, `single` or `none` -- of how many, how many
+    #: agreed, the rewordings the fidelity gate discarded by the check that
+    #: discarded them, the rung each run's generator was scored at, and the
+    #: question's state rendered as JSON, in bytes. Empty for one run.
+    agreement: str = ""
+    candidates: int = 0
+    agreed: int = 0
+    rejections: dict[str, int] = field(default_factory=dict)
+    candidate_rungs: list[str] = field(default_factory=list)
+    state_bytes: int = 0
+    #: Every rewording the Paraphraser wrote: its words, what it changed,
+    #: and whether the gate kept it or why not -- where a false rejection
+    #: shows, and so where the gate's vocabulary grows from.
+    rewordings: list[dict[str, Any]] = field(default_factory=list)
+    #: Every run, in a line: its wording, how it ended, whether it could
+    #: vote and why not, its group, the Judge's verdict on its answer, its
+    #: SQL, and which was delivered.
+    runs: list[dict[str, Any]] = field(default_factory=list)
+    #: What the Judge did (arch7.1): `accepted` every answer, `set aside`
+    #: some, `overruled` the runs' own choice, `accepted none`, `failed` or
+    #: `not asked`; its verdict on each group; and how the answer the runs
+    #: alone would have chosen scores -- the delivered one's outcome unless
+    #: the Judge overruled them.
+    judged: str = ""
+    verdicts: list[dict[str, Any]] = field(default_factory=list)
+    without_judge: str = ""
+    #: Whether a second wave ran (arch7.1 section 22.7), and what fusion did
+    #: (section 22.8): whether it joined columns at all, the columns joined
+    #: from the group's other runs and those declined, with why, the claims
+    #: they added and those of theirs the delivered rows did not bear out.
+    wave2: bool = False
+    columns_fused: bool = False
+    joined: list[dict[str, Any]] = field(default_factory=list)
+    declined: list[dict[str, Any]] = field(default_factory=list)
+    claims_added: int = 0
+    claims_dropped: int = 0
+    #: The runs the grain check sent to repair (arch7.3 section 22.14): for
+    #: each, which run it was -- 0 the question's own, or the only one --
+    #: how many of its attempts the check refused, and how that run ended,
+    #: scored against the reference as the answer is.
+    grain_repairs: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def label(self) -> str:
+        """B07 for the benchmark's own wording, B07.2 for the second rewording."""
+        return f"{self.question_id}.{self.wording}" if self.wording else self.question_id
 
     @property
     def correct(self) -> bool:
@@ -303,6 +263,11 @@ class QuestionResult:
 class BenchmarkReport:
     results: list[QuestionResult] = field(default_factory=list)
     label: str = ""
+    #: Whether the grain check was on for the run, and the questions whose
+    #: reference query it would refuse -- which must be none: a check that
+    #: rejects a right query blocks the release that ships it.
+    grain_checked: bool = False
+    rejected_references: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
@@ -330,6 +295,33 @@ class BenchmarkReport:
             bucket[0] += int(result.correct)
             bucket[1] += 1
         return {k: (v[0], v[1]) for k, v in out.items()}
+
+    def by_question(self) -> dict[str, list[QuestionResult]]:
+        """Question id -> its results, in the order they were asked: with the
+        paraphrase set, the benchmark's own wording first, then each rewording."""
+        out: dict[str, list[QuestionResult]] = {}
+        for result in self.results:
+            out.setdefault(result.question_id, []).append(result)
+        return out
+
+    @property
+    def paraphrased(self) -> bool:
+        """Whether a question was asked in words not its own: the paraphrase set."""
+        return any(result.wording for result in self.results)
+
+    @property
+    def stable(self) -> int:
+        """How many questions came out right however they were worded."""
+        return sum(1 for results in self.by_question().values() if all(r.correct for r in results))
+
+    @property
+    def stability(self) -> float:
+        """The fraction of questions every wording of which came out right --
+        arch7 section 11's first measure, the premise the ensemble is argued
+        from. With one wording a question it is the accuracy, and says
+        nothing about wording."""
+        questions = self.by_question()
+        return self.stable / len(questions) if questions else 0.0
 
     def seconds(self) -> list[float]:
         return sorted(r.wall_seconds for r in self.results)
@@ -386,6 +378,91 @@ class BenchmarkReport:
             if result.rung:
                 counts[result.rung] = counts.get(result.rung, 0) + 1
         return counts
+
+    # --- the ensemble (arch7 section 11) ----------------------------------
+
+    @property
+    def ensembled(self) -> bool:
+        """Whether the questions were asked through the ensemble."""
+        return any(result.candidates for result in self.results)
+
+    def agreement_levels(self) -> dict[str, int]:
+        """How many questions the runs agreed on at each level."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            if result.agreement:
+                counts[result.agreement] = counts.get(result.agreement, 0) + 1
+        return counts
+
+    @property
+    def agreed_on_wrong(self) -> int:
+        """Questions a majority or all of the runs agreed on, wrongly: the
+        failure agreement cannot catch, and the one worth reading first."""
+        return sum(1 for r in self.results if r.agreement in ("unanimous", "majority") and not r.correct)
+
+    def fidelity_rejections(self) -> dict[str, int]:
+        """Rewordings the fidelity gate discarded, by check, across the run."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            for check, count in result.rejections.items():
+                counts[check] = counts.get(check, 0) + count
+        return dict(sorted(counts.items()))
+
+    @property
+    def rung_spread(self) -> int:
+        """Questions whose runs' generators were scored at more than one rung:
+        how often a host serving several calls at once would be asked for two
+        models at once (R6 of arch7's risks by phase)."""
+        return sum(1 for r in self.results if len(set(r.candidate_rungs)) > 1)
+
+    def state_sizes(self) -> list[int]:
+        return sorted(r.state_bytes for r in self.results if r.state_bytes)
+
+    def judge_actions(self) -> dict[str, int]:
+        """What the Judge did, question by question: how often it accepted
+        every answer, set some aside, overruled the runs, accepted none,
+        failed, or was not asked."""
+        counts: dict[str, int] = {}
+        for result in self.results:
+            if result.judged:
+                counts[result.judged] = counts.get(result.judged, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def judge_effect(self) -> dict[str, int]:
+        """Where the Judge changed the answer, scored both ways: `fixed` a
+        wrong answer the runs would have delivered, `broke` a right one, and
+        overruled them with no change to the score."""
+        overruled = [r for r in self.results if r.judged == "overruled"]
+        fixed = sum(1 for r in overruled if r.correct and r.without_judge == WRONG)
+        broke = sum(1 for r in overruled if not r.correct and r.without_judge == CORRECT)
+        return {"overruled": len(overruled), "fixed": fixed, "broke": broke}
+
+    def grain_repairs(self) -> dict[str, int]:
+        """What the grain check cost and bought: the runs it sent to repair,
+        and how each ended -- `right`, `wrong`, or `failed` to answer."""
+        ended = [repair["ended"] for result in self.results for repair in result.grain_repairs]
+        return {
+            "runs": len(ended),
+            "right": ended.count(CORRECT),
+            "wrong": ended.count(WRONG),
+            "failed": len(ended) - ended.count(CORRECT) - ended.count(WRONG),
+        }
+
+    @property
+    def second_waves(self) -> int:
+        """Questions the first wave's vote did not settle, so a second ran."""
+        return sum(1 for r in self.results if r.wave2)
+
+    def fusion(self) -> dict[str, int]:
+        """Fusion's yield across the run (arch7 section 11, item 8): columns
+        joined onto the chosen rows and declined, claims added from the
+        other runs and claims of theirs the delivered rows did not bear out."""
+        return {
+            "columns joined": sum(len(r.joined) for r in self.results),
+            "columns declined": sum(len(r.declined) for r in self.results),
+            "claims added": sum(r.claims_added for r in self.results),
+            "claims dropped": sum(r.claims_dropped for r in self.results),
+        }
 
     def stage_totals(self) -> dict[str, float]:
         """Seconds spent in each pipeline stage across the whole run."""

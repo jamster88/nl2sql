@@ -1,4 +1,4 @@
-# NL2SQL Agent (v6, multi-agent)
+# NL2SQL Agent (v7, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -42,6 +42,12 @@ person's questions and statements as their own database role -- the agent
 still connects as its read-only reader, and becomes the person for a
 transaction with `SET LOCAL ROLE`. The command line is unchanged: it is
 whoever runs it. See [`../auth/README.md`](../auth/README.md).
+
+**v7 asks it several ways** (arch7.1, being built). The question is
+screened once, reworded, the pipeline run once per wording, every distinct
+answer read by a Judge, and the answers it accepts voted on -- a second wave
+when the vote does not settle it -- and what the agreeing runs found fused
+into the chosen one's answer. See [Asking it several ways (arch7)](#asking-it-several-ways-arch7).
 
 For launching it and asking questions day to day, see [`USAGE.md`](USAGE.md).
 This file covers how it works and how to extend it.
@@ -118,13 +124,13 @@ supervise --+-- retrieve_schema ----+
 | 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period) | screens |
 | 1. Intake | `refuse` | Answers a refused or ambiguous question without touching the database | -- |
 | 1. Context | `retrieve_schema` | Tables from the DDL-chunk vectors | -- |
-| 1. Context | `retrieve_literals` | Phrases in the question resolved to real values | -- |
+| 1. Context | `retrieve_literals` | Phrases in the question resolved to the real values they name -- the whole value, or a close spelling of it (7.0) | -- |
 | 1. Context | `retrieve_knowledge` | Business rules and data-dictionary chunks | -- |
 | 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
 | 1. Context | `retrieve_snippets` | SQL snippets -- joins, filters, measures, dimensions -- found by keyword phrase and by meaning (v5.6) | -- |
 | 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described; the snippets over those tables | -- |
 | 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
-| 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope | -- |
+| 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope; and the grain check (7.0): no two tables of different grains joined without being brought to one | -- |
 | 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
 | 3. Execute | `execute_query` | Reader role, READ ONLY, statement timeout, row cap | -- |
 | 3. Review | `review` | The Completeness Reviewer: a label beside every id, the measure a ranking was ranked by, the period, the row count; then one reflection | once, when the rows name something |
@@ -166,6 +172,51 @@ the budget runs out, the answer is shown with the gap named. A default the
 pipeline chose, such as the fiscal year, is written to `assumptions`, and
 the narrator must state it -- the audit checks, and the answer states it
 itself if the narrative did not.
+
+**Two grains, one join** (arch7.3, 7.0). A table of monthly costs holds one
+date in each fiscal month. Joined to daily sales on the date, each month's
+cost meets one day's sales and the rest of the month is dropped: the query
+runs, the planner has no objection, and the margin is a plausible number
+from a twenty-eighth of the data. The Static Validator now refuses that
+join ([`grain.py`](nl2sql_agent/grain.py)). Each table's grain is measured,
+not declared: for every table with a foreign key to the date dimension,
+the coarsest period of `GRAIN_PERIODS` that holds at most one of the
+table's distinct dates in each -- on this catalog three tables are daily,
+three weekly and two monthly. It is read once a process, beside the label
+map, a query a table. The rule reads the query
+([`completeness.py`](nl2sql_agent/completeness.py)'s reading of what is
+added up, rolled up and joined) and refuses two shapes, both between two
+tables that are added up and whose grains differ:
+
+- **on the date** -- the two joined date to date, directly or through the
+  date dimension, with the finer not first rolled up to the coarser's
+  period;
+- **on no date** -- the two joined on a product or a store alone, with the
+  coarser still bringing a row for every period, so each row of the finer
+  meets all of them.
+
+Each is an ordinary static issue whose message names the two tables, their
+grains and the columns to join on, and the Repair Agent passes it on to the
+generator without a model call. The rule refuses only what it can read: a
+join it cannot follow, a coarser table held to one period or rolled up
+past its period, and a table read twice wherever the answer would hang on
+the whole statement all pass. What one SELECT shows by itself is read
+whatever else the statement does: a SELECT that reads the finer table as
+stored and joins it to the coarser on the date has rolled nothing up
+first, though it group by the month afterwards and though another SELECT
+read the same table again. A grain is what the data
+shows today -- a table loaded once a month so far reads as monthly -- and
+is read again at the next start. When the grains cannot be read -- no date
+dimension, a period column it does not have, a database error -- the check
+stands down for the process and the log says so once.
+`GRAIN_CHECK_ENABLED=false` is the validator without it. It is the first
+part of arch7 that changes the pipeline itself, so it applies with
+`ENSEMBLE_ENABLED=false` as well. Measured with it and without through
+every benchmark configuration, it fired only on that trap, every run it
+refused came back with its grain right -- one of them, with the schema
+alone to go on, still wrong for another reason -- and no right query was
+refused; a join on a computed key is one it cannot read, and it passed
+([`docs/benchmark.md`](../docs/benchmark.md#the-grain-check)).
 
 **One retry budget.** A failure from any gate -- the AST check, the planner, a
 runtime error, the Completeness Reviewer, or the audit -- becomes an
@@ -255,6 +306,137 @@ table allowlist).
 Re-measure with `python benchmarks/run_benchmark.py`, which now reports
 per-agent timing, model calls per node, and the fraction of the narrative the
 audit could trace back to the result.
+
+## Asking it several ways (arch7)
+
+Temperature is zero everywhere, so the only independent second opinion the
+pipeline can give itself is a different wording of the same question. arch7
+([`Multi-Agent_NL2SQL_arch7.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md))
+builds on that: the question is screened once, reworded three to ten ways,
+each rewording held to the original's answer contract, the pipeline above run
+once per wording, and the largest agreeing group's answer delivered with the
+record of every run. arch7.1 is arch7 with the Judge moved before the
+vote: every distinct answer is read against the question first, and only
+the runs whose answer it accepts are counted. arch7.2
+([`Multi-Agent_NL2SQL_arch7_2.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md))
+is arch7.1 as its Phase 3 was built, with a grain check added as a phase
+of its own, and arch7.3
+([`Multi-Agent_NL2SQL_arch7_3.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md))
+records the owner's decisions on it. It is built in phases
+([`Multi-Agent_NL2SQL_arch7_3_implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md),
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md)),
+and all seven of its phases are built -- the outer graph, the rewordings,
+the Judge and the vote, the second wave and fusion, the calibration of the
+two new routing tasks, the clients' views of the runs, and the grain check
+(Phase 6, on by default, and in the pipeline itself: see
+[The pipeline](#the-pipeline)). It is drawn in full by
+[`arch_diagrams/arch_v7.svg`](../arch_diagrams/arch_v7.svg), and it is
+[`ensemble.py`](nl2sql_agent/ensemble.py), around the pipeline:
+
+```
+screen ─┬─ refuse                    the Supervisor, once, on the original
+        └─ paraphrase                up to 10 rewordings, most different first
+           └─ screen_paraphrase      F1-F3 and F5 in code; F4, the Supervisor's reading
+              └─ plan_wave <──────────┐  the original + the first 3 faithful;
+                 └─ answer            │  then every faithful one not yet run
+                    └─ validate       │  E1-E5, agreement, the groups
+                       └─ judge       │  every group's answer, accepted or set aside
+                          └─ vote ─┬──┘  the accepted runs vote; unsettled, a second wave
+                                   ├─ fuse ─┐   columns, claims, dissent onto the chosen
+                                   └────────┴─ deliver   the answer, its line first
+```
+
+| Node | What it does | LLM |
+|---|---|---|
+| `screen` | The Supervisor on the original: verdict, intent and the answer contract every wording is held to. An injection or an ambiguity stops here, and nothing is reworded | screens |
+| `refuse` | A refused or ambiguous question is answered as the pipeline answers it, and nothing runs | -- |
+| `paraphrase` | The Paraphraser ([`paraphrase.py`](nl2sql_agent/paraphrase.py)): `ENSEMBLE_MAX_PARAPHRASES` rewordings in one structured call, from the question and what its answer may not change, named in everyday words and nothing else, each with a few words on what it varied. A failure costs the rewordings: the original runs alone | writes rewordings |
+| `screen_paraphrase` | The fidelity gate: each rewording held to F1 numbers, F2 literals, F3 polarity and F5 distinct in code ([`fidelity.py`](nl2sql_agent/fidelity.py)) -- so one that visibly changed the question costs no call -- then read by the Supervisor, and kept only when that reading proceeds and builds the original's contract (F4, `contract.same_contract`): the same entities, measure and period, the contract built in the original's shape, since its numbers and direction are F1's and F3's. Fewer than `ENSEMBLE_PARAPHRASES` kept, the Paraphraser is asked once more, told which failed and why | screens, light |
+| `plan_wave` | The first wave: the original and the first `ENSEMBLE_PARAPHRASES` faithful rewordings, in the order written. A second: every faithful rewording not yet run, with the vote before it emptied | -- |
+| `answer` | The pipeline on each wording, seeded with the screening made for those exact words and the anchor contract -- every run is held to the contract read from the question as asked -- so no run makes a Supervisor call of its own (`Nl2SqlAgent.answer`) | the pipeline's |
+| `validate` | Each run checked against its own question ([`agreement.py`](nl2sql_agent/agreement.py)): E1 answered, E2 faithful, E3 rows when the question implies some, E4 the audit did not judge the rows wrong, E5 not a sample -- only what makes a run's rows no answer keeps it from voting. Then every pair compared with the benchmark's scorer ([`compare.py`](nl2sql_agent/compare.py)) and the runs grouped by agreement | -- |
+| `judge` | The Judge ([`judge.py`](nl2sql_agent/judge.py)), on every question with an answer to judge, before anything is counted: each group's representative query and first five rows, lettered in the order the runs were asked -- never how many runs gave it -- read against the question, what every answer was held to, and the knowledge the original's run retrieved. A verdict per letter, accepted or set aside with the mistake in the query named; an answer it says nothing about stands. A failure costs the verdicts: the runs vote alone | judges, heavy |
+| `vote` | Only the runs whose answer the Judge accepted vote: a strict majority of them, the largest accepted group winning, ties to the original's. `judged` when that is not the group the runs alone would have chosen; when the Judge accepted none, the runs' own choice, `contested`, with its objection. A vote that does not settle the question -- no majority among the runs that voted, or one run standing alone -- goes back to `plan_wave` while a wave is left (`ENSEMBLE_WAVES`), a faithful rewording has not run and `ENSEMBLE_DEADLINE_SECONDS`, if set, has not passed; the Judge then reads every group again and the vote is recounted over both waves. With no wave left, the largest accepted group is delivered as `contested` | -- |
+| `fuse` | The representative of the winning group -- complete before a gap was accepted, audited before claims were dropped, the original's wording before a rewording's, fewer attempts, the cheaper plan -- whose SQL and chart are the answer's ([`fuse.py`](nl2sql_agent/fuse.py)). Then, in code: a column of a dimension the rows identify that another run of the group carried, joined on that dimension's key only when every row matches exactly once (`ENSEMBLE_FUSE_COLUMNS`); the other runs' claims that speak of a row the narrative does not yet speak of, each kept only when the delivered rows reproduce it, up to `ENSEMBLE_MAX_CLAIMS`, and the whole re-audited; the assumptions every run made, once; and each losing answer with the tables and filtered columns its query has that the chosen one's has not, and how it rolls up and joins the tables it adds up where the two differ -- where a mistake of grain shows. No SQL is fused | -- |
+| `deliver` | The answer, rendered for the question as asked, opening with its agreement line: "Agreed by 4 of 4 independent runs of the question, each worded differently.", or, when the Judge overruled the runs, "The Judge set aside the answer 3 of 4 runs gave -- *its reason* -- and accepted this one, which 1 gave." Its notes name each joined column's run, each column left out and why, and each answer that lost. When no run could vote, the original's give-up, as the pipeline delivers one | -- |
+
+The outer state ([`ensemble_state.py`](nl2sql_agent/ensemble_state.py))
+keeps each run whole as a candidate -- its wording, its outcome, whether it
+could vote and why not, its group, its state with its own trace -- the
+Judge's verdict on each group, and every rewording with the check that
+discarded it; `--json` and the REST answer's
+`ensemble` carry that record ([`API.md`](API.md)). Progress lines from a
+run's nodes carry the run's index (`[2] [sql] ...` on the CLI, `candidate`
+on the event stream), and the trace is one per question, each run a
+"Candidate k" span beneath the ensemble's own nodes (see
+[Tracing](#tracing-mlflow)). The web interface and the desktop client draw
+a lane per run while a question is answered, show how the runs agreed
+beside the answer, and fold every wording and its SQL away beneath it
+([the web interface](../docs/web_interface.md#the-web-interface)); and a
+verdict on an answer is staged with the record, so a reviewer sees the
+queries that agreed and the ones that lost
+([feedback](../docs/feedback.md#what-happens-to-a-verdict)). `ENSEMBLE_ENABLED=false` is the pipeline alone,
+and the answer's `ensemble` is null; with `SUPERVISOR_ENABLED=false` nothing
+is reworded, since no rewording runs that the Supervisor has not read.
+
+**The gate was measured on real rewordings.** F1-F3 started from the
+implementation specification's word lists and grew until all 45 of the
+benchmark's hand-written rewordings passed ([`docs/benchmark.md`](../docs/benchmark.md)).
+F4 was measured with the live Supervisor reading the same 45. Compared as
+the specification first had it -- each rewording's contract built from its
+own words -- it discarded 18 of them: the Supervisor copies a period in the
+question's own spelling, so "FY2025" and "fiscal year 2025" differed, and
+the contract's reading of a question's shape knows a count only as "how
+many", so "What is the store count?" read as a list. F4 now compares periods
+however they are spelled, and builds the rewording's contract in the
+original's shape -- the numbers and the direction are F1's and F3's to hold
+-- so what it compares is what the Supervisor read: the entities, the
+measure, the period. The 45 lose 3, each where it read a different entity.
+
+**Why the Judge reads before the vote counts.** arch7 voted first and
+asked a Judge only when the vote could not decide. Measured on the
+paraphrase set, the runs' mistakes were shared: runs that fell into the
+same trap got the same number, so they agreed and outvoted the run that did
+not, and every wrong answer the vote delivered had a majority behind it --
+which a Judge asked only on a split never sees
+([`docs/benchmark.md`](../docs/benchmark.md)). So the Judge reads every
+answer first, without the count, and the vote counts what it accepts. It
+cannot take the answer away: with none accepted, the runs' own choice is
+still delivered, marked contested. Its rules name the kinds of mistake the
+benchmark's runs made -- a filter the question does not state, a join off
+the knowledge's grain, other units than asked -- so the benchmark is no
+longer blind to them, and the report scores the runs' own choice wherever
+the Judge overruled them, so its effect shows both ways.
+
+**The host gate.** Every call the agent makes to its chat models -- any
+run's, any job's, the Supervisor's included -- takes a slot of one gate
+first, held around the call and given back when it returns, fails or meets
+`OLLAMA_TIMEOUT` ([`hostgate.py`](nl2sql_agent/hostgate.py)).
+`OLLAMA_PARALLEL_CALLS` is how many slots there are, one by default, because
+the host this was built against serves one call at a time; it is also how
+many runs of one question go at once. It is a statement about the host, not
+something measured, so set it to what the host serves -- Ollama's own
+`OLLAMA_NUM_PARALLEL` -- and no higher, and raise it only for a host with the
+memory for its resident models times the slots: two runs at different rungs
+ask for two models at once, and a host that holds one swaps on every call.
+A model pinned for the Judge or the Paraphraser (`MODEL_ROUTE_JUDGE`,
+`MODEL_ROUTE_PARAPHRASER`) that routing would not otherwise keep is one
+resident model more. With one slot, `API_MAX_CONCURRENCY=1` is the setting
+to prefer for the REST API: two questions at once only take turns at the
+gate, call by call, so each takes about twice as long and neither finishes
+sooner than it would have from the queue.
+And a deployer who raises the slots should raise the API container's
+process ceiling with them (`pids_limit`, 512, in `docker-compose.yml`):
+every run is a thread with threads of its own, and threads count against it
+([what each container may use](../docs/hardening.md#what-each-container-may-use)).
+One consequence for an upgrade: at one slot the REST API's two workers,
+which 6.3 let call the host at once, take turns; a host that serves two
+calls needs `OLLAMA_PARALLEL_CALLS=2` to keep them. And the API warns at
+start when `OLLAMA_PARALLEL_CALLS` times `API_MAX_CONCURRENCY` -- the runs
+that may hold a database connection at once -- is more than the agent's
+connection pool holds (15, SQLAlchemy's defaults) or more than half the
+reader role's connection limit (60, set in
+[`common/nl2sql_common/roles.py`](../common/nl2sql_common/roles.py)).
 
 ## Serving it over HTTP
 
@@ -360,6 +542,20 @@ from state the pipeline already holds; nothing in routing calls a model.
 | Completeness reflection | the generation's, capped at standard | with the generation |
 | Insight Narrator | light for at most 5 rows of at most 3 numbers, else standard | an audit send-back |
 | Repair diagnosis | one above the generator's, standard at least | with the generator |
+| Paraphraser (arch7) | the Supervisor's: light, standard when the pre-screen flags the question | never: one call, and one retry |
+| Judge (arch7.1) | heavy, always | never: one call a question, before the vote |
+
+The two arch7 tasks are new in 7.0. `models/build_catalog.py` writes
+catalogs of schema 3, with a prior for both, and `models/calibrate.py
+--tasks paraphraser judge` measures them -- the Paraphraser on whether
+enough of its rewordings pass the fidelity gate, the Judge on whether it
+accepts each benchmark question's right answer and sets aside the wrong
+ones recorded beside it ([`models/README.md`](../models/README.md#calibration)).
+A catalog built before 7.0 -- schema 2, every calibrated host's -- knows
+nothing of them. It is read, not refused: the two are taken as unmeasured,
+so `OLLAMA_MODEL` answers them until a rebuild and the calibrator measure
+them, and the routing table's notes say so. A catalog of any other schema
+than 2 or 3 is refused, as before.
 
 The **routing table** is built once, at startup, from the catalog
 `MODEL_CATALOG` names. Each task and rung gets the fastest model whose
@@ -368,7 +564,9 @@ size and description, and by size alone a 2023 mixture of experts outranks
 the reference, so it is used only with `MODEL_ROUTE_ON_PRIOR=true`. At most
 `MODEL_MAX_LOADED` distinct models fill the table, because Ollama swaps from
 disk when too many are asked for: `OLLAMA_MODEL` first, then whichever
-models take the most rungs. `MODEL_ROUTE_<TASK>` pins a task's rungs
+models take the most rungs -- counting only the rungs a task is ever called
+at, so the Judge, called only at heavy, wins a model no place by its light
+and standard rungs. `MODEL_ROUTE_<TASK>` pins a task's rungs
 outright. The table is printed by the CLI, logged, and reported by
 `/v1/meta`.
 
@@ -458,7 +656,7 @@ running it:
 [`tracing.py`](nl2sql_agent/tracing.py) writes every run into MLflow when
 `MLFLOW_TRACKING_URI` names a server: one trace per question, filed under
 `MLFLOW_EXPERIMENT_NAME`. The trace is drawn by the same wrapper that writes
-the state's `trace` entries (`Nl2SqlAgent._traced`), so the two records of a
+the state's `trace` entries (`graph.traced_node`), so the two records of a
 run cannot disagree about what ran:
 
 | Span | Type | Holds |
@@ -470,6 +668,23 @@ run cannot disagree about what ran:
 `graph.TRACE_SPANS`, beside `STEP_LABELS`, is the one place a node's name,
 span type and inputs are written down, and a test fails when a node is added
 without one.
+
+**Under the ensemble** (arch7.1) a question is still one trace. The root
+span's children are the ensemble's own nodes (`ensemble.TRACE_SPANS`:
+Supervisor, Paraphraser, Fidelity Gate, Wave Planner, Candidate Runs,
+Agreement, Judge, Vote, Fusion, Answer), and beneath Candidate Runs is a
+span per run, "Candidate k", holding that run's agents as the table above
+describes them -- its Supervisor with no model call inside, the screening
+having been made once above it. A second wave repeats Wave Planner,
+Candidate Runs, Agreement, Judge and Vote in the same trace, its runs
+beneath its own Candidate Runs. The runs happen on worker threads, each
+started in a copy of the question's context, so their spans land in the
+question's trace whichever thread made them. The trace gains three tags,
+`nl2sql.agreement` (`4/4 unanimous`), `nl2sql.candidates` and
+`nl2sql.judge` -- what the Judge did: `accepted`, `set aside`, `overruled`,
+`accepted none`, `failed` or `not asked` -- and its `nl2sql.attempts` and
+`nl2sql.model_calls` are read from the runs: the delivered run's attempts,
+and every run's calls with the ensemble's own.
 
 **Verdicts.** The REST API records each verdict -- `yes`, `no`,
 `incomplete` -- on the answer's trace as human feedback named `verdict`,
@@ -853,7 +1068,7 @@ truncated rather than silently cutting it off.
 The knowledge base is a pgvector database with one collection per document in
 [`knowledge/`](../knowledge), each row a semantically chunked section with its
 bge-m3 embedding, the heading path it came from, and the authored `chunk_meta`
-(`table`, `domain`, `grain`, `keywords`).
+(`table` or `tables`, `domain`, `grain`, `keywords`).
 
 `retrieval.py` embeds the question once and runs a cosine search against every
 collection, so one question picks up DDL detail, dictionary context and
@@ -871,6 +1086,26 @@ What the retrieved chunks feed:
 
 `--json` includes the `chunk_id`, source document and distance of every chunk
 used, so an answer can be traced back to the text that shaped it.
+
+**A table the shown knowledge is about is admitted when a draft reads it**
+(7.0). A DDL chunk documents one table and says so under `table`; a
+business rule or a recipe covers several and lists them under `tables` --
+the gross-margin recipe's is `fact_pos_retail_sales, fact_item_cogs,
+dim_date`. That list went unread: a generator shown the recipe wrote the
+roll-up it describes and, when the vectors had not ranked the sales, was
+refused for reading a table out of scope -- at every attempt, since the
+scope is fixed for a run. The Static Validator now admits such a table:
+when a draft reads one that the knowledge in its prompt lists, and
+`MAX_TABLES` has room, the table joins the scope, the schema is described
+again with it for any draft to come, and this draft goes on to the planner,
+which knows whether its columns exist. The trace says so: "valid
+(fact_pos_retail_sales brought into scope: the knowledge shown is about
+it)". Nothing is put in scope ahead of the first draft, so every prompt is
+the prompt it was: described up front, the tables the shown knowledge lists
+-- five a question -- changed what the generator wrote for questions that
+needed none of them. A chunk that lists no table, as the data dictionary's
+sections do not, admits none; when writing a rule, list in `tables` what a
+reader of it will need.
 
 ### Why retrieval
 
@@ -893,6 +1128,18 @@ unreachable, the node records why, the prompts drop the knowledge block
 entirely, and the run continues schema-only -- exactly v1 behavior. A missing
 knowledge base slows the agent down; it never fails a question that v1 could
 have answered.
+
+Schema-only means the whole schema. When nothing chose a table for the
+question -- retrieval off (`--no-rag`), every store down, or
+`SCHEMA_TOP_K=0` with no hint from a document or an example -- every table
+is in scope and `MAX_TABLES` does not apply: with no ranking, a cap keeps
+the first tables by name, which in a star schema is dimensions and no
+fact. The answer contract's tables go first and are not a ranking: they
+are what the answer is about, not what it is computed from. From v4 to
+7.0 the scope here was the contract's tables alone, or the first ten by
+name, and a query that read the sales was refused as out of scope until
+the attempts ran out; 7.0.0 fixes it
+([`docs/benchmark.md`](../docs/benchmark.md#the-grain-check)).
 
 ```
 [knowledge] skipped: Could not search the knowledge base: connection failed ...
@@ -928,7 +1175,7 @@ optional, so an ablation is an environment change rather than a code change:
 | `CLARIFY_ENABLED` | -- | off (batch and benchmark runs have nobody to answer) |
 | `SCHEMA_RETRIEVAL` | -- | `vector` (or `llm` for v3's table-selection call) |
 | `SCHEMA_TOP_K` | -- | 6 tables from the DDL vectors, before FK closure |
-| `MAX_TABLES` | -- | 10 after closure |
+| `MAX_TABLES` | -- | 10 after closure. Not applied when nothing chose a table: schema-only is the whole schema |
 | `LITERALS_ENABLED` | -- | on |
 | `LITERAL_MAX_DISTINCT` | -- | 500 distinct values per catalogued column |
 | `LITERAL_MIN_SCORE` | -- | 0.6 |
@@ -962,6 +1209,33 @@ Model routing (arch5.2, [above](#model-routing-arch52)) adds these:
 | `MODEL_MAX_LOADED` | -- | 3 distinct models in the table, `OLLAMA_MODEL` among them |
 | `MODEL_NUM_CTX` | -- | 32768, the window of every routed model but `OLLAMA_MODEL` |
 | `OLLAMA_KEEP_ALIVE` | -- | `30m` with routing on, so a session's models stay loaded; not sent with routing off |
+
+The ensemble ([above](#asking-it-several-ways-arch7)) adds these. A value
+out of range stops the agent at start, naming the variable and its bound;
+all but the pins are published in `/v1/meta`:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | on. Off is the pipeline alone, to the answer |
+| `ENSEMBLE_PARAPHRASES` | `--paraphrases` | 3 rewordings in the first wave; 3 to 10 |
+| `ENSEMBLE_MAX_PARAPHRASES` | -- | 10, the most the Paraphraser writes; at least `ENSEMBLE_PARAPHRASES` |
+| `ENSEMBLE_WAVES` | -- | 2; a second wave only when the vote does not settle the question. It runs every faithful rewording left, so more than 2 is 2 |
+| `ENSEMBLE_DEADLINE_SECONDS` | -- | 0, none: set, no wave starts that many seconds after the question arrived |
+| `ENSEMBLE_JUDGE_ENABLED` | -- | on: the Judge reads every question's answers before the vote, which counts only those it accepts. Off, the runs vote alone |
+| `ENSEMBLE_MAX_CLAIMS` | -- | 8 claims in the fused narrative |
+| `ENSEMBLE_FUSE_COLUMNS` | `--fuse-columns` / `--no-fuse-columns` | on: columns other agreeing runs carried, joined on the entity's key |
+| `OLLAMA_PARALLEL_CALLS` | `--parallel-calls` | 1 model call in flight to the host at once, and one run of a question at a time |
+| `MODEL_ROUTE_PARAPHRASER` | -- | none. A model for every rung, or `light=a,standard=b,heavy=c`, as the five pins |
+| `MODEL_ROUTE_JUDGE` | -- | none, as above |
+
+The grain check ([above](#the-pipeline)) adds these. `GRAIN_PERIODS`
+written wrongly -- an empty period, a name that is not a column's, a
+period or a column twice -- stops the agent at start:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `GRAIN_CHECK_ENABLED` | -- | on: the Static Validator refuses two tables of different grains joined on the date, or on no date. Off, it is the validator of 6.3, and no grain is read |
+| `GRAIN_PERIODS` | -- | `fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num`: the periods a table may be stamped by, finest first, each the date dimension's columns that name one, joined by `+`. A column the date dimension does not have stands the check down |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

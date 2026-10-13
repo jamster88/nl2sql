@@ -96,6 +96,13 @@ The gates run in the agent's order, with the agent's code:
 | **planner gate** | `EXPLAIN (FORMAT JSON)`, read by `total_cost` and judged by `plan_cost_problem` | whatever the planner refuses (an unknown column, a type mismatch, an aggregate outside `GROUP BY`) and an estimated cost over `MAX_PLAN_COST` |
 | **executor** | the statement, in a `READ ONLY` transaction under `STATEMENT_TIMEOUT_MS` | whatever the database refuses at run time: a timeout, a division by zero, a write the validator did not recognise |
 
+One rule of the agent's validator is not run here: the grain check (7.0),
+which refuses two tables of different grains joined without being brought
+to one ([`agent/README.md`](../agent/README.md#the-pipeline)). It needs the
+grains the agent measures from the data, which the console does not read,
+so a query the agent would send back for that reason is accepted by this
+verdict.
+
 The first gate that objects is the verdict's stage; every objection is
 listed. Some findings are not refusals but still change the answer the agent
 would give -- a result longer than `MAX_ROWS` is one: the agent reads the

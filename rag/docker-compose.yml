@@ -23,9 +23,11 @@ services:
       # at this path and Docker seeds the volume from it on first creation.
       - chunkdb-data:/var/lib/pgdata
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U ${RAG_DB_USER:-ragproc} -d ${CHUNK_DB_NAME:-nl2sql_chunks}
+      # As `postgres`, not as the root the container starts as: Docker runs
+      # a check as that user, so `setpriv` becomes the account and then is
+      # the check. A list, so no shell stands in front of it as root.
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-U", "${RAG_DB_USER:-ragproc}", "-d", "${CHUNK_DB_NAME:-nl2sql_chunks}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -48,9 +50,11 @@ services:
     volumes:
       - vectordb-data:/var/lib/pgdata
     healthcheck:
-      test:
-        - CMD-SHELL
-        - pg_isready -U ${RAG_DB_USER:-ragproc} -d ${VECTOR_DB_NAME:-nl2sql_vectors}
+      # As `postgres`, not as the root the container starts as: Docker runs
+      # a check as that user, so `setpriv` becomes the account and then is
+      # the check. A list, so no shell stands in front of it as root.
+      test: ["CMD", "setpriv", "--reuid=postgres", "--regid=postgres", "--clear-groups",
+             "pg_isready", "-U", "${RAG_DB_USER:-ragproc}", "-d", "${VECTOR_DB_NAME:-nl2sql_vectors}"]
       interval: 5s
       timeout: 5s
       retries: 10

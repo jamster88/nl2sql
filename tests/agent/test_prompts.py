@@ -9,6 +9,7 @@ exception -- so it gets pinned here.
 from __future__ import annotations
 
 import pytest
+from nl2sql_agent.literals import LITERAL_MAP_HEADER, render_literal_map
 from nl2sql_agent.prompts import (
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
@@ -21,6 +22,7 @@ from nl2sql_agent.prompts import (
     snippet_block,
     task_block,
 )
+from nl2sql_agent.state import LiteralMatch
 
 
 def render(messages) -> str:
@@ -262,10 +264,28 @@ def test_the_literal_block_renders_nothing_when_no_literal_matched():
     assert literal_block("   ") == ""
 
 
+DAIRY = LiteralMatch("dairy and eggs", "dim_product", "department_name", "Dairy & Eggs", 0.9)
+
+
 def test_the_literal_block_names_the_column_a_phrase_resolves_to():
-    rendered = literal_block('"dairy and eggs" -> dim_product.department_name = \'Dairy & Eggs\'')
+    rendered = literal_block(render_literal_map([DAIRY]))
     assert "Literal values in this database" in rendered
     assert "dim_product.department_name = 'Dairy & Eggs'" in rendered
+
+
+def test_the_literal_block_is_headed_once():
+    """The Literal Matcher renders its block with the heading, and the
+    prompt places it. From v4 to 7.0 the prompt put the heading on again:
+    every generator prompt with a literal in it read "Literal values in
+    this database that match the question:" twice running. Each half had
+    its test, and neither test had the other half in it."""
+    block = render_literal_map([DAIRY, LiteralMatch("SCAN_BACK", "dim_allowance_type", "allowance_type_code", "SCAN_BACK", 1.0)])
+    rendered = literal_block(block)
+    assert rendered == block + "\n\n"
+    assert rendered.count(LITERAL_MAP_HEADER) == 1
+    assert rendered.splitlines()[0] == LITERAL_MAP_HEADER
+    # The rows keep the indentation and the alignment the matcher gave them.
+    assert rendered.splitlines()[1].startswith('  "dairy and eggs" -> ')
 
 
 def test_the_task_block_renders_nothing_without_an_intent():
@@ -287,13 +307,14 @@ def test_the_generator_turn_carries_literals_and_task_alongside_the_question():
             dialect="postgresql",
             schema="s",
             knowledge=knowledge_block("a rule"),
-            literals=literal_block('"x" -> t.c = \'X\''),
+            literals=literal_block(render_literal_map([LiteralMatch("x", "t", "c", "X", 1.0)])),
             task=task_block("This is a trend."),
             examples=[],
             question="how did sales trend?",
             feedback="",
         )
     )
+    assert text.count("Literal values in this database") == 1
     assert text.index("Knowledge base") < text.index("Literal values")
     assert text.index("Literal values") < text.index("Task: This is a trend.")
     assert text.index("Task: This is a trend.") < text.index("how did sales trend?")

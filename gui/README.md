@@ -40,12 +40,35 @@ plan, running it, narrating, auditing -- streamed over Server-Sent Events.
 The steps still to come are listed greyed, because they are known: `/v1/meta`
 says which nodes this server runs.
 
+**Shows every run, when there are several.** Since 7.0 the agent asks a
+question as typed and reworded, and runs the whole pipeline once per
+wording. Every event names the run it came from (`candidate`), so the panel
+draws a lane per run, each with the pipeline's steps, between the
+ensemble's own steps: above the lanes what it did before the runs, below
+them what it did with their answers. `/v1/meta` says how many runs to
+expect and which steps are whose (`pipeline.ensemble`), so the lanes are
+drawn, waiting, before the first event; and the stream is still the truth
+-- a run that reports gets a lane whether or not anything said to expect
+it. The lanes are never placed by a step's name: which of the ensemble's
+steps go above and which below is decided by which had finished when the
+first run reported.
+
 **Shows the answer, and its working.** The sentence first, then the chart,
 then the rows. Folded away beneath: the SQL and how many attempts it took,
 the phrases matched to database values, and how long each node took. Hovering
 a claim lights up the exact cells it was read from -- the audit ties each
 sentence to the rows that support it, and that is the clearest thing this API
 makes possible.
+
+**Says how the runs agreed.** A badge beside the sentence carries the
+level in a word, the count, and the agent's own line about the vote
+(`ensemble.line` -- the server's sentence, so this page and the terminal
+say the same thing). The answers that lost are among the notes, each with
+how its query differs. Folded away with the SQL is "The question, asked 4
+ways": every wording and what was changed to make it, how its run ended,
+which answer it gave and its SQL, the Judge's verdict on each answer, and
+the rewordings that were never run with the check each failed. All of it
+that a model wrote is rendered as text.
 
 **Handles the three answers that are not answers.** A refusal is still a
 `succeeded` job with no table, because no query ran -- rendering an empty
@@ -81,7 +104,7 @@ carries every page and is told which one to serve (`NL2SQL_PAGE=gui`);
 and `setup.sh` pulls and pins it whenever a page will be served -- with
 sign-in on, always:
 
-    docker pull mcfaddja/nl2sql-proxy:v6_3
+    docker pull mcfaddja/nl2sql-proxy:v7_0
     ./setup.sh --gui        # pulls it and writes PROXY_IMAGE_* into .env
 
 Without that pin the first `./launch.sh --gui` builds the image here instead,
@@ -89,7 +112,7 @@ which works and takes several minutes -- compose builds a service whose
 image is missing. Publishing a new one:
 
     docker buildx build --platform linux/amd64,linux/arm64 \
-      -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v6_3 .
+      -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v7_0 .
 
 Multi-arch in one step, so the tag covers both architectures the way every
 other tag in this project does. The version in the image label comes from
@@ -170,6 +193,8 @@ src/
                 Plot.tsx     the marks themselves
                 Chart.tsx    dispatch on the kind the pipeline chose
   components/   the interface
+                Progress.tsx     one row of steps, or a lane per run
+                Candidates.tsx   the badge, the notes and the runs (7.0)
   feedback/     store.ts     one interface, one implementation behind it
 ```
 
@@ -352,7 +377,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-340 tests, 100% of statements, branches, functions and lines -- matching the
+386 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

@@ -132,6 +132,14 @@ class ProgressEvent(Wire):
     label: str = Field(description="Short human label for the step, e.g. 'sql'.")
     detail: str = ""
     at: datetime
+    candidate: int | None = Field(
+        default=None,
+        description=(
+            "Which wording's run reported the step, under the ensemble: 0 the question as asked, "
+            "1 and up a rewording. None for a step of the ensemble's own, and for every step "
+            "when the ensemble is off."
+        ),
+    )
 
 
 class ResultTable(Wire):
@@ -218,6 +226,117 @@ class LiteralMatch(Wire):
     score: float = 0.0
 
 
+class EnsembleAgreement(Wire):
+    """How the ensemble's vote went: `agreed` of the `admissible` runs agreed,
+    of `total` run. `admissible` counts the runs that voted -- the Judge set
+    aside `set_aside` more before the vote."""
+
+    admissible: int
+    agreed: int
+    total: int
+    level: Literal["unanimous", "majority", "judged", "contested", "single", "none"]
+    why: str = ""
+    set_aside: int = 0
+
+
+class EnsembleVerdict(Wire):
+    """The Judge's verdict on one group's answer."""
+
+    group: int
+    accepted: bool
+    why: str = ""
+
+
+class EnsembleJudgement(Wire):
+    """The Judge's verdicts on the answers, given on every question before the vote."""
+
+    verdicts: list[EnsembleVerdict] = Field(default_factory=list)
+    set_aside: list[int] = Field(default_factory=list, description="The runs whose answer it set aside.")
+    overruled: bool = Field(default=False, description="It set aside the answer the runs alone would have chosen.")
+    instead_of: int | None = Field(default=None, description="That answer's run, when it did.")
+    model: str = ""
+    error: str = Field(default="", description="Why it could not be asked; the runs then voted alone.")
+
+
+class JoinedColumn(Wire):
+    """A column another agreeing run carried, joined onto the delivered rows."""
+
+    column: str
+    from_candidate: int
+    key: str = Field(description="The entity key it was joined on.")
+    table: str
+
+
+class DeclinedColumn(Wire):
+    """A column another agreeing run carried that would not join cleanly, and why."""
+
+    column: str
+    from_candidate: int
+    why: str
+
+
+class EnsembleDissent(Wire):
+    """A group of runs that lost the vote: its key fact, and how its query differs."""
+
+    group: int
+    members: list[int] = Field(default_factory=list)
+    signature: str
+    differs: str
+
+
+class EnsembleCandidate(Wire):
+    """One wording's run: what it was asked, what it wrote, how it ended."""
+
+    index: int = Field(description="0 the question as asked; 1 and up a rewording.")
+    wording: str
+    origin: Literal["original", "paraphrase"]
+    wave: int
+    changed: str = Field(default="", description="What the rewording varied, in the Paraphraser's words.")
+    outcome: Literal["answered", "gave_up", "refused"]
+    admissible: bool
+    reasons: list[str] = Field(
+        default_factory=list, description="Why it could not vote, by rule: 'E1 answered: gave_up', ..."
+    )
+    sql: str = ""
+    signature: str = ""
+    attempts: int = 0
+    group: int | None = None
+    duration_ms: float = 0.0
+    trace: list[TraceEntry] = Field(default_factory=list)
+
+
+class DiscardedRewording(Wire):
+    """A rewording the fidelity gate would not run, and the check it failed."""
+
+    index: int
+    text: str
+    changed: str
+    reason: str
+
+
+class Ensemble(Wire):
+    """The question asked several ways (arch7): the vote, what was chosen and
+    from which runs, and every run's record."""
+
+    agreement: EnsembleAgreement
+    line: str = Field(
+        default="",
+        description="The agreement, as the sentence the answer opens with; empty when no run could be delivered.",
+    )
+    chosen: int | None = Field(description="The delivered run's index; None when no run could be delivered.")
+    fused_from: list[int] = Field(default_factory=list)
+    columns_fused: bool = True
+    joined_columns: list[JoinedColumn] = Field(default_factory=list)
+    declined_columns: list[DeclinedColumn] = Field(default_factory=list)
+    claims_added: int = 0
+    claims_dropped: int = 0
+    dissent: list[EnsembleDissent] = Field(default_factory=list)
+    judged: EnsembleJudgement | None = None
+    candidates: list[EnsembleCandidate] = Field(default_factory=list)
+    discarded: list[DiscardedRewording] = Field(default_factory=list)
+    parallel_calls: int = Field(default=1, description="OLLAMA_PARALLEL_CALLS: runs this server makes at once.")
+
+
 class Answer(Wire):
     """Everything the pipeline produced for one question.
 
@@ -250,6 +369,14 @@ class Answer(Wire):
         description=(
             "Agents other than retrievers that failed and were survived -- the "
             "supervisor's screening, the narrator's claims -- by name."
+        ),
+    )
+    ensemble: Ensemble | None = Field(
+        default=None,
+        description=(
+            "The question asked several ways (arch7): the agreement, the delivered run and every "
+            "run's record. None when the ensemble is off, so a client written for 6.3 reads the "
+            "same answer it always did."
         ),
     )
 
@@ -367,6 +494,23 @@ class Limits(Wire):
     max_metadata_entries: int = MAX_METADATA_ENTRIES
 
 
+class EnsembleSettings(Wire):
+    """How this server asks a question several ways, so a client knows how
+    many runs to expect before the first event arrives."""
+
+    enabled: bool
+    paraphrases: int
+    max_paraphrases: int
+    waves: int
+    parallel_calls: int
+    judge: bool
+    fuse_columns: bool
+    nodes: list[str] = Field(
+        default_factory=list,
+        description="The ensemble's own nodes, in order: the first of `Pipeline.nodes`, where each run's follow them.",
+    )
+
+
 class Pipeline(Wire):
     """Which optional stages this server is running with.
 
@@ -380,6 +524,9 @@ class Pipeline(Wire):
     audit: bool
     schema_retrieval: str
     nodes: list[str] = Field(default_factory=list)
+    ensemble: EnsembleSettings | None = Field(
+        default=None, description="The ensemble's settings; absent from a server older than 7.0."
+    )
 
 
 class Meta(Wire):

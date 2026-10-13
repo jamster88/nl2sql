@@ -6,6 +6,7 @@ Ollama host, a different model, or a different database without a rebuild.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from nl2sql_common.env import (
@@ -55,6 +56,45 @@ DEFAULT_SNIPPET_DB_URL = "postgresql+psycopg://snippets_reader:snippets_reader@n
 # the agent wherever it runs -- the CLI, the API, the benchmark -- so its
 # traces can be compared side by side; the trace's tags say which it was.
 DEFAULT_MLFLOW_EXPERIMENT = "nl2sql-agent"
+
+# How many rewordings the ensemble may ask beside the original: at least three
+# and at most ten, as the architecture was asked for (arch7 section 22.9).
+MIN_PARAPHRASES = 3
+MAX_PARAPHRASES = 10
+
+# The periods a table's grain is measured against (arch7.3 section 22.14):
+# the fiscal week and the fiscal month, as the date dimension spells them.
+DEFAULT_GRAIN_PERIODS = "fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num"
+_COLUMN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+
+
+def parse_grain_periods(setting: str) -> tuple[tuple[str, ...], ...]:
+    """`GRAIN_PERIODS` as its periods, finest first, each the columns of the
+    date dimension that together name one: `a+b,a+c` is two periods.
+
+    Empty is allowed and means there is nothing coarser than a day to
+    measure, which leaves the grain check with nothing to say. What is
+    refused is a period with no column and a name that is not a column's --
+    these names are written into a query. Whether the date dimension has
+    each column is the database's to say, when the grains are read.
+    """
+    if not (setting or "").strip():
+        return ()
+    periods = []
+    for period in setting.split(","):
+        columns = tuple(column.strip().lower() for column in period.split("+"))
+        bad = [column for column in columns if not _COLUMN_NAME.match(column)]
+        if bad:
+            raise ValueError(
+                f"GRAIN_PERIODS is {setting!r}; each period is one or more of the date dimension's "
+                f"column names joined by '+', and periods are separated by ',' -- {bad[0]!r} is not a column name"
+            )
+        if len(set(columns)) != len(columns):
+            raise ValueError(f"GRAIN_PERIODS is {setting!r}; the period {period.strip()!r} names a column twice")
+        periods.append(columns)
+    if len(set(periods)) != len(periods):
+        raise ValueError(f"GRAIN_PERIODS is {setting!r}; it names a period twice")
+    return tuple(periods)
 
 
 @dataclass
@@ -261,6 +301,87 @@ class Settings:
     # The experiment the traces are filed under, created if it is missing.
     mlflow_experiment_name: str = DEFAULT_MLFLOW_EXPERIMENT
 
+    # --- arch7: asking it several ways --------------------------------------
+    # The question reworded, the pipeline run once per wording, the results
+    # judged, voted on and one chosen (arch7.1 section 22). Off is arch6 to
+    # the answer. 7.0 is built in phases, and so far there is one wave and no
+    # fusion: ENSEMBLE_WAVES, ENSEMBLE_DEADLINE_SECONDS and ENSEMBLE_MAX_CLAIMS
+    # are read, checked and carried for the stages that will read them.
+    ensemble_enabled: bool = True
+    # Rewordings in the first wave, beside the original: 3 to 10.
+    ensemble_paraphrases: int = 3
+    # The most the Paraphraser writes, and a second wave spends from.
+    ensemble_max_paraphrases: int = MAX_PARAPHRASES
+    # The one loop counter's limit: a second wave only on disagreement.
+    ensemble_waves: int = 2
+    # No wave starts this many seconds after the question arrived; 0 is none.
+    ensemble_deadline_seconds: float = 0.0
+    # The Judge, asked on every question before the vote, which counts only
+    # the answers it accepts; off, the runs vote alone.
+    ensemble_judge_enabled: bool = True
+    # The fused narrative's length, in claims.
+    ensemble_max_claims: int = 8
+    # Columns other agreeing runs carried, joined on the entity's key.
+    ensemble_fuse_columns: bool = True
+    # Model calls in flight to the Ollama host at once, process-wide, and
+    # candidate runs at once per question (`hostgate.py`). One is serial: the
+    # host this was built against serves one call at a time. Set it no higher
+    # than the host's own OLLAMA_NUM_PARALLEL.
+    ollama_parallel_calls: int = 1
+    # Pins for the ensemble's two routing tasks, the Paraphraser and the
+    # Judge, as the five above.
+    model_route_paraphraser: str = ""
+    model_route_judge: str = ""
+    # The grain check (arch7.3 section 22.14): the Static Validator refuses a
+    # query that joins tables of different grains -- daily sales, monthly
+    # costs -- on the date, or on no date at all. On for every run, with the
+    # ensemble or without; off, the validator is 6.3's.
+    grain_check_enabled: bool = True
+    # The periods a table's grain can be, finest first: each a `+`-joined
+    # list of the date dimension's columns that together name one period.
+    grain_periods: str = DEFAULT_GRAIN_PERIODS
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    @property
+    def grain_period_columns(self) -> tuple[tuple[str, ...], ...]:
+        """`grain_periods`, parsed: each period as its columns."""
+        return parse_grain_periods(self.grain_periods)
+
+    def validate(self) -> None:
+        """Stop at start on a setting out of range, naming it and its bound.
+
+        Run on construction, and again by whoever sets a field afterwards --
+        the CLI's flags, the benchmark's configurations -- since a dataclass
+        does not check an assignment.
+        """
+        problems = []
+        if not MIN_PARAPHRASES <= self.ensemble_paraphrases <= MAX_PARAPHRASES:
+            problems.append(
+                f"ENSEMBLE_PARAPHRASES is {self.ensemble_paraphrases}; it must be "
+                f"{MIN_PARAPHRASES} to {MAX_PARAPHRASES}"
+            )
+        if not self.ensemble_paraphrases <= self.ensemble_max_paraphrases <= MAX_PARAPHRASES:
+            problems.append(
+                f"ENSEMBLE_MAX_PARAPHRASES is {self.ensemble_max_paraphrases}; it must be at least "
+                f"ENSEMBLE_PARAPHRASES ({self.ensemble_paraphrases}) and at most {MAX_PARAPHRASES}"
+            )
+        for name, value, least in (
+            ("ENSEMBLE_WAVES", self.ensemble_waves, 1),
+            ("ENSEMBLE_DEADLINE_SECONDS", self.ensemble_deadline_seconds, 0),
+            ("ENSEMBLE_MAX_CLAIMS", self.ensemble_max_claims, 1),
+            ("OLLAMA_PARALLEL_CALLS", self.ollama_parallel_calls, 1),
+        ):
+            if value < least:
+                problems.append(f"{name} is {value:g}; it must be at least {least}")
+        try:
+            parse_grain_periods(self.grain_periods)
+        except ValueError as exc:
+            problems.append(str(exc))
+        if problems:
+            raise ValueError("; ".join(problems))
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -334,4 +455,17 @@ class Settings:
             ollama_keep_alive=_env_str("OLLAMA_KEEP_ALIVE", "30m"),
             mlflow_tracking_uri=_env_str("MLFLOW_TRACKING_URI", ""),
             mlflow_experiment_name=_env_str("MLFLOW_EXPERIMENT_NAME", DEFAULT_MLFLOW_EXPERIMENT),
+            ensemble_enabled=_env_bool("ENSEMBLE_ENABLED", True),
+            ensemble_paraphrases=_env_int("ENSEMBLE_PARAPHRASES", 3),
+            ensemble_max_paraphrases=_env_int("ENSEMBLE_MAX_PARAPHRASES", MAX_PARAPHRASES),
+            ensemble_waves=_env_int("ENSEMBLE_WAVES", 2),
+            ensemble_deadline_seconds=_env_float("ENSEMBLE_DEADLINE_SECONDS", 0.0),
+            ensemble_judge_enabled=_env_bool("ENSEMBLE_JUDGE_ENABLED", True),
+            ensemble_max_claims=_env_int("ENSEMBLE_MAX_CLAIMS", 8),
+            ensemble_fuse_columns=_env_bool("ENSEMBLE_FUSE_COLUMNS", True),
+            ollama_parallel_calls=_env_int("OLLAMA_PARALLEL_CALLS", 1),
+            model_route_paraphraser=_env_str("MODEL_ROUTE_PARAPHRASER", ""),
+            model_route_judge=_env_str("MODEL_ROUTE_JUDGE", ""),
+            grain_check_enabled=_env_bool("GRAIN_CHECK_ENABLED", True),
+            grain_periods=_env_str("GRAIN_PERIODS", DEFAULT_GRAIN_PERIODS),
         )

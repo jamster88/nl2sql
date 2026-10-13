@@ -368,6 +368,68 @@ body {
   background: var(--surface-raised);
 }
 
+/* The other runs behind the answer (7.0): evidence, folded away. */
+
+.candidates {
+  margin: 12px 0 0;
+  font-size: 0.88rem;
+}
+
+.candidates summary {
+  cursor: pointer;
+  font-weight: 550;
+}
+
+.candidates-none {
+  margin: 12px 0 0;
+  font-size: 0.84rem;
+}
+
+.candidates-line {
+  margin: 8px 0;
+  color: var(--text-secondary);
+}
+
+.candidates-runs {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.candidates-runs li {
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+}
+
+.candidates-runs li[data-chosen="true"] {
+  border-left-color: var(--accent);
+}
+
+.candidates-wording,
+.candidates-standing,
+.candidates-reasons {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.candidates-standing {
+  font-size: 0.82rem;
+}
+
+.candidates-reasons {
+  font-size: 0.82rem;
+  color: var(--warn);
+}
+
+.candidates-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  overflow-wrap: anywhere;
+}
+
 /* --- the form --------------------------------------------------------- */
 
 .field {

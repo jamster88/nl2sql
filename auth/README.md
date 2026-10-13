@@ -276,6 +276,12 @@ as it from then on; the start-up says `running as nl2sql`. Its TLS key is
 that account's already: the pki service hands each key to the account its
 service runs as (`docker-compose.yml`, the last part of each identity).
 
+Its health check is that account's too (7.0). Docker runs a check as the
+user the container was started as -- root, here -- so compose starts it
+through `setpriv` as `nl2sql`, and it is never root; started any other way,
+`python -m nl2sql_common.health AUTH` becomes `nl2sql` itself before it
+reads a setting or a certificate.
+
 ## Settings
 
 The auth service's, read from the environment; compose passes each from

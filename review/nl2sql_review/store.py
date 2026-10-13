@@ -84,6 +84,7 @@ SUBMISSION_COLUMNS = (
     "columns",
     "comment",
     "agent_version",
+    "ensemble",
 )
 
 
@@ -111,6 +112,10 @@ class Submission:
     columns: list[str] = field(default_factory=list)
     comment: str = ""
     agent_version: str = ""
+    #: The agent's record of asking the question several ways (7.0): each
+    #: wording's run, the Judge's verdicts, the vote. `{}` for a submission
+    #: from before 7.0, and for an answer one run gave.
+    ensemble: dict[str, Any] = field(default_factory=dict)
     submitted_at: datetime | None = None
     state: str = "pending"
     reviewer: str = ""
@@ -161,6 +166,7 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 columns          JSONB NOT NULL DEFAULT '[]'::jsonb,
                 comment          TEXT NOT NULL DEFAULT '',
                 agent_version    TEXT NOT NULL DEFAULT '',
+                ensemble         JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                 submitted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 state            TEXT NOT NULL DEFAULT 'pending',
                 reviewer         TEXT NOT NULL DEFAULT '',
@@ -171,6 +177,16 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             )
             """
         ).format(sql.Identifier(SUBMISSIONS))
+    )
+    # A table created before 7.0 has no `ensemble`, and CREATE TABLE IF NOT
+    # EXISTS leaves it that way. A constant default adds the column without
+    # rewriting a row, and every submission already staged reads `{}`. The
+    # agent's API cannot do this -- it is the INSERT-only writer -- so until
+    # this has run once it records its verdicts without the column.
+    conn.execute(
+        sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} JSONB NOT NULL DEFAULT '{{}}'::jsonb").format(
+            sql.Identifier(SUBMISSIONS), sql.Identifier("ensemble")
+        )
     )
     # Both CHECKs are (re)applied rather than declared inline: a table
     # created before `incomplete` or `corrected` existed carries the narrower
@@ -309,8 +325,8 @@ def ensure_writer_role(conn: psycopg.Connection, password: str) -> None:
 
 
 def _row_to_submission(row: dict[str, Any]) -> Submission:
-    # `columns` and `draft` are JSONB, which psycopg hands back already
-    # decoded, so there is nothing to parse here.
+    # `columns`, `ensemble` and `draft` are JSONB, which psycopg hands back
+    # already decoded, so there is nothing to parse here.
     return Submission(**dict(row))
 
 

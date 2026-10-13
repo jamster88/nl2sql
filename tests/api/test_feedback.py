@@ -15,6 +15,8 @@ from dataclasses import replace
 
 import pytest
 from nl2sql_agent.api.feedback import (
+    COLUMNS,
+    OPTIONAL,
     AlreadyReviewed,
     Capture,
     DisabledSink,
@@ -115,6 +117,32 @@ def test_the_snapshot_is_taken_from_the_job_not_from_the_request(client, sink):
     assert captured.columns == ("n",)
     assert captured.comment == "wrong"
     assert captured.agent_version
+
+
+def test_one_runs_answer_is_captured_with_no_ensemble(client, sink):
+    job = ask(client)
+    client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
+    assert sink.captures[0].ensemble == {}
+
+
+def test_an_answer_asked_several_ways_is_captured_with_every_run(make_client, sink):
+    """The reviewer fixing a wrong answer sees the other queries and the
+    vote, an hour after the job that held them is forgotten."""
+    from .test_ensemble_wire import SQL, _ensemble_state
+
+    client = make_client(make_runner(state=_ensemble_state()), feedback=sink)
+    job = ask(client)
+    client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "no"})
+
+    staged = sink.captures[0].ensemble
+    assert staged == job["answer"]["ensemble"]
+    assert staged["agreement"]["level"] == "single"
+    assert [(c["index"], c["wording"], c["outcome"]) for c in staged["candidates"]] == [
+        (0, "how many stores?", "answered"), (1, "count the stores", "gave_up")]
+    assert staged["candidates"][0]["sql"] == SQL
+    assert staged["discarded"][0]["text"] == "count the warehouses"
+    # No rows: a snapshot is what was asked and written, not the data.
+    assert "result" not in staged and all("result" not in run for run in staged["candidates"])
 
 
 def test_a_run_with_no_result_is_captured_without_one(make_client, sink):
@@ -352,7 +380,7 @@ def test_the_server_shares_one_tracer_between_its_agent_and_its_verdicts(monkeyp
         built["tracer"] = tracer
         return object()
 
-    monkeypatch.setattr(app_module, "Nl2SqlAgent", agent)
+    monkeypatch.setattr(app_module, "build_agent", agent)
     app = app_module.create_app(settings=Settings(), api_settings=api_settings, feedback=FakeSink())
     try:
         app.state.agent.get()
@@ -417,9 +445,17 @@ def test_the_disabled_sink_refuses_with_a_reason():
     assert sink.check() == (False, "not configured")
 
 
-def test_the_capture_encodes_its_json_column():
-    values = Capture(job_id="j", verdict="yes", question="q", columns=("a", "b")).values()
-    assert values[-3] == '["a", "b"]'
+def test_the_capture_encodes_its_json_columns():
+    capture = Capture(job_id="j", verdict="yes", question="q", columns=("a", "b"), ensemble={"chosen": 0})
+    values = dict(zip(COLUMNS, capture.values()))
+    assert values["columns"] == '["a", "b"]'
+    assert values["ensemble"] == '{"chosen": 0}'
+    assert values["question"] == "q"
+
+
+def test_the_capture_gives_only_the_columns_it_is_asked_for():
+    capture = Capture(job_id="j", verdict="yes", question="q", ensemble={"chosen": 0})
+    assert capture.values(("job_id", "verdict")) == ["j", "yes"]
 
 
 def test_the_column_list_matches_the_schema_the_review_service_owns():
@@ -436,14 +472,20 @@ def test_the_column_list_matches_the_schema_the_review_service_owns():
 
 
 class FakeConnection:
-    """Enough psycopg to drive PostgresSink without a database."""
+    """Enough psycopg to drive PostgresSink without a database.
 
-    def __init__(self, *, rowcount=1, on_insert=None) -> None:
+    `whole` is what the catalog says about the 7.0 column, in the order it
+    is asked: a store the review service has migrated answers yes.
+    """
+
+    def __init__(self, *, rowcount=1, on_insert=None, whole=(True,)) -> None:
         self.statements: list[str] = []
+        self.inserted: list[list] = []
         self.rowcount = rowcount
-        self.on_insert = on_insert
+        self.on_insert = [on_insert] if isinstance(on_insert, Exception) else list(on_insert or [])
+        self.whole = list(whole)
         self.committed = False
-        self.rolled_back = False
+        self.rolled_back = 0
 
     def __enter__(self):
         return self
@@ -453,8 +495,14 @@ class FakeConnection:
 
     def execute(self, statement, params=None):
         self.statements.append(statement)
-        if statement.startswith("INSERT") and self.on_insert is not None:
-            raise self.on_insert
+        if "information_schema.columns" in statement:
+            assert params == ("feedback_submissions", "ensemble")
+            self.rows = [(1,)] if self.whole.pop(0) else []
+            return self
+        if statement.startswith("INSERT"):
+            self.inserted.append(list(params))
+            if self.on_insert:
+                raise self.on_insert.pop(0)
         self.rows = [(params[0],)] if statement.startswith("INSERT") else []
         return self
 
@@ -465,7 +513,7 @@ class FakeConnection:
         self.committed = True
 
     def rollback(self):
-        self.rolled_back = True
+        self.rolled_back += 1
 
 
 def test_the_postgres_sink_deletes_before_inserting():
@@ -478,10 +526,101 @@ def test_the_postgres_sink_deletes_before_inserting():
     sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
 
     sink.record(Capture(job_id="j", verdict="yes", question="q"))
-    assert conn.statements[0].startswith("DELETE FROM feedback_submissions")
-    assert conn.statements[1].startswith("INSERT INTO feedback_submissions")
-    assert "ON CONFLICT" not in conn.statements[1]
+    assert conn.statements[1].startswith("DELETE FROM feedback_submissions")
+    assert conn.statements[2].startswith("INSERT INTO feedback_submissions")
+    assert "ON CONFLICT" not in conn.statements[2]
     assert conn.committed
+
+
+# The 7.0 column, on a store that may not have it yet. The review service
+# adds it at its own start and is a compose profile; this process is the
+# INSERT-only writer and can add nothing.
+
+ASKED = "information_schema.columns"
+
+
+def _columns_of(statement: str) -> list[str]:
+    return statement.split("(", 1)[1].split(")", 1)[0].split(", ")
+
+
+def test_a_migrated_store_is_sent_the_ensemble_and_asked_about_it_once():
+    conn = FakeConnection()
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    sink.record(Capture(job_id="a", verdict="yes", question="q", ensemble={"chosen": 0}))
+    sink.record(Capture(job_id="b", verdict="yes", question="q"))
+
+    assert sum(ASKED in statement for statement in conn.statements) == 1
+    inserts = [statement for statement in conn.statements if statement.startswith("INSERT")]
+    assert all(_columns_of(statement) == ["id", *COLUMNS] for statement in inserts)
+    assert conn.inserted[0][-1] == '{"chosen": 0}' and conn.inserted[1][-1] == "{}"
+
+
+def test_a_store_from_before_7_0_takes_the_verdict_without_the_ensemble(caplog):
+    """A stack upgraded and started without the review service: every vote
+    would otherwise fail on a column nothing has added yet."""
+    conn = FakeConnection(whole=(False, False))
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    with caplog.at_level("WARNING", logger="nl2sql_agent.api.feedback"):
+        first = sink.record(Capture(job_id="a", verdict="yes", question="q", ensemble={"chosen": 0}))
+        sink.record(Capture(job_id="b", verdict="no", question="q"))
+
+    assert first == conn.inserted[0][0]
+    for statement, values in zip([s for s in conn.statements if s.startswith("INSERT")], conn.inserted):
+        assert OPTIONAL not in _columns_of(statement)
+        assert len(values) == len(COLUMNS) and '{"chosen": 0}' not in values
+    assert conn.committed
+    # Said once, however many votes: it is one fact about the store.
+    said = [record.getMessage() for record in caplog.records]
+    assert len(said) == 1 and "until the review service has started once" in said[0]
+
+
+def test_the_first_vote_after_the_review_service_starts_carries_the_ensemble():
+    """Asked at every vote until the answer is yes, then never again."""
+    conn = FakeConnection(whole=(False, True))
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    for job in ("a", "b", "c"):
+        sink.record(Capture(job_id=job, verdict="yes", question="q", ensemble={"chosen": 0}))
+
+    inserts = [statement for statement in conn.statements if statement.startswith("INSERT")]
+    assert [OPTIONAL in _columns_of(statement) for statement in inserts] == [False, True, True]
+    assert sum(ASKED in statement for statement in conn.statements) == 2
+
+
+def test_a_column_that_went_away_is_asked_about_again_and_the_verdict_kept():
+    """A store restored from before 7.0 under a running API."""
+    gone = psycopg.errors.UndefinedColumn('column "ensemble" of relation "feedback_submissions" does not exist')
+    conn = FakeConnection(whole=(True, False), on_insert=gone)
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    sink.record(Capture(job_id="j", verdict="yes", question="q", ensemble={"chosen": 0}))
+
+    kinds = [statement.split()[0] for statement in conn.statements]
+    assert kinds == ["SELECT", "DELETE", "INSERT", "SELECT", "DELETE", "INSERT"]
+    assert conn.rolled_back == 1 and conn.committed
+    assert OPTIONAL in _columns_of(conn.statements[2]) and OPTIONAL not in _columns_of(conn.statements[5])
+
+
+def test_a_column_the_catalog_names_and_the_table_refuses_is_reported_not_retried_for_ever():
+    gone = psycopg.errors.UndefinedColumn("no such column")
+    conn = FakeConnection(whole=(True, True), on_insert=[gone, psycopg.errors.UndefinedColumn("still none")])
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    with pytest.raises(FeedbackUnavailable, match="UndefinedColumn"):
+        sink.record(Capture(job_id="j", verdict="yes", question="q"))
+    assert len(conn.inserted) == 2 and not conn.committed
+
+
+def test_an_undefined_column_on_a_store_already_without_the_ensemble_is_not_this_ones_doing():
+    """Some other column is missing: nothing to leave out, so say so."""
+    conn = FakeConnection(whole=(False,), on_insert=psycopg.errors.UndefinedColumn("no such column"))
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    with pytest.raises(FeedbackUnavailable, match="UndefinedColumn"):
+        sink.record(Capture(job_id="j", verdict="yes", question="q"))
+    assert len(conn.inserted) == 1
 
 
 def test_a_duplicate_key_means_the_verdict_was_already_reviewed():
@@ -490,7 +629,7 @@ def test_a_duplicate_key_means_the_verdict_was_already_reviewed():
 
     with pytest.raises(AlreadyReviewed):
         sink.record(Capture(job_id="j", verdict="yes", question="q"))
-    assert conn.rolled_back
+    assert conn.rolled_back == 1
 
 
 def test_any_other_driver_failure_is_reported_as_unavailable():

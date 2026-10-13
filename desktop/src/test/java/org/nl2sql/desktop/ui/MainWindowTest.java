@@ -65,10 +65,44 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 7.0.0"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
+            window.close();
+        });
+    }
+
+    @Test
+    void a_server_that_asks_a_question_several_ways_gets_a_lane_for_every_run() {
+        // What `/v1/meta` says about the ensemble is what the lanes are drawn
+        // from before the first event: how many runs, and which steps are whose.
+        FxToolkit.onFx(() -> {
+            Models.Meta meta = Fakes.meta(true);
+            Models.Pipeline pipeline = meta.pipeline();
+            client.meta = new Models.Meta(meta.service(), meta.version(), meta.model(),
+                    meta.intents(), meta.tables(), meta.scope(), meta.limits(),
+                    new Models.Pipeline(pipeline.supervisor(), pipeline.literals(),
+                            pipeline.narrate(), pipeline.audit(), pipeline.schema_retrieval(),
+                            Fakes.ensembleNodes(), Fakes.ensembleSettings(true, 2)),
+                    meta.tls(), meta.authentication(), meta.feedback(), meta.routing());
+            Models.Job answered = Fakes.job("job-1", Models.JobStatus.SUCCEEDED,
+                    Fakes.answer(Fakes.ensemble()));
+            client.streams.add(stream(
+                    event("progress", Json.write(Fakes.own(1, "plan_wave"))),
+                    event("progress", Json.write(Fakes.run(2, 1, "generate_sql"))),
+                    event("done", Json.write(answered))));
+            MainWindow window = window();
+
+            window.start();
+            assertTrue(Nodes.says(window.root(), "0 / 3 runs"));
+            assertEquals(3, Nodes.withClass(window.root(), "progress-lane").size());
+
+            window.ask("how many stores are there?");
+
+            assertTrue(Nodes.says(window.root(), "Finished — 2 steps in 1 run"));
+            assertTrue(Nodes.says(window.root(), "Rewording 1"));
+            assertTrue(Nodes.says(window.root(), "Most agree · 3 of 4"));
             window.close();
         });
     }
@@ -85,7 +119,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 7.0.0"));
             window.close();
         });
     }
@@ -476,7 +510,7 @@ class MainWindowTest {
                         + "2025, which is an increase of eleven per cent over the previous year "
                         + "across every banner in the group.", 719279.97,
                         List.of(List.of(0, "net_sales")), null)),
-                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of());
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of(), null);
         Models.Job job = Fakes.answered();
         return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
                 job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),
@@ -649,7 +683,7 @@ class MainWindowTest {
             signInAs(window, "ada", "pw");
 
             assertFalse(window.signInView().node().isVisible());
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 6.3.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 7.0.0"));
             assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
             window.close();
         });

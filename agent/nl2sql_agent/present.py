@@ -51,6 +51,7 @@ from typing import Any
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from .compare import ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE, ROUNDING_DECIMALS
 from .state import AUDIT, AuditReport, ChartSpec, Claim, CompletenessReport, Issue, QueryResult
 from nl2sql_common.errors import Invalid
 
@@ -59,12 +60,11 @@ from nl2sql_common.errors import Invalid
 # sample, so both the formatter and the narrator change behaviour at the line.
 MAX_CHART_ROWS = 30
 
-# Two decimals, matching ROUNDING_DECIMALS in benchmarks/runner.py: the
-# reference queries round for legibility and agents do not, and a claim is
-# graded by the same arithmetic the benchmark grades an answer by.
-ROUNDING_DECIMALS = 2
-_RELATIVE_TOLERANCE = 1e-6
-_ABSOLUTE_TOLERANCE = 1e-9
+# The scorer's own tolerances (`compare.py`): the reference queries round for
+# legibility and agents do not, and a claim is graded by the same arithmetic
+# the benchmark grades an answer by.
+_RELATIVE_TOLERANCE = RELATIVE_TOLERANCE
+_ABSOLUTE_TOLERANCE = ABSOLUTE_TOLERANCE
 
 
 # ---------------------------------------------------------------------------
@@ -977,6 +977,13 @@ def _scalar_sentence(question: str, result: QueryResult) -> str:
     return f"{asked}: {answer}" if asked else answer
 
 
+def _runs(members: Sequence[int]) -> str:
+    """"Run 2", "Runs 1 and 3", "Runs 1, 2 and 3"."""
+    if len(members) == 1:
+        return f"Run {members[0]}"
+    return f"Runs {', '.join(map(str, members[:-1]))} and {members[-1]}"
+
+
 def render_answer(
     question: str,
     result: QueryResult,
@@ -986,6 +993,7 @@ def render_answer(
     *,
     assumptions: Sequence[str] = (),
     completeness: CompletenessReport | None = None,
+    ensemble: Any = None,
 ) -> str:
     """The markdown answer: the claims that survived the audit, then the table.
 
@@ -997,12 +1005,22 @@ def render_answer(
     stated here, so the reader is told regardless of what the narrator did;
     and a gap the Completeness Reviewer accepted rather than send back again
     is named, so a reader is told what is missing rather than left to guess.
+
+    Under the ensemble (arch7), `ensemble` is its decision, and the answer
+    opens with its agreement line: how many runs there were and how they
+    agreed, before anything they say. Its notes close it: each column
+    joined from another run that agreed, named with that run, since this
+    answer's query does not return it; each column that would not join, and
+    why; and each answer that lost, with how its query differs.
     """
     report = audit_report if audit_report is not None else AuditReport()
     kept = surviving_claims(claims, report)
     is_scalar = chart is not None and chart.kind == "scalar"
 
     blocks: list[str] = []
+    line = getattr(ensemble, "line", "")
+    if line:
+        blocks.append(f"*{_escape_text(line)}*")
     if is_scalar and result.columns and result.rows:
         blocks.append(_scalar_sentence(question, result))
     if kept:
@@ -1025,5 +1043,18 @@ def render_answer(
     if report.semantic_issue:
         why = _escape_text(report.semantic_issue)
         notes.append(f"*This result may not answer the question -- {why}.*")
+    for joined in getattr(ensemble, "joined_columns", None) or []:
+        notes.append(
+            f"*{_escape_text(joined.column)} is from run {joined.from_candidate}, which agreed, joined on "
+            f"{_escape_text(joined.key)}; this answer's query does not return it.*"
+        )
+    for declined in getattr(ensemble, "declined_columns", None) or []:
+        notes.append(
+            f"*{_escape_text(declined.column)}, which run {declined.from_candidate} also returned, was left out: "
+            f"{_escape_text(declined.why)}.*"
+        )
+    for dissent in getattr(ensemble, "dissent", None) or []:
+        differs = f": {_escape_text(dissent.differs)}" if dissent.differs else ""
+        notes.append(f"*{_runs(dissent.members)} answered differently ({_escape_text(dissent.signature)}){differs}.*")
     blocks.extend(notes)
     return "\n\n".join(block for block in blocks if block)

@@ -35,6 +35,7 @@ from starlette.status import (
 
 from .. import __version__
 from ..config import Settings
+from .. import ensemble
 from ..graph import STEP_LABELS
 from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
@@ -46,6 +47,7 @@ from .models import (
     MAX_METADATA_ENTRIES,
     MAX_QUESTION_LENGTH,
     AskRequest,
+    EnsembleSettings,
     FeedbackModel,
     FeedbackRequest,
     Job as JobModel,
@@ -192,6 +194,7 @@ class ApiContext:
             columns=tuple(table.columns) if table else (),
             comment=body.comment,
             agent_version=__version__,
+            ensemble=answer.ensemble.model_dump(mode="json") if answer.ensemble else {},
         )
 
 
@@ -264,6 +267,8 @@ def question_routes(ctx: ApiContext) -> APIRouter:
     def meta() -> Meta:
         settings = ctx.settings
         tables = ctx.holder.tables()
+        # The ensemble's own nodes, which a client draws around its runs.
+        outer = list(ensemble.STEP_LABELS) if settings.ensemble_enabled else []
         return Meta(
             version=__version__,
             model=settings.ollama_model,
@@ -286,7 +291,18 @@ def question_routes(ctx: ApiContext) -> APIRouter:
                 narrate=settings.narrate_enabled,
                 audit=settings.audit_enabled,
                 schema_retrieval=settings.schema_retrieval,
-                nodes=list(STEP_LABELS),
+                # Under the ensemble, its own nodes and then each run's.
+                nodes=outer + list(STEP_LABELS),
+                ensemble=EnsembleSettings(
+                    enabled=settings.ensemble_enabled,
+                    paraphrases=settings.ensemble_paraphrases,
+                    max_paraphrases=settings.ensemble_max_paraphrases,
+                    waves=settings.ensemble_waves,
+                    parallel_calls=settings.ollama_parallel_calls,
+                    judge=settings.ensemble_judge_enabled,
+                    fuse_columns=settings.ensemble_fuse_columns,
+                    nodes=outer,
+                ),
             ),
             tls=(
                 ctx.certificate.summary()

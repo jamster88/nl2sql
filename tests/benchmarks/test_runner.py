@@ -12,7 +12,6 @@ clock rather than by sleeping.
 from __future__ import annotations
 
 import sys
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -32,131 +31,8 @@ from benchmarks.runner import (
     StageTiming,
     WRONG,
     model_calls_from_trace,
-    result_matches,
     timing_from_trace,
-    values_match,
 )
-
-
-# ---------------------------------------------------------------------------
-# Comparing single values
-# ---------------------------------------------------------------------------
-
-
-def test_the_same_number_matches_however_the_driver_produced_it():
-    """Postgres NUMERIC arrives as Decimal, a count as int, a ratio as float.
-    All three are the same answer.
-    """
-    assert values_match(Decimal("10"), 10)
-    assert values_match(10, 10.0)
-    assert values_match(Decimal("21.51"), 21.51)
-
-
-def test_rounding_at_the_last_place_still_matches():
-    assert values_match(6032194.28, 6032194.280000001)
-
-
-def test_a_real_mistake_does_not_match():
-    """The two traps the benchmark exists for: a 5x fan-out and a ~30x grain
-    miss. Neither may be absorbed by the tolerance.
-    """
-    assert not values_match(21.51, 107.55)
-    assert not values_match(18187.20, 605.3)
-    assert not values_match(100, 101)
-
-
-def test_strings_match_ignoring_case_and_padding():
-    """state_code is CHAR(2) and comes back space-padded; department names can
-    differ in case between a literal and the column.
-    """
-    assert values_match("WI", "wi ")
-    assert values_match("Meat & Seafood", "meat & seafood")
-    assert not values_match("WI", "CT")
-
-
-def test_booleans_are_not_treated_as_numbers():
-    """True == 1 in Python, and a boolean column matching an integer one would
-    make an is_private_label flag indistinguishable from a count.
-    """
-    assert not values_match(True, 1.0)
-    assert values_match(True, "true")
-
-
-def test_null_only_matches_null():
-    assert values_match(None, None)
-    assert not values_match(None, 0)
-    assert not values_match(0, None)
-
-
-# ---------------------------------------------------------------------------
-# Comparing result sets
-# ---------------------------------------------------------------------------
-
-
-def test_an_identical_result_matches():
-    assert result_matches([[1, "a"], [2, "b"]], [[1, "a"], [2, "b"]])
-
-
-def test_column_order_does_not_matter():
-    """`SELECT total, name` answers the same question as `SELECT name, total`."""
-    assert result_matches([["a", 1], ["b", 2]], [[1, "a"], [2, "b"]])
-
-
-def test_extra_columns_are_allowed():
-    """An agent that returns the department alongside the total has answered the
-    question; grading it wrong would punish being informative.
-    """
-    assert result_matches([["Meat & Seafood", 100]], [["Meat & Seafood", 100, "extra"]])
-
-
-def test_a_missing_column_is_not_allowed():
-    """B02 asks for two numbers. Returning only the first is half an answer."""
-    assert not result_matches([[200, 41]], [[200]])
-
-
-def test_row_order_is_ignored_by_default():
-    assert result_matches([["a", 1], ["b", 2]], [["b", 2], ["a", 1]])
-
-
-def test_row_order_matters_when_the_question_asks_for_an_order():
-    """"Top 5 by sales" means the order is the answer."""
-    ranked = [["a", 3], ["b", 2], ["c", 1]]
-    shuffled = [["b", 2], ["a", 3], ["c", 1]]
-    assert result_matches(ranked, shuffled, ordered=False)
-    assert not result_matches(ranked, shuffled, ordered=True)
-
-
-def test_a_different_row_count_never_matches():
-    assert not result_matches([[1], [2]], [[1]])
-    assert not result_matches([[1]], [[1], [2]])
-
-
-def test_the_right_values_in_the_wrong_pairing_do_not_match():
-    """Both columns contain the same values, but attached to the wrong rows --
-    a join on the wrong key produces exactly this.
-    """
-    assert not result_matches([["a", 1], ["b", 2]], [["a", 2], ["b", 1]])
-
-
-def test_two_columns_holding_the_same_values_are_each_matched_once():
-    """A reference with two identical columns must not be satisfied by an agent
-    result that has only one.
-    """
-    assert result_matches([[1, 1]], [[1, 1]])
-    assert not result_matches([[1, 1]], [[1, "x"]])
-
-
-def test_an_empty_reference_only_matches_an_empty_result():
-    assert result_matches([], [])
-    assert not result_matches([], [[1]])
-    assert not result_matches([[1]], [])
-
-
-def test_rows_with_mixed_types_sort_without_raising():
-    """The ordering used for the comparison cannot assume a column's values are
-    mutually comparable -- NULLs and numbers arrive in the same column.
-    """
-    assert result_matches([[None], [1], ["a"]], [["a"], [None], [1]])
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +114,38 @@ def test_accuracy_counts_only_correct_answers():
     assert report.accuracy == 0.25
 
 
+def _worded(qid, outcome, wording) -> QuestionResult:
+    worded = result(qid, "schema", outcome, 1.0)
+    worded.wording = wording
+    return worded
+
+
+def test_stability_is_the_fraction_of_questions_right_in_every_wording():
+    """arch7's premise, measured: a question is stable when all four of its
+    wordings came out right. One wrong rewording makes its question
+    unstable however many others were right."""
+    report = BenchmarkReport(results=[
+        *(_worded("B01", CORRECT, wording) for wording in range(4)),
+        _worded("B02", CORRECT, 0), _worded("B02", WRONG, 1), _worded("B02", CORRECT, 2), _worded("B02", CORRECT, 3),
+    ])
+    assert report.paraphrased
+    assert [r.wording for r in report.by_question()["B02"]] == [0, 1, 2, 3]
+    assert (report.stable, report.stability) == (1, 0.5)
+    assert report.accuracy == 7 / 8, "the wordings' accuracy is not the stability"
+
+
+def test_one_wording_a_question_is_not_the_paraphrase_set():
+    report = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0), result("B02", "schema", WRONG, 1.0)])
+    assert not report.paraphrased
+    assert report.stability == report.accuracy == 0.5
+    assert BenchmarkReport().stability == 0.0
+
+
+def test_a_result_is_labelled_by_its_question_and_its_wording():
+    assert result("B07", "grain", CORRECT, 1.0).label == "B07"
+    assert _worded("B07", CORRECT, 2).label == "B07.2"
+
+
 def test_answered_separates_a_wrong_answer_from_no_answer():
     """A pipeline that gives up fails differently from one that confidently
     answers the wrong question, and the fixes are different too.
@@ -308,27 +216,6 @@ def test_stage_totals_aggregate_across_questions_worst_first():
     ])
     assert list(report.stage_totals()) == ["generate_sql", "fetch_schema"]
     assert report.stage_totals()["generate_sql"] == pytest.approx(4.5)
-
-
-def test_a_reference_rounded_to_two_places_matches_an_unrounded_answer():
-    """The references round for legibility and agents usually do not. A pure
-    relative tolerance rejects 48.6076 against 48.61 -- off by 5e-5, thirty
-    times 1e-6, and obviously the same number. This cost correct agents four
-    marks before it was fixed.
-    """
-    assert values_match(48.61, 48.607604215)
-    assert values_match(34.20, 34.19905297061825)
-    assert values_match(Decimal("83.5"), 83.4999999)
-
-
-def test_rounding_tolerance_does_not_absorb_a_real_mistake():
-    """The margin between the two is wide: the grain trap returns 98.81 against
-    34.20 and the fan-out is wrong by 5x, neither of which is a rounding
-    difference.
-    """
-    assert not values_match(34.20, 98.81)
-    assert not values_match(21.51, 0.2151)
-    assert not values_match(48.61, 48.62)
 
 
 # ---------------------------------------------------------------------------
@@ -409,33 +296,15 @@ def test_model_calls_survive_a_trace_that_came_back_as_json():
     assert model_calls_from_trace([{"node": "narrate", "model_calls": 2}]) == {"narrate": 2}
 
 
-def test_a_pathologically_wide_result_falls_back_to_the_reference_column_order():
-    """The search is over column assignments, which is factorial in the width
-    of the agent's result. Nothing the benchmark asks returns more than a few
-    columns, but a `SELECT *` on a wide fact table would, and the scorer must
-    not become the slow part of a run that is already a minute a question.
-    """
-    import math
+def test_the_benchmark_scores_with_the_agents_scorer():
+    """The scorer moved into the agent for the ensemble's agreement step
+    (arch7); the benchmark imports it back by name, so one function decides
+    both "correct" and "agree". Its cases are tests/agent/test_compare.py."""
+    from benchmarks import runner
+    from nl2sql_agent import compare
 
-    from benchmarks.runner import MAX_COLUMN_ASSIGNMENTS
-
-    # 8 columns offered, 5 wanted: 6,720 assignments, over the cap.
-    assert math.perm(8, 5) > MAX_COLUMN_ASSIGNMENTS
-
-    expected = [[1, 2, 3, 4, 5]]
-    leading = [[1, 2, 3, 4, 5, 6, 7, 8]]
-    assert result_matches(expected, leading) is True
-
-    # Past the cap it stops searching, so the same values behind three
-    # padding columns are no longer found. That is the trade the cap makes,
-    # and it is worth pinning: it is a refusal to guess, not a wrong answer.
-    trailing = [[0, 0, 0, 1, 2, 3, 4, 5]]
-    assert result_matches(expected, trailing) is False
-
-    # One column narrower and the search runs, so the shape above is not
-    # simply unmatchable.
-    assert math.perm(7, 5) <= MAX_COLUMN_ASSIGNMENTS
-    assert result_matches([[1, 2, 3, 4, 5]], [[0, 0, 1, 2, 3, 4, 5]]) is True
+    for name in ("values_match", "result_matches", "MAX_COLUMN_ASSIGNMENTS", "ROUNDING_DECIMALS"):
+        assert getattr(runner, name) is getattr(compare, name)
 
 
 # ---------------------------------------------------------------------------
@@ -484,3 +353,85 @@ def test_accuracy_and_p50_are_attributed_per_agent_rung_and_model():
          "correct": 1, "p50_seconds": 4.0, "hops": 1},
     ]
     assert report.rungs() == {"light": 2, "standard": 1}
+
+
+def test_a_candidates_step_is_timed_like_any_other_and_forwarded_without_its_index():
+    """Under the ensemble (arch7) a run's steps carry `candidate=k`; the timer
+    times them all the same, and the caller's callback is the two-argument
+    one it always was."""
+    seen = []
+    timer = StageTimer(lambda step, detail: seen.append((step, detail)))
+    timer("generate_sql", "SELECT 1", candidate=0)
+    assert [name for name, _ in timer.timing.stages] == ["generate_sql"]
+    assert seen == [("generate_sql", "SELECT 1")]
+
+
+# ---------------------------------------------------------------------------
+# The ensemble's measures (arch7 section 11)
+# ---------------------------------------------------------------------------
+
+
+def _ensembled(
+    qid, outcome, level, *, rejections=None, rungs=("light",), size=1000, runs=4, judged="accepted", without=None,
+    wave2=False, joined=(), declined=(), added=0, dropped=0,
+) -> QuestionResult:
+    asked = result(qid, "schema", outcome, 1.0)
+    asked.agreement, asked.candidates, asked.agreed = level, runs, 3
+    asked.rejections = dict(rejections or {})
+    asked.candidate_rungs, asked.state_bytes = list(rungs), size
+    asked.judged, asked.without_judge = judged, without or outcome
+    asked.wave2, asked.columns_fused = wave2, True
+    asked.joined = [{"column": c, "from_candidate": 1, "key": "store_key", "table": "dim_store"} for c in joined]
+    asked.declined = [{"column": c, "from_candidate": 2, "why": "row 1 has no match in run 2"} for c in declined]
+    asked.claims_added, asked.claims_dropped = added, dropped
+    return asked
+
+
+def test_one_run_a_question_is_not_the_ensemble():
+    report = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)])
+    assert not report.ensembled
+    assert report.agreement_levels() == {} and report.fidelity_rejections() == {} and report.state_sizes() == []
+
+
+def test_the_ensembles_agreement_rejections_spread_and_size():
+    report = BenchmarkReport(results=[
+        _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "light"), size=900),
+        _ensembled("B02", WRONG, "majority", rejections={"F2": 1, "F4": 1}, rungs=("light", "standard"), size=300),
+        _ensembled("B03", WRONG, "contested", size=600),
+        _ensembled("B04", CORRECT, "unanimous"),
+    ])
+    assert report.ensembled
+    assert report.agreement_levels() == {"unanimous": 2, "majority": 1, "contested": 1}
+    assert report.agreed_on_wrong == 1, "the majority that agreed on a wrong answer; contested is not agreement"
+    assert report.fidelity_rejections() == {"F2": 1, "F4": 3}
+    assert report.rung_spread == 1
+    assert report.state_sizes() == [300, 600, 900, 1000]
+
+
+def test_what_the_judge_did_and_where_it_changed_the_score():
+    """arch7.1: the Judge's effect, scored both ways -- the answer delivered
+    against the one the runs alone would have chosen."""
+    report = BenchmarkReport(results=[
+        _ensembled("B01", CORRECT, "unanimous"),
+        _ensembled("B02", CORRECT, "judged", judged="overruled", without=WRONG),
+        _ensembled("B03", WRONG, "judged", judged="overruled", without=CORRECT),
+        _ensembled("B04", WRONG, "judged", judged="overruled", without=WRONG),
+        _ensembled("B05", WRONG, "contested", judged="accepted none"),
+        _ensembled("B06", CORRECT, "majority", judged="set aside"),
+        _ensembled("B07", CORRECT, "unanimous", judged=""),
+    ])
+    assert report.judge_actions() == {"accepted": 1, "accepted none": 1, "overruled": 3, "set aside": 1}
+    assert report.judge_effect() == {"overruled": 3, "fixed": 1, "broke": 1}
+    assert BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)]).judge_actions() == {}
+
+
+def test_how_often_a_second_wave_ran_and_what_fusion_joined_added_and_dropped():
+    """arch7 section 11, items 3 and 8: the second-wave rate, and fusion's
+    yield -- columns joined and declined, claims added and dropped."""
+    report = BenchmarkReport(results=[
+        _ensembled("B01", CORRECT, "unanimous", joined=("region_name",), added=2),
+        _ensembled("B02", CORRECT, "majority", wave2=True, declined=("brand_name", "store_key"), dropped=1),
+        _ensembled("B03", WRONG, "contested", wave2=True, added=1),
+    ])
+    assert report.second_waves == 2
+    assert report.fusion() == {"columns joined": 1, "columns declined": 2, "claims added": 3, "claims dropped": 1}

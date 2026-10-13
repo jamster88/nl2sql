@@ -41,6 +41,48 @@ Supervisor's screening, the attempts, the model calls, the agent's version
 and -- from the REST API -- the job, so the trace of any job is a filter away:
 ``tags.`nl2sql.job_id` = '<id>'``.
 
+**Under the ensemble (7.0) a question is still one trace.** Its root span's
+children are the ensemble's own steps, and each run of the pipeline is a
+span beneath them, holding that run's agents as above:
+
+```
+nl2sql                      AGENT       the question in, the delivered answer out
+  Supervisor                AGENT       the screening, once for the question
+    qwen3.8-256k:latest     CHAT_MODEL
+  Paraphraser               AGENT       the rewordings, in one call
+    <model>                 CHAT_MODEL
+  Fidelity Gate             GUARDRAIL   each rewording that passed the checks in
+    <model>                 CHAT_MODEL  code, read by the Supervisor (F4)
+    ...
+  Wave Planner              TASK
+  Candidate Runs            CHAIN       a line per run: its wording, outcome and SQL
+    Candidate 0             AGENT       the question as asked
+      Supervisor            AGENT       screened above, so no model call here
+      Schema Retriever      RETRIEVER
+      ...
+      Answer                TASK
+    Candidate 1             AGENT       the first rewording, the same again
+    ...
+  Agreement                 EVALUATOR   each run marked: could it vote, its group
+  Judge                     EVALUATOR   every group's answer, accepted or set aside
+    <model>                 CHAT_MODEL  heavy, always: one call, before the vote
+  Vote                      EVALUATOR   the accepted runs counted, the winner
+  Fusion                    TASK        the run chosen, and what the others added
+  Answer                    TASK        what was delivered
+```
+
+When the vote does not settle the question, a second wave follows the first
+Vote in the same trace -- Wave Planner, Candidate Runs with that wave's
+runs, Agreement, Judge and Vote again -- before Fusion.
+
+The trace gains three tags, `nl2sql.agreement` (`3/4 majority`: agreed of
+run, and the level), `nl2sql.candidates` and `nl2sql.judge` -- what the
+Judge did: `accepted`, `set aside`, `overruled`, `accepted none`, `failed`
+or `not asked` -- and its attempts and model calls are read from the runs
+-- the delivered run's attempts, every run's calls with the ensemble's own.
+Searching ``tags.`nl2sql.judge` = 'overruled'`` finds the questions where the
+Judge changed what the runs would have delivered.
+
 **A verdict lands on the trace it judges.** *Correct*, *Wrong* or *Correct
 but incomplete*, given in the web or desktop interface, is staged for review
 as before and also recorded on that answer's trace as human feedback; voting

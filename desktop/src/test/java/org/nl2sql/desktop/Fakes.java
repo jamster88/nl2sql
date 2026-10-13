@@ -51,7 +51,7 @@ public final class Fakes {
                 125767.4, 1,
                 List.of(new Models.TraceEntry("generate_sql", 8123.4, 1, "3 tables, 2 examples", "", "", "", List.of()),
                         new Models.TraceEntry("run_sql", 210.0, 0, "", "", "", "", List.of())),
-                Map.of(), Map.of());
+                Map.of(), Map.of(), null);
     }
 
     public static Models.Job job(String id, Models.JobStatus status, Models.Answer answer) {
@@ -77,7 +77,92 @@ public final class Fakes {
     }
 
     public static Models.ProgressEvent step(int seq, String node, String label, String detail) {
-        return new Models.ProgressEvent(seq, node, label, detail, "2026-09-25T10:00:0" + seq + "Z");
+        return new Models.ProgressEvent(seq, node, label, detail, "2026-09-25T10:00:0" + seq + "Z", null);
+    }
+
+    /** A step of the ensemble's own (7.0): no run reported it. */
+    public static Models.ProgressEvent own(int seq, String node) {
+        return own(seq, node, "");
+    }
+
+    public static Models.ProgressEvent own(int seq, String node, String detail) {
+        return new Models.ProgressEvent(seq, node, node, detail, "", null);
+    }
+
+    /** A step of one wording's run: 0 the question as asked, 1 and up a rewording. */
+    public static Models.ProgressEvent run(int seq, int candidate, String node) {
+        return run(seq, candidate, node, "");
+    }
+
+    public static Models.ProgressEvent run(int seq, int candidate, String node, String detail) {
+        return new Models.ProgressEvent(seq, node, node, detail, "", candidate);
+    }
+
+    /** The ensemble's eleven nodes, as `/v1/meta` names them by themselves. */
+    public static final List<String> OUTER = List.of("screen", "refuse", "paraphrase",
+            "screen_paraphrase", "plan_wave", "answer", "validate", "judge", "vote", "fuse",
+            "deliver");
+
+    /** The steps of one run, as short as a fixture can make them. */
+    public static final List<String> INNER = List.of("supervise", "generate_sql", "finish");
+
+    /** How a 7.0 server says it asks a question several ways. */
+    public static Models.EnsembleSettings ensembleSettings(boolean enabled, int paraphrases) {
+        return new Models.EnsembleSettings(enabled, paraphrases, 10, 2, 1, true, true,
+                enabled ? OUTER : List.of());
+    }
+
+    /** Every node a server with the ensemble on lists: its own, then each run's. */
+    public static List<String> ensembleNodes() {
+        List<String> nodes = new java.util.ArrayList<>(OUTER);
+        nodes.addAll(INNER);
+        return nodes;
+    }
+
+    /** One wording's run that answered. */
+    public static Models.EnsembleCandidate candidate(int index, String wording, String changed,
+                                                     int group, String signature) {
+        return new Models.EnsembleCandidate(index, wording, index == 0 ? "original" : "paraphrase",
+                1, changed, "answered", true, List.of(), "SELECT " + index, signature, 1, group,
+                31250, List.of());
+    }
+
+    /**
+     * A question asked four ways: three runs agree, one answers differently,
+     * and a fifth rewording was never run.
+     */
+    public static Models.Ensemble ensemble() {
+        return new Models.Ensemble(
+                new Models.EnsembleAgreement(4, 3, 4, "majority", "3 of 4 agree", 0),
+                "3 of 4 runs agreed; 1 answered differently.", 0, List.of(0, 1, 3), true,
+                List.of(), List.of(), 0, 0,
+                List.of(new Models.EnsembleDissent(1, List.of(2), "Dairy 512004.10",
+                        "filters on banner_name")),
+                new Models.EnsembleJudgement(
+                        List.of(new Models.EnsembleVerdict(0, true, ""),
+                                new Models.EnsembleVerdict(1, true, "")),
+                        List.of(), false, null, "judge-model", ""),
+                List.of(candidate(0, "What was total net sales for Produce in FY2025?", "", 0,
+                                "Produce 719279.97"),
+                        candidate(1, "In FY2025, what did Produce sell, net?",
+                                "the order of the clauses", 0, "Produce 719279.97"),
+                        candidate(2, "Produce net sales, fiscal 2025?", "shortened", 1,
+                                "Dairy 512004.10"),
+                        candidate(3, "How much did Produce take, net, in FY2025?", "", 0,
+                                "Produce 719279.97")),
+                List.of(new Models.DiscardedRewording(4, "What did Dairy sell?",
+                        "the department", "F2 literals")),
+                1);
+    }
+
+    /** The sample answer, given by the ensemble above. */
+    public static Models.Answer answer(Models.Ensemble ensemble) {
+        Models.Answer base = answer();
+        return new Models.Answer(base.answer(), base.narrative(), base.sql(), base.verdict(),
+                base.intent(), base.clarification(), base.tables(), base.literals(),
+                base.result(), base.chart(), base.claims(), base.audit(), base.plan_cost(),
+                base.attempts(), base.trace(), base.retrieval_errors(), base.node_errors(),
+                ensemble);
     }
 
     /**
@@ -111,11 +196,11 @@ public final class Fakes {
             "fact_vendor_allowances", "fact_store_traffic");
 
     public static Models.Meta meta(boolean feedback) {
-        return new Models.Meta("nl2sql-agent", "6.3.0", "qwen3.8-256k",
+        return new Models.Meta("nl2sql-agent", "7.0.0", "qwen3.8-256k",
                 List.of("aggregate"), TABLES, SCOPE,
                 new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
                 new Models.Pipeline(true, true, true, true, "hybrid",
-                        List.of("screen", "generate_sql", "run_sql")),
+                        List.of("screen", "generate_sql", "run_sql"), null),
                 Map.of("enabled", true), "bearer", feedback, Map.of());
     }
 

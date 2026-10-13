@@ -292,6 +292,21 @@ about (`tables`, `scope`), what it must respect (`limits.max_rows`), and what
 to render (`pipeline.narrate` false means there is no paragraph to show,
 `pipeline.audit` false means no verification badge).
 
+Since 7.0 `pipeline.ensemble` says how the server asks a question several
+ways (arch7), so a client knows how many runs to expect before the first
+event: `{"enabled": true, "paraphrases": 3, "max_paraphrases": 10, "waves": 2,
+"parallel_calls": 1, "judge": true, "fuse_columns": true, "nodes": [...]}`.
+With it enabled, `pipeline.nodes` lists the ensemble's own nodes (`screen`,
+`refuse`, `paraphrase`, `screen_paraphrase`, `plan_wave`, `answer`,
+`validate`, `judge`, `vote`, `fuse`, `deliver`) before the pipeline's, and
+`pipeline.ensemble.nodes` is those eleven again by themselves: where a
+client divides the list into the steps around the runs and the steps of
+each run, without knowing any of their names. The first wave is the
+question as asked and `paraphrases` rewordings, so `1 + paraphrases` lanes
+is what to draw before the first event; fewer run when fewer rewordings
+were faithful, and more when a second wave is taken. With the ensemble off
+`nodes` there is empty, and a server older than 7.0 sends no `ensemble`.
+
 Two of those limits describe the request rather than the answer:
 
 | Field | Default | What |
@@ -352,7 +367,8 @@ list is a list, so nothing needs a null check before it is rendered.
                    "route": "attempt 1, ...", "hops": []}],
     "retrieval_errors": {},          // a retriever that could not reach its store: "unavailable",
                                      // or the driver's words to an administrator
-    "node_errors": {}                // the supervisor or narrator, failed and survived: "failed"
+    "node_errors": {},               // the supervisor or narrator, failed and survived: "failed"
+    "ensemble":  { /* 7.0: the record of every run; null with the ensemble off, see below */ }
   },
   "error": null,
   "links": {"self": "/v1/questions/3f2c...", "events": "/v1/questions/3f2c.../events"}
@@ -385,6 +401,117 @@ Notes a client author will want:
 * **`trace` is per-node cost.** Useful for a debug panel, and it is what the
   benchmark measures from.
 
+### Asked several ways: `ensemble` (7.0)
+
+With the ensemble on (`ENSEMBLE_ENABLED`, the default), the answer is the
+delivered run's and everything above reads as one coherent run: `answer`,
+`sql`, `result`, `chart`, `claims` and `audit` are what was delivered;
+`tables`, `literals`, `plan_cost`, `attempts` and `retrieval_errors` are the
+delivered run's; `node_errors` is the ensemble's and that run's together; and
+`trace` is the ensemble's own nodes followed by that run's. A client written
+for 6.3 needs nothing new. `ensemble` is the record beside it:
+
+```jsonc
+"ensemble": {
+  "agreement": {"admissible": 3, "agreed": 3, "total": 4,
+                "level": "unanimous",    // unanimous | majority | judged | contested | single | none
+                "why": "all 3 that could vote agree",
+                "set_aside": 1},         // runs the Judge kept from voting
+  "line": "Agreed by 3 of 4 independent runs of the question, each worded differently; the Judge set aside the answer of 1 other.",
+  "chosen": 0,                           // the delivered run; null when none could be (level "none")
+  "fused_from": [0, 1, 3],               // the winning group
+  "columns_fused": true,                 // ENSEMBLE_FUSE_COLUMNS for this run
+  "joined_columns": [{"column": "region_name", "from_candidate": 3, "key": "store_key", "table": "dim_store"}],
+  "declined_columns": [],                // {"column", "from_candidate", "why"}: one that would not join
+  "claims_added": 1, "claims_dropped": 0,
+  "dissent": [{"group": 1, "members": [2], "signature": "1495000.11",
+               "differs": "run 2's query filters on dim_date.calendar_year; the chosen one filters on dim_date.fiscal_year"}],
+  "judged": {                            // the Judge, before the vote; null when it was not asked
+    "verdicts": [{"group": 0, "accepted": true, "why": "It rolls sales up to the fiscal year."},
+                 {"group": 1, "accepted": false, "why": "It filters the calendar year."}],
+    "set_aside": [2],                    // runs whose answer it rejected
+    "overruled": false,                  // it set aside the answer the runs alone would have chosen...
+    "instead_of": null,                  // ...that answer's run, when it did
+    "model": "...", "error": ""          // error: why it could not be asked; the runs then voted alone
+  },
+  "candidates": [{
+    "index": 0, "wording": "What was total net sales for Produce in FY2025?",
+    "origin": "original", "wave": 1, "changed": "",
+    "outcome": "answered",               // answered | gave_up | refused
+    "admissible": true, "reasons": [],   // why it could not vote, by rule: "E1 answered: gave up after 7 attempts"
+    "sql": "SELECT ...", "signature": "719279.97", "attempts": 1, "group": 0,
+    "duration_ms": 61210.0,
+    "trace": [ /* that run's nodes */ ]
+  }, {
+    "index": 2, "wording": "Report the Produce department's net sales for FY2025.",
+    "origin": "paraphrase", "wave": 1, "changed": "instruction form",
+    /* ... */
+  }],
+  "discarded": [{"index": 4, "text": "What were Produce sales in 2024?", "changed": "shorter",
+                 "reason": "F1 numbers: 2025 missing; 2024 added"}],
+  "parallel_calls": 1                    // OLLAMA_PARALLEL_CALLS: runs this server makes at once
+}
+```
+
+Each candidate is one run of the pipeline on one wording: `0` the question
+as asked, `1` and up the rewordings, numbered in the order the Paraphraser
+wrote them. A rewording runs only after the fidelity gate kept it, so
+`discarded` lists the ones that never ran and the check that stopped each:
+F1 numbers, F2 literals, F3 polarity, F5 distinct (in code), or F4 (the
+Supervisor's reading of it: a verdict other than `proceed`, or another
+contract than the question's). `admissible` is whether the run could vote,
+and `reasons` why not, by rule (E1 answered, E2 faithful, E3 rows, E4
+audited, E5 comparable); `group` is the agreeing group it fell in, `0` the
+largest, and `signature` its result's key fact. `judged` is the Judge's
+reading of every group's answer, made before the vote (arch7.1): a verdict
+per group, and only the runs of the groups it accepted vote --
+`agreement.admissible` counts them, and `agreement.set_aside` the runs it
+kept out. `level` is `judged` when it set aside the answer the runs alone
+would have chosen (`overruled`, that answer's run `instead_of`), and
+`contested` when it accepted none -- the runs' own choice is then delivered,
+with the Judge's objection in the answer's first line. `judged` is null
+when the Judge was not asked -- `ENSEMBLE_JUDGE_ENABLED=false`, or no run
+could vote -- and carries `error` when it could not be reached. `chosen` is
+the run whose SQL was delivered, and whose rows and claims the answer's
+start from; the answer opens with a sentence saying how the runs agreed and
+what the Judge set aside, and `line` is that sentence by itself -- plain
+text, for a client that shows the agreement as a badge rather than
+composing its own from the counts; empty when no run could be delivered.
+A vote with no majority among the runs that voted,
+or one run standing alone, runs a second wave first when one is left --
+each candidate's `wave` says which it ran in -- and with none left is
+delivered as `contested`. `fused_from` is the winning group, from whose
+other runs, in code: `joined_columns`, each a column another run carried
+and the chosen rows did not, joined on the dimension's `key` (`result` has
+it; `sql` does not return it, so `from_candidate` names the run that did);
+`declined_columns`, each that would not join cleanly and `why`;
+`claims_added`, the other runs' claims about rows the chosen narrative
+did not speak of that the delivered rows bear out, and `claims_dropped`,
+those they did not; `columns_fused` false when
+`ENSEMBLE_FUSE_COLUMNS` is off. `dissent` is each losing group: its runs,
+its key fact (`signature`) and `differs`, the tables and filtered columns
+its query has that the chosen one's has not, how it rolls up and joins the
+tables it aggregates where the two differ ("joins fact_item_cogs on
+date_key, product_key, row by row"), and the reverse -- empty when the two
+read the same. When no run could vote, `level` is `none`, `chosen` is null and
+the answer and `error` are the original's own give-up. A refused question
+has no candidate at all. Without administrator detail, a candidate's
+`reasons` keep the rule's name and lose what follows it, as the error maps
+do. A client reading the agreement:
+
+```python
+answer = job["answer"]
+if answer.get("ensemble"):
+    agreement = answer["ensemble"]["agreement"]
+    print(f"{agreement['agreed']} of {agreement['total']} ({agreement['level']})")
+    print(answer["ensemble"]["line"])
+```
+
+Everything in the record that a model wrote -- a candidate's `wording` and
+`changed`, a discarded rewording's `text`, a verdict's `why`, and `line`
+where it quotes one -- is plain text that was never escaped for markdown.
+Render it as text.
+
 ---
 
 ## Progress events
@@ -394,7 +521,7 @@ Notes a client author will want:
 ```
 id: 4
 event: progress
-data: {"seq":4,"step":"generate_sql","label":"sql","detail":"3 tables, 2 examples","at":"..."}
+data: {"seq":4,"step":"generate_sql","label":"sql","detail":"3 tables, 2 examples","at":"...","candidate":0}
 
 event: status
 data: {"status":"running"}
@@ -407,6 +534,13 @@ data: { ...the whole finished job... }
 
 * `step` is the graph node -- key your UI off it. `label` is the short human
   word for it. The full list is in `/v1/meta` under `pipeline.nodes`.
+* `candidate` (7.0) says which wording's run reported the step: `0` the
+  question as asked, `1` and up a rewording, `null` for a step of the
+  ensemble's own -- and for every step with the ensemble off. A run's steps
+  are the pipeline's nodes, so group them by `candidate` to draw one lane
+  per run. The numbers are the rewordings' own, so a rewording the fidelity
+  gate discarded leaves a gap: draw a lane for each number that reports,
+  not for each number up to the largest.
 * `id:` is the sequence number. Reconnect with `Last-Event-ID: 4` (browsers
   send it automatically) or `?from_seq=4` and the server resumes rather than
   replaying.
@@ -465,6 +599,14 @@ a job is forgotten after `API_JOB_TTL_SECONDS`, and a verdict holding only a
 job id would be pointing at nothing within the hour. The SQL in particular is
 the entire reason a "yes" is worth keeping -- it is the candidate a golden
 question/SQL pair gets built from.
+
+Since 7.0 the snapshot includes the answer's `ensemble`, whole, so whoever
+reviews the verdict sees every run behind the answer. The column it goes in
+is the review service's to add, when it starts; against a staging table
+that does not have it yet -- a stack upgraded and started without the
+review service -- the verdict is staged without it, which the server says
+once in its log, and the first verdict after the review service has started
+carries it.
 
 Four rules are worth knowing:
 

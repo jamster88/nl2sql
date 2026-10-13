@@ -59,6 +59,7 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
         "model_routing": True,
         "max_attempts": 7,
         "questions": "B01,B02",
+        "paraphrase_set": False,
     }
     assert run["metrics"]["accuracy"] == 1.0
     assert run["metrics"]["questions"] == 2
@@ -79,6 +80,7 @@ def test_each_question_is_a_trace_in_the_run_tagged_and_judged(monkeypatch, caps
     assert trace.tags["benchmark.configuration"] == "snippets"
     assert trace.tags["benchmark.question_id"] == "B01"
     assert trace.tags["benchmark.category"] == by_id("B01").category
+    assert trace.tags["benchmark.wording"] == "0"
     [score] = trace.assessments
     assert (score.name, score.value, score.rationale) == (tracking.SCORE, False, WRONG)
     # Sent before it is scored, or the server has no trace to score.
@@ -92,18 +94,32 @@ def test_compare_files_each_configuration_as_a_run_of_its_own(monkeypatch, capsy
 
     assert [r["name"] for r in mlflow.runs.values()] == [
         "benchmark schema-only", "benchmark knowledge", "benchmark multi-shot", "benchmark snippets",
+        "benchmark ensemble",
     ]
     assert {t.run_id for t in mlflow.traces.values()} == set(mlflow.runs)
+
+
+def test_the_paraphrase_set_is_one_run_whose_traces_say_which_wording_asked(monkeypatch, capsys):
+    mlflow = FakeMlflowWithRuns()
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--paraphrase-set"], tracer=tracer_on(mlflow))
+
+    [run] = mlflow.runs.values()
+    assert run["name"] == "benchmark snippets (paraphrase set)"
+    assert run["params"]["paraphrase_set"] is True
+    assert (run["metrics"]["stability"], run["metrics"]["stable"]) == (1.0, 1)
+    traces = list(mlflow.traces.values())
+    assert sorted(t.tags["benchmark.wording"] for t in traces) == ["0", "1", "2", "3"]
+    assert {t.tags["benchmark.question_id"] for t in traces} == {"B01"}
 
 
 def test_a_configuration_cut_short_keeps_what_it_measured_under_a_status_that_says_so(monkeypatch, capsys):
     mlflow = FakeMlflowWithRuns()
     asked = run_benchmark.run_question
 
-    def interrupted_on_the_second(agent, database, question, timer):
+    def interrupted_on_the_second(agent, database, question, timer, **kwargs):
         if question.id == "B02":
             raise KeyboardInterrupt
-        return asked(agent, database, question, timer)
+        return asked(agent, database, question, timer, **kwargs)
 
     monkeypatch.setattr(run_benchmark, "run_question", interrupted_on_the_second)
     with pytest.raises(KeyboardInterrupt):
@@ -159,6 +175,16 @@ def test_the_metrics_are_the_score_and_where_the_time_went():
     }
 
 
+def test_with_the_paraphrase_set_the_metrics_carry_the_stability():
+    report = BenchmarkReport(results=[
+        result("B01", CORRECT), result("B01", WRONG, wording=1),
+        result("B02", CORRECT), result("B02", CORRECT, wording=1),
+    ])
+    values = tracking.metrics(report)
+    assert (values["stability"], values["stable"]) == (0.5, 1)
+    assert "stability" not in tracking.metrics(BenchmarkReport(results=[result("B01", CORRECT)]))
+
+
 def test_a_question_that_crashed_has_no_trace_to_score():
     tracked = tracking.BenchmarkRun(FakeMlflowWithRuns(), "run-1")
     tracked.score(result("B01", FAILED, error="boom"))  # no trace id: nothing to call
@@ -210,3 +236,38 @@ def test_the_stacks_certificate_is_trusted_when_it_has_been_copied_out(tmp_path)
     trust_the_stack(environ, certificate)
     assert environ["MLFLOW_TRACKING_SERVER_CERT_PATH"] == "/mine.pem", "the environment's own choice wins"
 
+
+
+def test_through_the_ensemble_the_metrics_say_how_the_runs_agreed():
+    from tests.benchmarks.test_runner import _ensembled
+
+    report = BenchmarkReport(label="ensemble", results=[
+        _ensembled("B01", CORRECT, "unanimous", rejections={"F4": 2}, rungs=("light", "standard")),
+        _ensembled("B02", WRONG, "majority", judged="accepted none"),
+        _ensembled("B03", CORRECT, "judged", judged="overruled", without=WRONG, wave2=True,
+                   joined=("region_name",), added=2, dropped=1),
+    ])
+    metrics = tracking.metrics(report)
+    assert (metrics["agreement.unanimous"], metrics["agreement.majority"]) == (1, 1)
+    assert (metrics["rejected.F4"], metrics["agreed_on_wrong"], metrics["rung_spread"]) == (2, 1, 1)
+    assert (metrics["judge.accepted"], metrics["judge.accepted_none"], metrics["judge.overruled"]) == (1, 1, 1)
+    assert (metrics["judge_fixed"], metrics["judge_broke"]) == (1, 0)
+    assert metrics["second_waves"] == 1
+    assert (metrics["columns_joined"], metrics["columns_declined"]) == (1, 0)
+    assert (metrics["claims_added"], metrics["claims_dropped"]) == (2, 1)
+    assert "agreement.unanimous" not in tracking.metrics(BenchmarkReport(results=report.results[:0]))
+
+
+def test_with_the_grain_check_on_the_metrics_say_what_it_refused_and_how_those_runs_ended():
+    """arch7.3 section 22.14: the references it would refuse, which is zero
+    or a release blocker, and the runs it sent to repair."""
+    repaired = result("B07", CORRECT, grain_repairs=[{"run": 0, "sent": 1, "ended": CORRECT},
+                                                     {"run": 2, "sent": 1, "ended": WRONG}])
+    report = BenchmarkReport(label="snippets", grain_checked=True, rejected_references=["B13"],
+                             results=[result("B01", CORRECT), repaired])
+    metrics = tracking.metrics(report)
+    assert metrics["grain.references_refused"] == 1
+    assert (metrics["grain.repaired_runs"], metrics["grain.repaired_right"], metrics["grain.repaired_wrong"],
+            metrics["grain.repaired_failed"]) == (2, 1, 1, 0)
+    off = tracking.metrics(BenchmarkReport(label="snippets", results=report.results))
+    assert not [name for name in off if name.startswith("grain.")]

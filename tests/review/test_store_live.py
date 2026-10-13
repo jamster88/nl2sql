@@ -52,6 +52,7 @@ from nl2sql_review.store import (
     WRITER_ROLE,
     Repository,
     connection,
+    ensure_schema,
     ensure_writer_role,
 )
 from tests import live_stores
@@ -246,6 +247,141 @@ def test_a_table_from_before_the_third_verdict_is_widened_in_place(repo, owner):
                 "VALUES ('bad', 'job-bad', 'maybe', 'q')"
             )
     assert repo.get_by_job("job-old").verdict == "no"
+
+
+# ---------------------------------------------------------------------------
+# The 7.0 column: added by the review service, written by the API
+# ---------------------------------------------------------------------------
+
+#: What an answer asked several ways is staged with, cut to what these read.
+ENSEMBLE = {
+    "agreement": {"admissible": 3, "agreed": 2, "total": 4, "level": "majority", "why": "", "set_aside": 0},
+    "chosen": 0,
+    "candidates": [{"index": 0, "wording": "How many stores are there?", "sql": "SELECT count(*) FROM dim_store;"}],
+}
+
+
+def _columns(url: str) -> dict[str, tuple[str, str, str]]:
+    """Each column of the staging table: its type, whether it may be null, its default."""
+    with psycopg.connect(url) as conn:
+        return {
+            name: (kind, nullable, default or "")
+            for name, kind, nullable, default in conn.execute(
+                "SELECT column_name, data_type, is_nullable, column_default "
+                "FROM information_schema.columns WHERE table_name = %s",
+                (SUBMISSIONS,),
+            ).fetchall()
+        }
+
+
+def _as_before_7_0(owner: str) -> None:
+    """The staging table as a 6.3 review service left it: no `ensemble`."""
+    with psycopg.connect(owner) as conn:
+        conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP COLUMN ensemble")
+        conn.commit()
+    assert "ensemble" not in _columns(owner)
+
+
+def test_a_table_from_before_7_0_gains_the_column_and_its_rows_read_as_one_run(repo, owner):
+    """`CREATE TABLE IF NOT EXISTS` never revisits a table that exists, and
+    a 6.3 stack's has no `ensemble`. Starting twice is every restart after
+    the first: the second must find nothing to do, and say nothing."""
+    _as_before_7_0(owner)
+    with psycopg.connect(owner) as conn:
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question) VALUES ('old', 'job-old', 'yes', 'q')"
+        )
+        conn.commit()
+
+    repo.setup(WRITER_PASSWORD)
+    repo.setup(WRITER_PASSWORD)
+
+    assert _columns(owner)["ensemble"] == ("jsonb", "NO", "'{}'::jsonb")
+    old = repo.get_by_job("job-old")
+    assert old.ensemble == {} and old.verdict == "yes"
+    assert [submission.ensemble for submission in repo.listing()] == [{}]
+
+
+def test_the_column_is_added_by_the_tables_owner_who_is_no_superuser(owner):
+    """The review service owns the table because it made it, and since 6.3
+    its role is not a superuser. Adding a column is the owner's to do; if
+    this ever fails with "must be owner", the DDL has moved to a role that
+    is not, and so must the column."""
+    role, password = f"t_owner_{uuid.uuid4().hex[:8]}", "owner-pw"
+    with psycopg.connect(owner, autocommit=True) as admin:
+        admin.execute(f"DROP TABLE IF EXISTS {PROMOTIONS}")
+        admin.execute(f"DROP TABLE IF EXISTS {SUBMISSIONS}")
+        admin.execute(f"CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEROLE PASSWORD '{password}'")
+        admin.execute(f"GRANT CREATE, USAGE ON SCHEMA public TO {role}")
+    _, _, rest = owner.partition("://")
+    as_owner = f"postgresql://{role}:{password}@{rest.rpartition('@')[2]}"
+    try:
+        with connection(as_owner) as conn:
+            ensure_schema(conn)
+            conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP COLUMN ensemble")
+            conn.commit()
+            ensure_schema(conn)
+            ensure_schema(conn)
+            assert conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").fetchone() == {
+                "rolsuper": False}
+        assert _columns(owner)["ensemble"][0] == "jsonb"
+    finally:
+        with psycopg.connect(owner, autocommit=True) as admin:
+            admin.execute(f"DROP OWNED BY {role}")
+            admin.execute(f"DROP ROLE {role}")
+
+
+def test_a_vote_is_recorded_on_a_store_the_review_service_has_not_migrated(repo, owner, writer_url):
+    """A stack upgraded to 7.0 and started without the review service, which
+    is a compose profile: the table is 6.3's and nothing will add the column
+    until the day the service starts. The API is the INSERT-only writer and
+    cannot. A vote must still be a vote."""
+    _as_before_7_0(owner)
+    writer = PostgresSink(writer_url)
+
+    before = capture(ensemble=ENSEMBLE)
+    writer.record(before)
+    with psycopg.connect(owner) as conn:
+        assert conn.execute(f"SELECT verdict FROM {SUBMISSIONS} WHERE job_id = %s", (before.job_id,)).fetchone() == (
+            "yes",)
+
+    # The review service starts for the first time since the upgrade. The
+    # same API process, restarted by nobody, stages the next answer whole.
+    repo.setup(WRITER_PASSWORD)
+    after = capture(ensemble=ENSEMBLE)
+    writer.record(after)
+
+    assert repo.get_by_job(before.job_id).ensemble == {}
+    assert repo.get_by_job(after.job_id).ensemble == ENSEMBLE
+
+
+def test_the_writer_is_shown_the_column_by_the_catalog(repo, writer_url):
+    """What the API's question rests on: `information_schema.columns` shows a
+    role the columns it has a privilege on, and INSERT on the table is one."""
+    with psycopg.connect(writer_url) as conn:
+        assert "ensemble" in PostgresSink(writer_url).columns(conn)
+
+
+def test_a_store_restored_from_before_7_0_under_a_running_api_still_takes_votes(repo, owner, sink):
+    """The API saw the column and remembered. Then the table lost it."""
+    whole = capture(ensemble=ENSEMBLE)
+    sink.record(whole)
+    assert repo.get_by_job(whole.job_id).ensemble == ENSEMBLE
+
+    _as_before_7_0(owner)
+    without = capture(ensemble=ENSEMBLE)
+    sink.record(without)
+
+    with psycopg.connect(owner) as conn:
+        assert conn.execute(f"SELECT count(*) FROM {SUBMISSIONS}").fetchone() == (2,)
+    repo.setup(WRITER_PASSWORD)
+    assert repo.get_by_job(without.job_id).ensemble == {}
+
+
+def test_an_answer_one_run_gave_is_staged_with_an_empty_record(repo, sink):
+    item = capture()
+    sink.record(item)
+    assert repo.get_by_job(item.job_id).ensemble == {}
 
 
 # ---------------------------------------------------------------------------

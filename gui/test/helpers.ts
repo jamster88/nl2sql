@@ -10,7 +10,15 @@
 import { vi } from "vitest";
 
 import type { Client } from "../src/api/client";
-import type { Answer, Job, Meta, ResultTable } from "../src/api/types";
+import type {
+  Answer,
+  Ensemble,
+  EnsembleCandidate,
+  EnsembleSettings,
+  Job,
+  Meta,
+  ResultTable,
+} from "../src/api/types";
 
 export function makeResult(overrides: Partial<ResultTable> = {}): ResultTable {
   return {
@@ -58,6 +66,118 @@ export function makeAnswer(overrides: Partial<Answer> = {}): Answer {
     ],
     retrieval_errors: {},
     node_errors: {},
+    ...overrides,
+  };
+}
+
+/** One wording's run, as the wire carries it under the ensemble (7.0). */
+export function makeCandidate(overrides: Partial<EnsembleCandidate> = {}): EnsembleCandidate {
+  return {
+    index: 0,
+    wording: "Which department had the highest net sales in fiscal year 2025?",
+    origin: "original",
+    wave: 1,
+    changed: "",
+    outcome: "answered",
+    admissible: true,
+    reasons: [],
+    sql: "SELECT department, sum(net_sales_amt) FROM fact_pos_retail_sales GROUP BY 1",
+    signature: "Produce 719279.97",
+    attempts: 1,
+    group: 0,
+    duration_ms: 31250,
+    trace: [],
+    ...overrides,
+  };
+}
+
+/**
+ * A question asked four ways: three runs agree, one answers differently.
+ *
+ * The shape is the one `agent/API.md` documents for `Answer.ensemble`, and
+ * `tests/gui/test_gui_contract.py` holds every field of it to the server's.
+ */
+export function makeEnsemble(overrides: Partial<Ensemble> = {}): Ensemble {
+  return {
+    agreement: { admissible: 4, agreed: 3, total: 4, level: "majority", why: "3 of 4 agree", set_aside: 0 },
+    line: "3 of 4 runs agreed; 1 answered differently.",
+    chosen: 0,
+    fused_from: [0, 1, 3],
+    columns_fused: true,
+    joined_columns: [],
+    declined_columns: [],
+    claims_added: 0,
+    claims_dropped: 0,
+    dissent: [{ group: 1, members: [2], signature: "Dairy & Eggs 512004.10", differs: "filters on banner_name" }],
+    judged: {
+      verdicts: [
+        { group: 0, accepted: true, why: "" },
+        { group: 1, accepted: true, why: "" },
+      ],
+      set_aside: [],
+      overruled: false,
+      instead_of: null,
+      model: "judge-model",
+      error: "",
+    },
+    candidates: [
+      makeCandidate(),
+      makeCandidate({
+        index: 1,
+        origin: "paraphrase",
+        wording: "In fiscal 2025, which department sold the most, net?",
+        changed: "the order of the clauses",
+      }),
+      makeCandidate({
+        index: 2,
+        origin: "paraphrase",
+        wording: "Top department by net sales, FY2025?",
+        changed: "shortened",
+        sql: "SELECT department FROM fact_pos_retail_sales WHERE banner_name = 'x'",
+        signature: "Dairy & Eggs 512004.10",
+        group: 1,
+        attempts: 3,
+      }),
+      makeCandidate({
+        index: 3,
+        origin: "paraphrase",
+        wording: "Which department's net sales were highest in FY2025?",
+        changed: "",
+      }),
+    ],
+    discarded: [
+      { index: 4, text: "Which store had the highest sales?", changed: "department to store", reason: "F2 literals" },
+    ],
+    parallel_calls: 1,
+    ...overrides,
+  };
+}
+
+/** The ensemble's eleven nodes, as `/v1/meta` names them by themselves. */
+export const OUTER_NODES = [
+  "screen",
+  "refuse",
+  "paraphrase",
+  "screen_paraphrase",
+  "plan_wave",
+  "answer",
+  "validate",
+  "judge",
+  "vote",
+  "fuse",
+  "deliver",
+];
+
+export function makeEnsembleSettings(overrides: Partial<EnsembleSettings> = {}): EnsembleSettings {
+  return {
+    enabled: true,
+    paraphrases: 3,
+    max_paraphrases: 10,
+    waves: 2,
+    parallel_calls: 1,
+    judge: true,
+    fuse_columns: true,
+    nodes: OUTER_NODES,
     ...overrides,
   };
 }

@@ -65,26 +65,34 @@ LIBRARY_URL = "https://ollama.com"
 USER_AGENT = "nl2sql-model-catalog/1"
 # Bumped when the catalog's shape changes, so the router can refuse a file it
 # does not understand rather than misread it. 2: `suited_from` is per task,
-# since calibration can measure some of a model's tasks and not others.
-SCHEMA_VERSION = 2
+# since calibration can measure some of a model's tasks and not others. 3
+# (7.0): the ensemble's two tasks, the Paraphraser and the Judge (arch7.3,
+# section 22.10); a catalog of schema 2 still carries its measurements into
+# a rebuild, and the router reads one with the two tasks unmeasured.
+SCHEMA_VERSION = 3
 
 RUNGS = ("light", "standard", "heavy")
-TASKS = ("supervisor", "generator", "reflection", "narrator", "repair")
+TASKS = ("supervisor", "generator", "reflection", "narrator", "repair", "paraphraser", "judge")
 # The most tokens each task's prompt needs (section 15.3). A model whose
-# context window is smaller is not a candidate for that task at all.
+# context window is smaller is not a candidate for that task at all. The
+# Judge's is the largest of the outer calls: every distinct answer's query
+# and rows, and the knowledge.
 TASK_BUDGETS = {
     "supervisor": 8192,
     "generator": 16384,
     "reflection": 8192,
     "narrator": 8192,
     "repair": 16384,
+    "paraphraser": 8192,
+    "judge": 16384,
 }
-# A classification with a four-field answer is not where parameters show, so
-# these two are heavy from 7 B; the other three are placed by size bands.
-CLASSIFYING = ("supervisor", "reflection")
+# A classification with a short answer is not where parameters show, so these
+# are heavy from 7 B -- the Judge's verdict per answer among them; the others
+# are placed by size bands, the Paraphraser by the narrator's.
+CLASSIFYING = ("supervisor", "reflection", "judge")
 # The tasks that answer in a JSON schema, which models trained for tool
 # calling hold more reliably.
-STRUCTURED = ("supervisor", "reflection", "narrator")
+STRUCTURED = ("supervisor", "reflection", "narrator", "paraphraser", "judge")
 
 # Keyword tags recorded from a library description. Recorded, not all acted
 # on: nearly every current model's description names coding among its
@@ -533,9 +541,15 @@ def _size_reason(parameters: int) -> str:
     drafting = RUNGS[_size_rung("generator", parameters)]
     band = {"light": "under 10 B", "standard": "10 to 40 B", "heavy": "over 40 B"}[drafting]
     return (
-        f"{parameters / 1e9:.1f} B parameters: supervisor and reflection {classifying}; "
-        f"generator, narrator and repair {drafting} ({band})"
+        f"{parameters / 1e9:.1f} B parameters: {_listed(CLASSIFYING)} {classifying}; "
+        f"{_listed([task for task in TASKS if task not in CLASSIFYING])} {drafting} ({band})"
     )
+
+
+def _listed(tasks) -> str:
+    """"a and b", "a, b and c"."""
+    tasks = list(tasks)
+    return f"{', '.join(tasks[:-1])} and {tasks[-1]}" if len(tasks) > 1 else "".join(tasks)
 
 
 def _placed(name: str, facts: dict, library: dict, parameters: int) -> tuple[dict, list[str]]:
@@ -566,7 +580,7 @@ def _placed(name: str, facts: dict, library: dict, parameters: int) -> tuple[dic
         for task in STRUCTURED:
             rung[task] -= 1
         known = "capabilities unknown" if capabilities is None else "no tool support"
-        reasons.append(f"{known}: supervisor, reflection and narrator one rung down")
+        reasons.append(f"{known}: {_listed(STRUCTURED)} one rung down")
     return rung, reasons
 
 
@@ -608,14 +622,17 @@ def prior_for(name: str, facts: dict, library: dict) -> dict:
 
 #: How many probes fewer than the reference a suited model may get right,
 #: per task. Section 15.5 allows one, and the tasks whose miss is a wrong
-#: answer are allowed none. The Supervisor: a light model within one question
+#: answer are allowed none. The Judge is one of those: a verdict that sets a
+#: right answer aside, or accepts a wrong one the runs agreed on, changes
+#: the answer delivered. A Paraphraser that writes too few faithful
+#: rewordings costs a retry, or a narrower first wave. The Supervisor: a light model within one question
 #: of the reference refused a valid benchmark question as out of domain, and
 #: a refusal is no answer. The generator: a model one question behind lost
 #: that very question in the routed benchmark, because the repairs that climb
 #: to the reference start from its wrong draft and never recovered. A miss by
 #: the narrator, the reflection or the diagnosis costs a retry or a sentence,
 #: not the answer.
-TOLERANCE = {"supervisor": 0, "generator": 0, "reflection": 1, "narrator": 1, "repair": 1}
+TOLERANCE = {"supervisor": 0, "generator": 0, "reflection": 1, "narrator": 1, "repair": 1, "paraphraser": 1, "judge": 0}
 #: The fewest probes a rung needs before its score is a measurement. "Within
 #: one question" of three probes allows a third of them wrong: the first
 #: calibrated benchmark run routed the reflection to a model that had agreed
@@ -658,17 +675,19 @@ def suitability(model: dict, reference: dict | None) -> tuple[dict, dict]:
     """`suited` and `suited_from` for one model: calibration's answer for a
     task it measured, the prior's for the rest. An exclusion in the prior --
     an embedding model, a cloud model, a window too small for the task --
-    is a fact, and no measurement overrides it."""
+    is a fact, and no measurement overrides it. A task the model's prior
+    does not name -- a catalog written before the task was -- has no
+    prior, and stays unrouted until a rebuild gives it one."""
     reference_measured = (reference or {}).get("measured", {})
     suited, source = {}, {}
     for task in TASKS:
         measured, rung = measured_rung(
             model["measured"].get(task, {}), reference_measured.get(task, {}), TOLERANCE[task]
         )
-        if measured and model["prior"][task] is not None:
+        if measured and model["prior"].get(task) is not None:
             suited[task], source[task] = rung, "calibration"
         else:
-            suited[task], source[task] = model["prior"][task], "prior"
+            suited[task], source[task] = model["prior"].get(task), "prior"
     return suited, source
 
 

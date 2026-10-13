@@ -68,7 +68,7 @@ Every page -- the web interface, the review, curation and SQL console
 interfaces, the directory page and MLflow's front door -- is one published
 image, `nl2sql-proxy`, each container told which page it serves. It, the
 agent, the review service, the desktop client's jar, MLflow's server and
-store, the directory and the auth service are published images (`v6_3`);
+store, the directory and the auth service are published images (`v7_0`);
 the rest are built or pulled by `setup.sh` as well -- the runtime stores are
 a stock pgvector, pinned by digest like every image this project does not
 build. Two one-shot containers run before the rest and exit: `pki`, which
@@ -217,6 +217,11 @@ $ ./launch.sh
     chat model qwen3.8-256k is available at http://192.168.10.82:11434
     embedding model bge-m3 is available on this machine
 
+==> Checking model routing
+    model routing: 3 models -- qwen3.8-256k:latest (OLLAMA_MODEL), ...
+    every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)
+    the model host is asked 1 call(s) at a time (OLLAMA_PARALLEL_CALLS)
+
 ==> Ready. Ask a question:
 
     docker compose run --rm agent "How many stores are there?"
@@ -235,7 +240,12 @@ that moved. An embedding model that is not the one the vectors were built
 with. A `.env` still pinning the previous agent image, so an upgrade silently
 has no effect. And the two the multi-agent pipeline added: the DDL-chunk
 collection its table selection reads instead of calling the model, and whether
-its database role has picked up a grant it should not have. The snippet store
+its database role has picked up a grant it should not have. Since 7.0 it also
+says how many ways each question will be asked and how many calls the model
+host is asked at a time -- read as compose reads them, the shell and then
+`.env` -- so that an answer taking several times as long as 6.3's reads as
+the setting it is (`ENSEMBLE_ENABLED=false` is one run;
+`OLLAMA_PARALLEL_CALLS` widens the gate for a host that serves more). The snippet store
 is the one thing it fills rather than checks: the store is built from a
 tracked document, and whenever the document's hash differs from the one the
 last complete load recorded, the loader runs before anything is asked.

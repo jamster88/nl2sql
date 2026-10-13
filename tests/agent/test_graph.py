@@ -747,6 +747,177 @@ def test_with_nothing_retrievable_the_whole_catalog_is_offered():
     assert set(state["selected_tables"]) == set(TABLES)
 
 
+# A catalog wider than the cap, and shaped as the retail one is: by name,
+# every dimension comes before the first fact.
+WIDE = [f"dim_{letter}" for letter in "abcdefghijkl"] + ["fact_pos_retail_sales", "fact_item_cogs"]
+
+
+def test_schema_only_is_the_whole_schema_and_the_cap_does_not_apply():
+    """`--no-rag`, and the benchmark's `schema-only`. With nothing ranked the
+    cap keeps the first tables by name, which in a star schema is dimensions
+    and no fact: the scope was ten tables no question about sales could be
+    answered from, and every draft that read the sales was refused as out of
+    scope until the attempts ran out (7.0: 1 of 15 on the benchmark).
+    """
+    db = FakeDatabase(tables=WIDE)
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_pos_retail_sales"]), schema_retriever=None, max_tables=10
+    ).run("q")
+
+    assert state["schema_tables"] == []
+    assert state["selected_tables"] == sorted(WIDE)
+    assert state["error"] is None and state["attempts"] == 1
+
+
+def test_the_contracts_tables_are_not_taken_for_the_whole_scope():
+    """What the answer is about is not what it is computed from. A question
+    about SKUs has `dim_product` in its contract; with retrieval off that was
+    the whole scope, and the sales the SKUs are ranked by were out of it.
+    The contract's tables still go first.
+    """
+    db = FakeDatabase(
+        tables=WIDE + ["dim_product"], run_select_result=product_rows("sku_id", "product_name", "net_sales")
+    )
+    llm = sku_llm(["SELECT sku_id, product_name, net_sales FROM dim_product JOIN fact_pos_retail_sales USING (k)"])
+    state = make_agent(
+        db, llm, schema_retriever=None, contract_resources=resources(), narrate_enabled=False, max_tables=10
+    ).run("top 10 SKUs")
+
+    assert state["selected_tables"][0] == "dim_product"
+    assert sorted(state["selected_tables"]) == sorted(WIDE + ["dim_product"])
+    assert state["error"] is None and state["attempts"] == 1
+
+
+def test_a_schema_retriever_with_its_store_down_proposes_nothing_and_the_scope_is_the_whole_schema():
+    """The other door to schema-only. The retriever's own fallback is every
+    table, uncapped, for the reason its module gives -- and the aggregator
+    then capped it, contract first and the rest by name. It is no proposal:
+    the trace says none, and the scope is every table.
+    """
+    db = FakeDatabase(tables=WIDE)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(error="vector store unreachable"), db, foreign_keys=lambda: [], max_tables=10
+    )
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_item_cogs"]), schema_retriever=retriever, max_tables=10
+    ).run("q")
+
+    assert "unreachable" in state["retrieval_errors"]["schema"]
+    assert state["schema_tables"] == []
+    assert next(e.detail for e in state["trace"] if e.node == "retrieve_schema") == "none"
+    assert state["selected_tables"] == sorted(WIDE)
+    assert state["error"] is None
+
+
+def test_with_the_ranking_down_what_the_others_chose_is_the_scope_and_is_capped():
+    """A table a knowledge chunk documents or a worked example queries is a
+    choice, so the cap applies to it as it always did. Before, the
+    retriever's every-table fallback stood ahead of these in the queue and
+    the cap never reached them: `SCHEMA_TOP_K=0`, which leaves the choice to
+    the hints, chose the first ten tables by name instead.
+    """
+    db = FakeDatabase(tables=WIDE)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(error="vector store unreachable"), db, foreign_keys=lambda: [], max_tables=2
+    )
+    kb = FakeKnowledgeBase(chunks=[make_chunk(meta={"table": "fact_item_cogs"})])
+    lib = FakeGoldenPairLibrary(pairs=[make_pair(tables="fact_pos_retail_sales, dim_a, dim_b")])
+    state = make_agent(
+        db, scripted(["SELECT 1 AS n FROM fact_item_cogs"]), kb, lib, schema_retriever=retriever, max_tables=2
+    ).run("q")
+
+    assert state["schema_tables"] == []
+    assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
+
+
+#: The gross-margin recipe, as the business index declares what it is about.
+RECIPE = {"tables": "fact_pos_retail_sales, fact_item_cogs", "type": "recipe"}
+
+
+def recipe_agent(sql: list[str], *, ranked: str = "fact_item_cogs", **kwargs):
+    """The vectors rank one table; the knowledge shown is the recipe."""
+    db = FakeDatabase(tables=WIDE)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": ranked})]), db, foreign_keys=lambda: [],
+        max_tables=kwargs.get("max_tables", 10),
+    )
+    kb = FakeKnowledgeBase(chunks=[make_chunk(meta=RECIPE)])
+    return db, make_agent(db, scripted(sql), kb, schema_retriever=retriever, **kwargs)
+
+
+def test_a_draft_that_reads_a_table_the_shown_knowledge_is_about_brings_it_into_scope():
+    """The benchmark's B07 with the knowledge base and no worked examples.
+    The vectors ranked the costs and not the sales; the generator was shown
+    the recipe, wrote the roll-up it describes, and was refused for reading
+    a table out of scope -- at every attempt, the scope being fixed -- until
+    it wrote a margin from the costs alone. The recipe lists its tables
+    under `tables`, which nothing read. A draft that reads one of them is
+    now admitted: the scope grows by it and the schema is described again."""
+    db, agent = recipe_agent(["SELECT 1 AS n FROM fact_pos_retail_sales JOIN fact_item_cogs USING (k)"])
+    state = agent.run("gross margin")
+
+    assert state["schema_tables"] == ["fact_item_cogs"]
+    assert state["knowledge_tables"] == []
+    assert state["knowledge_about"] == ["fact_pos_retail_sales", "fact_item_cogs"]
+    assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
+    assert state["error"] is None and state["attempts"] == 1
+    assert [tables for tables, _ in db.schema_and_samples_calls] == [
+        ["fact_item_cogs"], ["fact_item_cogs", "fact_pos_retail_sales"]]
+    detail = next(e.detail for e in state["trace"] if e.node == "validate_static")
+    assert detail == "valid (fact_pos_retail_sales brought into scope: the knowledge shown is about it)"
+
+
+def test_what_the_knowledge_is_about_is_not_in_scope_until_a_draft_reads_it():
+    """Put in scope before the first draft, every table the shown knowledge
+    lists changed the prompt for questions that needed none of them, and the
+    benchmark's B15 went from right to wrong under `multi-shot`. A draft
+    that keeps to its scope leaves it, and the one description of the
+    schema, as they were."""
+    db, agent = recipe_agent(["SELECT 1 AS n FROM fact_item_cogs"])
+    state = agent.run("average cost")
+
+    assert state["knowledge_about"] == ["fact_pos_retail_sales", "fact_item_cogs"]
+    assert state["selected_tables"] == ["fact_item_cogs"]
+    assert len(db.schema_and_samples_calls) == 1
+    assert next(e.detail for e in state["trace"] if e.node == "validate_static") == "valid"
+
+
+def test_a_table_is_admitted_only_while_the_cap_has_room():
+    """A full scope is the scope: the draft is refused as it always was."""
+    db, agent = recipe_agent(
+        ["SELECT 1 AS n FROM fact_pos_retail_sales", "SELECT 1 AS n FROM fact_item_cogs"], max_tables=1
+    )
+    state = agent.run("gross margin")
+
+    assert state["selected_tables"] == ["fact_item_cogs"]
+    assert state["attempts"] == 2
+    assert state["attempt_history"][0].issues[0].message.startswith("fact_pos_retail_sales is not in scope")
+
+
+def test_a_table_the_knowledge_is_not_about_is_still_refused_beside_one_it_is():
+    """Each table is admitted or not on its own: the one the recipe is about
+    comes in, described for the next draft, and the other is out of scope."""
+    db, agent = recipe_agent([
+        "SELECT 1 AS n FROM fact_pos_retail_sales JOIN dim_a USING (k)",
+        "SELECT 1 AS n FROM fact_pos_retail_sales",
+    ])
+    state = agent.run("gross margin")
+
+    [issue] = state["attempt_history"][0].issues
+    assert issue.message.startswith("dim_a is not in scope")
+    assert state["selected_tables"] == ["fact_item_cogs", "fact_pos_retail_sales"]
+    assert state["attempts"] == 2 and state["error"] is None
+
+
+def test_nothing_is_admitted_to_a_run_with_no_scope_or_no_knowledge():
+    _, agent = recipe_agent(["SELECT 1 AS n FROM fact_item_cogs"])
+    draft = "SELECT 1 FROM fact_pos_retail_sales"
+    assert agent._admit({"sql": draft, "selected_tables": [], "knowledge_about": ["fact_pos_retail_sales"]}) == ({}, [])
+    assert agent._admit({"sql": draft, "selected_tables": ["fact_item_cogs"], "knowledge_about": []}) == ({}, [])
+    assert agent._admit({"sql": draft, "selected_tables": ["fact_item_cogs"]}) == ({}, [])
+    assert agent._admit({"sql": "not sql", "selected_tables": ["fact_item_cogs"], "knowledge_about": ["fact_pos_retail_sales"]}) == ({}, [])
+
+
 def test_a_bridge_table_is_named_in_the_progress_line(progress_log):
     """The aggregator's detail is how a reader sees the closure working; a
     bridge added silently looks like the vector search having found it.
@@ -809,6 +980,28 @@ def test_a_matcher_that_raises_mid_question_is_recorded_and_skipped():
     ).run("q")
     assert "trigram index vanished" in state["retrieval_errors"]["literals"]
     assert state["result"] is not None
+
+
+def test_the_generator_is_shown_the_literal_blocks_heading_once():
+    """Through the pipeline, where the matcher's block and the prompt's
+    place for it meet. Each carried the heading, each was tested by itself,
+    and from v4 to 7.0 every generator prompt with a literal in it said
+    "Literal values in this database that match the question:" twice."""
+    from nl2sql_agent.literals import LITERAL_MAP_HEADER
+    from nl2sql_agent.state import LiteralMatch
+
+    class _Matcher:
+        def match(self, question, **kwargs):
+            return [LiteralMatch("dairy", "dim_product", "department_name", "Dairy & Eggs", 0.9)]
+
+    db = FakeDatabase(tables=TABLES)
+    llm = scripted(["SELECT 1 AS n FROM dim_store"])
+    state = make_agent(db, llm, literal_matcher=_Matcher()).run("dairy sales")
+
+    assert [match.value for match in state["literal_map"]] == ["Dairy & Eggs"]
+    human = llm.plain_invocations[0][-1].content
+    assert human.count(LITERAL_MAP_HEADER) == 1
+    assert LITERAL_MAP_HEADER + '\n  "dairy" -> dim_product.department_name = \'Dairy & Eggs\'\n\n' in human
 
 
 def test_the_catalog_is_built_once_and_its_matches_reach_the_state(monkeypatch):
@@ -1388,3 +1581,190 @@ def test_reload_asks_the_schema_retriever_and_the_knowledge_base_to_forget():
     assert agent.reload() == ["schema_edges"]
     agent.schema_retriever, agent.knowledge_base = None, object()
     assert agent.reload() == [], "a part with nothing to forget is skipped"
+
+
+# ---------------------------------------------------------------------------
+# A run seeded by someone else: the ensemble's candidates (arch7)
+# ---------------------------------------------------------------------------
+
+
+def test_a_screened_run_trusts_its_screening_and_makes_no_supervisor_call():
+    from nl2sql_agent.state import new_state
+
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    agent = make_agent(FakeDatabase(tables=TABLES), llm)
+    screening = {"verdict": "proceed", "intent": "lookup", "clarification": None,
+                 "entities": ["store"], "measure": "", "period": ""}
+    state = agent.answer(new_state("how many stores?", screening=screening))
+
+    assert not [schema for schema, _ in llm.structured_invocations if schema is Screening]
+    assert state["intent"] == "lookup"
+    supervise = state["trace"][0]
+    assert (supervise.node, supervise.model_calls) == ("supervise", 0)
+    assert supervise.detail.startswith("screened by the ensemble")
+    assert state["answer_contract"] == agent.build_contract("how many stores?", intent="lookup", entities=["store"])
+
+
+def test_answering_a_seeded_state_opens_no_trace_of_its_own():
+    """`run` opens the question's trace; `answer` runs inside whatever the
+    caller opened -- the ensemble's span for the candidate."""
+    from nl2sql_agent.state import new_state
+
+    from .test_graph_tracing import traced
+
+    tracer, client = traced()
+    make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"]),
+               tracer=tracer).answer(new_state("q"))
+    assert client.traces == {}
+
+
+def test_answering_reports_to_the_callback_it_is_given():
+    from nl2sql_agent.state import new_state
+
+    seen = []
+    make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"])).answer(
+        new_state("q"), on_progress=lambda step, detail: seen.append(step)
+    )
+    assert seen[0] == "supervise" and seen[-1] == "finish"
+
+
+# ---------------------------------------------------------------------------
+# arch7.3 section 22.14: the grain check, in the Static Validator's node
+# ---------------------------------------------------------------------------
+
+import psycopg  # noqa: E402
+
+from tests.agent import test_grain as grain_cases  # noqa: E402
+from tests.grain_fixture import GRAINS  # noqa: E402
+
+GRAIN_TABLES = ["dim_date", "dim_product", "fact_pos_retail_sales", "fact_item_cogs"]
+
+
+def _grain_agent(sql: list[str], *, grains=GRAINS, **settings):
+    """An agent whose tables are B07's and whose grains are the catalog's."""
+    db = FakeDatabase(tables=GRAIN_TABLES)
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": t}) for t in GRAIN_TABLES]), db, foreign_keys=lambda: [],
+    )
+    llm = scripted(sql)
+    agent = make_agent(db, llm, schema_retriever=retriever,
+                       contract_resources=ContractResources(grains=grains), **settings)
+    return agent, db, llm
+
+
+def test_the_grain_check_sends_the_trap_to_repair_and_the_repaired_query_is_what_runs():
+    """B07, inside one run: the trap is refused before it is planned, the
+    generator is told both grains and the way round, and what it writes next
+    is what reaches the database."""
+    agent, db, llm = _grain_agent([grain_cases.TRAP, grain_cases.RIGHT])
+    state = agent.run("gross margin for Dairy & Eggs in fiscal month 12 of FY2025?")
+
+    assert state["attempts"] == 2 and state["error"] is None
+    [refused] = state["attempt_history"]
+    assert refused.sql == grain_cases.TRAP
+    assert [(issue.source, issue.message) for issue in refused.issues] == [("static", grain_cases.ON_THE_DATE_MESSAGE)]
+    # Refused statically: the trap was never planned and never run.
+    assert db.explain_calls == [grain_cases.RIGHT] and db.run_select_calls == [grain_cases.RIGHT]
+    # The Repair Agent passed the message on as written, and asked no model.
+    assert [entry.model_calls for entry in state["trace"] if entry.node == "repair"] == [0]
+    retry = llm.plain_invocations[-1][-1].content
+    assert grain_cases.ON_THE_DATE_MESSAGE in retry and "Keep the rest of the query" in retry
+    assert [entry.detail for entry in state["trace"] if entry.node == "validate_static"] == [
+        grain_cases.ON_THE_DATE_MESSAGE, "valid"]
+
+
+def test_with_the_grain_check_off_the_static_validator_is_the_one_it_was():
+    """`GRAIN_CHECK_ENABLED=false`: the trap is the planner's to pass, and it does."""
+    agent, db, _ = _grain_agent([grain_cases.TRAP], grain_check_enabled=False)
+    state = agent.run("q")
+
+    assert state["attempts"] == 1 and state["attempt_history"] == []
+    assert db.run_select_calls == [grain_cases.TRAP]
+    assert agent.grains() == GRAINS, "held, and not handed to the validator"
+
+
+def test_with_no_grains_read_there_is_nothing_to_hold_a_join_to():
+    agent, db, _ = _grain_agent([grain_cases.TRAP], grains={})
+    assert agent.run("q")["attempts"] == 1 and db.run_select_calls == [grain_cases.TRAP]
+
+
+def test_a_query_at_one_grain_passes_the_check_at_its_first_attempt():
+    agent, _, _ = _grain_agent([grain_cases.RIGHT])
+    state = agent.run("q")
+    assert state["attempts"] == 1 and state["attempt_history"] == []
+
+
+class _GrainDatabase(FakeDatabase):
+    """A fake whose catalog has a date dimension and the two facts, and
+    whose dates read as the retail database's do -- or not at all."""
+
+    def __init__(self, *, dates_error=None):
+        super().__init__(tables=GRAIN_TABLES)
+        self.tables_detail = [grain_cases.CALENDAR, grain_cases.DAILY, grain_cases.MONTHLY]
+        self.dates_error = dates_error
+        self.dates_asked: list[tuple] = []
+
+    def dates_per_period(self, table, column, periods, *, calendar, key):
+        self.dates_asked.append((table, tuple(periods)))
+        if self.dates_error is not None:
+            raise self.dates_error
+        # The most dates any one week holds, and any one month.
+        most = {"fact_pos_retail_sales": {"fiscal_week_num": 9, "fiscal_month_num": 37},
+                "fact_item_cogs": {"fiscal_week_num": 1, "fiscal_month_num": 1}}[table]
+        return [most[period[-1]] for period in periods]
+
+
+def _reading_agent(db, sql, **settings):
+    retriever = SchemaRetriever(
+        FakeKnowledgeBase(chunks=[make_chunk(meta={"table": t}) for t in GRAIN_TABLES]), db, foreign_keys=lambda: [],
+    )
+    return make_agent(db, scripted(sql), schema_retriever=retriever, **settings)
+
+
+def test_the_grains_are_read_once_a_process_by_the_periods_the_settings_name():
+    db = _GrainDatabase()
+    agent = _reading_agent(db, [grain_cases.TRAP, grain_cases.RIGHT, grain_cases.RIGHT],
+                           grain_periods="fiscal_year+fiscal_month_num")
+
+    assert agent.run("q")["attempts"] == 2
+    assert agent.run("q again")["attempts"] == 1
+    assert sorted(db.dates_asked) == [
+        ("fact_item_cogs", (("fiscal_year", "fiscal_month_num"),)),
+        ("fact_pos_retail_sales", (("fiscal_year", "fiscal_month_num"),)),
+    ]
+    assert {name: grain.period for name, grain in agent.grains().items()} == {
+        "fact_pos_retail_sales": "day", "fact_item_cogs": "fiscal month"}
+
+
+def test_with_the_check_off_the_dates_are_never_read():
+    db = _GrainDatabase()
+    agent = _reading_agent(db, [grain_cases.TRAP], grain_check_enabled=False)
+    assert agent.run("q")["attempts"] == 1
+    assert db.dates_asked == [] and agent.grains() == {}
+
+
+def test_grains_that_cannot_be_read_stand_the_check_down_and_the_log_says_so_once(caplog):
+    """A validator that has stopped checking is otherwise silent. The
+    question is still answered -- by the trap, as it would have been in 6.3."""
+    db = _GrainDatabase(dates_error=psycopg.errors.QueryCanceled("canceling statement due to statement timeout"))
+    agent = _reading_agent(db, [grain_cases.TRAP, grain_cases.TRAP])
+
+    with caplog.at_level("WARNING", logger="nl2sql_agent.graph"):
+        first, second = agent.run("q"), agent.run("q again")
+
+    assert first["attempts"] == second["attempts"] == 1 and first["error"] is None
+    said = [record.getMessage() for record in caplog.records if "grain check" in record.getMessage()]
+    assert said == ["the grain check is standing down: the grains could not be read "
+                    "(canceling statement due to statement timeout)"]
+
+
+def test_reloading_reads_the_grains_again():
+    """An operator who loaded a table differently: the next question measures."""
+    db = _GrainDatabase()
+    agent = _reading_agent(db, [grain_cases.RIGHT, grain_cases.RIGHT])
+    agent.run("q")
+    asked = len(db.dates_asked)
+
+    assert "contract" in agent.reload()
+    agent.run("q again")
+    assert len(db.dates_asked) == 2 * asked

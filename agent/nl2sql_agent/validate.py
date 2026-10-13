@@ -34,8 +34,9 @@ to stand on -- there is no tree to walk after a syntax error.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from difflib import get_close_matches
+from typing import Any
 
 from pglast import ast, parse_sql
 from pglast.parser import ParseError
@@ -80,7 +81,12 @@ _WRITING_CTE_KINDS: dict[type, str] = {
 _ERROR_CONTEXT = 30
 
 
-def validate(sql: str, *, allowed_tables: Iterable[str] | None = None) -> list[Issue]:
+def validate(
+    sql: str,
+    *,
+    allowed_tables: Iterable[str] | None = None,
+    grains: Mapping[str, Any] | None = None,
+) -> list[Issue]:
     """Check `sql` statically and return one `Issue` per problem found.
 
     An empty list means the statement is a single read-only `SELECT` over
@@ -92,6 +98,14 @@ def validate(sql: str, *, allowed_tables: Iterable[str] | None = None) -> list[I
     generator nothing it can act on. When it is `None` the check is skipped
     entirely -- there is a difference between an empty scope, where nothing is
     allowed, and no scope, where the caller has not said.
+
+    `grains` is each date-stamped table's grain, as the data has it
+    (`grain.read_grains`). When they are given, a join of two tables of
+    different grains on the date, or on no date at all, is an issue too
+    (arch7.3 section 22.14) -- after the statement's own, since it is the
+    only one about what the query means rather than what it may do. With
+    none, the check is not made: a caller that has measured nothing has
+    nothing to hold a join to.
 
     Nothing here touches the database, so this is safe to call on anything,
     including text that is not SQL at all.
@@ -139,10 +153,40 @@ def validate(sql: str, *, allowed_tables: Iterable[str] | None = None) -> list[I
     issues.extend(_denied_function_issues(statement))
     if allowed_tables is not None:
         issues.extend(_out_of_scope_issues(statement, allowed_tables))
+    if grains:
+        issues.extend(_grain_issues(cleaned, grains))
     return issues
 
 
+def out_of_scope(sql: str, allowed_tables: Iterable[str]) -> list[str]:
+    """The tables `sql` reads that are not among `allowed_tables`, by bare
+    name. None for text that is not one SELECT: what is wrong with that is
+    `validate`'s to say."""
+    try:
+        statements = parse_sql(strip_sql(sql))
+    except ParseError:
+        return []
+    if len(statements) != 1 or not isinstance(statements[0].stmt, ast.SelectStmt):
+        return []
+    return [_bare(relation) for relation, _ in _outside(statements[0].stmt, allowed_tables)]
+
+
 # --- the individual checks ---------------------------------------------------
+
+
+def _grain_issues(sql: str, grains: Mapping[str, Any]) -> Iterator[Issue]:
+    """Tables of different grains joined on the date, or on no date.
+
+    The one check here that reads the query for what it computes. It reads
+    with the Completeness Reviewer's reading and passes whatever that cannot
+    read (`grain.mismatches`), so it is imported where it is used: that
+    module imports the reviewer, which imports the repair hints, and this
+    one is the gate all of them stand behind.
+    """
+    from . import grain
+
+    for message in grain.issues(sql, grains):
+        yield Issue(source=STATIC, message=message)
 
 
 def _writing_cte_issues(statement: ast.SelectStmt) -> Iterator[Issue]:
@@ -215,15 +259,7 @@ def _out_of_scope_issues(
     relation and `x` is not, and the rule has to survive nesting, shadowing
     and `WITH RECURSIVE`.
     """
-    allowed = list(allowed_tables)
-    # An allowed name may be written qualified or quoted on either side, so
-    # both spellings of both sides are compared.
-    by_bare = {_bare(name): name for name in allowed}
-    accepted = {_normalise(name) for name in allowed} | set(by_bare)
-
-    for relation in sorted(referenced_relations(statement)):
-        if _normalise(relation) in accepted or _bare(relation) in accepted:
-            continue
+    for relation, by_bare in _outside(statement, allowed_tables):
         message = f"{relation} is not in scope"
         near = get_close_matches(_bare(relation), list(by_bare), n=1, cutoff=0.6)
         if near:
@@ -231,6 +267,20 @@ def _out_of_scope_issues(
         else:
             message += "."
         yield Issue(source=STATIC, message=message)
+
+
+def _outside(statement: ast.SelectStmt, allowed_tables: Iterable[str]) -> Iterator[tuple[str, dict[str, str]]]:
+    """Each relation the statement reads that is not allowed, as written,
+    with the allowed names by their bare spelling."""
+    allowed = list(allowed_tables)
+    # An allowed name may be written qualified or quoted on either side, so
+    # both spellings of both sides are compared.
+    by_bare = {_bare(name): name for name in allowed}
+    accepted = {_normalise(name) for name in allowed} | set(by_bare)
+
+    for relation in sorted(referenced_relations(statement)):
+        if _normalise(relation) not in accepted and _bare(relation) not in accepted:
+            yield relation, by_bare
 
 
 # --- helpers -----------------------------------------------------------------

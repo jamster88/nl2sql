@@ -32,8 +32,10 @@ from typing import Any, Callable, Iterator
 from .. import tracing
 
 #: What the store is handed to actually answer a question:
-#: `runner(question, principal, on_progress) -> AgentState`.
-Runner = Callable[[str, str | None, Callable[[str, str], None]], dict]
+#: `runner(question, principal, on_progress) -> AgentState`, where
+#: `on_progress(step, detail, candidate=None)` -- the ensemble names the
+#: wording whose run a step belongs to (arch7).
+Runner = Callable[[str, str | None, Callable[..., None]], dict]
 
 TERMINAL = ("succeeded", "failed", "cancelled")
 
@@ -65,6 +67,7 @@ class ProgressRecord:
     step: str
     detail: str
     at: dt.datetime
+    candidate: int | None = None
 
 
 @dataclass
@@ -233,7 +236,7 @@ class JobStore:
             job.started_at = _now()
             job.condition.notify_all()
 
-        def on_progress(step: str, detail: str) -> None:
+        def on_progress(step: str, detail: str, candidate: int | None = None) -> None:
             with job.condition:
                 job.progress.append(
                     ProgressRecord(
@@ -241,6 +244,7 @@ class JobStore:
                         step=step,
                         detail=detail or "",
                         at=_now(),
+                        candidate=candidate,
                     )
                 )
                 job.condition.notify_all()

@@ -395,8 +395,13 @@ def test_every_variable_compose_sets_is_one_the_review_proxy_reads(reviewgui: di
 def test_the_review_service_is_health_checked_on_the_scheme_it_serves(review: dict):
     """The check follows REVIEW_TLS_ENABLED rather than assuming https, so
     turning TLS off does not make a working container look unhealthy; and on
-    https it verifies the certificate it is answered with (6.3, V6-37)."""
-    assert review["healthcheck"]["test"] == ["CMD", "python", "-m", "nl2sql_common.health", "REVIEW"]
+    https it verifies the certificate it is answered with (6.3, V6-37). As
+    `nl2sql`, not as the root the container starts as (7.0): started through
+    `setpriv`, whoever the service itself became to write the checkout."""
+    assert review["healthcheck"]["test"] == [
+        "CMD", "setpriv", "--reuid=nl2sql", "--regid=nl2sql", "--clear-groups",
+        "python", "-m", "nl2sql_common.health", "REVIEW",
+    ]
     health = (REPO_ROOT / "common" / "nl2sql_common" / "health.py").read_text()
     assert '_TLS_ENABLED"' in health and "/healthz" in health and '"REVIEW": 8444' in health
 

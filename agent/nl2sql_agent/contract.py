@@ -209,6 +209,24 @@ def build_label_map(tables: Iterable[Any]) -> LabelMap:
     return LabelMap(labels, names)
 
 
+def dimensions(tables: Iterable[Any], label_map: LabelMap) -> dict[str, str]:
+    """Column -> table for every column of every dimension the label map
+    names: what fusion may join onto the rows that identify one (arch7
+    section 22.8). A column two dimensions share is left out rather than
+    guessed, as a key two tables label differently is."""
+    named = set(label_map.tables)
+    found: dict[str, str] = {}
+    shared: set[str] = set()
+    for table in tables:
+        if table.name not in named:
+            continue
+        for column in table.columns:
+            name = column.name.lower()
+            if found.setdefault(name, table.name) != table.name:
+                shared.add(name)
+    return {name: table for name, table in found.items() if name not in shared}
+
+
 def _choose_label(table: str, keys: Sequence[str], columns: Sequence[str]) -> str | None:
     candidates = [c for c in columns if c.lower().endswith(("_name", "_desc"))]
     if not keys or not candidates:
@@ -286,25 +304,51 @@ class ContractResources:
     """The label map and the fiscal calendar, read once per process."""
 
     label_map: LabelMap = field(default_factory=LabelMap)
+    #: Column -> table for every column of a labelled dimension (`dimensions`).
+    dimensions: dict[str, str] = field(default_factory=dict)
     fiscal_year: int | None = None
     fiscal_year_start: date | None = None
     fiscal_year_end: date | None = None
+    #: Table -> its grain, for every table stamped with a date, measured
+    #: from its own dates (`grain.read_grains`). Empty when the grain check
+    #: is off, and when they could not be read.
+    grains: dict[str, Any] = field(default_factory=dict)
     #: Why a part could not be read. Best-effort, like retrieval: recorded
     #: and carried on without.
     errors: dict[str, str] = field(default_factory=dict)
 
 
-def load_resources(database: Any) -> ContractResources:
-    """Read the label map and the latest complete fiscal year.
+def load_resources(database: Any, *, grain_periods: Sequence[Sequence[str]] | None = None) -> ContractResources:
+    """Read the label map, the latest complete fiscal year and the grains.
 
-    Each half fails on its own. A database that cannot describe itself costs
-    the labels; one with no sales calendar costs the default period.
+    Each part fails on its own. A database that cannot describe itself costs
+    the labels; one with no sales calendar costs the default period; one
+    whose dates cannot be read, or whose date dimension lacks a column
+    `GRAIN_PERIODS` names, costs the grain check.
+
+    `grain_periods` is that setting, parsed; None with the check off, when
+    the grains are not read at all.
     """
+    # Here rather than at the top: the grain check reads queries with the
+    # Completeness Reviewer's reading, which imports this module.
+    from . import grain
+
     resources = ContractResources()
     try:
-        resources.label_map = build_label_map(database.catalog())
+        tables = database.catalog()
     except DATABASE_ERRORS as exc:
         resources.errors["label_map"] = str(exc)
+        if grain_periods is not None:
+            # Which tables are stamped with a date is the catalog's to say.
+            resources.errors["grains"] = str(exc)
+    else:
+        resources.label_map = build_label_map(tables)
+        resources.dimensions = dimensions(tables, resources.label_map)
+        if grain_periods is not None:
+            try:
+                resources.grains = grain.read_grains(database, tables, grain_periods)
+            except DATABASE_ERRORS + (grain.UnknownPeriod,) as exc:
+                resources.errors["grains"] = str(exc)
     try:
         latest = database.latest_complete_fiscal_year()
     except DATABASE_ERRORS as exc:
@@ -481,6 +525,107 @@ def render_contract(contract: AnswerContract | None) -> str:
     if contract.limit:
         parts.append(f"no more than {contract.limit} rows, as the question asks")
     return "; ".join(parts) + "." if parts else ""
+
+
+#: How a period is written, made one spelling: what the Supervisor copies
+#: out of a question is the question's own words, and a faithful rewording
+#: may say "FY2025" where the question said "fiscal year 2025".
+_PERIOD_SPELLINGS = (
+    (re.compile(r"\bfy\s*-?\s*(\d{2,4})\b"), r"fiscal year \1"),
+    (re.compile(r"\bq\s*([1-4])\b"), r"quarter \1"),
+    (re.compile(r"\b(\d+)(?:st|nd|rd|th)\b"), r"\1"),
+)
+_PERIOD_ORDINALS = {
+    "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6", "seventh": "7",
+    "eighth": "8", "ninth": "9", "tenth": "10", "eleventh": "11", "twelfth": "12",
+}
+_PERIOD_FILLER = frozenset({"of", "the", "in", "for", "during", "a", "an"})
+
+
+def _period(contract: AnswerContract) -> tuple[str, ...]:
+    """A period as F4 compares it: its words, whatever their order, with the
+    abbreviations and ordinals spelled out -- so "fiscal Q4 of FY2025",
+    "the fourth fiscal quarter of fiscal year 2025" and "fiscal quarter 4 of
+    fiscal year 2025" are one period, while 2024 and 2025, a quarter and a
+    month, fiscal and calendar stay apart. No period is no period however the
+    Supervisor said so.
+
+    Grown (arch7): the specification compared the words case-folded, and the
+    Supervisor's readings of the paraphrase set's rewordings differed from
+    their questions' in nothing but these spellings for eleven of the
+    forty-five."""
+    text = " ".join((contract.period or "").casefold().split())
+    if text in NO_PERIOD:
+        return ()
+    for pattern, spelled in _PERIOD_SPELLINGS:
+        text = pattern.sub(spelled, text)
+    words = [_PERIOD_ORDINALS.get(word, word) for word in re.findall(r"[a-z0-9]+", text)]
+    return tuple(sorted(word for word in words if word not in _PERIOD_FILLER))
+
+
+def _measure(a: AnswerContract, b: AnswerContract) -> str | None:
+    """Whether the two contracts tell the generator different measures.
+
+    Only a default is stated (`stated_measure`): "net sales", for a ranking
+    that names none. That one contract states it and the other does not is a
+    difference only when the other names some other quantity -- "units sold"
+    -- and not when the other names net sales in its own words.
+
+    Grown (arch7): the Supervisor read B04's "total net sales" as "net sales"
+    in two of its rewordings, and a measure the reading names that happens
+    to be the default's name was taken for the default."""
+    left, right = stated_measure(a), stated_measure(b)
+    if left == right:
+        return None
+    stated, other = (left, b) if left else (right, a)
+    if stated in (other.measure or "").casefold():
+        return None
+    return f"measure {left!r} vs {right!r}"
+
+
+def _entities(contract: AnswerContract) -> set[tuple[str | None, str | None, str | None]]:
+    """The entities as the contract acts on them: resolved to a key or a
+    label. One the label map could not resolve -- the Supervisor's "total",
+    or "market share" -- is shown to nobody and checks nothing."""
+    return {(e.key, e.label, e.table) for e in contract.entities if e.key or e.label}
+
+
+def differences(a: AnswerContract, b: AnswerContract) -> list[str]:
+    """What two contracts disagree on, as the fidelity gate's F4 reads them
+    (arch7 section 22.3): the entities by resolved key, label and table, the
+    measure the contract states, the period and whether it was the default,
+    the fiscal year, whether the rows are ranked, and how many are asked for.
+
+    The intent is not compared -- it is the noisiest of the Supervisor's
+    readings, and it shapes the framing line and the chart, not the rows --
+    and nor is a named measure's wording, which the contract never shows the
+    generator. Empty when the contracts are the same."""
+    found = []
+    if _entities(a) != _entities(b):
+        found.append(f"entities {_entity_words(a)} vs {_entity_words(b)}")
+    measure = _measure(a, b)
+    if measure:
+        found.append(measure)
+    if _period(a) != _period(b):
+        found.append(f"period {a.period!r} vs {b.period!r}")
+    for name, left, right in (
+        ("default period", a.period_default, b.period_default),
+        ("fiscal year", a.fiscal_year, b.fiscal_year),
+        ("ranked", a.ranked, b.ranked),
+        ("row count", a.limit, b.limit),
+    ):
+        if left != right:
+            found.append(f"{name} {left!r} vs {right!r}")
+    return found
+
+
+def same_contract(a: AnswerContract, b: AnswerContract) -> bool:
+    """F4: does a rewording's reading build the original's contract?"""
+    return not differences(a, b)
+
+
+def _entity_words(contract: AnswerContract) -> str:
+    return "[" + ", ".join(sorted(e.label or e.key or "" for e in contract.entities if e.key or e.label)) + "]"
 
 
 def default_period_assumption(contract: AnswerContract) -> str:

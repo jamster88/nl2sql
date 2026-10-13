@@ -2,7 +2,7 @@
 
 What this stack protects, from whom, where its boundaries are, what each
 credential is worth, and which deployments its defaults are built for. As of
-**6.3.0**. The sign-in design these rest on -- why it is built this way, the
+**7.0.0**. The sign-in design these rest on -- why it is built this way, the
 alternatives rejected, the limits chosen -- is section 20 of
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md),
 with what 6.2 added -- revocation, named tokens, the accounts each service
@@ -134,7 +134,8 @@ What `./setup.sh && ./start.sh` gives you:
 - TLS on every connection to the retail database, required by the server;
   a person's password accepted only over it, and verified end to end;
 - every service running as an account of its own, not root, and reading
-  only its own key (6.2); a session that can be ended -- by signing out, a
+  only its own key (6.2), and its health check running as that account too
+  (7.0); a session that can be ended -- by signing out, a
   password change, a lock or a removal -- for every service at once (6.2);
 - every container read-only, with no capability it does not use, no
   privilege it can gain, and a ceiling on its memory and processes; every
@@ -188,6 +189,7 @@ And the work in *Known limits*, which no setting replaces.
 | A session signed out, or from before a password change or set, a lock or a removal, is refused within a minute; the lists are the auth service's to write and nobody's to read | `tests/auth/test_auth_revocation.py`, `tests/auth/test_auth_live.py` (`--run-docker`) |
 | A service token is named and holds only the roles it is given; a header never names who did something | `tests/auth/test_identity_guard.py`, `tests/review/test_signin.py` |
 | Nothing runs as root but the one-shot pki service: every image names its account or drops to one, and each key is its account's | `tests/security/test_unprivileged.py`, `tests/auth/test_identity_pki.py` |
+| A health check is not root's either: in a container that starts as root it is started as the service's account, and the two this project wrote give root up before they read or ask anything (7.0) | `tests/security/test_unprivileged.py`, `tests/common/test_health.py`, `tests/ldap/test_service.py`; in the running stack, `tests/acceptance/test_stack.py` (`--run-acceptance`) |
 | Every broad `except` says why it is broad | `tests/security/test_error_taxonomy.py` |
 | Every Python image installs a hash-checked lock | `tests/security/test_supply_chain.py` |
 | A failure's own words -- hosts, drivers, configuration -- are an administrator's to see | `tests/api/test_signin.py`, `tests/auth/test_identity_guard.py` |
@@ -198,6 +200,10 @@ And the work in *Known limits*, which no setting replaces.
 | Every health check verifies the certificate it is answered with (6.3) | `tests/security/test_posture.py`, `tests/common/test_health.py`, `tests/proxy/test_proxy_startup.py`, `tests/docker/test_gui_container.py` (`--run-docker`) |
 | Every base image and stock image is pinned by digest (6.3) | `tests/security/test_pinned_images.py` |
 | Every service role has a statement timeout, a memory ceiling and a connection limit (6.3) | `tests/common/test_roles.py`, `tests/ops/test_ops_retail.py`, `tests/ops/test_ops_stores.py`, `tests/auth/test_auth_rolesync.py` |
+| A rewording is a model's text about to become a prompt, and is screened before it runs: one that changes a number, a name or the direction is discarded in code, and one the Supervisor refuses, or reads as asking for something else, never reaches the pipeline (7.0) | `tests/agent/test_fidelity.py`, `tests/agent/test_ensemble.py` |
+| The Judge gives a verdict on each answer it was shown and nothing else: it is never told how many runs gave an answer, a verdict on an answer it was not shown is discarded, it writes no SQL, and it cannot take the answer away (7.0) | `tests/agent/test_judge.py`, `tests/agent/test_ensemble.py` |
+| What a model wrote -- a rewording, the Judge's reason -- is drawn as text by every client, never as markup (7.0) | `gui/test/ensemble.test.tsx`, `review/gui/test/candidates.test.tsx`, `desktop/src/test/java/org/nl2sql/desktop/ui/EnsembleViewTest.java` |
+| The API stages a verdict as the INSERT-only writer whether or not the staging table has 7.0's column yet; it adds none (7.0) | `tests/api/test_feedback.py`, `tests/review/test_store_live.py` (`--run-docker`) |
 
 `tests/security/` is the tier for posture: what the stack exposes by
 default, read from the files that decide it.
@@ -223,7 +229,7 @@ with its plan item.
 - **This project's own images are pinned by tag, and carry no signature or
   provenance.** Every image it does not build is pinned by digest since
   6.3, and every Python dependency installed from a hash-checked lock since
-  6.2; but `.env` names `v6_3`, and nothing proves who built what is behind
+  6.2; but `.env` names `v7_0`, and nothing proves who built what is behind
   it. (M-09; V6-42.)
 - **The dbprep one-shot is every database's superuser while it runs.** It
   holds every socket and most passwords for the seconds before each start,

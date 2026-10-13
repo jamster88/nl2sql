@@ -537,7 +537,26 @@ assumptions the answer made, the audited claims, a cost per step and, with
 MLflow up, the run's `trace_id`.
 
 The exit code is `0` when it answered, `1` when it could not, and `2` when
-the Ollama host or model is wrong -- it checks both before anything else.
+the Ollama host or model is wrong -- it checks both before anything else --
+or a setting is out of range.
+
+Since 7.0 a question goes through the ensemble (arch7.1): it is
+reworded, the original and three rewordings that keep what it asks are each
+run, a Judge reads every distinct answer and sets aside those it can name a
+mistake in, and the answer is the strongest run of the largest group it
+accepted, printed under a line saying how they agreed ("Agreed by 4 of 4
+independent runs of the question, each worded differently.", or what the
+Judge set aside and why). A run's progress lines carry its
+index, `[0]` for the question as asked. It takes about four times as long.
+`--no-ensemble` asks the pipeline alone, and `--json` carries the record of
+every run and every rewording under `ensemble`.
+
+Also since 7.0, and with the ensemble on or off: a query that joins two
+tables kept at different grains -- daily sales and monthly costs, say --
+without bringing them to one grain is refused before it runs and written
+again (the grain check). The `[validation]` line says so in the check's
+own words -- which two tables, their grains, the columns to join on -- and
+the query is one attempt more. `GRAIN_CHECK_ENABLED=false` turns it off.
 
 | Flag | What |
 |---|---|
@@ -557,6 +576,10 @@ the Ollama host or model is wrong -- it checks both before anything else.
 | `--max-attempts N` | SQL generations before giving up |
 | `--sample-rows N` | Sample rows per table shown to the model |
 | `--database-url URL`, `--vector-db-url URL`, `--context-db-url URL`, `--snippet-db-url URL` | Point at other databases |
+| `--ensemble`, `--no-ensemble` | Ask through the ensemble, arch7 (on by default) |
+| `--paraphrases N` | Rewordings in the ensemble's first wave, 3 to 10 |
+| `--parallel-calls N` | Model calls in flight to the Ollama host at once: what the host serves, no more (1 by default) |
+| `--fuse-columns`, `--no-fuse-columns` | Widen the chosen rows with columns other agreeing runs carried (on by default) |
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 
@@ -628,7 +651,9 @@ agent assumes the latest complete fiscal year and says so in the answer.
 
 **Values need not be spelled the database's way.** "dairy and eggs" is
 matched to `Dairy & Eggs`, and the `[literals]` line says what it was
-matched to.
+matched to. Name the whole value -- "whole milk" is not matched to one
+size of it -- and put a value that begins with a number or has a slash in
+it in quotes: "12-Pack", "1/15 Net 45".
 
 **Vocabulary that maps cleanly onto the data:** net sales, gross sales,
 markdown, quantity sold, promo quantity sold, ad spend, impressions,
@@ -1042,6 +1067,7 @@ recreates the containers.
 | `SNIPPETS_ENABLED` | `true` | Retrieve SQL snippets |
 | `MODEL_ROUTING_ENABLED` | `true` | Route calls by the catalog |
 | `MAX_ATTEMPTS` | `7` | SQL generations before giving up |
+| `GRAIN_CHECK_ENABLED` | `true` | Refuse a query that joins tables of different grains -- daily, weekly, monthly -- without bringing them to one |
 | `MAX_ROWS` | `50` | Rows read back from a query |
 | `STATEMENT_TIMEOUT_MS` | `30000` | How long a query may run |
 | `MAX_PLAN_COST` | `1000000` | The planner-cost ceiling a query must be under |
@@ -1106,7 +1132,11 @@ The defaults are its second, **a team on a trusted network**:
   `API_TOKEN_ROLES` and its siblings say what it may do, and nothing else.
 - **Nothing runs as root** (6.2) but the one-shot pki service: each service
   runs as an account of its own and reads only its own key, and the review
-  service writes the checkout's documents as the person who owns them.
+  service writes the checkout's documents as the person who owns them. Nor
+  does a health check (7.0): Docker runs one as the user its container was
+  started as, so in the nine that start as root to take their volumes each
+  is started as the service's account
+  ([what each container may use](hardening.md)).
 - **A failure's own words are an administrator's** (6.2): hosts, drivers and
   configuration in `/readyz` and in answers, to `nl2sql_admins` only
   (`API_DEBUG_DETAIL=true` shows everyone, for a development server).
@@ -1195,6 +1225,32 @@ Upgrading to `v6_3` moves three things, and the first start does each:
 - **Every page is one image**, `nl2sql-proxy`; `start.sh` pins it in place
   of the six it replaces.
 
+Upgrading to `v7_0` changes what a question costs and what one run answers,
+and moves nothing in the databases:
+
+- **Every question is asked several ways** -- reworded, run four times,
+  judged and voted on -- so an answer takes several times as long as 6.3's
+  and makes several times the model calls ([Asking it several
+  ways](../agent/README.md#asking-it-several-ways-arch7)).
+  `ENSEMBLE_ENABLED=false` is one run, as before.
+- **What one run answers changes too**: the grain check is in the pipeline,
+  on by default, with the ensemble off as well. `GRAIN_CHECK_ENABLED=false`
+  is 6.3's validator.
+- **The API's two workers take turns at the model host.** A host that
+  served two calls at once under 6.3 serves one until you set
+  `OLLAMA_PARALLEL_CALLS=2`.
+- **A verdict carries the record of its runs** once the review service has
+  started at 7.0, which adds the column it is kept in; a vote cast before
+  then is recorded without it, and the API's log says so once.
+- **A calibrated catalog of your own from before 7.0** is read as it is:
+  the Paraphraser and the Judge go to `OLLAMA_MODEL` until
+  `python models/calibrate.py --tasks paraphraser judge` measures them, and
+  the API's start-up notes say so.
+- **Pin the images together.** Every health check in a container that
+  starts as root runs as the service's account now, through a `setpriv`
+  the directory's image installs; an older `nl2sql-ldap` under this
+  checkout's compose file is unhealthy.
+
 An agent from before `v6_0` does not check sessions, so pinned with
 `--agent-tag`, its API answers according to its own `API_TOKEN`, signed in
 or not. An agent or a page from before `v6_1` does not know the stack's CA,
@@ -1242,7 +1298,7 @@ Problems with answers rather than with the stack:
 |---|---|
 | An answer is wrong | Run its SQL in the [SQL console](#when-an-answer-is-wrong-the-sql-console); read its [trace](#seeing-what-the-agent-did-mlflow); mark it **Wrong** with a comment |
 | `Could not produce a valid query in 7 attempts` | Rephrase with a measure, grain and period |
-| An answer ignored a value you named | Check the `[literals]` line, or the matched phrases under the answer |
+| An answer ignored a value you named | Check the `[literals]` line, or the matched phrases under the answer; name the value whole, or put it in quotes |
 | Retrieval returns irrelevant knowledge | The embedding model is not the one the knowledge base was built with: use `bge-m3` |
 | Questions take minutes | Normal is about a minute, on a host that is not busy with something else. `launch.sh`'s routing table shows which models are in play; `--reasoning` (`OLLAMA_REASONING`) is off by default and much slower when on |
 | Results stop at 50 rows | Raise `MAX_ROWS`, or ask for fewer rows |

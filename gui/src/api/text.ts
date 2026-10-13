@@ -21,3 +21,16 @@ export function leadParagraph(markup: string): string {
   const table = markup.search(/\n\s*\n/);
   return plainText(table === -1 ? markup : markup.slice(0, table)).trim();
 }
+
+/**
+ * A markdown answer without its first block.
+ *
+ * Under the ensemble (7.0) the document opens with the agreement line --
+ * how many runs there were and how they agreed -- before anything the runs
+ * say. This page shows that line as a badge, from `Answer.ensemble.line`,
+ * so the prose it falls back to is the block after it.
+ */
+export function afterLead(markup: string): string {
+  const gap = /\n\s*\n/.exec(markup);
+  return gap === null ? "" : markup.slice(gap.index + gap[0].length);
+}

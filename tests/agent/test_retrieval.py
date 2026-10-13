@@ -11,7 +11,9 @@ from nl2sql_agent.retrieval import (
     KnowledgeUnavailableError,
     _vector_literal,
     format_chunks,
+    tables_about,
     tables_mentioned,
+    chunks_shown,
 )
 
 from .conftest import make_chunk
@@ -51,6 +53,53 @@ def test_tables_mentioned_empty_for_chunks_without_table_metadata():
     assert tables_mentioned([make_chunk(meta={})]) == []
 
 
+RECIPE_TABLES = "fact_pos_retail_sales, fact_item_cogs, dim_date"
+
+
+def test_a_rule_or_a_recipe_is_about_the_tables_it_lists():
+    """The business index's chunks say which tables they are about under
+    `tables`, as the DDL index's say the one they document under `table`.
+    Only `table` was read, so a run shown the gross-margin recipe was
+    refused the sales it says to roll up. What a chunk documents is as it
+    was; what it is about is read beside it."""
+    recipe = make_chunk(meta={"tables": RECIPE_TABLES, "type": "recipe"})
+    assert recipe.table is None
+    assert recipe.tables == ["fact_pos_retail_sales", "fact_item_cogs", "dim_date"]
+    assert tables_mentioned([recipe]) == []
+    assert tables_about([recipe]) == ["fact_pos_retail_sales", "fact_item_cogs", "dim_date"]
+
+
+def test_a_chunk_that_documents_one_table_is_about_that_table():
+    assert make_chunk(meta={"table": "dim_store"}).tables == ["dim_store"]
+    assert make_chunk(meta={"table": "dim_store", "tables": "dim_geography, dim_store"}).tables == ["dim_store", "dim_geography"]
+
+
+@pytest.mark.parametrize("meta", [
+    {}, {"tables": ""}, {"tables": None}, {"tables": " , ,"}, {"tables": 7}, {"tables": {"a": 1}}, {"domain": "sales"},
+])
+def test_a_chunk_that_lists_no_table_is_about_none(meta):
+    assert make_chunk(meta=meta).tables == []
+
+
+def test_tables_may_be_listed_as_a_list_and_what_is_not_a_name_is_passed_over():
+    assert make_chunk(meta={"tables": ["dim_date", " fact_item_cogs ", "", None, 3, "dim_date"]}).tables == [
+        "dim_date", "fact_item_cogs"]
+    assert make_chunk(meta={"tables": ("dim_date",)}).tables == ["dim_date"]
+
+
+def test_the_knowledges_tables_keep_the_chunks_rank_and_each_chunks_own_order():
+    chunks = [
+        make_chunk(meta={"tables": "fact_item_cogs, fact_vendor_allowances"}, distance=0.1),
+        make_chunk(meta={}, distance=0.2),
+        make_chunk(meta={"table": "dim_date"}, distance=0.3),
+        make_chunk(meta={"tables": RECIPE_TABLES}, distance=0.4),
+    ]
+    assert tables_about(chunks) == [
+        "fact_item_cogs", "fact_vendor_allowances", "dim_date", "fact_pos_retail_sales"]
+    assert tables_mentioned(chunks) == ["dim_date"]
+    assert tables_about([]) == []
+
+
 # ---------------------------------------------------------------------------
 # format_chunks
 # ---------------------------------------------------------------------------
@@ -82,6 +131,22 @@ def test_format_chunks_keeps_the_best_match_when_truncating():
     text = format_chunks(chunks, max_chars=450)
     assert "closest" in text
     assert "furthest" not in text
+
+
+def test_the_chunks_shown_are_the_ones_the_context_renders():
+    """What the knowledge is about is read from what the prompt holds, so
+    the two are cut by one rule: best first, up to the first that will not
+    fit."""
+    chunks = [
+        make_chunk(heading_path="closest", content="a" * 400, distance=0.1),
+        make_chunk(heading_path="too long", content="b" * 4000, distance=0.2),
+        make_chunk(heading_path="short but after it", content="c" * 10, distance=0.3),
+    ]
+    shown = chunks_shown(chunks, max_chars=1000)
+    assert [chunk.heading_path for chunk in shown] == ["closest"]
+    assert format_chunks(chunks, max_chars=1000) == format_chunks(shown, max_chars=1000)
+    assert chunks_shown(chunks, max_chars=100000) == chunks
+    assert chunks_shown([], max_chars=10) == []
 
 
 # ---------------------------------------------------------------------------

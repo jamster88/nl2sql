@@ -19,6 +19,12 @@ done as root first is to make the directories `serve` writes the ldap user's
 -- because a named volume another container mounted first is created empty
 and owned by root, which is what happens to the certificate's volume when the
 retail database starts before the directory, as it does under compose.
+
+The health check gives root up before even the settings are read: it asks
+the directory for its base, which is one variable and no password file.
+Under compose it is never root to begin with -- the check is started through
+`setpriv` there (docker-compose.yml), as the `ldap` user from its first
+instruction.
 """
 
 from __future__ import annotations
@@ -42,7 +48,7 @@ from .directory import Directory, DirectoryError
 from .layout import Layout
 from .records import parse
 from .replica import Replicator
-from .settings import CONFIG_FILE, DATA_DIR, RUN_DIR, DirectorySettings, SettingsError
+from .settings import CONFIG_FILE, DATA_DIR, RUN_DIR, DirectorySettings, SettingsError, directory_base
 from nl2sql_common.privileges import become as _become
 
 #: Who slapd and this process run as: the account Alpine's openldap package
@@ -216,6 +222,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command == "health":
+        # Docker runs this every few seconds, as whoever the container was
+        # started as. So root is given up first, and nothing is read as
+        # root: the check needs the directory's base and no password.
+        become()
+        return health(base_dn=directory_base())
     try:
         settings = DirectorySettings.from_env()
     except SettingsError as exc:
@@ -230,8 +242,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             os.path.dirname(settings.tls_cert_file), os.path.dirname(settings.tls_key_file),
         ) if serving else ()
     )
-    if args.command == "health":
-        return health(base_dn=settings.base_dn)
     if args.command == "import":
         return import_file(args.file, settings)
     if args.command == "sync":

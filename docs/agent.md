@@ -82,6 +82,29 @@ this checkout was developed against; on any other host every call goes to
 `OLLAMA_MODEL`, exactly as in v5.1, until that host has a catalog of its own,
 and `MODEL_ROUTING_ENABLED=false` makes it v5.1 outright.
 
+**v7 (arch7) asks the question several ways.** Temperature is zero
+everywhere, so asking again gets the same answer, right or wrong; the only
+independent second opinion the pipeline can give itself is another wording
+of the question. So the question is screened once, reworded by a model,
+and each rewording held to what the original asks for -- its numbers, its
+names, its direction, and the Supervisor's reading of it -- before it runs.
+The pipeline above then runs once for the question as asked and once for
+each rewording that passed. The answers are compared with the benchmark's
+own scorer, a Judge reads each distinct answer without being told how many
+runs gave it, the runs it leaves standing vote, and one answer is
+delivered with how they agreed: "Agreed by 4 of 4 independent runs of the
+question, each worded differently." It is a second graph around the first
+rather than more nodes in it, so the pipeline is v5.6's, unchanged but for
+accepting a screening it is handed. Every surface shows the runs: a lane
+each while they work, the agreement beside the answer, and every wording
+with its SQL folded away -- in [the web interface](web_interface.md#the-web-interface)
+and [the desktop client](desktop_client.md#the-desktop-client) -- and a
+reviewer sees them beside the verdict. It costs about four runs a question,
+which is the point of it and the price: `ENSEMBLE_ENABLED=false` is v5.6 to
+the answer. [`agent/README.md`](../agent/README.md#asking-it-several-ways-arch7)
+has the whole of it, and [the benchmark](benchmark.md#the-ensemble-configuration)
+what it measured.
+
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md):
 arch5.2 as built in 6.1.0 -- the answer contract, the Completeness Reviewer,

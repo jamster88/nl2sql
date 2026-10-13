@@ -8,8 +8,12 @@ import { ApiError } from "../src/api/client";
 import { EXAMPLES } from "../src/components/AskBox";
 import {
   FakeEventSource,
+  OUTER_NODES,
   fakeClient,
   fakeEventSource,
+  makeAnswer,
+  makeEnsemble,
+  makeEnsembleSettings,
   makeJob,
   makeMeta,
   memoryStorage,
@@ -86,6 +90,42 @@ describe("App", () => {
 
     expect(await screen.findByLabelText("Answer")).toBeInTheDocument();
     expect(screen.queryByLabelText("Pipeline progress")).toBeNull();
+  });
+
+  it("draws a lane for each run the server said it makes, and files each step under its run", async () => {
+    // What `/v1/meta` says about the ensemble is what the lanes are drawn
+    // from before the first event: how many runs, and which steps are whose.
+    const base = makeMeta();
+    const pipeline = {
+      ...base.pipeline,
+      nodes: [...OUTER_NODES, ...base.pipeline.nodes],
+      ensemble: makeEnsembleSettings({ paraphrases: 2 }),
+    };
+    mount({ meta: vi.fn().mockResolvedValue(makeMeta({ pipeline })) });
+    await userEvent.click(await screen.findByRole("button", { name: EXAMPLES[0] }));
+
+    const progress = await screen.findByLabelText("Pipeline progress");
+    expect(within(progress).getByText("0 / 3 runs")).toBeInTheDocument();
+
+    await waitFor(() => expect(FakeEventSource.instances.length).toBeGreaterThan(0));
+    const emit = (seq: number, step: string, candidate: number | null) =>
+      act(() => {
+        FakeEventSource.last().emit("progress", { seq, step, label: step, detail: "", at: "", candidate });
+      });
+    emit(1, "plan_wave", null);
+    emit(2, "generate_sql", 1);
+
+    expect(within(progress).getByRole("status").textContent).toBe("Rewording 1: generate_sql");
+    const lane = within(progress).getByLabelText("Rewording 1");
+    expect(lane.querySelectorAll('.progress-step[data-state="done"]')).toHaveLength(1);
+    expect(lane.querySelector('.progress-step[data-state="done"]')?.textContent).toBe("generate_sql");
+
+    act(() => {
+      FakeEventSource.last().emit("done", makeJob({ answer: makeAnswer({ ensemble: makeEnsemble() }) }));
+    });
+    const answer = await screen.findByLabelText("Answer");
+    expect(within(answer).getByText("Most agree · 3 of 4")).toBeInTheDocument();
+    expect(within(answer).getByText("The question, asked 4 ways")).toBeInTheDocument();
   });
 
   it("still answers questions when /v1/meta never landed", async () => {

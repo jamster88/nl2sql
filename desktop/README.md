@@ -196,6 +196,17 @@ things in the same order: the sentence, then the picture, then the rows, then
   streamed as they finish, with the ones still to come greyed out. It is a
   report rather than an animation: a user watching "matching literals" go by
   learns something about why the answer took a minute.
+* **A lane for every run, when there are several.** Since 7.0 the agent
+  asks a question as typed and reworded, and runs the pipeline once per
+  wording. Each event names the run it came from, so the panel draws a lane
+  per run between the ensemble's own steps -- above, what it did before the
+  runs; below, what it did with their answers -- by the same rules as the
+  web interface, from the same fields of `/v1/meta` and the stream.
+* **How the runs agreed, with the sentence.** A badge saying the level in a
+  word and the count, and under it the agent's own line about the vote; the
+  answers that lost among the notes; and a folded pane, "The question, asked
+  4 ways", with every wording, its outcome and its SQL, the Judge's verdict
+  on each answer and the rewordings that were not run.
 * **The sentence, traceable.** The audit ties each sentence of the narrative
   to the cells it was read from, so pointing at one lights up its cells in
   the table below. That is the clearest thing this API makes possible.
@@ -299,6 +310,8 @@ src/main/java/org/nl2sql/desktop/
   chart/                 rows to series, a port of gui/src/charts/values.ts
   feedback/              the verdict, where it is kept and where it goes
   ui/                    the window, and every part of it
+    ProgressView.java    one row of steps, or a lane per run
+    EnsembleView.java    the badge, the notes and the runs (7.0)
     Markup.java          undoing the escaping the pipeline does for markdown
 ```
 
@@ -329,7 +342,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v6_3-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v7_0-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
@@ -382,7 +395,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-411 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+459 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

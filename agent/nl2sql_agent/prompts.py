@@ -159,6 +159,96 @@ REPAIR_DIAGNOSIS_PROMPT = ChatPromptTemplate.from_messages(
     ]
 )
 
+#: The Paraphraser (arch7 section 22.3): one structured call that rewords a
+#: question without changing what it asks. It sees the question and what the
+#: answer may not change, named in words -- no schema, no retrieved text, no
+#: rows. The system text is arch7's, with one sentence more, and the contract
+#: is not shown as the generator sees it: its column names, in a
+#: Paraphraser's hands, became the rewordings' words ("for every
+#: banner_name"), which the Supervisor read as nothing a person asks.
+PARAPHRASE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You reword questions about a retail database without changing what "
+            "they ask. Keep every number, year, name and quoted value exactly as "
+            "written. Keep what the answer is about ({entities}), the quantity that "
+            "answers or ranks it ({measure}), the period ({period}), the direction "
+            "(top or bottom, highest or lowest, more or less) and the row count asked "
+            "for ({limit}). Add no period, filter or measure the question lacks; drop "
+            "none it has. Vary the words and the shape: a question and an "
+            "instruction, another common verb, another order of clauses, a plainer "
+            "or a more formal register, \"our\" and \"the company's\". Write as "
+            "the person asking would, in everyday words: keep any code or name the "
+            "question itself uses, and add no column, table or field name of your own.",
+        ),
+        (
+            "human",
+            "Question: {question}\n"
+            "Write {count} rewordings, each different from the question and from "
+            "the others, the most different first. For each, say in a few words "
+            "what you changed.\n"
+            "{failed}",
+        ),
+    ]
+)
+
+#: The Paraphraser's one retry: the rewordings the fidelity gate discarded,
+#: each with the check it failed, so the replacements avoid the same slips.
+#: Model output and reasons written by code or by the Supervisor; nothing from
+#: anyone else.
+PARAPHRASE_RETRY_BLOCK = (
+    "These rewordings were rejected:\n{failed}\n"
+    "Write replacements that avoid the same mistakes.\n"
+)
+
+
+def paraphrase_retry_block(failed: list[tuple[str, str]]) -> str:
+    if not failed:
+        return ""
+    lines = "\n".join(f"- {text} -- because {reason}" for text, reason in failed)
+    return PARAPHRASE_RETRY_BLOCK.format(failed=lines)
+
+
+#: The Judge (arch7.1 section 22.7): every distinct answer the runs gave,
+#: judged against the question before the vote counts them. It is not told
+#: how many runs gave each answer -- the vote counts; the Judge reads -- and
+#: it writes no SQL: it returns a verdict per answer, by letter. What may be
+#: wrong with a query is said in general terms; the knowledge block is what
+#: tells it this database's grains.
+JUDGE_PROMPT = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            "You check answers to a question about a retail database before they "
+            "are counted. Each answer is a SQL query and the first rows it returned. "
+            "Judge each one on its own against the question as asked and the "
+            "knowledge given: you are not told how many runs gave each answer, and "
+            "one answer, several, or none may be right. Accept an answer whose query "
+            "computes what the question asks for: the measure it names, in the units "
+            "it names (a percentage as a percentage); for the entities and the period "
+            "it names; with no filter the question does not state -- names given as "
+            "examples, with \"such as\", \"like\" or \"and so on\", are examples, not "
+            "a list to keep -- and with every join at the grain the knowledge gives, "
+            "so that no row is counted twice or matched to the wrong period. Answers "
+            "that differ only in column names, column order or rounding are equally "
+            "right. Set an answer aside only for a mistake you can point to in its "
+            "query, and say what it is in one sentence. Do not write SQL. Give a "
+            "verdict for every answer, by its letter.",
+        ),
+        (
+            "human",
+            "Question: {question}\n"
+            "Every answer was held to: {held}\n"
+            "{assumptions}"
+            "{knowledge}"
+            "Answers:\n\n{answers}\n\n"
+            "Give a verdict for each of {letters}.",
+        ),
+    ]
+)
+
+
 KNOWLEDGE_BLOCK = (
     "Knowledge base (retrieved for this question -- authoritative on business "
     "rules, grains, and join traps):\n{knowledge}\n\n"
@@ -194,13 +284,17 @@ def snippet_block(rendered: str) -> str:
     return SNIPPET_BLOCK.format(snippets=rendered.strip())
 
 
-LITERAL_BLOCK = (
-    "Literal values in this database that match the question:\n{literals}\n\n"
-)
+#: The Literal Matcher's block comes with its own heading
+#: (`literals.render_literal_map`, as arch4 section 4.3 draws it), so this
+#: gives it its place in the turn and no more. From v4 to 7.0 it gave the
+#: heading again, and every generator prompt with a literal in it opened
+#: that block with the same line twice: each half was tested, alone.
+LITERAL_BLOCK = "{literals}\n\n"
 
 
 def literal_block(rendered: str) -> str:
-    """Wrap the Literal Matcher's output for the prompt, or render nothing.
+    """Place the Literal Matcher's block (`literals.render_literal_map`,
+    heading and rows) in the prompt, or render nothing.
 
     The block exists so the model does not have to guess how this database
     spells a value it was asked about in prose. "dairy and eggs" in a question

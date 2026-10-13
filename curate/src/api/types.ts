@@ -77,6 +77,8 @@ export interface SubmissionModel {
   columns: string[];
   comment: string;
   agent_version: string;
+  /** The agent's record of the runs behind the answer (7.0); the review page shows it. */
+  ensemble: Record<string, unknown>;
   submitted_at: string | null;
   state: string;
   reviewer: string;

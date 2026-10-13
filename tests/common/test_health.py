@@ -4,6 +4,10 @@ Against a real HTTPS server in this process, with certificates from the
 stack's own CA (nl2sql_identity.pki): the check passes for the right one and
 fails for a certificate from somewhere else, which is what the checks it
 replaced -- `ssl._create_unverified_context()` -- could not tell apart.
+
+And who it is while it asks: Docker runs a health check as the user the
+container was started as, so one that finds itself root becomes the
+service's account before anything else.
 """
 
 from __future__ import annotations
@@ -17,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from nl2sql_common import health
+from nl2sql_common import health, privileges
 from nl2sql_identity.pki import Identity, ensure_ca, ensure_identity
 
 
@@ -53,6 +57,9 @@ def issue(root: Path, name: str) -> Path:
 def clean(monkeypatch):
     for name in ("API_PORT", "API_TLS_ENABLED", "API_TLS_CERT_FILE", "API_TLS_CA_FILE"):
         monkeypatch.delenv(name, raising=False)
+    # Whoever runs the suite is who the checks below run as: there is no
+    # account `nl2sql` to become on a machine that is not one of the images.
+    monkeypatch.setattr(privileges, "become", lambda account: False)
 
 
 def test_a_service_serving_its_own_certificate_is_healthy(tmp_path, monkeypatch):
@@ -107,6 +114,42 @@ def test_each_service_has_its_own_port_by_default(monkeypatch):
     assert health.target("REVIEW")[0] == "http://127.0.0.1:8444/healthz"
     monkeypatch.setenv("SOMETHING_TLS_ENABLED", "false")
     assert health.target("SOMETHING")[0] == "http://127.0.0.1:8443/healthz"
+
+
+def test_root_is_given_up_before_anything_is_read_or_asked(monkeypatch):
+    """The auth and review services start as root to take what they write,
+    so Docker runs their checks as root -- every ten seconds, for as long as
+    the stack is up, until 7.0. The check becomes the account first: the
+    settings, the certificate and the connection all come after."""
+    order: list = []
+    monkeypatch.setattr(health, "target", lambda prefix: order.append(("target", prefix)) or ("http://127.0.0.1:9/healthz", None))
+    assert health.main(["auth"], become=lambda account: order.append(("become", account))) == 1
+    assert order == [("become", "nl2sql"), ("target", "AUTH")]
+    # Even a check asked wrongly has given root up before it says so.
+    order.clear()
+    assert health.main([], become=lambda account: order.append(("become", account))) == 2
+    assert order == [("become", "nl2sql")]
+
+
+def test_the_real_drop_is_the_one_it_uses(monkeypatch):
+    """`privileges.become`, as every service that starts as root uses, with
+    nothing named to own: the check writes nothing."""
+    seen: list = []
+    monkeypatch.setattr(privileges, "become", lambda *args, **kwargs: seen.append((args, kwargs)))
+    assert health.main([]) == 2
+    assert seen == [(("nl2sql",), {})]
+
+
+@pytest.mark.parametrize("refusal", [KeyError("getpwnam(): name not found: 'nl2sql'"), PermissionError(1, "Operation not permitted")])
+def test_a_check_that_cannot_give_root_up_is_unhealthy_and_asks_nothing(monkeypatch, capsys, refusal):
+    """No such account in the image, or a container that was not given
+    SETUID: either way it is root's check, and root's check is not run."""
+    def become(account):
+        raise refusal
+
+    monkeypatch.setattr(health, "target", lambda prefix: pytest.fail("asked as root"))
+    assert health.main(["AUTH"], become=become) == 1
+    assert "unhealthy: started as root, and could not become nl2sql" in capsys.readouterr().err
 
 
 def test_it_takes_one_prefix(capsys):

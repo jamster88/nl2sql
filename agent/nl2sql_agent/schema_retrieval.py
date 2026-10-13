@@ -32,6 +32,11 @@ Three decisions the architecture document leaves open, and why:
   tables alphabetically -- which in this schema is ten dimensions and not one
   fact table, a guaranteed failure. Degrading to schema-only means the whole
   schema, which is the v2/v3 behaviour the architecture keeps (section 3).
+  A selection made that way says so (`whole_schema`), because every table is
+  no choice of tables: the Context Aggregator, which caps what it is offered,
+  must not take it for a ranking and cap it after all. It did, from v4 to
+  7.0 -- which is how `--no-rag` came to answer a question about sales from
+  ten dimensions.
 """
 
 from __future__ import annotations
@@ -82,6 +87,9 @@ class SchemaSelection:
     bridges: list[str] = field(default_factory=list)
     #: Tables the cap removed, lowest-ranked first.
     dropped: list[str] = field(default_factory=list)
+    #: Nothing ranked or hinted a table, and `tables` is every table there is:
+    #: the schema-only fallback, not a choice, and never to be capped as one.
+    whole_schema: bool = False
     #: Why this selection is degraded: an unreachable vector store, or a
     #: foreign-key read that failed. Retrieval is best-effort and the run
     #: continues either way, so this is a note, never an exception.
@@ -197,7 +205,7 @@ class SchemaRetriever:
                 selected.append(hinted)
 
         if not selected:
-            return SchemaSelection(tables=sorted(known), error=error)
+            return SchemaSelection(tables=sorted(known), whole_schema=True, error=error)
 
         bridges, closure_error = self._closure(selected, known)
         tables, dropped = self._apply_cap(selected + bridges, set(bridges))
@@ -224,7 +232,7 @@ class SchemaRetriever:
             if name in known and name not in selected:
                 selected.append(name)
         if not selected:
-            return SchemaSelection(tables=sorted(known)[: self._max_tables])
+            return SchemaSelection(tables=sorted(known), whole_schema=True)
 
         bridges, error = self._closure(selected, known)
         capped, dropped = self._apply_cap(selected + bridges, set(bridges))

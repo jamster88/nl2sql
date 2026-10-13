@@ -28,9 +28,10 @@ which the last test drives.
 The tests sign in as the administrator the directory made on its first
 start, with the password `setup.sh` generated -- read from the copy's `secrets/`
 and never printed -- and then: every page, a question through the web
-interface, its verdict and its promotion into the golden set, the SQL
-console, MLflow behind its front door with the question's trace in it, and
-the desktop client's own classes. Everything is torn down afterwards, volumes
+interface -- asked several ways since 7.0, every run of it reporting its own
+steps -- its verdict, staged with the record of those runs, and its promotion
+into the golden set, the SQL console, MLflow behind its front door with the
+question's trace in it, and the desktop client's own classes. Everything is torn down afterwards, volumes
 included, unless NL2SQL_ACCEPTANCE_KEEP is set.
 
 A question needs a chat model. The tier asks the same one this checkout's
@@ -58,6 +59,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.security.test_unprivileged import CHECKED_AS, drop_to
+
 pytestmark = pytest.mark.acceptance
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -78,6 +81,10 @@ PORTS = (
 #: secret: which host answers, with which models.
 MODEL_SETTINGS = ("OLLAMA_BASE_URL", "OLLAMA_MODEL", "EMBED_BASE_URL", "EMBED_MODEL")
 QUESTION = "How many stores are there?"
+#: How long every container is watched for a process of root's: three of the
+#: ten seconds between one health check and the next, so each is seen
+#: starting more than once.
+WATCH_SECONDS = 30
 
 
 def _dotenv(path: Path) -> dict[str, str]:
@@ -297,29 +304,82 @@ def test_every_container_is_up_healthy_and_has_never_restarted(stack: Stack):
             assert state["Health"]["Status"] == "healthy", name
 
 
+def _roots(name: str) -> list[str]:
+    """What root is running in a container this instant: each command line.
+
+    With the PID: Docker's `top` refuses a format without one. The user is
+    named as Docker's own machine names that uid -- nginx's 101 may read
+    `statd` -- so root is the one name that matters."""
+    processes = _docker("top", name, "-o", "pid,user,args", check=True).stdout.splitlines()[1:]
+    return [line.split(None, 2)[2] for line in processes if line.split()[1] in ("root", "0")]
+
+
 def test_nothing_runs_as_root_writes_its_image_or_shows_a_secret(stack: Stack):
     """6.3 (V6-34, V6-38), held across the whole stack as compose made it:
     no process in any container is root's -- those that start as root to hand
     over their volumes have dropped by now -- every root filesystem is
     read-only and every container has given up new privileges, and no
     password or token is in any container's environment or command line,
-    where `docker inspect` would show it."""
+    where `docker inspect` would show it.
+
+    Watched since 7.0, where it was one look. Docker runs a health check as
+    the user its container was started as, so in the nine that start as root
+    the check was root's for as long as it took, every ten seconds: a look
+    at one of them found a root process about once in a hundred and fifty,
+    and this test -- one look at each -- failed for it now and then. Each of
+    those checks is now started through `setpriv`, so what is left is the
+    instant that takes to stop being root -- which Docker starts as root,
+    and nothing here can change -- and a process of root's that is anything
+    else fails this."""
     secrets = [path.read_text().strip() for path in (stack.root / "secrets").iterdir()]
     assert len([value for value in secrets if value]) >= 15
     rows = _docker("ps", "--filter", f"label=com.docker.compose.project={stack.instance}",
                    "--format", "{{.Names}}", check=True).stdout.split()
+    seen: dict[str, set[str]] = {}
+    until = time.monotonic() + WATCH_SECONDS
+    while time.monotonic() < until:
+        for name in rows:
+            seen.setdefault(name, set()).update(_roots(name))
+    roots = {name: sorted(found) for name, found in seen.items()
+             if [args for args in found if not args.startswith("setpriv --reuid=")]}
+    assert not roots, f"root's, and not a health check giving root up: {roots}"
     for name in rows:
-        # With the PID: Docker's `top` refuses a format without one. The user
-        # is named as Docker's own machine names that uid -- nginx's 101 may
-        # read `statd` -- so root is the one name that matters.
-        processes = _docker("top", name, "-o", "pid,user,args", check=True).stdout.splitlines()[1:]
-        assert not [line for line in processes if line.split()[1] in ("root", "0")], f"{name}: {processes}"
         host = json.loads(_docker("inspect", "--format", "{{json .HostConfig}}", name, check=True).stdout)
         assert host["ReadonlyRootfs"] and "no-new-privileges:true" in host["SecurityOpt"], name
         assert "ALL" in host["CapDrop"] and host["Memory"] > 0 and host["PidsLimit"] > 0, name
     for name in rows + [f"{stack.instance}-dbprep", f"{stack.instance}-pki"]:
         shown = _docker("inspect", "--format", "{{json .Config.Env}} {{json .Config.Cmd}} {{json .Args}}", name).stdout
         assert not [value for value in secrets if value and value in shown], f"a secret is in {name}'s configuration"
+
+
+def test_a_health_check_is_the_services_account_from_its_first_instruction(stack: Stack):
+    """7.0, and what the watch above cannot show for certain: a check comes
+    and goes too fast to be sure of catching. Read from each container as
+    Docker made it instead -- every one that starts as root and has a health
+    check has one that begins by becoming the service's account -- and then
+    run: that drop, with the capabilities the container really has, comes
+    out as the account, in its group and no other, and the check behind it
+    passes as that account."""
+    rows = _docker("ps", "--filter", f"label=com.docker.compose.project={stack.instance}",
+                   "--format", "{{.Names}}", check=True).stdout.split()
+    checked = set()
+    for name in rows:
+        config = json.loads(_docker("inspect", "--format", "{{json .Config}}", name, check=True).stdout)
+        check = (config.get("Healthcheck") or {}).get("Test")
+        if not check or config["User"].split(":")[0] not in ("", "0", "root"):
+            continue
+        service = config["Labels"]["com.docker.compose.service"]
+        account = CHECKED_AS[service]
+        assert check[:5] == drop_to(account), f"{name}: {check}"
+        drop = check[1:5]
+        uid, gid = (_docker("exec", name, "id", flag, account, check=True).stdout.strip() for flag in ("-u", "-g"))
+        assert uid != "0", name
+        assert _docker("exec", name, *drop, "id", "-u", check=True).stdout.strip() == uid, name
+        assert _docker("exec", name, *drop, "id", "-G", check=True).stdout.split() == [gid], name
+        passed = _docker("exec", name, *check[1:])
+        assert passed.returncode == 0, f"{name}: {passed.stdout}{passed.stderr}"
+        checked.add(service)
+    assert checked == set(CHECKED_AS)
 
 
 def test_the_generated_administrator_signs_in_on_every_page_and_each_reaches_its_service(stack, sessions):
@@ -421,6 +481,41 @@ def test_a_question_through_the_web_interface_is_answered_with_its_working(answe
     assert any(entry["model"] for entry in answer["trace"]), "no model call in the trace"
 
 
+def test_the_question_was_asked_several_ways_and_every_run_reported_its_own_steps(answered: dict):
+    """7.0's ensemble, through the page: the answer carries the record of its
+    runs, and the progress the page drew its lanes from names each run.
+
+    What a lane is drawn from is an event's `candidate`, so a run with no
+    event of its own is a lane that stayed empty, and an event naming a run
+    the record does not hold is a step drawn in the wrong one -- either is
+    the worker threads losing the question's context (arch7.3's R1).
+    """
+    ensemble = answered["answer"]["ensemble"]
+    assert ensemble is not None, "the answer has no ensemble: is ENSEMBLE_ENABLED off in this stack?"
+    runs = {run["index"]: run for run in ensemble["candidates"]}
+    assert 0 in runs and runs[0]["origin"] == "original", sorted(runs)
+    assert ensemble["agreement"]["total"] == len(runs), ensemble["agreement"]
+    assert ensemble["chosen"] in runs and ensemble["line"], ensemble["agreement"]
+    # The Judge read the answers before the vote (arch7.1), and its verdicts
+    # are in the record: one for each group of agreeing runs, from a model.
+    judged = ensemble["judged"]
+    assert judged is not None and not judged["error"], f"the Judge was not asked: {judged}"
+    assert judged["model"] and judged["verdicts"], judged
+    assert {verdict["group"] for verdict in judged["verdicts"]} == {
+        run["group"] for run in runs.values() if run["group"] is not None}, judged
+
+    reported: dict[int | None, list[str]] = {}
+    for event in answered["progress"]:
+        reported.setdefault(event["candidate"], []).append(event["step"])
+    # The ensemble's own steps name no run, and a question starts and ends there.
+    assert reported[None][0] == "screen" and reported[None][-1] == "deliver", reported[None]
+    assert set(reported) - {None} == set(runs), f"lanes {sorted(set(reported) - {None})} for runs {sorted(runs)}"
+    for index, steps in reported.items():
+        if index is not None:
+            # Each lane is a whole run of the pipeline, not one line saying it ran.
+            assert {"generate_sql", "execute_query", "finish"} <= set(steps), (index, steps)
+
+
 def test_its_verdict_reaches_review_and_is_promoted_into_the_golden_set(stack, sessions, answered):
     gui, review = stack.url("GUI_PORT"), stack.url("REVIEW_GUI_PORT")
     said = _call(stack, "POST", f"{gui}/v1/questions/{answered['id']}/feedback", {"verdict": "yes"},
@@ -428,6 +523,9 @@ def test_its_verdict_reaches_review_and_is_promoted_into_the_golden_set(stack, s
     assert said.status in (200, 201), said.body
     queue = _call(stack, "GET", f"{review}/v1/submissions?state=pending", cookie=sessions["REVIEW_GUI_PORT"])
     [submission] = [s for s in queue.body["submissions"] if s["job_id"] == answered["id"]]
+    # Staged with the record of every run (7.0): the review service added the
+    # column when it started, and the API found it there.
+    assert submission["ensemble"] == answered["answer"]["ensemble"]
     draft = {
         "title": "Acceptance: how many stores", "question": submission["question"],
         "tables": submission["tables"] or "dim_store", "keywords": "count, stores",
@@ -467,6 +565,37 @@ def test_mlflow_answers_only_through_its_front_door_and_holds_the_questions_trac
             break
         time.sleep(5)
     assert any(QUESTION in json.dumps(trace) for trace in traces), f"{len(traces)} traces, none of the question"
+
+    # One trace for the question, with every run inside it (7.0): a span per
+    # run under the ensemble's own, holding exactly the steps that run
+    # reported. A run traced beside the question rather than inside it, or a
+    # step in another run's span, is the worker threads losing the context
+    # the span is found by -- the same fault an empty lane would be.
+    [trace] = [trace for trace in traces if QUESTION in json.dumps(trace)]
+    # The trace says what the Judge did, in the words the record implies
+    # (`ensemble_state.judged`): a verdict on the trace and a record that
+    # disagree would be two accounts of one question.
+    judged = answered["answer"]["ensemble"]["judged"]
+    did = ("failed" if judged["error"]
+           else "accepted none" if judged["verdicts"] and not any(v["accepted"] for v in judged["verdicts"])
+           else "overruled" if judged["overruled"] else "set aside" if judged["set_aside"] else "accepted")
+    tags = {tag["key"]: tag["value"] for tag in trace["tags"]}
+    assert tags.get("nl2sql.judge") == did, (tags.get("nl2sql.judge"), did)
+    spans = _call(stack, "GET", f"{door}/ajax-api/2.0/mlflow/get-trace-artifact?request_id={trace['request_id']}",
+                  basic=f"admin:{stack.admin_password}").body["spans"]
+    children: dict[str | None, list[dict]] = {}
+    for span in spans:
+        children.setdefault(span["parent_span_id"], []).append(span)
+    [root] = children[None]
+    [runs] = [span for span in children[root["span_id"]] if span["name"] == "Candidate Runs"]
+    ensemble = answered["answer"]["ensemble"]
+    steps: dict[int, int] = {}
+    for event in answered["progress"]:
+        if event["candidate"] is not None:
+            steps[event["candidate"]] = steps.get(event["candidate"], 0) + 1
+    assert {span["name"]: len(children.get(span["span_id"], [])) for span in children[runs["span_id"]]} == {
+        f"Candidate {index}": count for index, count in steps.items()}
+    assert len(children[runs["span_id"]]) == ensemble["agreement"]["total"]
 
 
 def test_the_directory_page_lists_the_administrator(stack, sessions):

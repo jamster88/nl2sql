@@ -342,6 +342,15 @@ class AgentState(TypedDict, total=False):
     intent: Intent
     verdict: Verdict
     clarification: str | None  # what to ask back when verdict == "ambiguous"
+    #: The run was screened for it before it started (arch7 section 22.4): the
+    #: ensemble's anchor screening, or a rewording's, seeded by `new_state`.
+    #: The Supervisor then makes no call, and the run is held to the contract
+    #: `screening_fields` brings -- the anchor's -- or, without one, the one
+    #: built from the screening's entities, measure and period.
+    #: Only the outer graph seeds one, from a screening it made itself; no
+    #: client can, since neither is on the wire.
+    screened: bool
+    screening_fields: dict[str, Any]
     answer_contract: AnswerContract  # what a complete answer carries (arch5)
     #: Defaults the pipeline chose for the user, such as the fiscal year; the
     #: narrator must state every one (arch5 sections 6.6 and 7.2).
@@ -352,6 +361,10 @@ class AgentState(TypedDict, total=False):
     literal_map: list[LiteralMatch]
     knowledge: str
     knowledge_tables: list[str]
+    #: Every table the knowledge shown to the generator says it is about --
+    #: a recipe's `tables`. Not scope: what a draft that reads one is
+    #: admitted to read (the Static Validator, 7.0).
+    knowledge_about: list[str]
     knowledge_chunks: list[dict[str, Any]]
     example_shots: list[Shot]
     example_tables: list[str]
@@ -408,19 +421,36 @@ class AgentState(TypedDict, total=False):
     trace_id: str
 
 
-def new_state(question: str, *, principal: str | None = None) -> AgentState:
+#: What a screening carries into a run beyond its verdict, intent and
+#: clarification: the Supervisor's reading that the contract is built from.
+SCREENING_FIELDS = ("entities", "measure", "period")
+
+
+def new_state(
+    question: str, *, principal: str | None = None, screening: dict[str, Any] | None = None
+) -> AgentState:
     """The initial state for a run: everything a node might read, empty.
 
     Seeding the collections here rather than relying on `state.get(...)`
     defaults keeps every node's reads total, which is what makes them
     individually testable.
+
+    `screening` is a Supervisor's reading made for this run before it
+    started -- `supervisor.screen`'s update -- which the run then trusts
+    (arch7 section 22.4), and the contract the run is held to when it
+    carries one: the ensemble's anchor, read from the question as asked.
+    This keyword is the only way a state is marked screened.
     """
     return {
         "question": question,
         "principal": principal,
-        "verdict": "proceed",
-        "intent": "aggregate",
-        "clarification": None,
+        "verdict": (screening or {}).get("verdict") or "proceed",
+        "intent": (screening or {}).get("intent") or "aggregate",
+        "clarification": (screening or {}).get("clarification"),
+        "screened": screening is not None,
+        "screening_fields": (
+            {name: screening.get(name) for name in (*SCREENING_FIELDS, "contract")} if screening is not None else {}
+        ),
         "answer_contract": AnswerContract(),
         "assumptions": [],
         "selected_tables": [],
@@ -428,6 +458,7 @@ def new_state(question: str, *, principal: str | None = None) -> AgentState:
         "literal_map": [],
         "knowledge": "",
         "knowledge_tables": [],
+        "knowledge_about": [],
         "knowledge_chunks": [],
         "example_shots": [],
         "example_tables": [],
@@ -489,6 +520,8 @@ LIFETIMES: dict[str, str] = {
     "intent": RUN,
     "verdict": RUN,
     "clarification": RUN,
+    "screened": RUN,
+    "screening_fields": RUN,
     "answer_contract": RUN,
     "assumptions": ATTEMPT,
     "selected_tables": RUN,
@@ -496,6 +529,7 @@ LIFETIMES: dict[str, str] = {
     "literal_map": RUN,
     "knowledge": RUN,
     "knowledge_tables": RUN,
+    "knowledge_about": RUN,
     "knowledge_chunks": RUN,
     "example_shots": RUN,
     "example_tables": RUN,

@@ -47,11 +47,26 @@ against.
 
 | | |
 |---|---|
-| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
+| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment, and since 7.0 the record of every run behind the answer: each wording, its outcome and its SQL, the Judge's verdicts and the vote. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
 | **Staged** | In the feedback store, a database of its own in `nl2sql-stores`. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
-| **Reviewed** | In a second web interface, one pane per verdict: what was asked, what the agent answered and the SQL it wrote, what the user thought -- and beside it a form for building a golden pair, or an editor for the query that should have been generated |
+| **Reviewed** | In a second web interface, one pane per verdict: what was asked, what the agent answered and the SQL it wrote, what the user thought, and the other runs -- the queries that agreed, the ones that lost and how they differ -- and beside it a form for building a golden pair, or an editor for the query that should have been generated |
 | **Promoted** *(correct)* | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
 | **Fixed** *(wrong, incomplete)* | The reviewer's query is run against the live retail database, read-only, as the agent's own role; only one that runs can be saved. The question, the incorrect answer and the corrected query go into that verdict's own store, with an embedding of the question beside them for retrieval |
+
+The verdict is on the answer that was delivered, however many runs were
+behind it, and promotion is unchanged by them: a golden pair is the
+question as the person asked it and the SQL the reviewer settles on, never
+a rewording. What the other runs are for is the reviewer -- the right query
+is often already among them, written by a run that lost the vote. A
+submission from before 7.0 has no such record and says so: "a single run;
+no ensemble record".
+
+The record is a column the review service adds to the staging table when it
+starts, and the review service is optional. A stack upgraded to 7.0 and
+started without it keeps the table it had, so the API -- which may insert a
+verdict and nothing more -- stages each one without the record and says so
+once in its log, until the first vote after the review service has started.
+No vote is lost either way.
 
 ## The three fields nobody can guess
 

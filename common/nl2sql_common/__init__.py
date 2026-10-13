@@ -18,4 +18,4 @@ Installed as a package (`pip install ./common`): `pyproject.toml` beside this
 directory names the version every image records (V6-66).
 """
 
-__version__ = "6.3.0"
+__version__ = "7.0.0"

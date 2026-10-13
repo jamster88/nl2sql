@@ -29,10 +29,62 @@ it:
 | `storesmigrate` | 1 GB | 128 | none: it runs as the stores' `postgres` account, 999 |
 | `desktop` | 256 MB | 64 | `SETUID`, `SETGID` |
 
+The `api` container's 512 processes are sized for the defaults: one slot at
+the model host and two questions at a time. Since 7.0 every run of a
+question is a thread, with threads of its own for the retrievers, and
+threads count against this ceiling. So a deployer who raises
+`OLLAMA_PARALLEL_CALLS` -- the runs of a question that go at once -- or
+`API_MAX_CONCURRENCY` well past the defaults should raise the `api`
+service's `pids_limit` with them, as they raise the host's own memory for
+its resident models ([the host
+gate](../agent/README.md#asking-it-several-ways-arch7)).
+
 `tests/security/test_posture.py` holds every service to the block, and to
 giving back nothing beyond those five; the acceptance tier checks, in the
 running stack, that no process in any container is root and that no
 container can write its own image.
+
+**Nor is a health check root's** (7.0). Docker runs a container's health
+check as the user the container was started as. Nine services start as
+root, to hand what they write to an account and then drop to it -- the five
+Postgres servers, the directory, the auth and review services and MLflow --
+so until 7.0 each one's check was root's, every ten seconds, long after the
+service itself had dropped. Each is now started through `setpriv`, as the
+account its service runs as:
+
+| Container | Its health check runs as |
+|---|---|
+| `nl2sql-postgres`, `nl2sql-stores`, `nl2sql-vectordb`, `nl2sql-chunkdb`, `nl2sql-mlflowdb` | `postgres` |
+| `nl2sql-ldap` | `ldap`, which the directory's own socket knows as its root |
+| `nl2sql-auth`, `nl2sql-review` | `nl2sql`, which owns each one's certificate |
+| `nl2sql-mlflow` | `mlflow` |
+
+`setpriv` becomes the account -- its user, its group and no other group --
+and then *is* the check, so `pg_isready`, or the interpreter, never runs as
+root. What is left is the instant `setpriv` takes to stop being root: Docker
+starts it as root, and nothing in a compose file can change who Docker
+starts. Each check is a list rather than a line for a shell, because a shell
+in front of a check stays root for as long as the check runs. Watched for
+five minutes, as fast as Docker answers: a 6.3 stack showed a root process
+43 times in 14,365 looks; 7.0, none in 14,807.
+
+The two checks this project wrote -- `python -m nl2sql_common.health` and
+`python3 -m nl2sql_ldap health` -- also give root up themselves, before they
+read a setting or open a connection, because an image cannot know who it
+will be started as: outside compose, under `docker run` or another
+orchestrator's probe, the check is what does it. One that cannot -- started
+as root in a container without `SETUID` -- fails saying so rather than ask
+as root; started as anyone else, it runs as it was given. An image put in a
+service's place (`STORES_IMAGE`) has to carry util-linux's `setpriv`, as
+every Debian image does. Alpine's is BusyBox's, which cannot change who a
+process is, until the `setpriv` package is installed -- which is what the
+directory's image does.
+
+`tests/security/test_unprivileged.py` holds every such check to that
+beginning, and a health check added to any service is a failing test until
+it says who it runs as. The acceptance tier watches every container of the
+running stack for thirty seconds for a process of root's that is anything
+but that instant, and runs each check's drop to see who comes out.
 
 **No password or token is in a container's environment.** Each is a file in
 `secrets/`, which `setup.sh` generates -- the directory `0700`, so only you

@@ -52,6 +52,13 @@ import java.util.Set;
  * the cells it was read from, so each is its own hoverable span and pointing
  * at one lights up its cells in the table.
  *
+ * <p>Under the ensemble (7.0) the sentence is what several runs of the
+ * question agreed on, and how they agreed is shown with it: a badge with the
+ * count and the agent's own line about the vote, the answers that lost among
+ * the notes, and every wording's run folded away with its SQL
+ * ({@link EnsembleView}). The markdown {@code answer} opens with that same
+ * line, so the prose this falls back to is the block after it.
+ *
  * <p>Three cases are not an answer at all and are handled before any of it. A
  * <b>refusal is a success</b> -- the agent decided the question was out of
  * scope or unsafe and said so, and there is no table because no query ran. An
@@ -89,6 +96,9 @@ public final class AnswerView {
         } else if (!answer.verdict().equals("proceed")) {
             node.getChildren().add(refusal(answer));
         } else {
+            if (answer.ensemble() != null) {
+                node.getChildren().add(EnsembleView.badge(answer.ensemble(), node));
+            }
             node.getChildren().add(narrative(answer));
             if (answer.result() != null && answer.chart() != null) {
                 Region chart = ChartView.of(answer.result(), answer.chart());
@@ -102,6 +112,10 @@ public final class AnswerView {
             }
             if (pipeline == null || pipeline.audit()) {
                 node.getChildren().add(audit(answer, node));
+            }
+            Region notes = answer.ensemble() == null ? null : EnsembleView.notes(answer.ensemble(), node);
+            if (notes != null) {
+                node.getChildren().add(notes);
             }
         }
 
@@ -190,7 +204,11 @@ public final class AnswerView {
     private Region narrative(Models.Answer answer) {
         if (answer.claims().isEmpty()) {
             String said = Markup.plain(answer.narrative());
-            Label headline = new Label(said.isEmpty() ? Markup.lead(answer.answer()) : said);
+            // Under the ensemble the document opens with the agreement line,
+            // which the badge above already says.
+            boolean opened = answer.ensemble() != null && !answer.ensemble().line().isEmpty();
+            String document = opened ? Markup.afterLead(answer.answer()) : answer.answer();
+            Label headline = new Label(said.isEmpty() ? Markup.lead(document) : said);
             headline.getStyleClass().add("answer-headline");
             wrapTo(headline, node, 32);
             return headline;
@@ -288,6 +306,10 @@ public final class AnswerView {
                     ? "SQL (" + answer.attempts() + " attempts)"
                     : "SQL", body));
         }
+        if (answer.ensemble() != null && !answer.ensemble().candidates().isEmpty()) {
+            panes.add(disclosure(EnsembleView.title(answer.ensemble()),
+                    EnsembleView.runs(answer.ensemble())));
+        }
         if (!answer.literals().isEmpty()) {
             VBox body = new VBox(2);
             for (Models.LiteralMatch literal : answer.literals()) {
@@ -373,7 +395,7 @@ public final class AnswerView {
         return pane;
     }
 
-    private static Region sql(String statement) {
+    static Region sql(String statement) {
         TextArea area = new TextArea(statement);
         area.getStyleClass().add("sql");
         area.setEditable(false);
@@ -382,7 +404,7 @@ public final class AnswerView {
         return area;
     }
 
-    private static Label muted(String text) {
+    static Label muted(String text) {
         Label label = new Label(text);
         label.getStyleClass().add("muted");
         label.setWrapText(true);
@@ -398,7 +420,7 @@ public final class AnswerView {
      * clipped by the column. Giving it a ceiling read from the container is
      * what makes the height depend on the width instead.
      */
-    private static <T extends Labeled> T wrapTo(T label, Region container, double margin) {
+    static <T extends Labeled> T wrapTo(T label, Region container, double margin) {
         label.setWrapText(true);
         label.setMinWidth(0);
         label.maxWidthProperty().bind(container.widthProperty().subtract(margin));

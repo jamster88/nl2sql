@@ -325,7 +325,7 @@ docker run -d --name v32-chunkdb  --network v32 mcfaddja/nl2sql-rag-chunkdb:v3_1
 docker run -d --name v32-vectordb --network v32 mcfaddja/nl2sql-rag-vectordb:v3_1
 docker run --rm --network v32 --add-host host.docker.internal:host-gateway \
   -v "$PWD/../context_questions:/app/context_questions:ro" --entrypoint sh \
-  mcfaddja/nl2sql-review:v6_3 -c 'cd /app/rag &&
+  mcfaddja/nl2sql-review:v7_0 -c 'cd /app/rag &&
     python 05_load_golden_pairs.py /app/context_questions/translated_questions.md \
       --db-url postgresql://ragproc:ragproc@v32-chunkdb:5432/nl2sql_chunks &&
     python 06_embed_golden_pairs.py --model bge-m3 --ollama-url http://host.docker.internal:11434 \
@@ -364,7 +364,7 @@ cluster — treat them as public and do not reuse them.
 | `source_doc` | document slug |
 | `ordinal` | position in the document |
 | `heading_path` | e.g. `DDL Index > dim_date` |
-| `chunk_meta` | JSONB, parsed from the ```` ```meta ```` block |
+| `chunk_meta` | JSONB, parsed from the ```` ```meta ```` block. The agent reads `table` (the one table a DDL chunk documents, which the Schema Retriever ranks by) and `tables` (the several a rule or recipe is about, comma-separated, which a draft that reads one is admitted to read) |
 | `content` | the chunk text, heading prefix included |
 | `token_estimate`, `content_hash`, `created_at`, `updated_at` | |
 

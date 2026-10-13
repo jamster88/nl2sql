@@ -47,7 +47,7 @@ COPY --from=build /src/target/nl2sql-desktop.jar /opt/nl2sql/nl2sql-desktop.jar
 
 LABEL org.opencontainers.image.title="nl2sql-desktop build" \
       org.opencontainers.image.description="Carries the nl2sql desktop client's jar, built for one JavaFX platform." \
-      org.opencontainers.image.version="6.3.0" \
+      org.opencontainers.image.version="7.0.0" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 # The default command copies the jar to a bind mount, which is the whole of

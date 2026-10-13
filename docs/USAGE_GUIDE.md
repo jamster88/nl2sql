@@ -651,7 +651,9 @@ agent assumes the latest complete fiscal year and says so in the answer.
 
 **Values need not be spelled the database's way.** "dairy and eggs" is
 matched to `Dairy & Eggs`, and the `[literals]` line says what it was
-matched to.
+matched to. Name the whole value -- "whole milk" is not matched to one
+size of it -- and put a value that begins with a number or has a slash in
+it in quotes: "12-Pack", "1/15 Net 45".
 
 **Vocabulary that maps cleanly onto the data:** net sales, gross sales,
 markdown, quantity sold, promo quantity sold, ad spend, impressions,
@@ -1266,7 +1268,7 @@ Problems with answers rather than with the stack:
 |---|---|
 | An answer is wrong | Run its SQL in the [SQL console](#when-an-answer-is-wrong-the-sql-console); read its [trace](#seeing-what-the-agent-did-mlflow); mark it **Wrong** with a comment |
 | `Could not produce a valid query in 7 attempts` | Rephrase with a measure, grain and period |
-| An answer ignored a value you named | Check the `[literals]` line, or the matched phrases under the answer |
+| An answer ignored a value you named | Check the `[literals]` line, or the matched phrases under the answer; name the value whole, or put it in quotes |
 | Retrieval returns irrelevant knowledge | The embedding model is not the one the knowledge base was built with: use `bge-m3` |
 | Questions take minutes | Normal is about a minute, on a host that is not busy with something else. `launch.sh`'s routing table shows which models are in play; `--reasoning` (`OLLAMA_REASONING`) is off by default and much slower when on |
 | Results stop at 50 rows | Raise `MAX_ROWS`, or ask for fewer rows |

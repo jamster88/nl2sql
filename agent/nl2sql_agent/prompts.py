@@ -284,13 +284,17 @@ def snippet_block(rendered: str) -> str:
     return SNIPPET_BLOCK.format(snippets=rendered.strip())
 
 
-LITERAL_BLOCK = (
-    "Literal values in this database that match the question:\n{literals}\n\n"
-)
+#: The Literal Matcher's block comes with its own heading
+#: (`literals.render_literal_map`, as arch4 section 4.3 draws it), so this
+#: gives it its place in the turn and no more. From v4 to 7.0 it gave the
+#: heading again, and every generator prompt with a literal in it opened
+#: that block with the same line twice: each half was tested, alone.
+LITERAL_BLOCK = "{literals}\n\n"
 
 
 def literal_block(rendered: str) -> str:
-    """Wrap the Literal Matcher's output for the prompt, or render nothing.
+    """Place the Literal Matcher's block (`literals.render_literal_map`,
+    heading and rows) in the prompt, or render nothing.
 
     The block exists so the model does not have to guess how this database
     spells a value it was asked about in prose. "dairy and eggs" in a question

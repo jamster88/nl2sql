@@ -312,6 +312,155 @@ def test_a_question_with_no_literal_in_it_matches_nothing(matcher: LiteralMatche
     assert matcher.match("how many rows are there in total") == []
 
 
+# --- what it is to name a value (7.0) -----------------------------------------
+
+# Values the real catalog holds, each of which a common word of a question is
+# one word of. Until 7.0 sharing that one word was a match.
+NOISY = CATALOG + [
+    CatalogEntry("dim_promo_calendar", "promo_season_type", "New Year New You"),
+    CatalogEntry("dim_vendor", "payment_terms_desc", "1/15 Net 45"),
+    CatalogEntry("dim_product", "sub_category_name", "Paper Products"),
+    CatalogEntry("dim_store", "layout_type_desc", "Value/Discount"),
+    CatalogEntry("dim_ad_channel", "channel_type", "Website Banner"),
+    CatalogEntry("dim_product", "sub_category_name", "Eggs"),
+    CatalogEntry("dim_promotion", "mechanic_type", "Percent Off"),
+    CatalogEntry("dim_promo_calendar", "promo_season_type", "Summer Grilling"),
+    CatalogEntry("dim_ad_placement", "ad_theme_name", "Summer Grilling: Grilling Season"),
+]
+
+
+@pytest.fixture(params=["difflib", "pg_trgm"])
+def noisy(request) -> LiteralMatcher:
+    """The same catalog behind each scorer: what a phrase has to be of a
+    value is one rule, whichever of them found the pair."""
+    if request.param == "difflib":
+        return LiteralMatcher(NOISY)
+    return LiteralMatcher(NOISY, database=StubDatabase(FakeEngine(trigram_installed=True)))
+
+
+@pytest.mark.parametrize("question", [
+    "Which 5 products had the highest net sales in fiscal year 2025? Give the SKU and the amount.",
+    "What was the average basket value for each store banner in fiscal year 2025?",
+    "What were our total net sales in fiscal year 2025?",
+])
+def test_a_word_of_a_longer_value_does_not_name_it(noisy: LiteralMatcher, question: str):
+    """The benchmark's own questions. `word_similarity` scores one word
+    against any value that contains it at 1.00, and sharing a word was
+    enough: "year" was the promotion season `New Year New You`, "net" the
+    payment terms `1/15 Net 45`, "products" the sub-category `Paper
+    Products`, "value" the store layout `Value/Discount` -- each handed to
+    the generator as a value the question had named, and with nothing else
+    to go on, B10's answer was filtered to paper products."""
+    assert noisy.match(question) == []
+
+
+def test_part_of_a_value_is_not_the_value(noisy: LiteralMatcher):
+    """Told "whole milk" is `Whole Milk 1 Gal`, the generator filters to one
+    size of it."""
+    assert all(m.column != "product_name" for m in noisy.match("how did whole milk sell"))
+    assert ("dim_product", "product_name", "Whole Milk 2 Gal") in resolved(noisy.match("sales of whole milk 2 gal"))
+
+
+def test_the_values_own_words_name_it_through_any_connector(noisy: LiteralMatcher):
+    for question in ("sales for dairy and eggs", "sales for Dairy & Eggs"):
+        assert ("dim_product", "department_name", "Dairy & Eggs") in resolved(noisy.match(question)), question
+    # With the connector left out. (On `difflib` alone: the stand-in for
+    # `word_similarity` above only knows a run of whole words.)
+    assert ("dim_product", "department_name", "Dairy & Eggs") in resolved(LiteralMatcher(NOISY).match("sales for dairy eggs"))
+
+
+def test_every_word_of_a_value_is_one_of_its_words_a_stopword_too(noisy: LiteralMatcher):
+    """`Percent Off` is two words. Compared by the words that carry meaning,
+    "off" did not count and "percent" was the whole of it."""
+    assert noisy.match("what percent of sales came from stores") == []
+    assert ("dim_promotion", "mechanic_type", "Percent Off") in resolved(noisy.match("how did Percent Off promotions do"))
+    assert ("dim_promotion", "mechanic_type", "Percent Off") in resolved(noisy.match('how did "percent off" promotions do'))
+
+
+def test_a_word_inside_a_phrase_that_is_a_value_is_not_a_name_of_its_own(noisy: LiteralMatcher):
+    """"Dairy & Eggs" is the department. Its "Eggs" is not also the
+    sub-category `Eggs` -- though asked about by itself, it is."""
+    department = resolved(noisy.match("What was the gross margin for the Dairy & Eggs department?"))
+    assert ("dim_product", "department_name", "Dairy & Eggs") in department
+    assert ("dim_product", "sub_category_name", "Eggs") not in department
+    assert ("dim_product", "sub_category_name", "Eggs") in resolved(noisy.match("how did Eggs sell last year"))
+
+
+def test_inside_a_phrase_that_only_resembles_a_value_the_shorter_name_stands(noisy: LiteralMatcher):
+    """"Summer Grilling season" has the words of an ad theme, `Summer
+    Grilling: Grilling Season`, and is not it word for word. What the
+    question names is the season, `Summer Grilling`, and a golden pair's
+    verified query filters on exactly that."""
+    found = resolved(noisy.match("Which promotions ran in the Summer Grilling season?"))
+    assert ("dim_promo_calendar", "promo_season_type", "Summer Grilling") in found
+
+
+def test_a_word_the_schema_is_named_with_is_not_a_misspelling_of_a_value(noisy: LiteralMatcher):
+    """"product" is one letter from `Produce` -- as near as "produse", which
+    is how a misspelling is told. But `dim_product` and `product_name` say
+    what "product" means here."""
+    assert all(m.value != "Produce" for m in noisy.match("which product sold the most"))
+    assert ("dim_product", "department_name", "Produce") in resolved(LiteralMatcher(NOISY).match("how did Produse do"))
+    assert ("dim_product", "department_name", "Produce") in resolved(noisy.match("how did produce do"))
+
+
+@pytest.mark.parametrize("question", [
+    "What was the gross margin for the Dairy & Eggs department in fiscal month 12?",
+    "how much SCAN_BACK did we book",
+    "Compare Print Flyer impressions in the Pacific Northwest for the year",
+    "Which 5 products had the highest net sales?",
+    "sales of Whole Milk 1 Gal by store banner",
+])
+def test_the_two_scorers_resolve_the_same_values(question: str):
+    """The module has always said they would. With one shared word enough,
+    they did not: `word_similarity` found every value containing a word and
+    `difflib`'s ratio found none of them."""
+    plain = LiteralMatcher(NOISY)
+    trigram = LiteralMatcher(NOISY, database=StubDatabase(FakeEngine(trigram_installed=True)))
+    assert trigram.scorer == "pg_trgm" and plain.scorer == "difflib"
+    assert resolved(trigram.match(question)) == resolved(plain.match(question))
+
+
+def test_a_value_named_twice_is_reported_once_by_its_better_phrase():
+    """A misspelling and then the word itself: one row, and the phrase kept
+    is the one that is the value."""
+    for question in ("did Produse mean Produce", "did Produce mean Produse"):
+        [match] = [m for m in LiteralMatcher(NOISY).match(question) if m.value == "Produce"]
+        assert (match.phrase, match.score) == ("Produce", 1.0), question
+
+
+def test_two_values_of_one_column_that_spell_alike_are_one_match():
+    """`SCAN_BACK` and `Scan-Back` are the same words, and a phrase that
+    names one names the other: a column still reports one of them."""
+    catalog = [
+        CatalogEntry("dim_allowance_type", "allowance_type_code", "SCAN_BACK"),
+        CatalogEntry("dim_allowance_type", "allowance_type_code", "Scan-Back"),
+    ]
+    for matcher in (LiteralMatcher(catalog), LiteralMatcher(catalog, database=StubDatabase(FakeEngine(trigram_installed=True)))):
+        assert len(matcher.match("how much scan-back did we book")) == 1, matcher.scorer
+
+
+def test_naming_is_the_values_words_or_a_near_miss_of_the_whole():
+    from nl2sql_agent.literals import _Indexed, _name_words, _names, _spelled, _within
+
+    value = _Indexed(CatalogEntry("dim_product", "department_name", "Dairy & Eggs"), "dairy and eggs", _name_words("dairy and eggs"))
+    assert _names("dairy and eggs", value) and _names("eggs and dairy", value) and _names("dairy eggs", value)
+    assert not _names("dairy", value) and not _names("eggs", value) and not _names("dairy eggs milk", value)
+    assert not _names("", value) and not _names("and", value)
+
+    produce = _Indexed(CatalogEntry("dim_product", "department_name", "Produce"), "produce", _name_words("produce"))
+    assert _names("produse", produce) and _names("product", produce)
+    assert not _names("product", produce, frozenset({"product"}))
+    assert _names("produce", produce, frozenset({"produce"})), "a word of the schema that is the value is the value"
+
+    assert _name_words("percent off") == {"percent", "off"} and _name_words("the top of the range") == {"top", "range"}
+    assert _spelled("summer grilling season") != _spelled("summer grilling grilling season")
+    assert _name_words("summer grilling season") == _name_words("summer grilling grilling season")
+    assert _within(["eggs"], [["dairy", "and", "eggs"]]) and _within(["and", "eggs"], [["dairy", "and", "eggs"]])
+    assert not _within(["dairy", "and", "eggs"], [["dairy", "and", "eggs"]]), "a phrase is not inside itself"
+    assert not _within(["eggs", "dairy"], [["dairy", "and", "eggs"]]) and not _within(["eggs"], [])
+
+
 # --- choosing a scorer ------------------------------------------------------
 
 
@@ -505,6 +654,38 @@ def test_the_three_benchmark_literals_resolve_to_their_real_columns(live_catalog
     assert ("dim_ad_channel", "channel_type", "Print Flyer") in resolved(
         matcher.match("compare print flyer and paid social spend")
     )
+
+
+@pytest.mark.docker
+def test_the_benchmarks_questions_resolve_to_the_values_they_name_and_no_others(live_catalog, live_db):
+    """Against the real catalog, 1,277 values. Until 7.0 the fifteen
+    questions resolved to 63 values over thirteen of them, and their
+    reference queries use one. These five are what the questions spell."""
+    from benchmarks.questions import QUESTIONS
+
+    matcher = LiteralMatcher(live_catalog, database=live_db)
+    found = {q.id: resolved(matcher.match(q.question)) for q in QUESTIONS}
+    assert {qid: values for qid, values in found.items() if values} == {
+        "B07": {("dim_product", "department_name", "Dairy & Eggs")},
+        "B09": {("dim_allowance_type", "allowance_type_code", "SCAN_BACK")},
+        "B15": {
+            ("dim_ad_channel", "channel_type", "Print Flyer"),
+            ("dim_ad_channel", "channel_type", "Paid Social"),
+            ("dim_allowance_type", "allowance_type_code", "ADVERTISING"),
+        },
+    }
+
+
+@pytest.mark.docker
+def test_the_real_scorers_resolve_the_same_values_for_every_benchmark_wording(live_catalog, live_db):
+    from benchmarks.paraphrases import PARAPHRASES
+    from benchmarks.questions import QUESTIONS
+
+    trigram = LiteralMatcher(live_catalog, database=live_db)
+    plain = LiteralMatcher(live_catalog, use_trigram=False)
+    for question in QUESTIONS:
+        for text in (question.question, *PARAPHRASES.get(question.id, ())):
+            assert resolved(trigram.match(text)) == resolved(plain.match(text)), text
 
 
 @pytest.mark.docker

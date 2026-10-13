@@ -982,6 +982,28 @@ def test_a_matcher_that_raises_mid_question_is_recorded_and_skipped():
     assert state["result"] is not None
 
 
+def test_the_generator_is_shown_the_literal_blocks_heading_once():
+    """Through the pipeline, where the matcher's block and the prompt's
+    place for it meet. Each carried the heading, each was tested by itself,
+    and from v4 to 7.0 every generator prompt with a literal in it said
+    "Literal values in this database that match the question:" twice."""
+    from nl2sql_agent.literals import LITERAL_MAP_HEADER
+    from nl2sql_agent.state import LiteralMatch
+
+    class _Matcher:
+        def match(self, question, **kwargs):
+            return [LiteralMatch("dairy", "dim_product", "department_name", "Dairy & Eggs", 0.9)]
+
+    db = FakeDatabase(tables=TABLES)
+    llm = scripted(["SELECT 1 AS n FROM dim_store"])
+    state = make_agent(db, llm, literal_matcher=_Matcher()).run("dairy sales")
+
+    assert [match.value for match in state["literal_map"]] == ["Dairy & Eggs"]
+    human = llm.plain_invocations[0][-1].content
+    assert human.count(LITERAL_MAP_HEADER) == 1
+    assert LITERAL_MAP_HEADER + '\n  "dairy" -> dim_product.department_name = \'Dairy & Eggs\'\n\n' in human
+
+
 def test_the_catalog_is_built_once_and_its_matches_reach_the_state(monkeypatch):
     """The lazy build and the successful path, which the failure tests above
     step around. Building reads every low-cardinality text column, so it

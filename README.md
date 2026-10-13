@@ -153,6 +153,18 @@ design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md)). So far:
   the table ranking had missed that table. With the knowledge base and no
   worked examples the benchmark goes from 13 of 15 to 14, and nothing else
   moves ([the measurement](docs/benchmark.md#what-the-knowledge-is-about)).
+- **A value is matched when the question names it.** The Literal Matcher
+  resolved a phrase to any value that shared a word with it: "year" was a
+  promotion called `New Year New You`, "products" the sub-category `Paper
+  Products`. It now takes the whole value -- every word of it, or a close
+  spelling -- and for the questions this repository has a verified query
+  for it offers 80 values where it offered 466, with every one the queries
+  use kept. The block they arrive in is headed once, where it had its
+  heading twice. As the agent ships, the default configuration answers all
+  fifteen benchmark questions where it answered fourteen, and through the
+  ensemble all fifteen are unanimous; a value that begins with a digit or
+  has a slash in it is matched in quotes ([the
+  measurement](docs/benchmark.md#what-a-question-names)).
 
 ## What's new in 6.3
 

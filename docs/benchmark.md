@@ -42,12 +42,14 @@ All three configurations, same 15 questions, `qwen3.8-256k` at 256k context:
 | `multi-shot` | 5/5 | 3/3 | 1/1 | 3/3 | 3/3 |
 
 The first three rows are the pipeline before v4. Measured again on 7.0
-(2026-10-11), `schema-only` scores 10 of 15 -- 1 until its scope was
-fixed -- and `knowledge` 14 -- 13 until a draft could be admitted to a
-table its knowledge is about -- as set out under [Schema-only, with the
-whole schema](#schema-only-with-the-whole-schema) and [What the knowledge
-is about](#what-the-knowledge-is-about); the paragraphs below read the
-table as it was measured.
+(2026-10-12), `schema-only` scores 9 of 15 and `knowledge` 13, as set
+out under [Schema-only, with the whole schema](#schema-only-with-the-whole-schema),
+[What the knowledge is about](#what-the-knowledge-is-about), [The literal
+block's heading](#the-literal-blocks-heading) and [What a question
+names](#what-a-question-names) -- 1 and 13 before their scopes were fixed,
+10 and 14 after, and a question fewer each since the literal block was
+put right, which is what any change to their prompts moves them by; the
+paragraphs below read the table as it was measured.
 
 Three things this says, including one that is not flattering:
 
@@ -907,3 +909,157 @@ names in its text*, fourteen a question to the lists' five: every scope
 filled to the cap. *The admitted draft sent back once*, to be written
 again with the table described: B07's second draft, at the heavy rung,
 was the first one over again, for an attempt spent.
+
+### The literal block's heading
+
+The generator's prompt carries the Literal Matcher's finds -- phrases of
+the question beside the values the database spells them as -- under the
+heading "Literal values in this database that match the question:". From
+v4 to 7.0 that line was there twice running: the matcher's block came with
+it, the prompt's place for the block added it again, and each half was
+tested alone. It is there once now (the changelog's Fixed, 7.0). It is the
+smallest change measured in this document, and it reaches every prompt
+that has a literal in it. Measured 2026-10-11 on the same stack, the grain
+check on:
+
+| | Right, before | Right, now | Total |
+|---|---|---|---|
+| `schema-only` | 10/15 | **9/15** | 363.1s |
+| `knowledge` | 14/15 | **12/15** | 511.1s |
+| `multi-shot` | 15/15 | 15/15 | 486.4s |
+| `snippets` | 14/15 | 14/15 | 373.4s |
+| `ensemble` | 15/15 | 15/15 | 2426.6s |
+| `snippets`, the twelve wordings | 12/12 | 12/12 | 679.3s |
+| `ensemble`, the twelve wordings | 12/12 | 12/12 | 3113.2s |
+
+**It cost three answers, all where there are no worked examples.** B10
+under `schema-only` and under `knowledge`, and B08 under `knowledge`. B10
+asks for the five products with the highest net sales; both runs now
+filter to `sub_category_name = 'Paper Products'`, which is what the
+matcher offers for the word "products" and what, before, neither run had
+taken up. B08's de-duplication lost a column of its grouping, 26.16 for
+21.51, with no literal in it: a different prompt, a different draft.
+
+**What the heading heads is almost all noise.** For the fifteen questions
+the matcher offers 63 values, and the reference queries use one: 'Dairy &
+Eggs', for B07. Thirty-three of the others are the word "year", matched to
+a promotion season called "New Year New You"; the rest are "net" for the
+payment term '1/15 Net 45', "value" for the positioning 'Value/Discount',
+"banner" for the channel 'Website Banner', "products" for 'Paper
+Products'. A single common word of the question scores 1.00 against a
+value that contains it. Said once, under one heading, the block reads as
+an instruction, and without a worked example to follow the generator
+follows it. That is the finding of this measurement: the doubled line was
+a flaw, and the block under it is the defect.
+
+**With worked examples it holds.** `multi-shot` 15 and `snippets` 14 of
+15, as before; three answers reworded and still right, one by a second
+attempt.
+
+**Through the ensemble the score holds and the agreement is weaker.**
+15 of 15 on the fifteen and 12 of 12 on the wordings, as before. Of the 60
+runs of the fifteen asked in the same words both times, 15 wrote other
+SQL than before -- every one of them a wording with a literal block, and
+none of the seven without. B13 was
+agreed by its four runs both times and now goes out contested: the run
+that stands for the group was rewritten to average only the products the
+competitor undercuts, which the Judge sets aside, and which gives the same
+figure for the competitor that is always cheaper. B15 took a second wave,
+eleven runs, to be settled the way four had settled it. 352 model calls
+for 339, 2426.6s for 2322.8s. On the wordings, B13's own went out
+contested the same way, and B07's fourth was agreed by four runs of four
+where it had been by three.
+
+The matcher is narrowed since, below, and the two are measured together
+there.
+
+### What a question names
+
+The measurement above found what the literal block had been holding: for
+the fifteen questions, 63 values offered and one used. The Literal Matcher
+kept any value that shared a word with a phrase of the question, and the
+database's `word_similarity`, which does its searching, scores one word
+against any value that contains it at 1.00. It now keeps a value only when
+the phrase names it -- every word of it, in any order and through any
+connector, or a near-miss of its whole spelling (the changelog's Fixed,
+7.0). A word inside a longer phrase that is a value word for word is part
+of that name: "Dairy & Eggs" is the department, and its "Eggs" is not also
+the sub-category `Eggs`. And a word the schema itself is named with is not
+a misspelling of a value: "product" is not the department `Produce`.
+
+**What it offers, measured before any model is asked.** Over the 108
+questions this repository holds a verified query for -- the benchmark's
+sixty wordings and the 48 golden pairs -- against the real catalog:
+
+| | Before | Now |
+|---|---|---|
+| Values offered | 466 | 80 |
+| Of them, a literal of the verified query | 54 | 54 |
+| Questions offered any value | 95 of 108 | 43 of 108 |
+| The fifteen, as the benchmark words them | 63 values over 13 questions | 5 over 3 |
+| Questions on which the two scorers resolve different values | 87 of 108 | 0 |
+
+Every one of the 54 was a phrase that is its value whole, and none of the
+383 that were part of a value was used. The module has always said that a
+database without `pg_trgm` gives "the same answers" by `difflib`; on 87 of
+these questions it did not, and now it does. What is still offered and not
+used is what a question spells and its query does not filter on: the two
+channels B15 gives as examples, a banner that is also a competitor's name,
+the word "advertising", which is also an allowance code.
+
+**What naming a value reaches.** Each of the catalog's 1,271 distinct
+values, put in a question. In quotes, all 1,271 resolve where 1,268 did,
+with 33 other values offered beside them where there were 2,334. Written
+as the catalog spells it and unquoted, 925 resolve where 967 did, with 245
+others beside them where there were 2,326. The 43 lost begin with a digit
+or have a slash in them -- `12-Pack`, `1/15 Net 45`, `2606 Elm St` --
+which the matcher cannot take from a sentence as one phrase. Before, one
+of their words reached them, along with every other value that had it.
+They are reached in quotes.
+
+**Measured 2026-10-12** on the same stack, the grain check on: the heading
+and the matcher together, beside the committed code and the heading alone.
+
+| | Committed | Heading once | Heading once, matcher narrowed |
+|---|---|---|---|
+| `schema-only` | 10/15 | 9/15 | 9/15 |
+| `knowledge` | 14/15 | 12/15 | 13/15 |
+| `multi-shot` | 15/15 | 15/15 | 14/15 |
+| `snippets` | 14/15 | 14/15 | **15/15** |
+| `ensemble` | 15/15 | 15/15 | 15/15 |
+| `snippets`, the twelve wordings | 12/12 | 12/12 | 12/12 |
+| `ensemble`, the twelve wordings | 12/12 | 12/12 | 12/12 |
+| `snippets`, the paraphrase set's sixty | 58/60 | -- | **59/60** |
+
+**As the agent ships, these are its best figures in this document.**
+`snippets`, the default for one run a question, answers all fifteen: B15,
+its standing miss, returns every channel. Through the ensemble all fifteen are
+unanimous, where one had been judged -- and where the heading alone had
+left one contested and one in a second wave -- with no answer overruled
+and no second wave, in 340 model calls and 2282.7s. On the twelve wordings
+all twelve are unanimous and the Judge sets one answer aside where it set
+aside two. On the paraphrase set's sixty, run on the committed code and on
+this, 59 are right where 58 were, with 14 of 15 questions stable both
+times: B15's own wording and its first rewording come right, and B08's
+third rewording goes wrong.
+
+**Without the examples or the snippets, a question fewer each, and never
+the same question.** `schema-only` gains B03 -- "banner" is no longer the
+ad channel `Website Banner`, and the stores are counted from the store
+dimension -- and loses B08 and B09, neither over a literal: B09 takes
+calendar 2025 for the fiscal year. `knowledge` gains B07, whose roll-up
+now keeps the product and the store, and loses B06 and B08. `multi-shot`
+loses B15: with the noise gone the block holds the two channels the
+question gives as examples, and the generator filters to them -- the
+question `snippets` gained by the same change.
+
+**What a fifteen-question score can carry.** Every configuration answers
+at temperature zero, so its score is a function of its prompt, and any
+change to the prompt moves the questions that are on an edge. B15 went
+right in one configuration and wrong in the next by one edit. Over the
+five prompts `knowledge` has been given in this section and the two before
+it, it scored 14, 14, 14, 12 and 13, and missed B06, B07, B08 and B10 by
+turns. A question either way is what rewording a prompt gives or takes,
+whatever the rewording says. So the matcher is measured on what it offers,
+where nothing is on an edge, and the configuration that ships was run on
+sixty wordings both ways.

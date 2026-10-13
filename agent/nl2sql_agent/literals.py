@@ -28,6 +28,26 @@ role that could not install it itself. Both paths score the same normalised
 forms and are held to the same floor, so a database without the extension
 gives slightly different numbers and the same answers.
 
+**What counts as a match.** A phrase that names the value: every word of
+it, or a spelling close to the whole of it (`_names`). Not a phrase that
+shares a word with it. From v4 to 7.0 sharing one word was enough, and
+`word_similarity` scores one word against any value that contains it at
+1.00 -- so "year" resolved to a promotion season called `New Year New You`,
+"net" to the payment terms `1/15 Net 45`, "products" to the sub-category
+`Paper Products`, each handed to the generator as a value the question had
+named. Measured over the 108 questions this repository holds a verified
+query for, the sixty benchmark wordings and the golden pairs: 466 matches,
+54 of them a value the query holds as a literal -- every one of the 54 a
+phrase that was the whole value, and not one of the 383 that was part of
+one.
+
+Two things follow from "names". A word inside a longer phrase that names a
+value is part of that name: "Dairy & Eggs" is the department, and its
+"Eggs" is not also the sub-category `Eggs`. And a word the schema itself is
+named with is spelled the way it is meant: "product" is not a misspelling of
+the department `Produce`, which by its letters alone it is as near to as
+"produse".
+
 Nothing here calls a model, and nothing here is random: the same question
 against the same catalog produces the same list every time, which is what
 makes the Literal Matcher unit-testable in the way the architecture claims
@@ -81,13 +101,15 @@ STOPWORDS = frozenset(
     """.split()
 )
 
-#: The score at which a match needs no shared word to be believable. Two short
-#: unrelated words reach the 0.6 floor by accident all the time -- "sales"
-#: against `Salem` scores 0.80, "store" against `Steak` scores 0.60 -- so a
-#: match has to either agree on a real word or be a character-level near-miss
-#: of the whole phrase, which is what a misspelling ("produse" -> `Produce`,
-#: 0.857) looks like. Without this the generator's prompt fills with plausible
-#: nonsense, which is worse than an empty literal map.
+#: The score at which a phrase that is not the value word for word is still
+#: believable as a spelling of it. Two short unrelated words reach the 0.6
+#: floor by accident all the time -- "sales" against `Salem` scores 0.80,
+#: "store" against `Steak` scores 0.60 -- so a match has to either be the
+#: value's own words or be a character-level near-miss of the whole of it,
+#: which is what a misspelling ("produse" -> `Produce`, 0.857) or a plural
+#: ("scan-back allowances" -> `Scan-Back Allowance`) looks like. Without this
+#: the generator's prompt fills with plausible nonsense, which is worse than
+#: an empty literal map.
 #:
 #: It is measured on `difflib`'s ratio even when `pg_trgm` did the searching,
 #: because the two scales do not agree and only one of them separates a typo
@@ -458,13 +480,51 @@ class _Indexed:
     words: frozenset[str]
 
 
-def _content_words(normalized: str) -> frozenset[str]:
-    """The words of a normalised phrase that carry meaning.
+#: The connectors of `_CONNECTORS`, as `normalize` leaves them.
+_JOINING = frozenset({"and", "of", "the"})
 
-    Stopwords are excluded because they are shared by accident: "flyer and
-    paid" and "floral and garden" agree on "and" and on nothing else.
+
+def _name_words(normalized: str) -> frozenset[str]:
+    """The words a normalised phrase or value is made of, its connectors
+    aside: "dairy and eggs" and "dairy eggs" are the same two words.
+
+    Every other word counts, a stopword included. `Percent Off` is two
+    words, and "percent" is one of them.
     """
-    return frozenset(w for w in normalized.split() if w not in STOPWORDS)
+    return frozenset(w for w in normalized.split() if w not in _JOINING)
+
+
+def _spelled(normalized: str) -> tuple[str, ...]:
+    """The same words in the order written: what "word for word" compares."""
+    return tuple(w for w in normalized.split() if w not in _JOINING)
+
+
+def _names(candidate_norm: str, indexed: _Indexed, schema_words: frozenset[str] = frozenset()) -> bool:
+    """Does the phrase name this value -- the whole of it?
+
+    Its words are the value's, in any order and through any connectors
+    ("eggs and dairy", "dairy eggs" and `Dairy & Eggs`), or it is a
+    near-miss of the value's whole spelling. A phrase that is part of a
+    value names nothing: "whole milk" is not `Whole Milk 1 Gal`, and told
+    that it is, the generator filters to one size of it.
+
+    `schema_words` are the words the tables and columns are named with. One
+    of those is a word of the schema's own, not a misspelling of a value:
+    "product" is one letter from `Produce`, and means the product.
+    """
+    words = _name_words(candidate_norm)
+    if words and words == indexed.words:
+        return True
+    return candidate_norm not in schema_words and _near_miss(candidate_norm, indexed.norm)
+
+
+def _within(words: Sequence[str], longer: Iterable[Sequence[str]]) -> bool:
+    """Is this run of words inside one of these longer runs?"""
+    size = len(words)
+    return any(
+        len(run) > size and any(list(run[at : at + size]) == list(words) for at in range(len(run) - size + 1))
+        for run in longer
+    )
 
 
 def _near_miss(candidate_norm: str, value_norm: str) -> bool:
@@ -507,11 +567,16 @@ class LiteralMatcher:
         # once per (value, candidate) pair: the inner loop runs 1,277 times a
         # candidate and a few dozen candidates a question.
         self._entries = [
-            _Indexed(entry, norm, _content_words(norm))
+            _Indexed(entry, norm, _name_words(norm))
             for entry, norm in ((e, normalize(e.value)) for e in self.catalog)
             if norm
         ]
         self._column_names = frozenset(normalize(e.column) for e in self.catalog)
+        # The words the catalogued tables and columns are named with:
+        # `dim_product.product_name` is "dim", "product" and "name".
+        self._schema_words = frozenset(
+            word for e in self.catalog for name in (e.table, e.column) for word in normalize(name).split()
+        )
         if use_trigram is None:
             self.use_trigram = database is not None and trigram_available(database)
         elif use_trigram and database is None:
@@ -538,6 +603,8 @@ class LiteralMatcher:
             return []
 
         matches: list[LiteralMatch] = []
+        #: The phrases that are a value word for word, as runs of words.
+        named: list[list[str]] = []
         for phrase, by_column in zip(candidates, self._score(candidates)):
             ranked = sorted(by_column.items(), key=lambda kv: (-kv[1][1], kv[0]))
             for _, (entry, score) in ranked[:limit_per_phrase]:
@@ -550,6 +617,16 @@ class LiteralMatcher:
                         score=round(score, 3),
                     )
                 )
+            if any(_spelled(normalize(phrase)) == _spelled(normalize(entry.value)) for entry, _ in by_column.values()):
+                named.append(normalize(phrase).split())
+        # A word inside a phrase that names a value is part of that name, and
+        # is not a name of its own: the "Eggs" of "Dairy & Eggs" is not the
+        # sub-category. Only inside a phrase that is its value word for word.
+        # One that resembles a value -- a near-miss, or the same words in
+        # another arrangement -- may be the wrong reading, and then the
+        # shorter phrase inside it is the right one: "Summer Grilling season"
+        # is near an ad theme, and names the season `Summer Grilling`.
+        matches = [m for m in matches if not _within(normalize(m.phrase).split(), named)]
         return _drop_duplicate_values(matches)
 
     # --- scoring backends ---------------------------------------------------
@@ -568,14 +645,13 @@ class LiteralMatcher:
     def _keep(self, candidate: str, indexed: _Indexed, score: float) -> bool:
         """Whether a scored pair is believable enough to show the generator.
 
-        The floor is the scorer's own; the near-miss anchor is always
-        `difflib`'s, for the reason recorded on `NEAR_MISS_SCORE`.
+        The floor is the scorer's own; what the phrase has to be of the
+        value is the same on both paths (`_names`), and its near-miss anchor
+        is always `difflib`'s, for the reason recorded on `NEAR_MISS_SCORE`.
         """
         if score < self.min_score:
             return False
-        if indexed.words & _content_words(candidate):
-            return True
-        return _near_miss(normalize(candidate), indexed.norm)
+        return _names(normalize(candidate), indexed, self._schema_words)
 
     def _score_difflib(self, candidate: str) -> _ByColumn:
         """`difflib` similarity, keeping the best value per column.
@@ -589,7 +665,6 @@ class LiteralMatcher:
         best: _ByColumn = {}
         if not candidate:
             return best
-        words = _content_words(candidate)
         matcher = SequenceMatcher(autojunk=False)
         matcher.set_seq2(candidate)
         for indexed in self._entries:
@@ -601,7 +676,7 @@ class LiteralMatcher:
             score = matcher.ratio()
             if score < self.min_score:
                 continue
-            if not indexed.words & words and not _near_miss(candidate, indexed.norm):
+            if not _names(candidate, indexed, self._schema_words):
                 continue
             key = (indexed.entry.table, indexed.entry.column)
             if key not in best or score > best[key][1]:
@@ -612,11 +687,13 @@ class LiteralMatcher:
         """`pg_trgm`'s `word_similarity`, every candidate in one round trip.
 
         `word_similarity(a, b)` scores `a` against the best-matching run of
-        whole words inside `b`, which is what makes "scan-back" reach
-        `Scan-Back Allowance` as well as `SCAN_BACK`. The normalised forms go
-        over the wire, not the raw ones, so the two backends agree on what is
-        being compared; ordinality carries the row back to its catalog entry,
-        so the table and column never need to make the trip.
+        whole words inside `b`: it finds every value a phrase could be, and
+        every value that merely contains it, at the same 1.00. So it does the
+        searching, in the database and indexed, and `_keep` decides which of
+        what it found the phrase names. The normalised forms go over the
+        wire, not the raw ones, so the two backends agree on what is being
+        compared; ordinality carries the row back to its catalog entry, so
+        the table and column never need to make the trip.
         """
         phrases = [normalize(c) for c in candidates]
         params = {
@@ -655,10 +732,10 @@ class LiteralMatcher:
 def _drop_duplicate_values(matches: Sequence[LiteralMatch]) -> list[LiteralMatch]:
     """One row per resolved value, keeping the phrase that matched it best.
 
-    "Show Dairy & Eggs" produces the candidates "Show Dairy & Eggs", "Dairy &
-    Eggs" and "dairy and eggs", all of which resolve to the same stored value.
-    Three identical lines in the generator's prompt is noise; the longest
-    phrase at the highest score is the informative one.
+    A question can name one value twice -- "dairy eggs" and, further on,
+    "Dairy & Eggs"; a misspelling and then the word itself. Two lines for
+    one value in the generator's prompt is noise; the longest phrase at the
+    highest score is the informative one.
     """
     best: dict[tuple[str, str, str], LiteralMatch] = {}
     for match in matches:

@@ -124,7 +124,7 @@ supervise --+-- retrieve_schema ----+
 | 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period) | screens |
 | 1. Intake | `refuse` | Answers a refused or ambiguous question without touching the database | -- |
 | 1. Context | `retrieve_schema` | Tables from the DDL-chunk vectors | -- |
-| 1. Context | `retrieve_literals` | Phrases in the question resolved to real values | -- |
+| 1. Context | `retrieve_literals` | Phrases in the question resolved to the real values they name -- the whole value, or a close spelling of it (7.0) | -- |
 | 1. Context | `retrieve_knowledge` | Business rules and data-dictionary chunks | -- |
 | 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
 | 1. Context | `retrieve_snippets` | SQL snippets -- joins, filters, measures, dimensions -- found by keyword phrase and by meaning (v5.6) | -- |

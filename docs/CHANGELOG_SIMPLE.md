@@ -70,6 +70,7 @@ arch7, the ensemble -- the question asked several ways, the pipeline run once pe
 **After publishing** (not in the images)
 - `launch.sh` says how many ways each question will be asked and how many calls the model host is asked at a time, beside the routing it reports.
 - The coverage and relevance audit: every compose variable new since 6.3 documented and tested, one coverage exclusion, every fake switch set, no test of a removed part, the tests' own unexecuted lines all skip and failure paths; every tier run and green, shell coverage 1,742 of 1,742.
+- The next architecture designed, not yet built: `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md` and its diagram -- the conversation remembered (the last `CONVERSATION_MEMORY` answered turns, five by default, fifteen at most, none at zero; the Supervisor restates a follow-up so that it stands alone, checked in code against the words typed, and the generator sees the earlier SQL as turns; the conversation kept in the serving process, bounded and forgotten, never on disk) and the pipeline chosen by release name at start (`PIPELINE_VERSION`: `v7_0_0` the ensemble, `v6_3_1` one run a question), said in every record.
 
 ## v6_3 (6.3.0) -- 2026-10-05
 

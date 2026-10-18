@@ -146,6 +146,46 @@ def test_a_result_is_labelled_by_its_question_and_its_wording():
     assert _worded("B07", CORRECT, 2).label == "B07.2"
 
 
+def _followed(qid: str, outcome: str, keeps: dict[str, bool] | None = None) -> QuestionResult:
+    followup = result(qid, "calendar", outcome, 1.0)
+    followup.followup_of, followup.keeps = qid, keeps or {}
+    return followup
+
+
+def test_the_follow_up_accuracy_is_over_the_follow_ups_alone():
+    """arch8's premise, measured: how many follow-ups came out right. A
+    question asked as the benchmark asks it in the same report is not one."""
+    report = BenchmarkReport(results=[
+        result("B03", "schema", CORRECT, 1.0),
+        _followed("B04", CORRECT), _followed("B05", WRONG), _followed("B06", FAILED), _followed("B07", WRONG),
+    ])
+    assert report.followed_up
+    assert [r.label for r in report.followups()] == ["B04.f", "B05.f", "B06.f", "B07.f"]
+    assert (report.followup_correct, report.followup_accuracy) == (1, 0.25)
+    assert report.accuracy == 2 / 5, "the report's accuracy is every result's"
+
+
+def test_the_consistency_is_the_first_turns_filters_the_delivered_sql_kept():
+    report = BenchmarkReport(results=[
+        _followed("B04", CORRECT),
+        _followed("B05", CORRECT, {"fiscal_year = 2025": True, "'Meat & Seafood'": False}),
+        _followed("B06", WRONG, {"fiscal_year = 2025": False}),
+    ])
+    assert report.filters_kept() == (1, 3)
+    assert report.consistency == 1 / 3
+
+
+def test_with_no_filter_to_keep_the_consistency_is_none_not_zero():
+    report = BenchmarkReport(results=[_followed("B01", CORRECT)])
+    assert (report.filters_kept(), report.consistency) == ((0, 0), None)
+
+
+def test_without_follow_ups_the_report_has_none():
+    report = BenchmarkReport(results=[result("B01", "schema", CORRECT, 1.0)])
+    assert not report.followed_up
+    assert (report.followup_correct, report.followup_accuracy, report.memory) == (0, 0.0, 0)
+
+
 def test_answered_separates_a_wrong_answer_from_no_answer():
     """A pipeline that gives up fails differently from one that confidently
     answers the wrong question, and the fixes are different too.

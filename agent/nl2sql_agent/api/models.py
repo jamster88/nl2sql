@@ -29,6 +29,8 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator
 from nl2sql_common.envelope import Wire
 
+from nl2sql_agent.memory import MAX_QUESTION_LENGTH
+
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
 #: A person's verdict on an answer. `yes` is "correct" and `no` is "wrong",
@@ -39,13 +41,14 @@ JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 #: fleshed out.
 Verdict = Literal["yes", "no", "incomplete"]
 
-#: The longest question this API will accept, in characters.
-#:
-#: Named rather than written into the validator because it is published in
-#: `/v1/meta` as well, and the two must be the same number. A client that
-#: learns the rule from `Limits` and then hits a 422 has been lied to, which
-#: is worse than not publishing it at all.
-MAX_QUESTION_LENGTH = 2000
+# The longest question this API will accept, in characters, is
+# `MAX_QUESTION_LENGTH`, imported above from `memory.py`, where a
+# follow-up's restatement is held to the same bound (arch8).
+#
+# Named rather than written into the validator because it is published in
+# `/v1/meta` as well, and the two must be the same number. A client that
+# learns the rule from `Limits` and then hits a 422 has been lied to, which
+# is worse than not publishing it at all.
 
 #: How many `metadata` entries a caller may attach to a question.
 MAX_METADATA_ENTRIES = 20

@@ -60,6 +60,8 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
         "max_attempts": 7,
         "questions": "B01,B02",
         "paraphrase_set": False,
+        "followup_set": False,
+        "memory": 0,
     }
     assert run["metrics"]["accuracy"] == 1.0
     assert run["metrics"]["questions"] == 2
@@ -81,6 +83,7 @@ def test_each_question_is_a_trace_in_the_run_tagged_and_judged(monkeypatch, caps
     assert trace.tags["benchmark.question_id"] == "B01"
     assert trace.tags["benchmark.category"] == by_id("B01").category
     assert trace.tags["benchmark.wording"] == "0"
+    assert "benchmark.followup" not in trace.tags
     [score] = trace.assessments
     assert (score.name, score.value, score.rationale) == (tracking.SCORE, False, WRONG)
     # Sent before it is scored, or the server has no trace to score.
@@ -110,6 +113,21 @@ def test_the_paraphrase_set_is_one_run_whose_traces_say_which_wording_asked(monk
     traces = list(mlflow.traces.values())
     assert sorted(t.tags["benchmark.wording"] for t in traces) == ["0", "1", "2", "3"]
     assert {t.tags["benchmark.question_id"] for t in traces} == {"B01"}
+
+
+def test_the_follow_up_set_is_one_run_whose_traces_say_they_are_follow_ups(monkeypatch, capsys):
+    mlflow = FakeMlflowWithRuns()
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "B07", "--followups"], tracer=tracer_on(mlflow))
+
+    [run] = mlflow.runs.values()
+    assert run["name"] == "benchmark snippets (follow-up set)"
+    assert (run["params"]["followup_set"], run["params"]["memory"], run["params"]["paraphrase_set"]) == (
+        True, 0, False)
+    assert (run["metrics"]["followup_accuracy"], run["metrics"]["followups_correct"]) == (1.0, 2)
+    assert (run["metrics"]["filters_kept"], run["metrics"]["consistency"]) == (0, 0.0)
+    traces = sorted(mlflow.traces.values(), key=lambda t: t.tags["benchmark.question_id"])
+    assert [(t.tags["benchmark.question_id"], t.tags["benchmark.followup"]) for t in traces] == [
+        ("B01", "true"), ("B07", "true")]
 
 
 def test_a_configuration_cut_short_keeps_what_it_measured_under_a_status_that_says_so(monkeypatch, capsys):
@@ -183,6 +201,19 @@ def test_with_the_paraphrase_set_the_metrics_carry_the_stability():
     values = tracking.metrics(report)
     assert (values["stability"], values["stable"]) == (0.5, 1)
     assert "stability" not in tracking.metrics(BenchmarkReport(results=[result("B01", CORRECT)]))
+
+
+def test_with_the_follow_up_set_the_metrics_carry_its_accuracy_and_the_filters_kept():
+    report = BenchmarkReport(results=[
+        result("B04", CORRECT, followup_of="B04"),
+        result("B05", WRONG, followup_of="B05", keeps={"fiscal_year = 2025": True, "'Meat & Seafood'": False}),
+    ])
+    values = tracking.metrics(report)
+    assert (values["followup_accuracy"], values["followups_correct"]) == (0.5, 1)
+    assert (values["filters_kept"], values["consistency"]) == (1, 0.5)
+    alone = tracking.metrics(BenchmarkReport(results=[result("B04", CORRECT, followup_of="B04")]))
+    assert alone["followup_accuracy"] == 1.0 and "consistency" not in alone
+    assert "followup_accuracy" not in tracking.metrics(BenchmarkReport(results=[result("B01", CORRECT)]))
 
 
 def test_a_question_that_crashed_has_no_trace_to_score():

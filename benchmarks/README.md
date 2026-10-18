@@ -343,12 +343,76 @@ rewording -- with the words asked as its `question`, and each configuration
 a `stability` block: the fraction, the stable count, and every question's
 outcomes in wording order; `null` for a run without the set.
 
+## The follow-up set
+
+```bash
+python benchmarks/run_benchmark.py --followups --config snippets
+python benchmarks/run_benchmark.py --followups --config ensemble
+```
+
+Each question's second turn: the question a person types after seeing its
+answer, written by hand in [`followups.py`](followups.py) -- "And by
+banner?", "The same for FY2024?", "What were its top 2 categories?" --
+each a fragment that borrows a measure, a period, an entity or a filter
+from the first turn, with the complete question it means and that
+question's reference query. The follow-up is asked in the words typed and
+scored against the complete question's reference; the report adds the
+**follow-up accuracy** and how often the delivered SQL kept the filters the
+first turn set (`fiscal_year = 2025`, `'Meat & Seafood'`), with each
+follow-up's outcome and its filters kept. The start of the `snippets` run
+of 2026-10-16:
+
+```
+FOLLOW-UPS  (the follow-up set: the question a person asks after each answer)
+  turns remembered     0  (--memory; at 0 each follow-up is asked alone, as 7.0 asks every question)
+  follow-up accuracy   1/15  (6.7%)
+  filters kept         3/14  the first turn's, in the delivered SQL
+
+  per follow-up
+    B01.f  schema     ok     And how many in each state?
+    B02.f  schema     WRONG  Break that down by department.  kept 0/1
+    B03.f  schema     FAILED What's the average square footage for each?
+    B04.f  calendar   WRONG  The same for FY2024?
+    B05.f  calendar   WRONG  What were its top 2 categories?  kept 1/2
+    ...
+```
+
+It is Phase 0 of the next architecture
+([`Multi-Agent_NL2SQL_arch8.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md),
+section 10), which remembers the conversation so that a follow-up is read
+as the complete question it means -- worth building only if the pipeline,
+which answers every question alone, answers such a fragment wrongly. This
+measures how often, before anything is built on it; the number is in
+[`docs/benchmark.md`](../docs/benchmark.md#the-follow-up-set).
+`--memory N` is how many earlier turns a follow-up is asked with. Nothing
+takes a turn until arch8's Phase 2, so 0 -- the fragment asked alone, which
+is what 7.0 does with a follow-up -- is the only depth, and any other is
+refused.
+
+Each standalone follows the rules arch8 gives the Supervisor that will
+write them (section 23.3): every number, name and quoted value of the
+fragment kept as written, and nothing added that the first turn does not
+supply. Each was checked by hand against its fragment and its first turn,
+and [`tests/benchmarks/test_followups.py`](../tests/benchmarks/test_followups.py)
+holds every one to the checks in code a model's restatement will meet
+([`memory.py`](../agent/nl2sql_agent/memory.py): numbers, literals,
+polarity, shape) against its fragment.
+
+`--json` gives each result its `followup_of` -- the question it follows,
+whose id it is filed under -- with the words asked as its `question` and
+its `keeps`, each filter of the first turn's with whether the delivered SQL
+kept it; and each configuration a `followups` block: the depth, the
+accuracy, the filters kept and the consistency, their fraction (`null`
+when no reference keeps one); `null` for a run without the set.
+
 ## Options
 
 ```bash
 python benchmarks/run_benchmark.py --only B07 B08      # just these
 python benchmarks/run_benchmark.py --category grain    # just this category
 python benchmarks/run_benchmark.py --paraphrase-set    # each question four ways: the stability
+python benchmarks/run_benchmark.py --followups         # each question's follow-up: the follow-up accuracy
+python benchmarks/run_benchmark.py --followups --memory 0  # with nothing remembered, the only depth yet
 python benchmarks/run_benchmark.py --json results.json # machine-readable
 python benchmarks/run_benchmark.py --verbose           # every pipeline step
 python benchmarks/run_benchmark.py --model other-model --base-url http://host:11434
@@ -380,15 +444,15 @@ python benchmarks/run_benchmark.py --compare
 
 With MLflow answering, each configuration the benchmark measures is an MLflow
 run of its own, named `benchmark <configuration>` -- with ` (paraphrase set)`
-after it when the set was asked -- in the agent's experiment
+or ` (follow-up set)` after it when a set was asked -- in the agent's experiment
 (`nl2sql-agent`, or `MLFLOW_EXPERIMENT_NAME`):
 
 | | |
 |---|---|
-| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`) |
-| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
+| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`), whether the follow-up set was (`followup_set`) and with how many turns remembered (`memory`) |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; with the follow-up set, `followup_accuracy` and `followups_correct`, and `filters_kept` and `consistency` when a reference keeps a filter; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
-| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
+| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own), `benchmark.followup` (`true` on a follow-up, filed under the question it follows) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
 
 So a wrong answer is one click from the trace that gave it -- which agent
 read what, which model wrote the SQL, what the repair said -- and two runs
@@ -431,3 +495,11 @@ The scorer is tested against both kinds of mistake it could make: too strict
 The paraphrase set is held offline: every question has three rewordings, no
 wording repeats another, and each rewording passes the fidelity checks
 against its question, all forty-five reported at once when any fails.
+
+So is the follow-up set: every question has one, no fragment is another
+wording or its own standalone, every standalone passes the checks in code
+against its fragment -- all fifteen reported at once when any fails -- and
+takes something from its first turn that the fragment does not say, and
+every filter a reference is said to keep is in it. Under `--run-docker`
+each reference is run twice for its row count and its determinism, and
+none returns its first turn's answer.

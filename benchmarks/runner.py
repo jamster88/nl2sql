@@ -241,10 +241,21 @@ class QuestionResult:
     #: how many of its attempts the check refused, and how that run ended,
     #: scored against the reference as the answer is.
     grain_repairs: list[dict[str, Any]] = field(default_factory=list)
+    #: The follow-up set's (arch8): the benchmark question this one follows,
+    #: whose id and category it keeps -- its words a follow-up's, in
+    #: `question`, and its reference the complete question's -- and each of
+    #: that question's filters the follow-up's reference keeps, with whether
+    #: the delivered SQL kept it too. Empty for a question asked as the
+    #: benchmark asks it.
+    followup_of: str = ""
+    keeps: dict[str, bool] = field(default_factory=dict)
 
     @property
     def label(self) -> str:
-        """B07 for the benchmark's own wording, B07.2 for the second rewording."""
+        """B07 for the benchmark's own wording, B07.2 for the second
+        rewording, B07.f for the question that follows it."""
+        if self.followup_of:
+            return f"{self.question_id}.f"
         return f"{self.question_id}.{self.wording}" if self.wording else self.question_id
 
     @property
@@ -268,6 +279,9 @@ class BenchmarkReport:
     #: rejects a right query blocks the release that ships it.
     grain_checked: bool = False
     rejected_references: list[str] = field(default_factory=list)
+    #: How many earlier turns each follow-up was asked with (arch8): 0,
+    #: nothing remembered, until the agent takes turns.
+    memory: int = 0
 
     @property
     def total(self) -> int:
@@ -378,6 +392,44 @@ class BenchmarkReport:
             if result.rung:
                 counts[result.rung] = counts.get(result.rung, 0) + 1
         return counts
+
+    # --- the follow-up set (arch8 section 11) ------------------------------
+
+    def followups(self) -> list[QuestionResult]:
+        """The results that were follow-ups, in the order they were asked."""
+        return [result for result in self.results if result.followup_of]
+
+    @property
+    def followed_up(self) -> bool:
+        """Whether the follow-up set was asked."""
+        return bool(self.followups())
+
+    @property
+    def followup_correct(self) -> int:
+        return sum(1 for result in self.followups() if result.correct)
+
+    @property
+    def followup_accuracy(self) -> float:
+        """The fraction of follow-ups answered right -- arch8 section 11's
+        first measure: with nothing remembered, the premise memory is argued
+        from."""
+        followups = self.followups()
+        return self.followup_correct / len(followups) if followups else 0.0
+
+    def filters_kept(self) -> tuple[int, int]:
+        """(kept, kept by the references): the first turns' filters the
+        follow-ups' references keep, and how many of them the delivered SQL
+        kept too."""
+        keeps = [kept for result in self.followups() for kept in result.keeps.values()]
+        return sum(keeps), len(keeps)
+
+    @property
+    def consistency(self) -> float | None:
+        """The fraction of those filters kept -- arch8 section 11's
+        consistency. None when no reference keeps one, so it is never
+        confused with none kept."""
+        kept, total = self.filters_kept()
+        return kept / total if total else None
 
     # --- the ensemble (arch7 section 11) ----------------------------------
 

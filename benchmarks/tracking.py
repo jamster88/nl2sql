@@ -7,11 +7,13 @@ run:
 
 * **parameters**: what was measured -- the configuration, the model, whether
   calls were routed, the retry budget, the questions, whether they were
-  asked the paraphrase set's four ways;
+  asked the paraphrase set's four ways, whether their follow-ups were asked
+  and with how many turns remembered;
 * **metrics**: the score and where the time went -- accuracy overall and per
   category, answered, the total and median seconds, seconds per stage, and
   how many questions the Aggregator scored at each rung; with the
-  paraphrase set, the stability too; through the ensemble, how its runs
+  paraphrase set, the stability too; with the follow-up set, the follow-up
+  accuracy and the first turns' filters kept; through the ensemble, how its runs
   agreed, which checks discarded rewordings, what the Judge did and how
   often its overruling turned a wrong answer right or a right one wrong,
   how often a second wave ran, and what fusion joined, added and dropped;
@@ -41,20 +43,26 @@ SCORE = "benchmark_correct"
 SOURCE = "benchmarks/run_benchmark.py"
 
 
-def question_tags(question: BenchmarkQuestion, configuration: str, *, wording: int = 0) -> dict[str, str]:
+def question_tags(
+    question: BenchmarkQuestion, configuration: str, *, wording: int = 0, followup: bool = False,
+) -> dict[str, str]:
     """The tags a question's trace is filed with, whether or not it is grouped.
 
     `wording` is 0 for the question's own words and 1 to 3 for the
     paraphrase set's rewordings, so the four traces of one question can be
-    told apart -- and found together by its id.
+    told apart -- and found together by its id. A follow-up (arch8) is
+    filed under the question it follows, and says it is one.
     """
-    return {
+    tags = {
         "nl2sql.entrypoint": "benchmark",
         "benchmark.configuration": configuration,
         "benchmark.question_id": question.id,
         "benchmark.category": question.category,
         "benchmark.wording": str(wording),
     }
+    if followup:
+        tags["benchmark.followup"] = "true"
+    return tags
 
 
 class BenchmarkRun:
@@ -119,6 +127,13 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
     if report.paraphrased:
         values["stability"] = report.stability
         values["stable"] = report.stable
+    if report.followed_up:
+        values["followup_accuracy"] = report.followup_accuracy
+        values["followups_correct"] = report.followup_correct
+        kept, total = report.filters_kept()
+        if total:
+            values["filters_kept"] = kept
+            values["consistency"] = kept / total
     if report.ensembled:
         for level, count in report.agreement_levels().items():
             values[f"agreement.{level}"] = count
@@ -143,6 +158,7 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
 
 def open_run(
     agent: Any, configuration: str, questions: list[BenchmarkQuestion], *, paraphrase_set: bool = False,
+    followups: bool = False, memory: int = 0,
 ) -> BenchmarkRun | None:
     """The configuration's run, or None when its traces cannot be grouped."""
     if not agent.tracer.ready():
@@ -158,8 +174,9 @@ def open_run(
     from nl2sql_agent import __version__
 
     settings = agent.settings
+    asked = " (paraphrase set)" if paraphrase_set else " (follow-up set)" if followups else ""
     run = mlflow.start_run(
-        run_name=f"benchmark {configuration}" + (" (paraphrase set)" if paraphrase_set else ""),
+        run_name=f"benchmark {configuration}{asked}",
         tags={"nl2sql.entrypoint": "benchmark", "nl2sql.version": __version__},
     )
     mlflow.log_params(
@@ -170,6 +187,8 @@ def open_run(
             "max_attempts": settings.max_attempts,
             "questions": ",".join(q.id for q in questions),
             "paraphrase_set": paraphrase_set,
+            "followup_set": followups,
+            "memory": memory,
         }
     )
     return BenchmarkRun(mlflow, run.info.run_id)

@@ -7,6 +7,7 @@ python benchmarks/run_benchmark.py                   # 15 questions, accuracy th
 python benchmarks/run_benchmark.py --config ensemble # the same, through the ensemble (arch7)
 python benchmarks/run_benchmark.py --compare         # schema-only vs ... vs snippets vs ensemble
 python benchmarks/run_benchmark.py --paraphrase-set  # each question four ways: the stability
+python benchmarks/run_benchmark.py --followups       # each question's follow-up: the follow-up accuracy
 ```
 
 Since v5.2 the report also says which model answered each agent at each
@@ -1063,3 +1064,101 @@ turns. A question either way is what rewording a prompt gives or takes,
 whatever the rewording says. So the matcher is measured on what it offers,
 where nothing is on an edge, and the configuration that ships was run on
 sixty wordings both ways.
+
+## The follow-up set
+
+Phase 0 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
+-- the design that remembers the conversation, so that "and by store?" is
+read as the complete question it means -- measures the premise it is
+argued from, before anything is built on it: how often the pipeline, which
+answers every question alone, answers a follow-up written as people write
+them. Each of the fifteen questions has a second turn written by hand
+([`benchmarks/followups.py`](../benchmarks/followups.py)): a fragment that
+borrows a measure, a period, an entity or a filter from the first turn or
+its answer, the complete question it means, and that question's reference
+query. The fragment is asked in the words typed, with nothing remembered
+-- what 7.0 does with every follow-up -- and scored against the complete
+question's reference. The **follow-up accuracy** is the fraction right.
+[`benchmarks/README.md`](../benchmarks/README.md#the-follow-up-set) has how
+the follow-ups were written and what the report and `--json` carry.
+
+**Measured 2026-10-16** with the agent as 7.0 ships, against the running
+stack, `--memory 0`: each fragment asked alone, and the report saying so.
+Beside it, the fifteen asked complete on 2026-10-12
+([What a question names](#what-a-question-names)):
+
+| | `snippets` | `ensemble` |
+|---|---|---|
+| the fifteen, asked complete | 15/15 | 15/15 |
+| **follow-up accuracy**, nothing remembered | **1/15** | **2/15** |
+| runnable SQL | 12/15 | 12/15 |
+| refused before any SQL | 3: B03, B10, B11 | 3: B03, B10, B11 |
+| the first turns' filters kept | 3/14 | 3/14 |
+| model calls | 60 | 284 |
+| total, median | 543.9s, 37.8s | 1925.6s, 88.7s |
+
+**The premise holds.** The risks by phase expected the number to be low,
+and it is: one or two follow-ups of fifteen right, where the same fifteen
+asked complete are all right. Three fragments never reach the generator.
+"What's the average square footage for each?", "What were their product
+names and brands?" and "And how many baskets did each have?" are screened
+as out of domain: a pronoun with nothing for it to stand for reads as a
+question the database cannot answer. The other twelve are answered, and
+each answers a different question. "And by banner?" counts each banner's
+stores, where it meant their net sales in fiscal year 2025. "Break that
+down by department." sums net sales, where it meant products and how many
+are private label. "What were its top 2 categories?" ranks the categories
+of every department, not Meat & Seafood's. "Which vendor paid us the most
+in SCAN_BACK?" ranks every year's allowances, not fiscal 2025's. Through
+`snippets`, "The same for FY2024?" gives FY2024 month by month.
+
+**The right shape is no sign.** B02, B05, B08, B14 and B15 return as many
+rows as their references in both configurations: a breakdown by the
+dimension asked for, over the wrong measure or the wrong period. A person
+reading the answer sees the table they expected.
+
+**What was kept is a year the generator wrote unasked.** The delivered
+SQL kept 3 of the 14 filters the first turns set, the same three in both
+configurations: `fiscal_year = 2025` in B05, B07 and B15, a year the
+generator gave a fragment that named none, as it did not in B06, B09, B12
+or B14. Nothing else was kept: not `'Meat & Seafood'`, not fiscal month
+12, not B08's `fiscal_year = 2024`, not B02's private label, not B10's
+top five.
+
+**The ensemble does not see it.** Where its readings of a fragment
+agree, they agree on a wrong question as readily as on the right one:
+B02's runs are unanimous and wrong, B09's a majority and wrong. Where the
+fragment says too little, they scatter: B06's seven readings of "What
+about Q3?" ask six different questions, from the quarter's dates to its
+market share. Five follow-ups are contested, the Judge accepting none of
+their answers, and an answer is given for each all the same. Of its two
+right, B01 is right in both configurations: after "How many stores are
+there?", "And how many in each state?" has one likely reading and it is
+the one meant. B04 is the Judge's, which overruled the runs' wrong answer
+in the second wave. The ensemble's one gain cost 224 model calls more.
+
+**What it means for arch8.** Retrieval alone guesses a follow-up right
+once or twice in fifteen, so remembering the conversation is bought for
+accuracy, as arch8 argues, and not only for consistency and the record.
+Phase 2 measures five turns remembered against these two numbers, under
+both pipelines.
+
+### The checks in code against the fifteen
+
+The second number Phase 0 owes
+([risks by phase](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_risks_by_phase.md),
+S1): how many of the fifteen standalones, each a complete question a
+person wrote for a fragment, the checks in code would have discarded --
+the checks a model's restatement will be held to before it becomes the
+question the pipeline answers ([`memory.py`](../agent/nl2sql_agent/memory.py),
+`resolve`: C1 numbers, C2 literals, C3 polarity, C4 shape, the fidelity
+gate's extractors in subset form). **None of 15**, with the word lists as
+the paraphrase set grew them; nothing was added.
+[`tests/benchmarks/test_followups.py`](../tests/benchmarks/test_followups.py)
+holds it. Four fragments carry a literal the standalone had to keep
+(`FY2024`, `Q3`, `Frozen Foods`, `SCAN_BACK`), three a number (`2`, and
+the `2024` and the `3` inside `FY2024` and `Q3`) and four a direction
+(`top`, `most`, `highest`, `fewest`). Read the number for what it is: the standalones were written
+with arch8's rules in view, so they are kinder to the checks than a
+model's restatements will be; Phase 2's rejections by check are the number
+for those.

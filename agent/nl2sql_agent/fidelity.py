@@ -29,6 +29,10 @@ test (Phase 0, and S1 of `Multi-Agent_NL2SQL_arch7_risks_by_phase.md`).
 What was added for a rewording the starting lists discarded is marked
 "grown" below, with the rewording that showed it; `docs/benchmark.md`
 counts them.
+
+The extractors are shared: arch8 holds a follow-up's restatement to the
+words typed with the same ones, in subset form (`memory.resolve`), which is
+why `words` and `unkept` are public.
 """
 
 from __future__ import annotations
@@ -108,7 +112,8 @@ def _fold(text: str) -> str:
     return " ".join(text.replace("’", "'").casefold().split())
 
 
-def _words(text: str) -> list[str]:
+def words(text: str) -> list[str]:
+    """The text's words, case-folded, its punctuation gone."""
     return _WORD.findall(_fold(text))
 
 
@@ -121,7 +126,7 @@ def _number(digits: str) -> str:
 def numerals(text: str) -> Counter[str]:
     """F1: every number in the text, as digits; a number word counts as its number."""
     found = Counter(_number(match) for match in _NUMBER.findall(text))
-    found.update(_NUMBERS[word] for word in _words(text) if word in _NUMBERS)
+    found.update(_NUMBERS[word] for word in words(text) if word in _NUMBERS)
     return found
 
 
@@ -194,7 +199,7 @@ def polarity(text: str) -> set[str]:
 
 def similarity(a: str, b: str) -> float:
     """Token Jaccard, case-folded and with the punctuation stripped."""
-    left, right = set(_words(a)), set(_words(b))
+    left, right = set(words(a)), set(words(b))
     if not left and not right:
         return 1.0
     return len(left & right) / len(left | right)
@@ -203,6 +208,16 @@ def similarity(a: str, b: str) -> float:
 def distinct(text: str, others: Sequence[str], *, max_jaccard: float = MAX_JACCARD) -> bool:
     """F5: no closer than `max_jaccard` to any of `others`."""
     return all(similarity(text, other) <= max_jaccard for other in others)
+
+
+def unkept(original: str, text: str) -> list[str]:
+    """F2's search: the literals of `original` that `text` does not carry
+    word for word, case-folded, in order."""
+    folded = _fold(text)
+    return [
+        literal for literal in sorted(literals(original))
+        if not re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", folded)
+    ]
 
 
 def _difference(original: Counter[str] | set[str], rewording: Counter[str] | set[str]) -> str:
@@ -223,10 +238,9 @@ def check(original: str, rewording: str, kept: Sequence[str] = ()) -> str | None
     """
     if numerals(original) != numerals(rewording):
         return f"F1 numbers: {_difference(numerals(original), numerals(rewording))}"
-    folded = _fold(rewording)
-    for literal in sorted(literals(original)):
-        if not re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", folded):
-            return f"F2 literals: '{literal}' not found"
+    lost = unkept(original, rewording)
+    if lost:
+        return f"F2 literals: '{lost[0]}' not found"
     if polarity(original) != polarity(rewording):
         return f"F3 polarity: {_difference(polarity(original), polarity(rewording))}"
     for index, other in enumerate((original, *kept)):

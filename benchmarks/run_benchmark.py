@@ -6,6 +6,7 @@
     python benchmarks/run_benchmark.py --only B07 B08
     python benchmarks/run_benchmark.py --json out.json
     python benchmarks/run_benchmark.py --paraphrase-set   # each question four ways: the stability
+    python benchmarks/run_benchmark.py --followups        # each question's follow-up: the follow-up accuracy
 
 Accuracy is execution accuracy: the agent's SQL is run and its rows compared
 against reference SQL whose answer was verified against the shipped dataset.
@@ -17,6 +18,14 @@ its three hand-written rewordings does (`benchmarks/paraphrases.py`), scores
 all four against the question's one reference, and reports the stability:
 the fraction of questions every wording of which came out right -- arch7's
 premise, measured.
+
+`--followups` asks, for each question, the second question a person types
+after seeing its answer (`benchmarks/followups.py`) -- "and by banner?",
+"the same for FY2024" -- and scores it against the reference of the
+complete question it means: the follow-up accuracy, arch8's premise.
+`--memory N` is how many earlier turns it is asked with; 0, nothing
+remembered, is all the agent takes until arch8's Phase 2, so each follow-up
+is asked alone, as 7.0 asks every question.
 
 `--compare` runs the same questions through five configurations, each the
 one before it plus one stage -- four of retrieval, which is the measurement
@@ -47,6 +56,7 @@ for _path in (REPO_ROOT / "common", REPO_ROOT / "agent", REPO_ROOT):
         sys.path.insert(0, str(_path))
 
 from benchmarks import tracking  # noqa: E402
+from benchmarks.followups import FOLLOWUPS, Followup, as_question, keeps  # noqa: E402
 from benchmarks.paraphrases import wordings  # noqa: E402
 from benchmarks.questions import CATEGORIES, QUESTIONS, BenchmarkQuestion  # noqa: E402
 from benchmarks.runner import (  # noqa: E402
@@ -159,17 +169,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="run every configuration in CONFIGURATIONS and print them side by side",
     )
     p.add_argument("--config", choices=sorted(CONFIGURATIONS), default="snippets")
-    p.add_argument(
+    sets = p.add_mutually_exclusive_group()
+    sets.add_argument(
         "--paraphrase-set", action="store_true",
         help="ask each question its own way and its three rewordings (benchmarks/paraphrases.py), "
              "and report the stability",
+    )
+    sets.add_argument(
+        "--followups", action="store_true",
+        help="ask each question's follow-up as a person types it (benchmarks/followups.py), "
+             "and report the follow-up accuracy",
+    )
+    p.add_argument(
+        "--memory", type=int, default=0, metavar="N",
+        help="how many earlier turns a follow-up is asked with; 0, nothing remembered, until the agent "
+             "takes turns (arch8 Phase 2)",
     )
     p.add_argument("--json", metavar="PATH", help="also write the full results as JSON")
     p.add_argument("--database-url", help="override the retail database URL")
     p.add_argument("--model", help="override the chat model")
     p.add_argument("--base-url", help="override the chat model host")
     p.add_argument("-v", "--verbose", action="store_true", help="show each pipeline step")
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.memory != 0:
+        p.error(f"--memory {args.memory}: the agent takes no turns until arch8's Phase 2, so 0 is the only depth")
+    return args
 
 
 def select(args: argparse.Namespace) -> list[BenchmarkQuestion]:
@@ -317,6 +341,32 @@ def run_question(
     )
 
 
+def run_followup(agent, database, followup: Followup, timer: StageTimer) -> QuestionResult:
+    """Ask a follow-up as a person types it and score it against the
+    reference of the complete question it means (arch8 Phase 0).
+
+    Nothing is remembered: the words typed are asked alone, which is what
+    7.0 does with a follow-up. The result is filed under the question it
+    follows, with which of that question's filters the delivered SQL kept.
+    """
+    result = run_question(agent, database, as_question(followup), timer, asked=followup.fragment)
+    result.followup_of = followup.first
+    result.keeps = keeps(followup, result.sql)
+    return result
+
+
+def to_ask(args: argparse.Namespace, question: BenchmarkQuestion) -> list[tuple[str, int, Followup | None]]:
+    """What is put to the agent for one question, each with its wording's
+    number and the follow-up it is: the question's own words; with the
+    paraphrase set, each of its four wordings; with the follow-up set, the
+    follow-up a person types after its answer."""
+    if args.followups:
+        followup = FOLLOWUPS[question.id]
+        return [(followup.fragment, 0, followup)]
+    texts = wordings(question) if args.paraphrase_set else (question.question,)
+    return [(text, wording, None) for wording, text in enumerate(texts)]
+
+
 def without_judge(state, expected, ordered: bool, outcome: str) -> str:
     """How the answer the runs alone would have chosen scores: the delivered
     one's outcome, unless the Judge overruled them (arch7.1) -- then the run
@@ -440,20 +490,26 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
     except LlmUnavailableError as exc:
         raise SystemExit(f"error: {exc}")
 
-    report = BenchmarkReport(label=configuration, grain_checked=settings.grain_check_enabled)
+    report = BenchmarkReport(label=configuration, grain_checked=settings.grain_check_enabled, memory=args.memory)
     # Before anything is asked: the check held to the references, against
     # the grains this database measures to.
     report.rejected_references = rejected_references(pipeline.grains(), questions)
-    tracked = tracking.open_run(agent, configuration, questions, paraphrase_set=args.paraphrase_set)
+    tracked = tracking.open_run(
+        agent, configuration, questions, paraphrase_set=args.paraphrase_set, followups=args.followups,
+        memory=args.memory,
+    )
     complete = False
     try:
         for question in questions:
-            asked = wordings(question) if args.paraphrase_set else (question.question,)
-            for wording, text in enumerate(asked):
-                label = f"{question.id}.{wording}" if wording else question.id
+            for text, wording, followup in to_ask(args, question):
+                label = f"{question.id}.f" if followup else f"{question.id}.{wording}" if wording else question.id
                 print(f"  {label} [{question.category}] {text[:64]}...", flush=True)
-                with tracing.tagged(tracking.question_tags(question, configuration, wording=wording)):
-                    result = run_question(agent, database, question, timer, asked=text, wording=wording)
+                tags = tracking.question_tags(question, configuration, wording=wording, followup=bool(followup))
+                with tracing.tagged(tags):
+                    if followup is None:
+                        result = run_question(agent, database, question, timer, asked=text, wording=wording)
+                    else:
+                        result = run_followup(agent, database, followup, timer)
                 report.results.append(result)
                 if tracked is not None:
                     tracked.score(result)
@@ -494,6 +550,9 @@ def print_report(report: BenchmarkReport) -> None:
     if report.paraphrased:
         print_stability(report)
 
+    if report.followed_up:
+        print_followups(report)
+
     if report.ensembled:
         print_ensemble(report)
 
@@ -501,7 +560,7 @@ def print_report(report: BenchmarkReport) -> None:
         print_grain(report)
 
     print("\nSPEED")
-    asked = "wordings" if report.paraphrased else "questions"
+    asked = "wordings" if report.paraphrased else "follow-ups" if report.followed_up else "questions"
     print(f"  total                {report.total_seconds:.1f}s for {report.total} {asked}")
     print(f"  median per question  {report.median_seconds:.1f}s")
     print("\n  slowest")
@@ -610,6 +669,25 @@ def print_stability(report: BenchmarkReport) -> None:
         print(f"    {question_id} {results[0].category:<10} {right}/{len(results)}  {marks}")
 
 
+def print_followups(report: BenchmarkReport) -> None:
+    """The follow-up set's verdict (arch8 section 11): how many follow-ups
+    came out right with what was remembered, how often the delivered SQL
+    kept the filters the first turn set, and per follow-up, its outcome,
+    its words and the filters kept."""
+    followups = report.followups()
+    print("\nFOLLOW-UPS  (the follow-up set: the question a person asks after each answer)")
+    print(f"  turns remembered     {report.memory}  (--memory; at 0 each follow-up is asked alone, "
+          "as 7.0 asks every question)")
+    print(f"  follow-up accuracy   {report.followup_correct}/{len(followups)}  ({100 * report.followup_accuracy:.1f}%)")
+    kept, total = report.filters_kept()
+    if total:
+        print(f"  filters kept         {kept}/{total}  the first turn's, in the delivered SQL")
+    print("\n  per follow-up")
+    for result in followups:
+        filters = f"  kept {sum(result.keeps.values())}/{len(result.keeps)}" if result.keeps else ""
+        print(f"    {result.label:<6} {result.category:<10} {MARKS[result.outcome]:<6} {result.question[:44]}{filters}")
+
+
 def print_comparison(reports: list[BenchmarkReport]) -> None:
     # The stability column only where a question was asked more than one way.
     paraphrased = any(report.paraphrased for report in reports)
@@ -660,6 +738,16 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         for question_id, results in report.by_question().items()
                     },
                 } if report.paraphrased else None,
+                # The follow-up set's: None for a run without it.
+                "followups": {
+                    "memory": report.memory,
+                    "accuracy": report.followup_accuracy,
+                    "correct": report.followup_correct,
+                    "total": len(report.followups()),
+                    "filters_kept": report.filters_kept()[0],
+                    "filters": report.filters_kept()[1],
+                    "consistency": report.consistency,
+                } if report.followed_up else None,
                 # The ensemble's: None for one run a question.
                 "ensemble": {
                     "agreement": report.agreement_levels(),
@@ -715,6 +803,8 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "claims_added": r.claims_added,
                         "claims_dropped": r.claims_dropped,
                         "grain_repairs": r.grain_repairs,
+                        "followup_of": r.followup_of,
+                        "keeps": r.keeps,
                     }
                     for r in report.results
                 ],

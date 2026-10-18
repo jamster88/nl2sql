@@ -21,6 +21,7 @@ for _path in (REPO_ROOT, REPO_ROOT / "agent"):
         sys.path.insert(0, str(_path))
 
 from benchmarks import run_benchmark  # noqa: E402
+from benchmarks.followups import FOLLOWUPS  # noqa: E402
 from benchmarks.paraphrases import PARAPHRASES, wordings  # noqa: E402
 from benchmarks.questions import QUESTIONS, by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
@@ -739,6 +740,101 @@ def test_one_wrong_rewording_makes_its_question_unstable_and_fails_the_run(monke
     }
     assert [(r["id"], r["wording"]) for r in payload["results"][:4]] == [("B01", w) for w in range(4)]
     assert payload["results"][2]["question"] == missed
+
+
+class _Recording(_Reference):
+    """A reference database that remembers which query it was asked."""
+
+    def __init__(self, rows) -> None:
+        super().__init__(rows)
+        self.asked: list[str] = []
+
+    def run_select(self, sql: str):
+        self.asked.append(sql)
+        return super().run_select(sql)
+
+
+def test_a_follow_up_is_asked_in_the_words_typed_and_scored_against_the_question_it_means():
+    """arch8 Phase 0: nothing remembered, so the fragment is asked alone,
+    as 7.0 asks every question; its answer is the complete question's."""
+    followup = FOLLOWUPS["B07"]
+    database = _Recording([[34.2]])
+    agent = FakeAgent({"sql": "SELECT 34.2 FROM t WHERE d.fiscal_year = 2025", "result": {"rows": [[34.2]]},
+                       "attempts": 1})
+    result = run_benchmark.run_followup(agent, database, followup, StageTimer())
+    assert agent.asked == [followup.fragment]
+    assert database.asked == [followup.reference_sql]
+    assert (result.question, result.label, result.followup_of, result.category, result.outcome) == (
+        followup.fragment, "B07.f", "B07", "grain", CORRECT)
+    assert result.keeps == {"fiscal_month_num = 12": False, "fiscal_year = 2025": True}
+
+
+def test_a_follow_up_that_crashed_kept_no_filter():
+    followup = FOLLOWUPS["B07"]
+    result = run_benchmark.run_followup(
+        FakeAgent(raises=RuntimeError("connection reset")), _Reference([[34.2]]), followup, StageTimer())
+    assert (result.outcome, result.label) == (FAILED, "B07.f")
+    assert result.keeps == {"fiscal_month_num = 12": False, "fiscal_year = 2025": False}
+
+
+def test_the_follow_up_set_asks_each_questions_follow_up_and_reports_the_accuracy(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "followups.json"
+    code, agents = _drive(monkeypatch, RIGHT, argv=["--only", "B04", "B07", "--followups", "--json", str(out_path)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert agents[0].asked == [FOLLOWUPS["B04"].fragment, FOLLOWUPS["B07"].fragment]
+    assert "  B04.f [calendar] The same for FY2024?..." in out, "each follow-up is named as it is asked"
+    assert "turns remembered     0  (--memory; at 0 each follow-up is asked alone" in out
+    assert "follow-up accuracy   2/2  (100.0%)" in out
+    assert "filters kept         0/2  the first turn's, in the delivered SQL" in out
+    assert "B07.f  grain      ok     And for Frozen Foods?  kept 0/2" in out
+    assert "s for 2 follow-ups" in out
+    assert "STABILITY" not in out
+
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["followups"] == {
+        "memory": 0, "accuracy": 1.0, "correct": 2, "total": 2, "filters_kept": 0, "filters": 2, "consistency": 0.0,
+    }
+    assert payload["stability"] is None
+    first, second = payload["results"]
+    assert (first["id"], first["question"], first["followup_of"], first["keeps"]) == (
+        "B04", FOLLOWUPS["B04"].fragment, "B04", {})
+    assert second["keeps"] == {"fiscal_month_num = 12": False, "fiscal_year = 2025": False}
+
+
+def test_a_follow_up_whose_reference_keeps_no_filter_says_nothing_of_filters(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "followups.json"
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--followups", "--json", str(out_path)])
+    out = capsys.readouterr().out
+    assert "follow-up accuracy   1/1" in out and "filters kept" not in out
+    assert json.loads(out_path.read_text())["configurations"][0]["followups"]["consistency"] is None
+
+
+def test_a_run_without_the_follow_up_set_has_none_in_its_json(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "results.json"
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--json", str(out_path)])
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["followups"] is None
+    assert (payload["results"][0]["followup_of"], payload["results"][0]["keeps"]) == ("", {})
+
+
+def test_the_follow_up_set_and_the_paraphrase_set_are_one_or_the_other(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        run_benchmark.parse_args(["--followups", "--paraphrase-set"])
+    assert exit_.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_nothing_is_remembered_until_the_agent_takes_turns(capsys):
+    """arch8 Phase 0: the depth is forced to zero, since nothing yet takes
+    a turn; a deeper one is refused rather than measured as zero."""
+    assert run_benchmark.parse_args([]).memory == 0
+    assert run_benchmark.parse_args(["--followups", "--memory", "0"]).memory == 0
+    with pytest.raises(SystemExit) as exit_:
+        run_benchmark.parse_args(["--followups", "--memory", "5"])
+    assert exit_.value.code == 2
+    assert "--memory 5: the agent takes no turns until arch8's Phase 2, so 0 is the only depth" in (
+        capsys.readouterr().err)
 
 
 def test_verbose_puts_each_agent_step_on_stderr(monkeypatch, capsys):

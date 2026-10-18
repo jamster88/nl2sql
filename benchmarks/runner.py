@@ -249,6 +249,8 @@ class QuestionResult:
     #: benchmark asks it.
     followup_of: str = ""
     keeps: dict[str, bool] = field(default_factory=dict)
+    #: The pipeline that answered, as its state names it (arch8).
+    pipeline: str = ""
 
     @property
     def label(self) -> str:
@@ -282,6 +284,8 @@ class BenchmarkReport:
     #: How many earlier turns each follow-up was asked with (arch8): 0,
     #: nothing remembered, until the agent takes turns.
     memory: int = 0
+    #: The pipeline the configuration ran under, `PIPELINE_VERSION` (arch8).
+    pipeline: str = ""
 
     @property
     def total(self) -> int:

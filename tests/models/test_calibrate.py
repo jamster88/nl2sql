@@ -465,7 +465,7 @@ def test_a_calibration_run_writes_each_model_as_it_goes_and_prints_the_table(
     assert written["calibrated"]
     out = capsys.readouterr()
     assert f"[1/2] {REFERENCE}" in out.out and "[2/2] mistral:7b" in out.out
-    assert "model routing on:" in out.out and "  supervisor light " in out.out
+    assert "model routing on, pipeline v7_0_0:" in out.out and "  supervisor light " in out.out
     assert "need 9.0 GB resident together, more than --host-memory 1.0 GB" in out.err
 
 

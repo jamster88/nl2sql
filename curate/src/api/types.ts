@@ -79,6 +79,8 @@ export interface SubmissionModel {
   agent_version: string;
   /** The agent's record of the runs behind the answer (7.0); the review page shows it. */
   ensemble: Record<string, unknown>;
+  /** The pipeline that answered, by name (8.0); empty for a submission from before. */
+  pipeline: string;
   submitted_at: string | null;
   state: string;
   reviewer: string;

@@ -116,6 +116,15 @@ def test_a_run_that_gives_up_says_so_on_its_trace():
     assert trace.root.outputs["error"].startswith("Could not produce a valid query in 2 attempts")
 
 
+def test_the_trace_names_the_pipeline_that_answered():
+    """arch8: PIPELINE_VERSION, said on every trace as in every record."""
+    for name in ("v7_0_0", "v6_3_1"):
+        tracer, client = traced()
+        state = make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"]),
+                           tracer=tracer, pipeline_version=name).run("How many stores are there?")
+        assert state["pipeline"] == client.only_trace().tags["nl2sql.pipeline"] == name
+
+
 def test_a_routed_call_that_fell_back_is_two_calls_the_first_failed():
     tracer, client = traced()
     anchor = scripted(["SELECT count(*) AS n FROM dim_store"])

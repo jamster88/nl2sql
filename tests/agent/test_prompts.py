@@ -406,3 +406,36 @@ def test_the_snippet_block_carries_its_own_instruction():
     assert "exactly as written -- its casts, NULLIFs and join keys" in rendered
     assert "a note says what the piece guards against" in rendered
     assert rendered.endswith("SELECT SUM(f.net_sales_amt)\n\n")
+
+
+# ---------------------------------------------------------------------------
+# arch8: the conversation's placeholders, empty unless a run has turns
+# ---------------------------------------------------------------------------
+
+
+def test_every_optional_block_defaults_to_nothing_and_every_other_input_is_required():
+    """The two partials 7.0 has and arch8's three, listed beside the inputs
+    every caller must give: a placeholder added without a default fails
+    here, rather than changing every answer."""
+    assert SUPERVISOR_PROMPT.partial_variables == {"memory_rule": "", "memory": ""}
+    assert sorted(SUPERVISOR_PROMPT.input_variables) == ["domain", "question"]
+    assert SQL_GENERATION_PROMPT.partial_variables == {"contract": "", "snippets": "", "conversation_rule": ""}
+    assert sorted(SQL_GENERATION_PROMPT.input_variables) == [
+        "dialect", "examples", "feedback", "knowledge", "literals", "question", "schema", "task",
+    ]
+
+
+def test_the_conversations_placeholders_sit_where_their_text_will():
+    """The rule closes the Supervisor's system turn and the turns open its
+    human turn, so the question is the last line; the generator's clause
+    closes the sentence about earlier turns, before the schema."""
+    supervisor = SUPERVISOR_PROMPT.format_messages(
+        domain="d", question="and by store?", memory_rule="\nRULE", memory="TURNS\n\n"
+    )
+    assert supervisor[0].content.endswith("does not depend on time at all.\nRULE")
+    assert supervisor[1].content == "TURNS\n\nQuestion: and by store?"
+    generator = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge="", literals="", task="", examples=[],
+        question="q", feedback="", conversation_rule=" CLAUSE",
+    )
+    assert "which is the last one. CLAUSE\n\nSchema and sample data:\ns" in generator[0].content

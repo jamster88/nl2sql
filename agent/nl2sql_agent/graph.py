@@ -65,7 +65,7 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Callable, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph import END, START, StateGraph
@@ -78,6 +78,7 @@ from .database import Database, plan_cost_problem, strip_sql
 from .examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING, GoldenPairLibrary
 from .literals import LiteralMatcher, build_catalog, render_literal_map
 from .llm import build_llm, build_routed_client
+from .memory import Turn
 from .prompts import (
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
@@ -560,15 +561,19 @@ class Nl2SqlAgent:
         *,
         principal: str | None = None,
         on_progress: ProgressFn | None = None,
+        turns: Sequence[Turn] = (),
     ) -> AgentState:
         """Answer one question.
 
         `on_progress` overrides the callback given to the constructor for
         this run only, which is what lets one agent serve several callers at
-        once without their progress lines crossing.
+        once without their progress lines crossing. `turns` are the
+        conversation's earlier answered questions (arch8), the only way a
+        run is handed any; nothing is kept between calls.
         """
         with self.tracer.run(question, principal=principal) as trace:
-            state = self.answer(new_state(question, principal=principal), on_progress=on_progress)
+            seeded = new_state(question, principal=principal, turns=turns, pipeline=self.settings.pipeline_version)
+            state = self.answer(seeded, on_progress=on_progress)
             if trace is not None:
                 trace.finish(state)
                 state["trace_id"] = trace.trace_id

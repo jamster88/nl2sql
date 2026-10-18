@@ -210,6 +210,9 @@ class RoutingTable:
     keep_alive: str | None = None
     catalog: dict[str, Any] | None = None
     notes: list[str] = field(default_factory=list)
+    #: The pipeline the table routes for (`PIPELINE_VERSION`, arch8), named
+    #: on the first line, where the terminal already says the models.
+    pipeline: str = ""
 
     def models(self) -> list[str]:
         """The distinct models the table routes to, the anchor first."""
@@ -242,9 +245,11 @@ class RoutingTable:
         }
 
     def lines(self) -> list[str]:
-        """The table for a log or a terminal: one line per task."""
+        """The table for a log or a terminal: one line per task, after a
+        first that names the pipeline."""
         state = "on" if self.enabled else "off"
-        out = [f"model routing {state}: {len(self.models())} model(s), anchor {self.anchor}"]
+        named = f", pipeline {self.pipeline}" if self.pipeline else ""
+        out = [f"model routing {state}{named}: {len(self.models())} model(s), anchor {self.anchor}"]
         for task in TASKS:
             rungs = ", ".join(f"{rung} {self.cells[(task, rung)].model}" for rung in RUNGS)
             out.append(f"  {task:<10} {rungs}")
@@ -344,7 +349,8 @@ def build_table(
     keep_alive = settings.ollama_keep_alive or None
     if not settings.model_routing_enabled:
         cells = {(t, r): Cell(anchor, None, "routing off") for t in TASKS for r in RUNGS}
-        return RoutingTable(False, anchor, cells, {anchor: settings.num_ctx}, 1, None, None, notes)
+        return RoutingTable(False, anchor, cells, {anchor: settings.num_ctx}, 1, None, None, notes,
+                            settings.pipeline_version)
 
     described = None
     ranked: dict[tuple[str, str], list[str]] = {(t, r): [] for t in TASKS for r in RUNGS}
@@ -414,7 +420,8 @@ def build_table(
             "the host may swap them in and out"
         )
     windows = {name: window_for(settings, name, anchor, catalog) for name in sorted(table_models)}
-    return RoutingTable(True, anchor, cells, windows, settings.model_max_loaded, keep_alive, described, notes)
+    return RoutingTable(True, anchor, cells, windows, settings.model_max_loaded, keep_alive, described, notes,
+                        settings.pipeline_version)
 
 
 def _host_of(catalog: dict[str, Any]) -> str:

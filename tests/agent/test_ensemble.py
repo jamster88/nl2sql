@@ -26,6 +26,7 @@ from nl2sql_agent.ensemble import STEP_LABELS, EnsembleAgent, build_agent, run_p
 from nl2sql_agent.ensemble_state import Paraphrase, new_ensemble_state
 from nl2sql_agent.graph import Nl2SqlAgent
 from nl2sql_agent.judge import Ruling, Rulings
+from nl2sql_agent.memory import MemoryNote, Turn
 from nl2sql_agent.paraphrase import Rewording, Rewordings
 from nl2sql_agent.present import Narrative
 from nl2sql_agent.supervisor import Screening
@@ -142,6 +143,21 @@ def test_each_rewording_runs_seeded_with_the_reading_made_of_its_own_words():
     assert [c.state["intent"] for c in state["candidates"]] == ["aggregate", "lookup", "compare", "trend"]
     assert all(c.state["screened"] for c in state["candidates"])
     assert state["paraphrases"][0].screening["intent"] == "lookup"
+
+
+def test_every_run_is_handed_the_questions_words_turns_name_and_reading():
+    """arch8's seam: `run` and the ensemble's `_answer` are the only ways a
+    state is given turns, and every run carries the question's record -- the
+    words typed, the turns, the name, the note -- whatever its own wording."""
+    turn = Turn(index=1, asked="How many stores?", question="How many stores?", sql=SQL)
+    state = ensemble(FakeDatabase(tables=TABLES), model(written=rewordings(*FAITHFUL))).run(QUESTION, turns=[turn])
+
+    assert (state["asked"], state["turns"], state["memory"]) == (QUESTION, [turn], MemoryNote(shown=1))
+    assert [c.state["question"] for c in state["candidates"]] == [QUESTION, *FAITHFUL]
+    for candidate in state["candidates"]:
+        assert (candidate.state["asked"], candidate.state["turns"], candidate.state["pipeline"]) == (
+            QUESTION, [turn], "v7_0_0")
+        assert candidate.state["memory"] == state["memory"]
 
 
 def test_the_first_wave_is_the_original_and_the_first_faithful_rewordings_in_the_order_written():

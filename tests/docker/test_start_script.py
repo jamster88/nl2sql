@@ -139,6 +139,34 @@ def test_no_auth_starts_without_sign_in_this_once(run_start):
     assert "AUTH_ENABLED" not in result.env_file()
 
 
+def test_a_pipeline_is_asked_for_this_once_and_said_by_launch(run_start):
+    """arch8: exported for compose and handed to launch.sh, which names it;
+    .env is not written -- PIPELINE_VERSION there is what makes it stick."""
+    result = run_start("--pipeline", "v6_3_1", env={"PIPELINE_VERSION": "", "ENSEMBLE_ENABLED": ""})
+    assert result.returncode == 0
+    assert "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION)" in result.output
+    told = (result.workdir.parent / "pipeline-version").read_text().split()
+    assert told and set(told) == {"v6_3_1"}
+    assert "PIPELINE_VERSION" not in result.env_file()
+
+
+@pytest.mark.parametrize(
+    ("args", "env", "said"),
+    [
+        (("--pipeline", "v8_0_0"), {}, "PIPELINE_VERSION is 'v8_0_0': it must be v7_0_0 or v6_3_1"),
+        (("--pipeline", "v6_3_1"), {"ENSEMBLE_ENABLED": "true"},
+         "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"),
+        (("--pipeline",), {}, "--pipeline needs a name: v7_0_0 or v6_3_1"),
+    ],
+    ids=["unknown", "contradicted", "no name"],
+)
+def test_a_pipeline_the_agent_would_refuse_stops_the_script_before_docker_is_asked(run_start, args, env, said):
+    result = run_start(*args, env=env)
+    assert result.returncode != 0
+    assert f"ERROR: {said}" in result.output
+    assert not result.calls_matching("info") and not result.calls_matching("compose")
+
+
 # ---------------------------------------------------------------------------
 # The first run
 # ---------------------------------------------------------------------------

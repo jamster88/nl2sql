@@ -146,6 +146,18 @@ def test_the_default_configuration_is_every_retrieval_stage_asked_once():
     assert run_benchmark.CONFIGURATIONS["snippets"] == {**dict.fromkeys(SWITCHES, True), "ensemble_enabled": False}
 
 
+def test_a_configuration_the_pipelines_name_forbids_is_refused_with_the_sentence(monkeypatch, tmp_path):
+    """arch8, S3: one run's name, and a configuration that turns the
+    ensemble on, would otherwise run the ensemble and label it v6_3_1."""
+    monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
+    monkeypatch.setenv("PIPELINE_VERSION", "v6_3_1")
+    monkeypatch.delenv("ENSEMBLE_ENABLED", raising=False)
+    settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "snippets")
+    assert (settings.pipeline_version, settings.ensemble_enabled) == ("v6_3_1", False)
+    with pytest.raises(ValueError, match="PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true"):
+        run_benchmark.build_settings(run_benchmark.parse_args([]), "ensemble")
+
+
 def test_the_snippet_store_is_found_on_its_published_port(monkeypatch, tmp_path):
     """The runtime stores' port since 6.3, where all four databases are."""
     monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
@@ -541,6 +553,7 @@ def _settings():
         max_rows=50,
         ensemble_enabled=False,
         grain_check_enabled=True,
+        pipeline_version="v7_0_0",
     )
 
 
@@ -666,6 +679,50 @@ def test_comparing_configurations_runs_each_one_and_prints_the_table(monkeypatch
         assert configuration in out
 
 
+def _refusing(configuration_refused: str):
+    """`build_settings` as it behaves under v6_3_1: the ensemble refused."""
+    from types import SimpleNamespace
+
+    def build(args, configuration):
+        if configuration == configuration_refused:
+            raise ValueError("PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it")
+        return SimpleNamespace(**{**vars(_settings()), "pipeline_version": "v6_3_1"})
+
+    return build
+
+
+def test_a_configuration_refused_by_the_name_stops_the_run_before_anything_is_asked(monkeypatch):
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "build_settings", _refusing("ensemble"))
+    with pytest.raises(SystemExit) as stopped:
+        _drive(monkeypatch, {"sql": "SELECT 1"}, argv=["--only", "B01", "--config", "ensemble"], keep_settings=True)
+    assert str(stopped.value) == (
+        "error: --config ensemble is refused: PIPELINE_VERSION v6_3_1 asks each question once; "
+        "ENSEMBLE_ENABLED=true contradicts it"
+    )
+
+
+def test_a_comparison_under_one_runs_name_runs_the_four_and_says_why_not_the_fifth(monkeypatch, capsys):
+    """S6: the comparison is four rows and a footer, not a refusal."""
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "build_settings", _refusing("ensemble"))
+    code, agents = _drive(
+        monkeypatch,
+        {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False}, "attempts": 1,
+         "pipeline": "v6_3_1"},
+        argv=["--only", "B01", "--compare"], keep_settings=True,
+    )
+    out = capsys.readouterr().out
+    assert code == 0 and len(agents) == 4
+    assert "\nsnippets  (pipeline v6_3_1)\n" in out
+    comparison = out[out.index("comparison"):]
+    assert comparison.splitlines()[3] == "  pipeline v6_3_1"
+    assert comparison.rstrip().endswith(
+        "ensemble was not run: PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it")
+
+
 def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys, tmp_path):
     out_path = tmp_path / "results.json"
     _drive(
@@ -684,6 +741,9 @@ def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys,
     [result] = payload["configurations"][0]["results"]
     assert result["id"] == "B01"
     assert result["wording"] == 0
+    # The configuration's name, and the run's own as its state said it --
+    # here a state no agent seeded, so none.
+    assert (payload["configurations"][0]["pipeline"], result["pipeline"]) == ("v7_0_0", "")
     assert payload["configurations"][0]["stability"] is None
     assert result["model_calls"] == {"generate_sql": 1}
     assert result["narrative_score"] == 1.0

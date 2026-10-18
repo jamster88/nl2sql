@@ -94,6 +94,7 @@ from .ensemble_state import (
 from .fuse import agreement_line
 from .graph import _DETAIL, _MODEL_CALLS, _ROUTE, Nl2SqlAgent, ProgressFn, progress_to, reporter, traced_node
 from .graph import step_label as pipeline_label
+from .memory import Turn
 from .state import AuditReport, QueryResult, new_state
 from nl2sql_common.errors import MODEL_ERRORS
 
@@ -217,13 +218,16 @@ class EnsembleAgent:
         *,
         principal: str | None = None,
         on_progress: ProgressFn | None = None,
+        turns: Sequence[Turn] = (),
     ) -> EnsembleState:
         """Answer one question, asked several ways.
 
         One trace for the question, as for one run: the outer nodes are its
         spans, and each candidate's run is a span of its own beneath them.
         `on_progress` overrides the constructor's callback for this question
-        only; a candidate's steps reach it with `candidate=k`.
+        only; a candidate's steps reach it with `candidate=k`. `turns` are
+        the conversation's earlier answered questions (arch8), handed on to
+        every run.
         """
         seconds = self.settings.ensemble_deadline_seconds
         deadline = time.monotonic() + seconds if seconds else 0.0
@@ -234,6 +238,8 @@ class EnsembleAgent:
                     principal=principal,
                     deadline=deadline,
                     parallel_calls=self.settings.ollama_parallel_calls,
+                    turns=turns,
+                    pipeline=self.settings.pipeline_version,
                 ),
                 config={"recursion_limit": RECURSION_LIMIT},
             )
@@ -474,10 +480,18 @@ class EnsembleAgent:
                 screening = {**screening, "contract": state["answer_contract"]}
             began = time.perf_counter()
             with tracing.agent_span(f"Candidate {index}", "AGENT", lambda: {"question": wording}) as span:
-                finished = self.agent.answer(
-                    new_state(wording, principal=state.get("principal"), screening=screening),
-                    on_progress=_for_candidate(report, index),
+                # The question's words, turns, name and reading, handed on:
+                # the one place besides `run` a state is given its turns.
+                seeded = new_state(
+                    wording,
+                    principal=state.get("principal"),
+                    screening=screening,
+                    turns=state.get("turns") or (),
+                    asked=state.get("asked"),
+                    pipeline=state.get("pipeline") or self.settings.pipeline_version,
+                    memory=state.get("memory"),
                 )
+                finished = self.agent.answer(seeded, on_progress=_for_candidate(report, index))
                 tracing.finish_run_span(span, finished)
             return Candidate(
                 index=index,

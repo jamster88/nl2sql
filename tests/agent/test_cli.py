@@ -461,7 +461,7 @@ def test_one_question_says_in_one_line_which_models_it_may_be_routed_to(monkeypa
     monkeypatch.setattr(cli, "build_agent", _StubAgentFactory())
     assert cli.main(["how", "many", "stores"]) == 0
     err = capsys.readouterr().err
-    assert "[routing] on: 1 model(s), anchor qwen3.8-256k:latest" in err
+    assert "[routing] on, pipeline v7_0_0: 1 model(s), anchor qwen3.8-256k:latest" in err
 
 
 @pytest.mark.parametrize("flag", ["--quiet", "--json"])
@@ -476,7 +476,7 @@ def test_interactive_mode_prints_the_whole_routing_table(monkeypatch, capsys):
     monkeypatch.setattr("builtins.input", lambda prompt="": (_ for _ in ()).throw(EOFError()))
     assert cli.main([]) == 0
     out = capsys.readouterr().out
-    assert "model routing on: 1 model(s), anchor qwen3.8-256k:latest" in out
+    assert "model routing on, pipeline v7_0_0: 1 model(s), anchor qwen3.8-256k:latest" in out
     assert "  generator  light qwen3.8-256k:latest" in out
     assert "note: no catalog (MODEL_CATALOG)" in out
 
@@ -666,3 +666,81 @@ def test_an_ensemble_answer_is_printed_under_how_its_runs_agreed(capsys):
     assert cli.answer(StubAgent(state), "q", as_json=False, quiet=True) == 0
     out = capsys.readouterr().out
     assert out.startswith("Agreed by 4 of 4 independent runs of the question, each worded differently.\n\nThere are 10.")
+
+
+# ---------------------------------------------------------------------------
+# arch8: the pipeline by name, and the conversation's depth
+# ---------------------------------------------------------------------------
+
+
+def test_the_pipeline_flag_decides_the_ensemble_when_nothing_else_says(monkeypatch):
+    for var in ("ENSEMBLE_ENABLED", "PIPELINE_VERSION"):
+        monkeypatch.delenv(var, raising=False)
+    assert cli.settings_from_args(cli.parse_args(["q"])).ensemble_enabled is True
+    older = cli.settings_from_args(cli.parse_args(["q", "--pipeline", "v6_3_1"]))
+    assert (older.pipeline_version, older.ensemble_enabled) == ("v6_3_1", False)
+    flagged = cli.settings_from_args(cli.parse_args(["q", "--pipeline", "v7_0_0", "--no-ensemble"]))
+    assert (flagged.pipeline_version, flagged.ensemble_enabled) == ("v7_0_0", False)
+
+
+def test_the_environments_word_on_the_ensemble_stands_when_no_flag_says_otherwise(monkeypatch):
+    """A 7.0 .env's ENSEMBLE_ENABLED=false still means one run, flag or no
+    flag; and a name on the command line that contradicts what the
+    environment said is refused, as the two from the environment are."""
+    monkeypatch.delenv("PIPELINE_VERSION", raising=False)
+    monkeypatch.setenv("ENSEMBLE_ENABLED", "false")
+    assert cli.settings_from_args(cli.parse_args(["q"])).ensemble_enabled is False
+    monkeypatch.setenv("ENSEMBLE_ENABLED", "true")
+    with pytest.raises(ValueError, match="ENSEMBLE_ENABLED=true contradicts it"):
+        cli.settings_from_args(cli.parse_args(["q", "--pipeline", "v6_3_1"]))
+
+
+def test_a_contradiction_or_a_depth_out_of_bounds_is_said_by_name(monkeypatch, capsys):
+    monkeypatch.delenv("ENSEMBLE_ENABLED", raising=False)
+    assert cli.main(["q", "--pipeline", "v6_3_1", "--ensemble"]) == 2
+    assert capsys.readouterr().err == (
+        "error: PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it\n")
+    assert cli.main(["q", "--memory", "16"]) == 2
+    assert capsys.readouterr().err == "error: CONVERSATION_MEMORY is 16; it must be 0 to 15\n"
+
+
+def test_the_memory_flag_is_read_and_checked_and_defaults_to_the_environment(monkeypatch):
+    monkeypatch.setenv("CONVERSATION_MEMORY", "3")
+    assert cli.settings_from_args(cli.parse_args(["q"])).conversation_memory == 3
+    assert cli.settings_from_args(cli.parse_args(["q", "--memory", "0"])).conversation_memory == 0
+
+
+def test_a_pipeline_with_no_such_name_is_refused_by_the_parser(capsys):
+    with pytest.raises(SystemExit):
+        cli.parse_args(["q", "--pipeline", "v8_0_0"])
+    assert "invalid choice: 'v8_0_0'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["true", "false", None])
+def test_the_ensemble_switchs_help_says_what_decides_it(monkeypatch, value):
+    """The one switch whose default is a sentence: unsaid, the name decides."""
+    if value is None:
+        monkeypatch.delenv("ENSEMBLE_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("ENSEMBLE_ENABLED", value)
+    parsers: list[argparse.ArgumentParser] = []
+    parse = argparse.ArgumentParser.parse_args
+
+    def keep(self, *args, **kwargs):
+        parsers.append(self)
+        return parse(self, *args, **kwargs)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "parse_args", keep)
+    cli.parse_args([])
+    [action] = [a for a in parsers[0]._actions if "--ensemble" in a.option_strings]
+    assert action.default is None
+    said = {"true": "(default: on)", "false": "(default: off)",
+            None: "(default: what --pipeline implies: on under v7_0_0, off under v6_3_1)"}
+    assert action.help.endswith(said[value])
+
+
+def test_json_mode_names_the_pipeline_that_answered(capsys):
+    from nl2sql_agent.state import new_state
+
+    cli.answer(StubAgent({**new_state("q", pipeline="v6_3_1"), "sql": "SELECT 1"}), "q", as_json=True, quiet=False)
+    assert json.loads(capsys.readouterr().out)["pipeline"] == "v6_3_1"

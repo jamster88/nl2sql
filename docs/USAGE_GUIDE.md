@@ -576,10 +576,12 @@ the query is one attempt more. `GRAIN_CHECK_ENABLED=false` turns it off.
 | `--max-attempts N` | SQL generations before giving up |
 | `--sample-rows N` | Sample rows per table shown to the model |
 | `--database-url URL`, `--vector-db-url URL`, `--context-db-url URL`, `--snippet-db-url URL` | Point at other databases |
-| `--ensemble`, `--no-ensemble` | Ask through the ensemble, arch7 (on by default) |
+| `--pipeline v7_0_0`, `--pipeline v6_3_1` | The pipeline that answers, by name: the ensemble, or one run a question (`v7_0_0` by default) |
+| `--ensemble`, `--no-ensemble` | Ask through the ensemble, arch7 (by default what `--pipeline` implies: on under `v7_0_0`, off under `v6_3_1`) |
 | `--paraphrases N` | Rewordings in the ensemble's first wave, 3 to 10 |
 | `--parallel-calls N` | Model calls in flight to the Ollama host at once: what the host serves, no more (1 by default) |
 | `--fuse-columns`, `--no-fuse-columns` | Widen the chosen rows with columns other agreeing runs carried (on by default) |
+| `--memory N` | Earlier answered turns a question is read with, 0 to 15 (5 by default); read and checked, taken from arch8's Phase 2 |
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 
@@ -1332,6 +1334,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--no-browser` | Print the URLs instead of opening them |
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only |
+| `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` asks every question several ways, `v6_3_1` once (`PIPELINE_VERSION` in `.env` for good) |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |
@@ -1351,6 +1354,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--load-golden` | Load the golden question document into the context store and its vectors before anything is asked |
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only: no directory, no auth service, every page open |
+| `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` or `v6_3_1`; a name the agent would refuse, or `ENSEMBLE_ENABLED=true` beside `v6_3_1`, stops the script before anything starts |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |

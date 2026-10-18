@@ -240,6 +240,10 @@ def build_settings(args: argparse.Namespace, configuration: str):
         settings.ollama_model = args.model
     if args.base_url:
         settings.ollama_base_url = args.base_url
+    # Every configuration says whether the ensemble is on, and the name may
+    # forbid it: checked here, so one is never run under a name it
+    # contradicts (arch8, the risks by phase's S3).
+    settings.validate()
     return settings
 
 
@@ -309,6 +313,7 @@ def run_question(
         routes=routes_from_trace(trace),
         rung=getattr(run.get("complexity"), "rung", None),
         trace_id=state.get("trace_id", ""),
+        pipeline=state.get("pipeline") or "",
         grain_repairs=grain_repairs(state, expected, question.ordered),
         **ensemble_measures(state),
     )
@@ -490,7 +495,10 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
     except LlmUnavailableError as exc:
         raise SystemExit(f"error: {exc}")
 
-    report = BenchmarkReport(label=configuration, grain_checked=settings.grain_check_enabled, memory=args.memory)
+    report = BenchmarkReport(
+        label=configuration, grain_checked=settings.grain_check_enabled, memory=args.memory,
+        pipeline=settings.pipeline_version,
+    )
     # Before anything is asked: the check held to the references, against
     # the grains this database measures to.
     report.rejected_references = rejected_references(pipeline.grains(), questions)
@@ -522,7 +530,8 @@ def run_configuration(args, configuration: str, questions: list[BenchmarkQuestio
 
 
 def print_report(report: BenchmarkReport) -> None:
-    print(f"\n{'=' * 72}\n{report.label or 'benchmark'}\n{'=' * 72}")
+    named = f"  (pipeline {report.pipeline})" if report.pipeline else ""
+    print(f"\n{'=' * 72}\n{report.label or 'benchmark'}{named}\n{'=' * 72}")
 
     print("\nACCURACY")
     print(f"  execution accuracy   {report.correct}/{report.total}  ({100 * report.accuracy:.1f}%)")
@@ -688,10 +697,14 @@ def print_followups(report: BenchmarkReport) -> None:
         print(f"    {result.label:<6} {result.category:<10} {MARKS[result.outcome]:<6} {result.question[:44]}{filters}")
 
 
-def print_comparison(reports: list[BenchmarkReport]) -> None:
+def print_comparison(reports: list[BenchmarkReport], refused: dict[str, str] | None = None) -> None:
+    """The configurations side by side, under the pipeline's name, and any
+    the name refused below them, each with the reason."""
     # The stability column only where a question was asked more than one way.
     paraphrased = any(report.paraphrased for report in reports)
     print(f"\n{'=' * 72}\ncomparison\n{'=' * 72}\n")
+    for pipeline in sorted({report.pipeline for report in reports} - {""}):
+        print(f"  pipeline {pipeline}\n")
     print(f"  {'configuration':<14} {'accuracy':>12} {'answered':>10} {'total':>9} {'median':>9}"
           + (f" {'stable':>8}" if paraphrased else ""))
     print(f"  {'-' * 14} {'-' * 12} {'-' * 10} {'-' * 9} {'-' * 9}" + (f" {'-' * 8}" if paraphrased else ""))
@@ -711,6 +724,8 @@ def print_comparison(reports: list[BenchmarkReport]) -> None:
             f"{cells.get(c, (0, 0))[0]:>8}/{cells.get(c, (0, 0))[1]:<4}" for c in categories
         )
         print(f"  {report.label:<14}{row}")
+    for configuration, reason in (refused or {}).items():
+        print(f"\n  {configuration} was not run: {reason}")
 
 
 def as_json(reports: list[BenchmarkReport]) -> dict:
@@ -718,6 +733,7 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
         "configurations": [
             {
                 "label": report.label,
+                "pipeline": report.pipeline,
                 "accuracy": report.accuracy,
                 "correct": report.correct,
                 "answered": report.answered,
@@ -783,6 +799,7 @@ def as_json(reports: list[BenchmarkReport]) -> dict:
                         "rung": r.rung,
                         "routes": r.routes,
                         "trace_id": r.trace_id,
+                        "pipeline": r.pipeline,
                         "sql": r.sql,
                         "error": r.error,
                         "agreement": r.agreement,
@@ -818,16 +835,27 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     questions = select(args)
     configurations = list(CONFIGURATIONS) if args.compare else [args.config]
+    # Every configuration checked before anything is asked (arch8, S3 and
+    # S6): one the pipeline's name contradicts -- the ensemble under v6_3_1
+    # -- is refused with the reason, and a comparison runs the rest.
+    refused = {}
+    for configuration in configurations:
+        try:
+            build_settings(args, configuration)
+        except ValueError as exc:
+            refused[configuration] = str(exc)
+    if refused and not args.compare:
+        raise SystemExit(f"error: --config {args.config} is refused: {refused[args.config]}")
 
     reports = []
-    for configuration in configurations:
+    for configuration in (c for c in configurations if c not in refused):
         print(f"\n--- {configuration} ({len(questions)} questions) ---")
         reports.append(run_configuration(args, configuration, questions))
 
     for report in reports:
         print_report(report)
-    if len(reports) > 1:
-        print_comparison(reports)
+    if len(reports) > 1 or refused:
+        print_comparison(reports, refused)
 
     if args.json:
         Path(args.json).write_text(json.dumps(as_json(reports), indent=2, default=str))

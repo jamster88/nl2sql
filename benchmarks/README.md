@@ -288,6 +288,18 @@ score (`without_judge`), whether a second wave ran (`wave2`) and what fusion
 joined, declined, added and dropped
 ([`docs/benchmark.md`](../docs/benchmark.md#the-ensemble-configuration)).
 
+**Under the pipeline's name (8.0).** A configuration is checked against
+`PIPELINE_VERSION` before anything is asked. Under `v6_3_1`, which asks each
+question once, `--config ensemble` is refused with the agent's own reason --
+`PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true
+contradicts it` -- rather than run and labelled with the wrong name, and
+`--compare` runs the four one-run configurations and says below the table
+why the fifth was not run. The report's heading names the pipeline beside
+the configuration (`snippets  (pipeline v6_3_1)`), the comparison opens with
+it, and `--json` carries it for each configuration and, as each run's state
+named it, for each question
+([`docs/benchmark.md`](../docs/benchmark.md#the-pipeline-by-name)).
+
 The snippet store is found on the runtime stores' published port,
 `localhost:5435` (6.3), unless `SNIPPET_DB_URL` says otherwise; each
 database's password is the one the stack generated, read from `secrets/`
@@ -449,7 +461,7 @@ or ` (follow-up set)` after it when a set was asked -- in the agent's experiment
 
 | | |
 |---|---|
-| Parameters | the configuration, the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`), whether the follow-up set was (`followup_set`) and with how many turns remembered (`memory`) |
+| Parameters | the configuration, the pipeline (`pipeline`, `PIPELINE_VERSION`), the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`), whether the follow-up set was (`followup_set`) and with how many turns remembered (`memory`) |
 | Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; with the follow-up set, `followup_accuracy` and `followups_correct`, and `filters_kept` and `consistency` when a reference keeps a filter; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
 | Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own), `benchmark.followup` (`true` on a follow-up, filed under the question it follows) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |

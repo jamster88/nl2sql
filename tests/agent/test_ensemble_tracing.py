@@ -82,6 +82,7 @@ def test_the_trace_is_tagged_with_the_agreement_and_the_whole_questions_cost():
     assert tags["nl2sql.attempts"] == "1", "the delivered run's, not the outer nodes' zero"
     assert tags["nl2sql.model_calls"] == str(sum(entry.model_calls for entry in whole_trace(state)))
     assert int(tags["nl2sql.model_calls"]) >= 3
+    assert tags["nl2sql.pipeline"] == state["pipeline"] == "v7_0_0"
 
 
 def test_a_second_wave_is_in_the_same_trace_its_runs_beneath_its_own_candidate_runs():

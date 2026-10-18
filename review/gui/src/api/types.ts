@@ -86,6 +86,7 @@ export interface SubmissionModel {
   comment: string;
   agent_version: string;
   ensemble: EnsembleRecord;
+  pipeline: string;
   submitted_at: string | null;
   state: State;
   reviewer: string;

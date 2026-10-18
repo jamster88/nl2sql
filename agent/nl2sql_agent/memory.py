@@ -28,11 +28,16 @@ Phase 0, and S1 of its risks by phase): the hand-written follow-up set
 and nothing in the pipeline calls it yet. The API takes
 `MAX_QUESTION_LENGTH` from here, so the longest question a request may ask
 and the longest a restatement may be are one number.
+
+`Turn` is what a conversation remembers of one answered question, and
+`MemoryNote` how a run's question was read against the turns it was handed.
+Every run's state carries both from arch8's Phase 1, empty: a run is handed
+no turns until Phase 2.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from nl2sql_agent import fidelity
 
@@ -42,6 +47,38 @@ MAX_QUESTION_LENGTH = 2000
 
 #: The note on a restatement that says nothing the words typed do not.
 NOT_RESTATED = "not restated"
+
+#: Rows of a remembered answer shown to the Supervisor, and how much of its
+#: narrative: the bounds on what a turn costs a prompt.
+MEMORY_ROWS = 3
+MEMORY_ANSWER_CHARS = 300
+
+
+@dataclass
+class Turn:
+    """One answered question of a conversation, as the next is read with it.
+
+    Every cell is text: a turn outlives the run that made it and is
+    rendered into a prompt, where a `Decimal` or a `date` has no business.
+    """
+
+    #: 1 and up within the conversation, counting answered turns.
+    index: int
+    #: The words typed.
+    asked: str
+    #: The question answered: the standalone reading, else `asked`.
+    question: str
+    #: The delivered SQL -- the chosen run's, under the ensemble.
+    sql: str
+    columns: list[str] = field(default_factory=list)
+    #: The first `MEMORY_ROWS` rows.
+    rows: list[list[str]] = field(default_factory=list)
+    row_count: int = 0
+    #: The narrative's first sentence, at most `MEMORY_ANSWER_CHARS`.
+    answer: str = ""
+    assumptions: list[str] = field(default_factory=list)
+    #: The API's job, so a verdict on it finds the turn.
+    job_id: str = ""
 
 
 @dataclass

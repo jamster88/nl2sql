@@ -94,6 +94,14 @@ def test_every_field_of_a_full_state_survives_the_crossing():
     assert answer.node_errors == {"narrator": "the model host went away"}
 
 
+def test_the_answer_names_the_pipeline_that_answered():
+    """arch8: the state's name, said in every record; nothing for a state
+    no agent made."""
+    assert answer_from_state(full_state()).pipeline == "v7_0_0"
+    assert answer_from_state({**full_state(), "pipeline": "v6_3_1"}).pipeline == "v6_3_1"
+    assert answer_from_state(None).pipeline == ""
+
+
 def test_the_model_that_answered_each_call_crosses_to_the_client():
     """V6-18: the routing fields were dropped by a lenient model for four
     releases while the documentation said a client could read them."""

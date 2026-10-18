@@ -1768,3 +1768,22 @@ def test_reloading_reads_the_grains_again():
     assert "contract" in agent.reload()
     agent.run("q again")
     assert len(db.dates_asked) == 2 * asked
+
+
+# ---------------------------------------------------------------------------
+# arch8: the run is handed its turns and named
+# ---------------------------------------------------------------------------
+
+from nl2sql_agent.memory import MemoryNote, Turn  # noqa: E402
+
+
+def test_a_run_is_seeded_with_the_turns_it_was_handed_and_the_pipelines_name():
+    """`run` is the one way a run of the pipeline is given turns; nothing
+    is kept between calls, so the next question has none."""
+    turn = Turn(index=1, asked="How many stores?", question="How many stores?", sql="SELECT 1")
+    agent = make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"] * 2),
+                       pipeline_version="v6_3_1")
+    state = agent.run("And by state?", turns=[turn])
+    assert (state["asked"], state["turns"], state["pipeline"]) == ("And by state?", [turn], "v6_3_1")
+    assert state["memory"] == MemoryNote(shown=1)
+    assert agent.run("And by state?")["turns"] == []

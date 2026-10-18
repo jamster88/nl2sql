@@ -47,7 +47,7 @@ against.
 
 | | |
 |---|---|
-| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment, and since 7.0 the record of every run behind the answer: each wording, its outcome and its SQL, the Judge's verdicts and the vote. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
+| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment, since 7.0 the record of every run behind the answer: each wording, its outcome and its SQL, the Judge's verdicts and the vote, and since 8.0 the pipeline that answered, `v7_0_0` or `v6_3_1`. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
 | **Staged** | In the feedback store, a database of its own in `nl2sql-stores`. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
 | **Reviewed** | In a second web interface, one pane per verdict: what was asked, what the agent answered and the SQL it wrote, what the user thought, and the other runs -- the queries that agreed, the ones that lost and how they differ -- and beside it a form for building a golden pair, or an editor for the query that should have been generated |
 | **Promoted** *(correct)* | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
@@ -66,7 +66,9 @@ starts, and the review service is optional. A stack upgraded to 7.0 and
 started without it keeps the table it had, so the API -- which may insert a
 verdict and nothing more -- stages each one without the record and says so
 once in its log, until the first vote after the review service has started.
-No vote is lost either way.
+No vote is lost either way. The pipeline's name (8.0) is a second such
+column, added the same way; a table may lack either or both, and the API
+asks which it has in one query.
 
 ## The three fields nobody can guess
 

@@ -11,6 +11,7 @@ for 7.0 reads the record of every run beside it.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 
 import pytest
@@ -83,6 +84,7 @@ def test_an_ensemble_state_reads_as_one_coherent_run():
     assert answer.retrieval_errors == {"knowledge": "connection refused at vectordb:5432"}
     assert answer.node_errors == {"narrator": "timed out", "supervisor": "down at ollama:11434"}
     assert [entry.node for entry in answer.trace] == ["screen", "deliver", "generate_sql"]
+    assert answer.pipeline == "v7_0_0", "the question's name, from the outer state"
 
 
 def test_the_record_of_every_run_is_beside_it():
@@ -228,6 +230,20 @@ def test_meta_with_the_ensemble_off_names_the_pipelines_nodes_alone(make_client)
     assert pipeline["ensemble"]["enabled"] is False and pipeline["ensemble"]["nodes"] == []
 
 
+def test_meta_names_the_pipeline_and_how_much_of_a_conversation_it_reads(make_client, api_settings):
+    """arch8: the name beside the ensemble's settings it decided, and the
+    conversation's four numbers."""
+    pipeline = make_client().get("/v1/meta").json()["pipeline"]
+    assert (pipeline["version"], pipeline["ensemble"]["enabled"]) == ("v7_0_0", True)
+    assert pipeline["memory"] == {"turns": 5, "rows": 3, "max_conversations": 200, "ttl_seconds": 3600.0}
+
+    api = replace(api_settings, max_conversations=20, conversation_ttl_seconds=60.0)
+    settings = Settings(pipeline_version="v6_3_1", conversation_memory=0)
+    pipeline = make_client(api=api, settings=settings).get("/v1/meta").json()["pipeline"]
+    assert (pipeline["version"], pipeline["ensemble"]["enabled"]) == ("v6_3_1", False)
+    assert pipeline["memory"] == {"turns": 0, "rows": 3, "max_conversations": 20, "ttl_seconds": 60.0}
+
+
 def test_a_client_cannot_send_a_screening_for_its_own_question(client):
     """R7's invariant: a screened run is built only from a screening the
     outer graph made itself. The request model forbids what it does not
@@ -235,6 +251,19 @@ def test_a_client_cannot_send_a_screening_for_its_own_question(client):
     for extra in ({"screening": {"verdict": "proceed"}}, {"screened": True}):
         response = client.post("/v1/questions", json={"question": "q", **extra})
         assert response.status_code == 422
+
+
+def test_a_client_cannot_hand_a_run_turns_or_a_reading_or_a_name():
+    """arch8's seam, R7 again for a second seeded input: a run is handed its
+    turns by `run` and by the ensemble alone, and the request declares none
+    of the four fields a run is seeded with -- so none can be sent."""
+    from nl2sql_agent.api.models import AskRequest
+    from pydantic import ValidationError
+
+    for extra in ({"turns": [{"index": 1, "asked": "a", "question": "a", "sql": "SELECT 1"}]},
+                  {"asked": "a"}, {"memory": {"resolved": True, "read_as": "a"}}, {"pipeline": "v6_3_1"}):
+        with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+            AskRequest(question="q", **extra)
 
 
 # ---------------------------------------------------------------------------

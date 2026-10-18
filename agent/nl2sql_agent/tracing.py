@@ -346,6 +346,8 @@ class RunTrace:
                 "nl2sql.attempts": str(state.get("attempts", 0)),
                 "nl2sql.model_calls": str(sum(e.model_calls for e in state.get("trace", []))),
                 "nl2sql.rows": str(len(result.rows)) if result is not None else "",
+                # Which pipeline answered, by name (arch8): PIPELINE_VERSION.
+                "nl2sql.pipeline": str(state.get("pipeline") or ""),
             }
         )
 

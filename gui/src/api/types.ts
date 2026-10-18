@@ -227,6 +227,8 @@ export interface Answer {
   node_errors: Record<string, string>;
   /** `null` with the ensemble off; absent from a server older than 7.0. */
   ensemble?: Ensemble | null;
+  /** The pipeline that answered, by name: v7_0_0 or v6_3_1. Absent from a server older than 8.0. */
+  pipeline?: string;
 }
 
 export interface JobLinks {
@@ -303,6 +305,15 @@ export interface EnsembleSettings {
   nodes: string[];
 }
 
+/** How much of a conversation this server reads a question with (8.0). */
+export interface MemorySettings {
+  /** Answered turns a question is read with; 0 is none. */
+  turns: number;
+  rows: number;
+  max_conversations: number;
+  ttl_seconds: number;
+}
+
 export interface Pipeline {
   supervisor: boolean;
   literals: boolean;
@@ -312,6 +323,10 @@ export interface Pipeline {
   nodes: string[];
   /** Absent from a server older than 7.0. */
   ensemble?: EnsembleSettings | null;
+  /** PIPELINE_VERSION: v7_0_0 or v6_3_1. Absent from a server older than 8.0. */
+  version?: string;
+  /** Absent from a server older than 8.0. */
+  memory?: MemorySettings | null;
 }
 
 /** Everything a client needs to configure itself against this server. */

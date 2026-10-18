@@ -128,6 +128,7 @@ def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> A
         ),
         node_errors=node_errors if detail else _codes(node_errors, "failed"),
         ensemble=ensemble_from_state(state, detail=detail) if is_ensemble(state) else None,
+        pipeline=state.get("pipeline") or "",
     )
 
 

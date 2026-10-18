@@ -37,6 +37,7 @@ from .. import __version__
 from ..config import Settings
 from .. import ensemble
 from ..graph import STEP_LABELS
+from ..memory import MEMORY_ROWS
 from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
 from nl2sql_common.envelope import ApiError, Check, Health, Readiness
@@ -53,6 +54,7 @@ from .models import (
     Job as JobModel,
     JobList,
     Limits,
+    MemorySettings,
     Meta,
     Pipeline,
     Reloaded,
@@ -195,6 +197,7 @@ class ApiContext:
             comment=body.comment,
             agent_version=__version__,
             ensemble=answer.ensemble.model_dump(mode="json") if answer.ensemble else {},
+            pipeline=answer.pipeline,
         )
 
 
@@ -302,6 +305,13 @@ def question_routes(ctx: ApiContext) -> APIRouter:
                     judge=settings.ensemble_judge_enabled,
                     fuse_columns=settings.ensemble_fuse_columns,
                     nodes=outer,
+                ),
+                version=settings.pipeline_version,
+                memory=MemorySettings(
+                    turns=settings.conversation_memory,
+                    rows=MEMORY_ROWS,
+                    max_conversations=api.max_conversations,
+                    ttl_seconds=api.conversation_ttl_seconds,
                 ),
             ),
             tls=(

@@ -445,3 +445,84 @@ def test_a_grain_period_that_is_not_columns_stops_the_agent_at_start(periods, me
     with pytest.raises(ValueError, match=re.escape(message)) as caught:
         Settings(grain_periods=periods)
     assert str(caught.value).startswith(f"GRAIN_PERIODS is {periods!r}")
+
+
+# ---------------------------------------------------------------------------
+# arch8: the pipeline by name, and the conversation's depth
+# ---------------------------------------------------------------------------
+
+
+def test_the_name_decides_the_ensemble_when_nothing_else_says():
+    """The risks by phase's three cases: no word is 7.0 exactly, v6_3_1 is
+    one run with no further word, and v6_3_1 with the ensemble on is
+    refused, with the sentence."""
+    assert (Settings().pipeline_version, Settings().ensemble_enabled) == ("v7_0_0", True)
+    assert Settings(pipeline_version="v6_3_1").ensemble_enabled is False
+    with pytest.raises(ValueError) as caught:
+        Settings(pipeline_version="v6_3_1", ensemble_enabled=True)
+    assert str(caught.value) == "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"
+
+
+def test_the_name_changes_the_ensemble_and_nothing_else():
+    """The owner's decision 42: v6_3_1 is the ensemble off and nothing else
+    -- the grain check and 7.0's other refinements of one run apply under
+    both. The test a later owner reads to see what the name is."""
+    from dataclasses import asdict
+
+    newer, older = asdict(Settings(pipeline_version="v7_0_0")), asdict(Settings(pipeline_version="v6_3_1"))
+    differ = {name for name in newer if newer[name] != older[name]}
+    assert differ == {"pipeline_version", "ensemble_enabled"}
+
+
+def test_the_ensemble_off_under_the_newer_name_is_what_a_7_0_env_meant():
+    settings = Settings(pipeline_version="v7_0_0", ensemble_enabled=False)
+    assert (settings.pipeline_version, settings.ensemble_enabled) == ("v7_0_0", False)
+
+
+def test_an_unset_switch_is_unsaid_and_the_name_from_the_environment_decides(monkeypatch):
+    for var in ("ENSEMBLE_ENABLED", "PIPELINE_VERSION", "CONVERSATION_MEMORY"):
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings.from_env()
+    assert (settings.pipeline_version, settings.ensemble_enabled, settings.conversation_memory) == ("v7_0_0", True, 5)
+
+    monkeypatch.setenv("PIPELINE_VERSION", "v6_3_1")
+    monkeypatch.setenv("ENSEMBLE_ENABLED", "")  # compose forwards it empty: still unsaid
+    monkeypatch.setenv("CONVERSATION_MEMORY", "0")
+    settings = Settings.from_env()
+    assert (settings.pipeline_version, settings.ensemble_enabled, settings.conversation_memory) == ("v6_3_1", False, 0)
+
+    monkeypatch.setenv("ENSEMBLE_ENABLED", "true")
+    with pytest.raises(ValueError, match="ENSEMBLE_ENABLED=true contradicts it"):
+        Settings.from_env()
+
+
+def test_a_name_set_after_construction_takes_the_switch_back_to_unsaid_first():
+    """A dataclass does not re-resolve: the name alone, set late, leaves the
+    switch the default name resolved, and the next check refuses what nobody
+    wrote. Whoever sets the name sets the switch back to None."""
+    settings = Settings()
+    settings.pipeline_version = "v6_3_1"
+    with pytest.raises(ValueError, match="contradicts it"):
+        settings.validate()
+    settings.ensemble_enabled = None
+    settings.validate()
+    assert settings.ensemble_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("fields", "message"),
+    [
+        ({"pipeline_version": "v8_0_0"}, "PIPELINE_VERSION is 'v8_0_0'; it must be v7_0_0 or v6_3_1"),
+        ({"pipeline_version": "V7_0_0"}, "PIPELINE_VERSION is 'V7_0_0'; it must be v7_0_0 or v6_3_1"),
+        ({"conversation_memory": -1}, "CONVERSATION_MEMORY is -1; it must be 0 to 15"),
+        ({"conversation_memory": 16}, "CONVERSATION_MEMORY is 16; it must be 0 to 15"),
+    ],
+)
+def test_a_name_or_a_depth_out_of_bounds_stops_the_agent_naming_them(fields, message):
+    with pytest.raises(ValueError, match=re.escape(message)):
+        Settings(**fields)
+
+
+def test_the_depth_runs_from_none_remembered_to_fifteen():
+    assert Settings(conversation_memory=0).conversation_memory == 0
+    assert Settings(conversation_memory=15).conversation_memory == 15

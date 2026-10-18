@@ -130,6 +130,10 @@ Brings up the whole stack and opens the web interface in your browser.
                      schema alone, with neither knowledge nor worked examples
       --no-auth      Start without sign-in, this once: every page open to
                      whoever can reach it. ./setup.sh --no-auth makes it stick
+      --pipeline NAME
+                     Answer with that release's pipeline, this once: v7_0_0
+                     asks every question several ways, v6_3_1 once.
+                     PIPELINE_VERSION in .env makes it stick
       --restart      Recreate the containers instead of reusing what is running
   -q, --quiet        Only print problems
   -h, --help         Show this message
@@ -180,6 +184,11 @@ while [[ $# -gt 0 ]]; do
         # This run only: setup.sh's own --no-auth is the one that sticks, and
         # a first run handed it would turn sign-in off for good unasked.
         --no-auth) LAUNCH_ARGS+=(--no-auth); export AUTH_ENABLED=false; shift ;;
+        # This run only, as --no-auth: exported for compose, and handed on so
+        # launch.sh run by itself says the same.
+        --pipeline)
+            [[ $# -ge 2 ]] || die "--pipeline needs a name: v7_0_0 or v6_3_1"
+            export PIPELINE_VERSION="$2"; LAUNCH_ARGS+=(--pipeline "$2"); shift 2 ;;
         --restart) LAUNCH_ARGS+=(--restart); shift ;;
         -q|--quiet) QUIET=1; LAUNCH_ARGS+=(--quiet); shift ;;
         -h|--help) usage; exit 0 ;;
@@ -197,6 +206,18 @@ if [[ $WITH_DESKTOP -eq 1 ]]; then
 else
     LAUNCH_ARGS=(--gui ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"})
     SETUP_ARGS=(--gui ${SETUP_ARGS[@]+"${SETUP_ARGS[@]}"})
+fi
+
+# --- The pipeline by name (arch8) ---------------------------------------------
+# Checked before anything is started, as launch.sh checks it: a name the agent
+# does not know, or the ensemble asked for under the name of one run, would
+# stop the agent a minute from now with less said about why.
+pipeline=$(compose_env PIPELINE_VERSION v7_0_0)
+if [[ "$pipeline" != v7_0_0 && "$pipeline" != v6_3_1 ]]; then
+    die "PIPELINE_VERSION is '$pipeline': it must be v7_0_0 or v6_3_1"
+fi
+if [[ "$pipeline" == v6_3_1 && "$(compose_env ENSEMBLE_ENABLED "" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]; then
+    die "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"
 fi
 
 # --- Docker ----------------------------------------------------------------

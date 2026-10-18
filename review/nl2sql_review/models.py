@@ -55,6 +55,9 @@ class SubmissionModel(Wire):
     #: Kept as the agent wrote it rather than modelled here: the two services
     #: are different images, and this one only shows it.
     ensemble: dict[str, Any] = Field(default_factory=dict)
+    #: The pipeline that answered, by name: v7_0_0 or v6_3_1; empty for a
+    #: submission from before 8.0.
+    pipeline: str = ""
     submitted_at: datetime | None = None
     state: State = "pending"
     reviewer: str = ""

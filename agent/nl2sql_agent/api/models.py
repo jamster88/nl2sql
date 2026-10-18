@@ -382,6 +382,13 @@ class Answer(Wire):
             "same answer it always did."
         ),
     )
+    pipeline: str = Field(
+        default="",
+        description=(
+            "The pipeline that answered, by the release that built it (PIPELINE_VERSION): "
+            "v7_0_0 or v6_3_1. Empty only for a state no agent made."
+        ),
+    )
 
 
 class Reloaded(Wire):
@@ -514,6 +521,15 @@ class EnsembleSettings(Wire):
     )
 
 
+class MemorySettings(Wire):
+    """How much of a conversation this server reads a question with (arch8)."""
+
+    turns: int = Field(description="CONVERSATION_MEMORY: answered turns a question is read with; 0 is none.")
+    rows: int = Field(description="Rows of a remembered answer shown with it.")
+    max_conversations: int = Field(description="API_MAX_CONVERSATIONS: conversations kept at once.")
+    ttl_seconds: float = Field(description="API_CONVERSATION_TTL_SECONDS: how long an idle one is kept.")
+
+
 class Pipeline(Wire):
     """Which optional stages this server is running with.
 
@@ -529,6 +545,12 @@ class Pipeline(Wire):
     nodes: list[str] = Field(default_factory=list)
     ensemble: EnsembleSettings | None = Field(
         default=None, description="The ensemble's settings; absent from a server older than 7.0."
+    )
+    version: str = Field(
+        default="", description="PIPELINE_VERSION: v7_0_0 or v6_3_1; empty from a server older than 8.0."
+    )
+    memory: MemorySettings | None = Field(
+        default=None, description="The conversation's settings; absent from a server older than 8.0."
     )
 
 

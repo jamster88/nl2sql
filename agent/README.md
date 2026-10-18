@@ -438,6 +438,22 @@ connection pool holds (15, SQLAlchemy's defaults) or more than half the
 reader role's connection limit (60, set in
 [`common/nl2sql_common/roles.py`](../common/nl2sql_common/roles.py)).
 
+### The pipeline by name
+
+Which pipeline answers is a setting with a name: `PIPELINE_VERSION`, the
+release that built it. `v7_0_0`, the default, is the ensemble above;
+`v6_3_1` asks each question once, and differs from it in that alone -- the
+grain check and the rest of 7.0's refinements of one run apply under both
+names, each under its own switch. One image answers as either. The name
+decides `ENSEMBLE_ENABLED` when nothing else says it: unset, the ensemble is
+on under `v7_0_0` and off under `v6_3_1`. A `.env` from 7.0 that sets
+`ENSEMBLE_ENABLED=false` still means one run, and `ENSEMBLE_ENABLED=true`
+beside `v6_3_1` is refused at start, with the reason, rather than run under
+the wrong name. The name is said wherever a run is recorded: the routing
+table's first line, the trace's `nl2sql.pipeline` tag, `Answer.pipeline`,
+`/v1/meta`'s `pipeline.version`, the verdict's snapshot and the benchmark's
+report ([arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)).
+
 ## Serving it over HTTP
 
 [`nl2sql_agent/api/`](nl2sql_agent/api) is the REST interface. It is a
@@ -1216,7 +1232,7 @@ all but the pins are published in `/v1/meta`:
 
 | Variable | Flag | Default |
 |---|---|---|
-| `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | on. Off is the pipeline alone, to the answer |
+| `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | what `PIPELINE_VERSION` says: on under `v7_0_0`, off under `v6_3_1`, beside which on is refused. Off is the pipeline alone, to the answer |
 | `ENSEMBLE_PARAPHRASES` | `--paraphrases` | 3 rewordings in the first wave; 3 to 10 |
 | `ENSEMBLE_MAX_PARAPHRASES` | -- | 10, the most the Paraphraser writes; at least `ENSEMBLE_PARAPHRASES` |
 | `ENSEMBLE_WAVES` | -- | 2; a second wave only when the vote does not settle the question. It runs every faithful rewording left, so more than 2 is 2 |
@@ -1236,6 +1252,15 @@ period or a column twice -- stops the agent at start:
 |---|---|---|
 | `GRAIN_CHECK_ENABLED` | -- | on: the Static Validator refuses two tables of different grains joined on the date, or on no date. Off, it is the validator of 6.3, and no grain is read |
 | `GRAIN_PERIODS` | -- | `fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num`: the periods a table may be stamped by, finest first, each the date dimension's columns that name one, joined by `+`. A column the date dimension does not have stands the check down |
+
+The pipeline by name ([above](#the-pipeline-by-name)) and the conversation
+add these. A name that is not one of the two, or a depth out of range,
+stops the agent at start, naming the bounds:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `PIPELINE_VERSION` | `--pipeline` | `v7_0_0`, the ensemble; `v6_3_1` asks each question once and differs in that alone |
+| `CONVERSATION_MEMORY` | `--memory` | 5 answered turns of a conversation a question is read with; 0 to 15, 0 asks every question alone. Read and checked, and taken by nothing until arch8's Phase 2 |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

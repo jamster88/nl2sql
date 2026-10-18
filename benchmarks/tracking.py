@@ -182,6 +182,8 @@ def open_run(
     mlflow.log_params(
         {
             "configuration": configuration,
+            # The pipeline by name (arch8); each trace says it too.
+            "pipeline": settings.pipeline_version,
             "model": settings.ollama_model,
             "model_routing": settings.model_routing_enabled,
             "max_attempts": settings.max_attempts,

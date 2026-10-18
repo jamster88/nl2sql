@@ -41,7 +41,10 @@ from __future__ import annotations
 
 import operator
 from dataclasses import asdict, dataclass, field, is_dataclass
-from typing import Annotated, Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, Sequence, TypedDict
+
+from .config import DEFAULT_PIPELINE
+from .memory import MemoryNote, Turn
 
 # --- vocabularies -----------------------------------------------------------
 
@@ -335,8 +338,21 @@ class AgentState(TypedDict, total=False):
     """
 
     # --- input -----------------------------------------------------------
+    #: The question answered. The words typed, unless the Supervisor's
+    #: restatement of a follow-up held (arch8), which it then replaces once:
+    #: the one `run` field a node rewrites.
     question: str
     principal: str | None  # end-user identity, for SET ROLE / RLS (section 8)
+    #: The words typed, for the whole run, whatever `question` becomes.
+    asked: str
+    #: The conversation's earlier answered turns, oldest first, handed to
+    #: the run by `run` -- and by the ensemble to each of its runs -- and by
+    #: nothing on the wire.
+    turns: list[Turn]
+    #: How the question was read against `turns` (arch8).
+    memory: MemoryNote
+    #: The pipeline's name, `PIPELINE_VERSION`: said in every record.
+    pipeline: str
 
     # --- stage 1: intake --------------------------------------------------
     intent: Intent
@@ -427,7 +443,14 @@ SCREENING_FIELDS = ("entities", "measure", "period")
 
 
 def new_state(
-    question: str, *, principal: str | None = None, screening: dict[str, Any] | None = None
+    question: str,
+    *,
+    principal: str | None = None,
+    screening: dict[str, Any] | None = None,
+    turns: Sequence[Turn] = (),
+    asked: str | None = None,
+    pipeline: str = DEFAULT_PIPELINE,
+    memory: MemoryNote | None = None,
 ) -> AgentState:
     """The initial state for a run: everything a node might read, empty.
 
@@ -440,10 +463,20 @@ def new_state(
     (arch7 section 22.4), and the contract the run is held to when it
     carries one: the ensemble's anchor, read from the question as asked.
     This keyword is the only way a state is marked screened.
+
+    `asked` is the words typed, the question unless said otherwise; `turns`
+    is copied, so no two runs share one list; `memory` defaults to a note
+    that the turns were shown and nothing was resolved. The ensemble passes
+    all four to each of its runs, so a run's record carries the question's
+    reading rather than a note of its own.
     """
     return {
         "question": question,
         "principal": principal,
+        "asked": question if asked is None else asked,
+        "turns": list(turns),
+        "memory": MemoryNote(shown=len(turns)) if memory is None else memory,
+        "pipeline": pipeline,
         "verdict": (screening or {}).get("verdict") or "proceed",
         "intent": (screening or {}).get("intent") or "aggregate",
         "clarification": (screening or {}).get("clarification"),
@@ -515,8 +548,14 @@ HANDOFF = "handoff"
 #: * `handoff` -- the failed SQL and the issues about it, which the Repair
 #:   Agent passes to the next generation and the generation then replaces.
 LIFETIMES: dict[str, str] = {
+    # Written by `new_state`, and once more by the Supervisor when a
+    # follow-up's restatement held (arch8): still the run's question.
     "question": RUN,
     "principal": RUN,
+    "asked": RUN,
+    "turns": RUN,
+    "memory": RUN,
+    "pipeline": RUN,
     "intent": RUN,
     "verdict": RUN,
     "clarification": RUN,

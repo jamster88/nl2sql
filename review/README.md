@@ -105,6 +105,13 @@ the API is the INSERT-only writer. So until this service has started once
 since the upgrade the API finds no such column, stages each verdict
 without it, and says so once in its log; the first vote after carries it.
 
+Since 8.0 it also carries **`pipeline`**: the name of the pipeline that
+answered -- `v7_0_0`, the ensemble, or `v6_3_1`, one run a question -- the
+API's `Answer.pipeline`. A submission from before 8.0 holds `''`. The
+column is added on start the same way, `TEXT NOT NULL DEFAULT ''`, and the
+API asks which of the two a table has in one query and leaves out what it
+lacks, saying so once.
+
 The verdict itself is one of three: `yes` (correct), `no` (wrong), or
 `incomplete` (correct but incomplete -- the SQL was right and the answer
 left out something a reader needed). Each has its own pane in the review

@@ -58,6 +58,7 @@ MIRRORED = {
     "Reloaded": models.Reloaded,
     "Limits": models.Limits,
     "EnsembleSettings": models.EnsembleSettings,
+    "MemorySettings": models.MemorySettings,
     "Pipeline": models.Pipeline,
     "Meta": models.Meta,
     "Health": envelope.Health,

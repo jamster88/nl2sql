@@ -115,6 +115,10 @@ Usage: ./launch.sh [options]
       --no-auth    Start without sign-in, for this run: no directory, no auth
                    service, and every page and port open to whoever can
                    reach it. AUTH_ENABLED=false in .env makes it the default
+      --pipeline NAME
+                   Answer with that release's pipeline, for this run: v7_0_0
+                   asks every question several ways, v6_3_1 once.
+                   PIPELINE_VERSION in .env makes it the default
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -153,6 +157,11 @@ while [[ $# -gt 0 ]]; do
         # of their own, against the stores started below.
         --load-golden) WITH_LOAD_GOLDEN=1; shift ;;
         --no-auth) NO_AUTH=1; shift ;;
+        # Exported, as --no-auth is, so compose hands it to the agent and the
+        # API; checked below, once .env can be read beside it.
+        --pipeline)
+            [[ $# -ge 2 ]] || die "--pipeline needs a name: v7_0_0 or v6_3_1"
+            export PIPELINE_VERSION="$2"; shift 2 ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -198,6 +207,20 @@ compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shel
 in_instance() {  # in_instance nl2sql-NAME -- that container's name in this stack
     printf '%s-%s' "$(compose_env NL2SQL_INSTANCE nl2sql)" "${1#nl2sql-}"
 }
+
+# --- The pipeline by name (arch8) ---------------------------------------------
+# Read as the agent reads it -- the name, then the switch -- from what compose
+# will hand it, and checked now: a name the agent does not know, or the
+# ensemble asked for under the name of one run, would otherwise stop the API
+# a minute from now as a service that never became healthy.
+pipeline=$(compose_env PIPELINE_VERSION v7_0_0)
+if [[ "$pipeline" != v7_0_0 && "$pipeline" != v6_3_1 ]]; then
+    die "PIPELINE_VERSION is '$pipeline': it must be v7_0_0 or v6_3_1"
+fi
+ensemble_enabled=$(compose_env ENSEMBLE_ENABLED "" | tr '[:upper:]' '[:lower:]')
+if [[ "$pipeline" == v6_3_1 && "$ensemble_enabled" =~ ^(1|true|yes|on)$ ]]; then
+    die "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"
+fi
 
 # --- Passwords and tokens --------------------------------------------------------
 # Every one a file in secrets/ (6.3, V6-38), mounted by compose into the
@@ -590,10 +613,10 @@ fi
 routing_probe='
 from nl2sql_agent.config import Settings
 from nl2sql_agent.router import RoutingError, build_table, listed_models, load_catalog
-s = Settings.from_env()
 try:
+    s = Settings.from_env()
     catalog = load_catalog(s.model_catalog) if s.model_routing_enabled and s.model_catalog else None
-except RoutingError as exc:
+except (RoutingError, ValueError) as exc:
     print("ROUTE error " + " ".join(str(exc).split()))
     raise SystemExit(0)
 table = build_table(s, catalog, catalog_path=s.model_catalog,
@@ -633,21 +656,23 @@ else
     while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$routing_raw" | tail -3)
 fi
 
-# --- Asking it several ways (arch7) -----------------------------------------
+# --- Asking it several ways (arch7), by name (arch8) --------------------------
 # Since 7.0 every question is reworded and the pipeline run once per wording,
 # the answers judged and voted on -- which is most of what a question costs.
-# Said here, beside the routing, so that one run per question
-# (ENSEMBLE_ENABLED=false) or a host allowed several calls at once
-# (OLLAMA_PARALLEL_CALLS) is seen as the setting it is rather than wondered
-# about as slowness. Read as compose reads them: the shell, then .env.
-ensemble_enabled=$(compose_env ENSEMBLE_ENABLED true | tr '[:upper:]' '[:lower:]')
-if [[ "$ensemble_enabled" =~ ^(false|0|no|off)$ ]]; then
-    info "every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies"
+# Said here, beside the routing, so that one run per question (the v6_3_1
+# pipeline, or ENSEMBLE_ENABLED=false) or a host allowed several calls at
+# once (OLLAMA_PARALLEL_CALLS) is seen as the setting it is rather than
+# wondered about as slowness. Read as compose reads them, the shell then
+# .env, and as the agent resolves them: the name first, the switch second.
+if [[ "$pipeline" == v6_3_1 ]]; then
+    info "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION); the grain check still applies"
+elif [[ "$ensemble_enabled" =~ ^(false|0|no|off)$ ]]; then
+    info "the pipeline is v7_0_0, the ensemble off: every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies"
 else
     paraphrases=$(compose_env ENSEMBLE_PARAPHRASES 3)
     [[ "$paraphrases" =~ ^[0-9]+$ ]] || paraphrases=3
     slots=$(compose_env OLLAMA_PARALLEL_CALLS 1)
-    info "every question is asked $((paraphrases + 1)) ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)"
+    info "the pipeline is v7_0_0: every question is asked $((paraphrases + 1)) ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)"
     info "the model host is asked $slots call(s) at a time (OLLAMA_PARALLEL_CALLS)"
 fi
 

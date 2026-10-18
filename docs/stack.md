@@ -110,6 +110,7 @@ agent tag, no knowledge base.
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
 ./start.sh --no-auth       # no sign-in, this once: every page open to whoever reaches it
+./start.sh --pipeline v6_3_1   # one run a question, this once (PIPELINE_VERSION in .env for good)
 ./start.sh --restart       # recreate the containers
 ./start.sh --quiet         # only print problems
 BROWSER=firefox ./start.sh # open it with something in particular

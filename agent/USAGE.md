@@ -300,8 +300,19 @@ docker compose run --rm agent --parallel-calls 2 "..." # model calls in flight t
 docker compose run --rm agent --no-fuse-columns "..."  # keep the chosen run's own columns
 ```
 
-A value out of range is refused before anything runs, by name:
-`error: ENSEMBLE_PARAPHRASES is 2; it must be 3 to 10`, exit code 2. Set
+The pipeline by name (8.0) and the conversation's depth have a flag each:
+
+```bash
+docker compose run --rm agent --pipeline v6_3_1 "..."  # one run a question: the ensemble off, nothing else
+docker compose run --rm agent --memory 0 "..."         # earlier turns read with, 0 to 15 (taken from arch8's Phase 2)
+```
+
+Unsaid, `--ensemble` follows the name -- on under `v7_0_0`, off under
+`v6_3_1` -- unless `ENSEMBLE_ENABLED` says otherwise, and `--pipeline v6_3_1
+--ensemble` is a contradiction. A value out of range is refused before
+anything runs, by name: `error: ENSEMBLE_PARAPHRASES is 2; it must be 3 to
+10`, or `error: PIPELINE_VERSION v6_3_1 asks each question once;
+ENSEMBLE_ENABLED=true contradicts it`, exit code 2. Set
 `--parallel-calls` to what the Ollama host serves at once (its own
 `OLLAMA_NUM_PARALLEL`), and no higher.
 

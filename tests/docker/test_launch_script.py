@@ -1004,10 +1004,10 @@ def test_it_says_how_many_ways_a_question_is_asked_and_how_wide_the_host_gate_is
     time unless OLLAMA_PARALLEL_CALLS says it serves more. Said beside the
     routing, as compose reads the settings -- the shell, then .env -- so a
     slow answer reads as the setting it is."""
-    result = run_launch()
+    result = run_launch(env=UNSAID)
     assert "every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)" in result.output
     assert "the model host is asked 1 call(s) at a time (OLLAMA_PARALLEL_CALLS)" in result.output
-    wider = run_launch(env={"ENSEMBLE_PARAPHRASES": "5", "OLLAMA_PARALLEL_CALLS": "2"})
+    wider = run_launch(env={**UNSAID, "ENSEMBLE_PARAPHRASES": "5", "OLLAMA_PARALLEL_CALLS": "2"})
     assert "every question is asked 6 ways" in wider.output
     assert "the model host is asked 2 call(s) at a time" in wider.output
 
@@ -1017,12 +1017,106 @@ def test_with_the_ensemble_off_it_says_one_run_answers_and_the_grain_check_stays
     `off`, in any case), from .env as from the shell; and a count that is not
     one is read as the default rather than breaking the arithmetic."""
     for spelling in ("false", "OFF", "0"):
-        result = run_launch(env={"ENSEMBLE_ENABLED": spelling})
+        result = run_launch(env={**UNSAID, "ENSEMBLE_ENABLED": spelling})
         assert "every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies" in result.output
         assert "asked 4 ways" not in result.output
-    assert "answered by one run" in run_launch(env_file="ENSEMBLE_ENABLED=no\n").output
-    odd = run_launch(env={"ENSEMBLE_PARAPHRASES": "many"})
+    assert "answered by one run" in run_launch(env=UNSAID, env_file="ENSEMBLE_ENABLED=no\n").output
+    odd = run_launch(env={**UNSAID, "ENSEMBLE_PARAPHRASES": "many"})
     assert "every question is asked 4 ways" in odd.output
+
+
+# ---------------------------------------------------------------------------
+# The pipeline by name (arch8): said as the agent resolves it, the name
+# first and the switch second, and a name it would refuse refused here first
+# ---------------------------------------------------------------------------
+
+#: Neither said: whatever the developer's shell holds, empty is unset.
+UNSAID = {"PIPELINE_VERSION": "", "ENSEMBLE_ENABLED": ""}
+
+
+def _named(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if "the pipeline is" in line]
+
+
+@pytest.mark.parametrize(
+    ("said", "line"),
+    [
+        ({}, "the pipeline is v7_0_0: every question is asked 4 ways, judged and voted on "
+             "(ENSEMBLE_ENABLED=false for one run)"),
+        ({"ENSEMBLE_ENABLED": "false"}, "the pipeline is v7_0_0, the ensemble off: every question is answered by one "
+                                        "run (ENSEMBLE_ENABLED=false); the grain check still applies"),
+        ({"PIPELINE_VERSION": "v6_3_1"}, "the pipeline is v6_3_1: every question is answered by one run "
+                                         "(PIPELINE_VERSION); the grain check still applies"),
+        ({"PIPELINE_VERSION": "v6_3_1", "ENSEMBLE_ENABLED": "no"},
+         "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION); "
+         "the grain check still applies"),
+    ],
+    ids=["v7_0_0", "v7_0_0 one run", "v6_3_1", "v6_3_1 and off"],
+)
+def test_it_names_the_pipeline_as_the_agent_resolves_it(run_launch, said, line):
+    result = run_launch(env={**UNSAID, **said})
+    assert result.returncode == 0
+    assert _named(result.output) == [line]
+
+
+@pytest.mark.parametrize("spelling", ["true", "ON", "1"])
+def test_the_ensemble_under_the_name_of_one_run_is_refused_before_anything_starts(run_launch, spelling):
+    """The fourth combination: the agent would refuse it at start, and the
+    API would never become healthy. Said here, with the agent's sentence."""
+    result = run_launch(env={"PIPELINE_VERSION": "v6_3_1", "ENSEMBLE_ENABLED": spelling})
+    assert result.returncode != 0
+    assert "ERROR: PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it" in result.output
+    assert not result.calls_matching("compose up")
+    from_env = run_launch(env=UNSAID, env_file="IMAGE_NAME=x\nPIPELINE_VERSION=v6_3_1\nENSEMBLE_ENABLED=true\n")
+    assert from_env.returncode != 0 and "ENSEMBLE_ENABLED=true contradicts it" in from_env.output
+
+
+def test_a_pipeline_the_agent_does_not_know_is_refused_naming_the_two(run_launch):
+    result = run_launch("--pipeline", "v8_0_0")
+    assert result.returncode != 0
+    assert "ERROR: PIPELINE_VERSION is 'v8_0_0': it must be v7_0_0 or v6_3_1" in result.output
+    assert not result.calls_matching("compose up")
+    from_env = run_launch(env=UNSAID, env_file="IMAGE_NAME=x\nPIPELINE_VERSION=7.0.0\n")
+    assert "ERROR: PIPELINE_VERSION is '7.0.0': it must be v7_0_0 or v6_3_1" in from_env.output
+
+
+def test_the_pipeline_flag_needs_a_name(run_launch):
+    result = run_launch("--pipeline")
+    assert result.returncode != 0
+    assert "ERROR: --pipeline needs a name: v7_0_0 or v6_3_1" in result.output
+
+
+def test_the_pipeline_flag_reaches_every_service_compose_starts_this_run_only(run_launch):
+    """Exported, as --no-auth is: compose reads the shell before .env, and
+    .env is not written."""
+    result = run_launch("--api", "--pipeline", "v6_3_1", env=UNSAID)
+    assert result.returncode == 0
+    told = (result.workdir.parent / "pipeline-version").read_text().split()
+    assert told and set(told) == {"v6_3_1"}
+    assert _named(result.output) == [
+        "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION); "
+        "the grain check still applies"]
+    assert "PIPELINE_VERSION" not in (result.workdir / ".env").read_text()
+
+
+def test_the_probe_says_a_setting_the_agent_refuses_rather_than_a_traceback():
+    """S9 of arch8's risks: `Settings.from_env` raises ValueError on a
+    contradiction, which the probe once let out as a traceback the script
+    reported as an agent image it could not ask. Run here, as Python,
+    against this checkout's agent."""
+    import os
+    import subprocess
+    import sys
+
+    probe = (REPO_ROOT / "launch.sh").read_text().split("routing_probe='", 1)[1].split("\n'\n", 1)[0]
+    env = {
+        **os.environ, "PYTHONPATH": f"{REPO_ROOT / 'agent'}:{REPO_ROOT / 'common'}", "MLFLOW_DISABLE_AGENT_HINT": "1",
+        "PIPELINE_VERSION": "v6_3_1", "ENSEMBLE_ENABLED": "true",
+    }
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=env, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        "ROUTE error PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it")
 
 
 def test_the_routing_table_is_asked_of_the_agent_image_itself(run_launch):

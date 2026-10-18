@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 from nl2sql_agent import memory
-from nl2sql_agent.memory import NOT_RESTATED, MemoryNote, resolve
+from nl2sql_agent.memory import NOT_RESTATED, MemoryNote, Turn, resolve
 from nl2sql_agent.state import to_jsonable
 
 # ---------------------------------------------------------------------------
@@ -149,3 +149,15 @@ def test_shown_is_the_callers_to_fill():
 def test_a_note_renders_as_json():
     note = MemoryNote(shown=2, resolved=True, read_as="What were net sales by store?")
     assert to_jsonable(note) == {"shown": 2, "resolved": True, "read_as": "What were net sales by store?", "reason": ""}
+
+
+def test_a_turn_renders_as_json_its_cells_already_text():
+    turn = Turn(index=2, asked="And by banner?", question="Net sales by banner in FY2025?", sql="SELECT 1",
+                columns=["banner_name", "net_sales"], rows=[["Mainline", "412300000.00"]], row_count=5,
+                answer="Mainline led.", assumptions=["FY2025"], job_id="j1")
+    assert to_jsonable(turn) == {
+        "index": 2, "asked": "And by banner?", "question": "Net sales by banner in FY2025?", "sql": "SELECT 1",
+        "columns": ["banner_name", "net_sales"], "rows": [["Mainline", "412300000.00"]], "row_count": 5,
+        "answer": "Mainline led.", "assumptions": ["FY2025"], "job_id": "j1",
+    }
+

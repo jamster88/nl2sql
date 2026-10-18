@@ -55,6 +55,7 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
     assert run["tags"]["nl2sql.entrypoint"] == "benchmark"
     assert run["params"] == {
         "configuration": "snippets",
+        "pipeline": "v7_0_0",
         "model": agents[0].settings.ollama_model,
         "model_routing": True,
         "max_attempts": 7,

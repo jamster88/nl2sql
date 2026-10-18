@@ -315,7 +315,7 @@ public final class Models {
                          ResultTable result, ChartSpec chart, List<Claim> claims, AuditReport audit,
                          Double plan_cost, int attempts, List<TraceEntry> trace,
                          Map<String, String> retrieval_errors, Map<String, String> node_errors,
-                         Ensemble ensemble) {
+                         Ensemble ensemble, String pipeline) {
         public Answer {
             answer = text(answer);
             narrative = text(narrative);
@@ -329,6 +329,7 @@ public final class Models {
             trace = list(trace);
             retrieval_errors = map(retrieval_errors);
             node_errors = map(node_errors);
+            pipeline = text(pipeline);
         }
     }
 
@@ -399,12 +400,18 @@ public final class Models {
         }
     }
 
-    /** Which optional stages this server is running with. */
+    /** How much of a conversation this server reads a question with (8.0). */
+    public record MemorySettings(int turns, int rows, int max_conversations, double ttl_seconds) {
+    }
+
+    /** Which optional stages this server is running with, and by which name (8.0). */
     public record Pipeline(boolean supervisor, boolean literals, boolean narrate, boolean audit,
-                           String schema_retrieval, List<String> nodes, EnsembleSettings ensemble) {
+                           String schema_retrieval, List<String> nodes, EnsembleSettings ensemble,
+                           String version, MemorySettings memory) {
         public Pipeline {
             schema_retrieval = text(schema_retrieval);
             nodes = list(nodes);
+            version = text(version);
         }
     }
 

@@ -7,8 +7,10 @@ import json
 import sys
 from typing import Any
 
+from nl2sql_common.env import env_bool
+
 from . import tracing
-from .config import Settings
+from .config import MAX_CONVERSATION_MEMORY, PIPELINES, V6_3_1, V7_0_0, Settings
 from .ensemble import build_agent, step_label
 from .ensemble_state import is_ensemble, run_state
 from .llm import LlmUnavailableError
@@ -73,10 +75,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--snippet-db-url", default=settings.snippet_db_url, help="snippet store URL")
     p.add_argument("--snippets-top-k", type=int, default=settings.snippets_top_k, help="snippets shown to the model, at most")
     p.add_argument(
+        "--pipeline",
+        choices=PIPELINES,
+        default=settings.pipeline_version,
+        help=f"the pipeline that answers, by the release that built it: {V7_0_0} asks each question several "
+        f"ways, {V6_3_1} once (default: {settings.pipeline_version})",
+    )
+    # Unsaid unless a flag or ENSEMBLE_ENABLED says: then the pipeline's
+    # name decides (arch8), so the help says so rather than a word.
+    said = env_bool("ENSEMBLE_ENABLED", None)
+    p.add_argument(
         "--ensemble",
         action=argparse.BooleanOptionalAction,
-        default=settings.ensemble_enabled,
-        help=f"ask the question through the ensemble, arch7 {_default(settings.ensemble_enabled)}",
+        default=None,
+        help="ask the question through the ensemble, arch7 "
+        + (_default(said) if said is not None else
+           f"(default: what --pipeline implies: on under {V7_0_0}, off under {V6_3_1})"),
     )
     p.add_argument(
         "--paraphrases",
@@ -95,6 +109,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=settings.ensemble_fuse_columns,
         help=f"widen the chosen rows with columns other agreeing runs carried {_default(settings.ensemble_fuse_columns)}",
+    )
+    p.add_argument(
+        "--memory",
+        type=int,
+        default=settings.conversation_memory,
+        help=f"earlier answered turns of this session a question is read with, 0 to {MAX_CONVERSATION_MEMORY}; "
+        f"read and checked, and taken by nothing until arch8's Phase 2 (default: {settings.conversation_memory})",
     )
     p.add_argument("--json", action="store_true", help="emit the full result as JSON")
     p.add_argument("--quiet", action="store_true", help="only print the final answer")
@@ -122,7 +143,12 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     settings.snippets_enabled = args.snippets
     settings.snippet_db_url = args.snippet_db_url
     settings.snippets_top_k = args.snippets_top_k
-    settings.ensemble_enabled = args.ensemble
+    settings.pipeline_version = args.pipeline
+    # The switch as a flag said it, else as the environment did, else
+    # unsaid -- for `validate` to resolve from the name the flag may just
+    # have changed. Never the value the old name resolved to.
+    settings.ensemble_enabled = args.ensemble if args.ensemble is not None else env_bool("ENSEMBLE_ENABLED", None)
+    settings.conversation_memory = args.memory
     settings.ensemble_paraphrases = args.paraphrases
     settings.ollama_parallel_calls = args.parallel_calls
     settings.ensemble_fuse_columns = args.fuse_columns
@@ -199,6 +225,7 @@ def as_document(question: str, state: dict[str, Any]) -> dict[str, Any]:
     run = run_state(state)
     document = {
         "question": question,
+        "pipeline": state.get("pipeline"),
         "verdict": state.get("verdict"),
         "intent": state.get("intent"),
         "answer_contract": state.get("answer_contract"),

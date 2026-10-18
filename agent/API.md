@@ -307,6 +307,16 @@ is what to draw before the first event; fewer run when fewer rewordings
 were faithful, and more when a second wave is taken. With the ensemble off
 `nodes` there is empty, and a server older than 7.0 sends no `ensemble`.
 
+Since 8.0 `pipeline.version` names the pipeline that answers,
+`PIPELINE_VERSION`: `v7_0_0`, the ensemble, or `v6_3_1`, one run a question
+and nothing else different. `pipeline.ensemble.enabled` is what the name
+decided, or what `ENSEMBLE_ENABLED` said. `pipeline.memory` is how much of a
+conversation a question is read with: `{"turns": 5, "rows": 3,
+"max_conversations": 200, "ttl_seconds": 3600}` -- `CONVERSATION_MEMORY`,
+the rows of a remembered answer shown with it, and the two settings below.
+A server older than 8.0 sends neither, and an 8.0 server takes no turn
+until arch8's Phase 2: the settings are published ahead of what reads them.
+
 Two of those limits describe the request rather than the answer:
 
 | Field | Default | What |
@@ -368,7 +378,8 @@ list is a list, so nothing needs a null check before it is rendered.
     "retrieval_errors": {},          // a retriever that could not reach its store: "unavailable",
                                      // or the driver's words to an administrator
     "node_errors": {},               // the supervisor or narrator, failed and survived: "failed"
-    "ensemble":  { /* 7.0: the record of every run; null with the ensemble off, see below */ }
+    "ensemble":  { /* 7.0: the record of every run; null with the ensemble off, see below */ },
+    "pipeline":  "v7_0_0"            // 8.0: the pipeline that answered, PIPELINE_VERSION
   },
   "error": null,
   "links": {"self": "/v1/questions/3f2c...", "events": "/v1/questions/3f2c.../events"}
@@ -606,7 +617,9 @@ is the review service's to add, when it starts; against a staging table
 that does not have it yet -- a stack upgraded and started without the
 review service -- the verdict is staged without it, which the server says
 once in its log, and the first verdict after the review service has started
-carries it.
+carries it. Since 8.0 the snapshot names the `pipeline` that answered, in a
+column added the same way, and a staging table may lack either: the server
+asks which it has in one query and leaves out the ones it lacks.
 
 Four rules are worth knowing:
 
@@ -855,6 +868,8 @@ role and resets its grants on every start.
 | `API_MAX_WAIT_SECONDS` | `900` | Ceiling on `?wait=` |
 | `API_EVENT_STREAM_TIMEOUT_SECONDS` | `300` | How long an idle stream is held open |
 | `API_KEEPALIVE_SECONDS` | `15` | Comment line interval on a stream |
+| `API_MAX_CONVERSATIONS` | `200` | Conversations kept at once, when `CONVERSATION_MEMORY` is above zero (`/v1/meta`'s `pipeline.memory`) |
+| `API_CONVERSATION_TTL_SECONDS` | `3600` | How long an idle conversation is kept |
 | `API_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc` |
 | `API_LOG_LEVEL` | `info` | uvicorn log level |
 

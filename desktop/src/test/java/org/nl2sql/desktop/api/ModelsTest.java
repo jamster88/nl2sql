@@ -165,6 +165,25 @@ class ModelsTest {
     }
 
     @Test
+    void the_pipelines_name_and_how_much_of_a_conversation_it_reads_parse() {
+        // 8.0: the name on the answer and in the metadata, and the
+        // conversation's four numbers beside it.
+        Models.Pipeline pipeline = Json.read("""
+                {"supervisor": true, "literals": true, "narrate": true, "audit": true,
+                 "schema_retrieval": "vector", "nodes": ["screen"], "version": "v6_3_1",
+                 "memory": {"turns": 5, "rows": 3, "max_conversations": 200, "ttl_seconds": 3600.0}}
+                """, Models.Pipeline.class);
+        assertEquals("v6_3_1", pipeline.version());
+        assertEquals(new Models.MemorySettings(5, 3, 200, 3600.0), pipeline.memory());
+        assertEquals("v7_0_0", Json.read("{\"pipeline\": \"v7_0_0\"}", Models.Answer.class).pipeline());
+        // A server older than 8.0 sends neither: no name, and no memory.
+        Models.Pipeline older = Json.read("{}", Models.Pipeline.class);
+        assertEquals("", older.version());
+        assertNull(older.memory());
+        assertEquals("", Json.read("{}", Models.Answer.class).pipeline());
+    }
+
+    @Test
     void a_reload_says_what_was_read_again_and_nothing_is_a_null() {
         // Mirrored for completeness: this client does not reload.
         Models.Reloaded reloaded = Json.read(

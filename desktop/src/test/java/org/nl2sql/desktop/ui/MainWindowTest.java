@@ -84,7 +84,7 @@ class MainWindowTest {
                     meta.intents(), meta.tables(), meta.scope(), meta.limits(),
                     new Models.Pipeline(pipeline.supervisor(), pipeline.literals(),
                             pipeline.narrate(), pipeline.audit(), pipeline.schema_retrieval(),
-                            Fakes.ensembleNodes(), Fakes.ensembleSettings(true, 2)),
+                            Fakes.ensembleNodes(), Fakes.ensembleSettings(true, 2), "", null),
                     meta.tls(), meta.authentication(), meta.feedback(), meta.routing());
             Models.Job answered = Fakes.job("job-1", Models.JobStatus.SUCCEEDED,
                     Fakes.answer(Fakes.ensemble()));
@@ -510,7 +510,7 @@ class MainWindowTest {
                         + "2025, which is an increase of eleven per cent over the previous year "
                         + "across every banner in the group.", 719279.97,
                         List.of(List.of(0, "net_sales")), null)),
-                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of(), null);
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of(), null, "");
         Models.Job job = Fakes.answered();
         return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
                 job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),

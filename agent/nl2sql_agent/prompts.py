@@ -82,11 +82,14 @@ SUPERVISOR_PROMPT = ChatPromptTemplate.from_messages(
             "(net sales when a ranking names none), and the period it names. "
             "Leave the period empty when the question names none -- a default "
             "is applied later and told to the user -- and write none when the "
-            "answer does not depend on time at all.",
+            "answer does not depend on time at all."
+            "{memory_rule}",
         ),
-        ("human", "Question: {question}"),
+        ("human", "{memory}Question: {question}"),
     ]
-)
+    # The conversation's rule and turns (arch8), empty unless a run is
+    # handed turns: every caller that passes neither renders 7.0's prompt.
+).partial(memory_rule="", memory="")
 
 SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
     [
@@ -108,7 +111,8 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
             "questions about this same database, each answered with SQL verified "
             "to run. Follow the patterns they establish -- how they reconcile "
             "grains, de-duplicate, and resolve the fiscal calendar -- but answer "
-            "the question actually asked, which is the last one.\n\n"
+            "the question actually asked, which is the last one."
+            "{conversation_rule}\n\n"
             "Schema and sample data:\n{schema}",
         ),
         # The worked examples, replayed as human/assistant turns. Empty when
@@ -129,8 +133,9 @@ SQL_GENERATION_PROMPT = ChatPromptTemplate.from_messages(
     ]
     # The contract and snippet blocks are optional in the template, not only
     # in the graph: every caller that predates them renders the prompt it
-    # always did.
-).partial(contract="", snippets="")
+    # always did. So is the clause on the conversation's own turns (arch8),
+    # empty unless a run is handed turns.
+).partial(contract="", snippets="", conversation_rule="")
 
 RETRY_FEEDBACK = (
     "Your previous attempt was rejected.\n"

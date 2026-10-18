@@ -1162,3 +1162,40 @@ the `2024` and the `3` inside `FY2024` and `Q3`) and four a direction
 with arch8's rules in view, so they are kinder to the checks than a
 model's restatements will be; Phase 2's rejections by check are the number
 for those.
+
+## The pipeline by name
+
+Phase 1 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
+names the pipeline -- `PIPELINE_VERSION`, the release that built it:
+`v7_0_0` the ensemble, `v6_3_1` one run a question and nothing else
+different -- and lays the plumbing memory will use, with nothing yet handed
+a turn: every run's state carries the words typed, its turns (none), how
+they were read and the name, and the Supervisor's and the generator's
+prompts each gain a placeholder that renders empty. Its acceptance is that
+none of it changes an answer: under `v7_0_0` the benchmark is 7.0's
+ensemble to the SQL, and under `v6_3_1` 7.0's `snippets`.
+
+**Measured 2026-10-17**, untraced, on the host against the running 7.0
+stack, routed by the committed catalog: 7.0's own code, run from a `git
+archive` of the commit Phase 1 started from, and then Phase 1's:
+
+| | Right | Same outcome | Same SQL | Same attempts, rung and model calls | Total | Median |
+|---|---|---|---|---|---|---|
+| 7.0, `snippets` | 15/15 | -- | -- | -- | 384.9s | 26.9s |
+| Phase 1, `snippets` under `v6_3_1` | 15/15 | 15 of 15 | 15 of 15 | 15 of 15 | 383.3s | 26.9s |
+| 7.0, `ensemble` | 15/15 | -- | -- | -- | 1964.8s | 127.4s |
+| Phase 1, `ensemble` under `v7_0_0` | 15/15 | 15 of 15 | 15 of 15 | 15 of 15 | 1973.8s | 127.4s |
+
+**No answer moved.** Every question came out the same way under each name
+as under 7.0: the same outcome, SQL, attempts, rung and number of model
+calls. The ensemble's record moved with none of it -- all fifteen
+unanimous both times, the same 45 rewordings discarded by the same checks
+(F3 13, F4 27, F5 5), the Judge setting the same one answer aside, no
+second wave, 338 model calls. The two prompts were held offline as well:
+rendered from 7.0's own module and from Phase 1's with the same inputs,
+the Supervisor's and the generator's are the same byte for byte. Under
+`v6_3_1`, `--config ensemble` is refused before anything is asked, with the
+agent's own sentence, and `--compare` runs the four one-run configurations
+and says why not the fifth
+([`benchmarks/README.md`](../benchmarks/README.md#comparing-configurations)).
+

@@ -148,6 +148,7 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("ENSEMBLE_WAVES", settings.ensemble_waves),
         ("ENSEMBLE_MAX_CLAIMS", settings.ensemble_max_claims),
         ("OLLAMA_PARALLEL_CALLS", settings.ollama_parallel_calls),
+        ("CONVERSATION_MEMORY", settings.conversation_memory),
     ):
         row = _table_row(agent_readme, name)
         assert str(value) in row, f"README says {name} defaults to something other than {value}: {row!r}"
@@ -158,6 +159,7 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("OLLAMA_BASE_URL", settings.ollama_base_url),
         ("EMBED_BASE_URL", settings.embed_base_url),
         ("OLLAMA_KEEP_ALIVE", settings.ollama_keep_alive),
+        ("PIPELINE_VERSION", settings.pipeline_version),
     ):
         row = _table_row(agent_readme, name)
         assert value in row, f"README says {name} defaults to something other than {value!r}: {row!r}"
@@ -200,6 +202,8 @@ def test_the_documented_api_defaults_are_the_real_defaults(agent_api_doc: str):
         ("API_JOB_TTL_SECONDS", settings.job_ttl_seconds),
         ("API_MAX_JOBS", settings.max_jobs),
         ("API_KEEPALIVE_SECONDS", settings.keepalive_seconds),
+        ("API_MAX_CONVERSATIONS", settings.max_conversations),
+        ("API_CONVERSATION_TTL_SECONDS", settings.conversation_ttl_seconds),
         ("API_TLS_CERT_FILE", settings.tls_cert_file),
         ("API_TLS_KEY_FILE", settings.tls_key_file),
     ):

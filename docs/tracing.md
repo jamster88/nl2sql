@@ -37,9 +37,10 @@ nl2sql                      AGENT       the question in, the answer out
 A repair is a second *SQL Generator* in the same trace, after a *Repair
 Agent*, so the attempts the answer took are read top to bottom. Each trace is
 tagged with how the run ended (`answered`, `gave_up`, `refused`), the
-Supervisor's screening, the attempts, the model calls, the agent's version
-and -- from the REST API -- the job, so the trace of any job is a filter away:
-``tags.`nl2sql.job_id` = '<id>'``.
+Supervisor's screening, the attempts, the model calls, the agent's version,
+the pipeline that answered (`nl2sql.pipeline`, since 8.0: `v7_0_0` or
+`v6_3_1`) and -- from the REST API -- the job, so the trace of any job is a
+filter away: ``tags.`nl2sql.job_id` = '<id>'``.
 
 **Under the ensemble (7.0) a question is still one trace.** Its root span's
 children are the ensemble's own steps, and each run of the pipeline is a

@@ -42,6 +42,23 @@ the pipeline that answered (`nl2sql.pipeline`, since 8.0: `v7_0_0` or
 `v6_3_1`) and -- from the REST API -- the job, so the trace of any job is a
 filter away: ``tags.`nl2sql.job_id` = '<id>'``.
 
+**A follow-up shows what it was read with** (8.0). A question asked with a
+conversation's earlier turns is tagged with how many were shown
+(`nl2sql.remembered`) and whether its restatement held and was answered
+(`nl2sql.resolved`, `true` or `false`). The root span's input stays the
+words typed, and its `nl2sql.read_as` attribute is the reading the run
+answered. The *Supervisor*'s span records the turns it was shown among its
+inputs and the rewritten `question` among its outputs, and holds two model
+calls where it made two -- the reading in context, then the screening of
+the question it asks, the words typed or the restatement, as 7.0 screens
+one -- and the *SQL
+Generator*'s the turns beside the note that decides whether it was shown
+them -- a question the Supervisor read as standing alone is written without
+them -- so a reader of the trace sees what each model was given and what it
+made of it. Searching
+``tags.`nl2sql.resolved` = 'true'`` finds every follow-up answered as a
+restatement.
+
 **Under the ensemble (7.0) a question is still one trace.** Its root span's
 children are the ensemble's own steps, and each run of the pipeline is a
 span beneath them, holding that run's agents as above:

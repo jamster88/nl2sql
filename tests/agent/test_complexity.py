@@ -243,3 +243,11 @@ def test_no_rule_calls_a_task_at_a_rung_outside_called_at():
     }
     assert set(c.CALLED_AT) == set(TASKS)
     assert {task: set(rungs) for task, rungs in c.CALLED_AT.items()} == reached
+
+
+def test_with_turns_shown_the_supervisor_reads_on_the_standard_rung():
+    """arch8 section 23.3: a fragment read against earlier answers is a
+    harder task than a sentence screened; with none, 7.0's rule."""
+    assert c.supervisor_rung("and by store?", remembered=2) == ("standard", "2 turn(s) remembered -> standard")
+    assert c.supervisor_rung("and by store?", remembered=0) == c.supervisor_rung("and by store?")
+    assert c.supervisor_rung("and by store?")[0] == "light"

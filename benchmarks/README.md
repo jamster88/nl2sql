@@ -396,10 +396,17 @@ as the complete question it means -- worth building only if the pipeline,
 which answers every question alone, answers such a fragment wrongly. This
 measures how often, before anything is built on it; the number is in
 [`docs/benchmark.md`](../docs/benchmark.md#the-follow-up-set).
-`--memory N` is how many earlier turns a follow-up is asked with. Nothing
-takes a turn until arch8's Phase 2, so 0 -- the fragment asked alone, which
-is what 7.0 does with a follow-up -- is the only depth, and any other is
-refused.
+`--memory N` is how many earlier turns a follow-up is asked with, 0 to 15,
+by default `CONVERSATION_MEMORY`'s. At 0 the fragment is asked alone, which
+is what 7.0 does with a follow-up (Phase 0). Above it (Phase 2) the first
+turn -- the benchmark question in its own words -- is asked first and handed
+on as the conversation's one turn, and the section adds how the first turns
+scored, the **resolution rate** -- the follow-ups whose restatement held and
+whose reading builds the contract the complete question's own reading does,
+which costs the benchmark one Supervisor call a follow-up -- and why the
+others were not resolved, counted by check (`C1 numbers`, `C2 literals`,
+`C3 polarity`, `C4 shape`) or as `not restated`; and under each follow-up,
+what it was read as, or why not.
 
 Each standalone follows the rules arch8 gives the Supervisor that will
 write them (section 23.3): every number, name and quoted value of the
@@ -413,9 +420,36 @@ polarity, shape) against its fragment.
 `--json` gives each result its `followup_of` -- the question it follows,
 whose id it is filed under -- with the words asked as its `question` and
 its `keeps`, each filter of the first turn's with whether the delivered SQL
-kept it; and each configuration a `followups` block: the depth, the
-accuracy, the filters kept and the consistency, their fraction (`null`
-when no reference keeps one); `null` for a run without the set.
+kept it, and with memory its `conversation`: the turn, the turns
+remembered, whether a restatement held and as what or why not, how the
+first turn scored (`first`) and whether the reading built the complete
+question's contract (`contract`). Each configuration has a `followups`
+block: the depth, the accuracy, the filters kept and the consistency, their
+fraction (`null` when no reference keeps one), the resolution rate (`null`
+with nothing remembered) and the reasons not resolved (`not_resolved`);
+`null` for a run without the set.
+
+## The independence
+
+```bash
+python benchmarks/run_benchmark.py --independence --config ensemble
+python benchmarks/run_benchmark.py --independence same --config ensemble
+```
+
+Memory that changes a question which stands alone is a cost with no
+benefit, and arch8 holds the default depth to it (section 11): each of the
+fifteen is asked alone, and then again as the second turn of a conversation
+-- after the question before it in the list, the first after the last
+(`previous`, the default), or after itself (`same`, the nearest thing to a
+person asking twice) -- and the **independence** is the fraction answered
+exactly as alone, by the rows. It must be 15 of 15. The report's
+INDEPENDENCE section says it, how many of the second turns were restated
+though each stands alone, and the model calls the second turns made against
+the same questions alone, which memory must not move; and lists every
+question that came out differently or was restated, with its reading.
+Each second turn is labelled `B07.i`; `--json` gives it `after`, the
+question it was asked after, and `independent`, and each configuration an
+`independence` block (`null` for a run without it).
 
 ## Options
 
@@ -424,7 +458,8 @@ python benchmarks/run_benchmark.py --only B07 B08      # just these
 python benchmarks/run_benchmark.py --category grain    # just this category
 python benchmarks/run_benchmark.py --paraphrase-set    # each question four ways: the stability
 python benchmarks/run_benchmark.py --followups         # each question's follow-up: the follow-up accuracy
-python benchmarks/run_benchmark.py --followups --memory 0  # with nothing remembered, the only depth yet
+python benchmarks/run_benchmark.py --followups --memory 0  # with nothing remembered, as 7.0 asks
+python benchmarks/run_benchmark.py --independence      # each question again after another: unchanged?
 python benchmarks/run_benchmark.py --json results.json # machine-readable
 python benchmarks/run_benchmark.py --verbose           # every pipeline step
 python benchmarks/run_benchmark.py --model other-model --base-url http://host:11434
@@ -461,10 +496,10 @@ or ` (follow-up set)` after it when a set was asked -- in the agent's experiment
 
 | | |
 |---|---|
-| Parameters | the configuration, the pipeline (`pipeline`, `PIPELINE_VERSION`), the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`), whether the follow-up set was (`followup_set`) and with how many turns remembered (`memory`) |
-| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; with the follow-up set, `followup_accuracy` and `followups_correct`, and `filters_kept` and `consistency` when a reference keeps a filter; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
+| Parameters | the configuration, the pipeline (`pipeline`, `PIPELINE_VERSION`), the model, whether calls were routed, the retry budget, the question ids, whether the paraphrase set was asked (`paraphrase_set`), whether the follow-up set was (`followup_set`) and with how many turns remembered (`memory`), and the independence's mode (`independence`, empty without it) |
+| Metrics | `accuracy`, `correct`, `answered`, `questions`, `total_seconds`, `median_seconds`; `accuracy.<category>`, `seconds.<stage>` and `rung.<rung>` for each one the run had; with the paraphrase set, `stability` and `stable`; with the follow-up set, `followup_accuracy` and `followups_correct`, `filters_kept` and `consistency` when a reference keeps a filter, and `resolution_rate` with memory; with the independence, `independence`; through the ensemble, `agreement.<level>`, `rejected.<check>`, `agreed_on_wrong`, `rung_spread`, `judge.<action>`, `judge_fixed`, `judge_broke`, `second_waves`, `columns_joined`, `columns_declined`, `claims_added` and `claims_dropped`; with the grain check on, `grain.references_refused`, `grain.repaired_runs`, `grain.repaired_right`, `grain.repaired_wrong` and `grain.repaired_failed` |
 | Artifact | `benchmark.json`, the report as `--json` writes it |
-| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own), `benchmark.followup` (`true` on a follow-up, filed under the question it follows) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
+| Traces | every question's, filed under the run by MLflow, tagged `benchmark.question_id`, `benchmark.category`, `benchmark.wording` (0 the question's own), `benchmark.followup` (`true` on a follow-up, filed under the question it follows), `benchmark.after` (on a second turn of the independence, the question before it) and `benchmark.configuration`, and judged by execution as feedback named `benchmark_correct` |
 
 So a wrong answer is one click from the trace that gave it -- which agent
 read what, which model wrote the SQL, what the repair said -- and two runs

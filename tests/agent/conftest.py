@@ -16,7 +16,7 @@ from nl2sql_agent.judge import Rulings
 from nl2sql_agent.paraphrase import Rewordings
 from nl2sql_agent.retrieval import KnowledgeUnavailableError, RetrievedChunk
 from nl2sql_agent.snippets import Found, Snippet, SnippetsUnavailableError
-from nl2sql_agent.supervisor import Screening
+from nl2sql_agent.supervisor import ConversationScreening, Screening
 from nl2sql_agent.tools import TableSelection
 
 
@@ -126,10 +126,15 @@ class _StructuredBinding:
                 # fail: as a model host that cannot answer would.
                 raise ConnectionError("with_structured_output(TableSelection): the model could not answer")
             return self._llm.table_selection
-        if self._schema is Screening:
+        if self._schema in (Screening, ConversationScreening):
             # A list scripts one screening per call -- the anchor's, then each
             # rewording's (arch7's F4) -- and the last answers every call after.
+            # With turns shown the reading asked for is the contextual one
+            # (arch8), scripted the same way, a restatement and all. An
+            # exception is raised, as a model host's would be.
             screening = self._llm.screening
+            if isinstance(screening, Exception):
+                raise screening
             if isinstance(screening, list):
                 return screening.pop(0) if len(screening) > 1 else screening[0]
             return screening or Screening(verdict="proceed", intent="aggregate")

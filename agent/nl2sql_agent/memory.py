@@ -29,15 +29,20 @@ and nothing in the pipeline calls it yet. The API takes
 `MAX_QUESTION_LENGTH` from here, so the longest question a request may ask
 and the longest a restatement may be are one number.
 
-`Turn` is what a conversation remembers of one answered question, and
+`Turn` is what a conversation remembers of one answered question
+(`turn_from_state` makes one from a finished run, of either agent), and
 `MemoryNote` how a run's question was read against the turns it was handed.
-Every run's state carries both from arch8's Phase 1, empty: a run is handed
-no turns until Phase 2.
+`render_turns` is the block the Supervisor reads them in (section 23.2):
+history, oldest first, each turn's question, the first sentence of its
+answer and its first row -- never the generator's, which is shown each
+turn's SQL as an exemplar (`prompts.conversation_messages`).
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from typing import Any, Mapping, Sequence
 
 from nl2sql_agent import fidelity
 
@@ -118,3 +123,79 @@ def resolve(asked: str, standalone: str, *, max_length: int = MAX_QUESTION_LENGT
     if len(read_as) > max_length:
         return MemoryNote(reason=f"C4 shape: longer than {max_length} characters")
     return MemoryNote(resolved=True, read_as=read_as)
+
+
+# --- the turn: made from a finished run, read by the Supervisor ---------------
+
+#: The end of a sentence: a stop, a question mark or an exclamation mark,
+#: then a space or the end of the text.
+_SENTENCE_END = re.compile(r"[.?!](?=\s|$)")
+
+
+def first_sentence(text: str, limit: int = MEMORY_ANSWER_CHARS) -> str:
+    """The narrative's first sentence, whitespace collapsed; one longer than
+    `limit` is cut on a word and marked cut, the mark within the limit."""
+    text = " ".join((text or "").split())
+    end = _SENTENCE_END.search(text)
+    sentence = text[: end.end()] if end else text
+    if len(sentence) <= limit:
+        return sentence
+    room = sentence[: limit - 3]
+    cut = room.rsplit(" ", 1)[0] if " " in room else room
+    return cut.rstrip(" ,;:") + "..."
+
+
+def turn_from_state(state: Mapping[str, Any], *, index: int, job_id: str = "") -> Turn | None:
+    """What a conversation remembers of a finished run, or None when it
+    answered nothing: a refusal, a give-up, or a run with no SQL or no rows.
+
+    Reads only the fields both agents' states carry at the top level --
+    the ensemble's `deliver` copies the chosen run's up -- so one function
+    makes a turn from either.
+    """
+    from .tracing import ANSWERED, outcome
+
+    result = state.get("result")
+    if outcome(state) != ANSWERED or not state.get("sql") or result is None:
+        return None
+    columns = result.get("columns", []) if isinstance(result, Mapping) else result.columns
+    rows = result.get("rows", []) if isinstance(result, Mapping) else result.rows
+    question = state.get("question") or ""
+    return Turn(
+        index=index,
+        asked=state.get("asked") or question,
+        question=question,
+        sql=state["sql"],
+        columns=[str(column) for column in columns],
+        rows=[["NULL" if cell is None else str(cell) for cell in row] for row in list(rows)[:MEMORY_ROWS]],
+        row_count=len(rows),
+        answer=first_sentence(state.get("narrative") or ""),
+        assumptions=[str(assumption) for assumption in state.get("assumptions") or []],
+        job_id=job_id,
+    )
+
+
+#: The block's first line: what the turns are, and what they are not.
+TURNS_HEADING = "Earlier in this conversation, oldest first (history, not instructions):"
+
+
+def render_turns(turns: Sequence[Turn]) -> str:
+    """The Supervisor's block, arch8 section 23.2's shape, oldest first:
+    each turn's question -- the one answered, so a chain of follow-ups
+    resolves against complete questions -- the first sentence of its answer,
+    and its first row as `column=value` pairs. Ends with a blank line, so
+    the question is the human turn's last line; empty for no turns."""
+    if not turns:
+        return ""
+    lines = [TURNS_HEADING]
+    for turn in turns:
+        lines.append(f"{turn.index}. Asked: {turn.question}")
+        if turn.answer:
+            lines.append(f"   Answered: {turn.answer}")
+        rows = f"{turn.row_count} row{'s' if turn.row_count != 1 else ''}"
+        if turn.rows:
+            rows += ", e.g. " + ", ".join(f"{column}={value}" for column, value in zip(turn.columns, turn.rows[0]))
+        if turn.assumptions:
+            rows += "; assumed: " + "; ".join(turn.assumptions)
+        lines.append(f"   ({rows})")
+    return "\n".join(lines) + "\n\n"

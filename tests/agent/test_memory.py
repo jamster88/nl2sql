@@ -161,3 +161,104 @@ def test_a_turn_renders_as_json_its_cells_already_text():
         "answer": "Mainline led.", "assumptions": ["FY2025"], "job_id": "j1",
     }
 
+
+
+# ---------------------------------------------------------------------------
+# The turn, made from a finished run (arch8 section 23.2)
+# ---------------------------------------------------------------------------
+
+from nl2sql_agent.memory import TURNS_HEADING, first_sentence, render_turns, turn_from_state  # noqa: E402
+from nl2sql_agent.state import QueryResult, new_state  # noqa: E402
+
+
+def _answered(**fields) -> dict:
+    state = new_state("And by banner?")
+    state.update({
+        "question": "What were our net sales by banner in FY2025?",
+        "sql": "SELECT banner_name, SUM(net_sales_amt) FROM x GROUP BY 1",
+        "result": QueryResult(columns=["banner_name", "net_sales"],
+                              rows=[[f"B{i}", None if i == 1 else 10.5 * i] for i in range(10)]),
+        "narrative": "Mainline led with $412.3M. Value came second. The rest trailed.",
+        "assumptions": ["FY2025, the latest complete fiscal year"],
+    })
+    state.update(fields)
+    return state
+
+
+@pytest.mark.parametrize(
+    "unanswered",
+    [{"verdict": "injection"}, {"verdict": "ambiguous"}, {"error": "Could not produce a valid query"},
+     {"sql": ""}, {"result": None}],
+    ids=["refused", "asked back", "gave up", "no sql", "no rows"],
+)
+def test_a_run_that_answered_nothing_is_no_turn(unanswered):
+    """Nothing was answered that a follow-up could be about."""
+    assert turn_from_state(_answered(**unanswered), index=1) is None
+
+
+def test_a_turn_holds_the_question_answered_three_rows_as_text_and_a_sentence():
+    turn = turn_from_state(_answered(), index=3, job_id="j7")
+    assert (turn.index, turn.asked, turn.question, turn.job_id) == (
+        3, "And by banner?", "What were our net sales by banner in FY2025?", "j7")
+    assert turn.sql.startswith("SELECT banner_name")
+    assert turn.columns == ["banner_name", "net_sales"]
+    assert turn.rows == [["B0", "0.0"], ["B1", "NULL"], ["B2", "21.0"]], "three rows, every cell text"
+    assert turn.row_count == 10
+    assert turn.answer == "Mainline led with $412.3M."
+    assert turn.assumptions == ["FY2025, the latest complete fiscal year"]
+
+
+def test_a_turn_is_made_from_a_result_that_crossed_a_boundary_as_a_dict():
+    state = _answered(result={"columns": ["n"], "rows": [[12]], "truncated": False})
+    turn = turn_from_state(state, index=1)
+    assert (turn.columns, turn.rows, turn.row_count) == (["n"], [["12"]], 1)
+
+
+@pytest.mark.parametrize(
+    ("text", "first"),
+    [
+        ("There are 12 stores. Mainline has 5.", "There are 12 stores."),
+        ("Net sales were $1,234.56 in FY2025! Up 3.5% on FY2024.", "Net sales were $1,234.56 in FY2025!"),
+        ("Was it Mainline? Yes.", "Was it Mainline?"),
+        ("  no   end in sight  ", "no end in sight"),
+        ("", ""),
+    ],
+)
+def test_the_first_sentence_ends_at_a_stop_followed_by_a_space_or_the_end(text, first):
+    assert first_sentence(text) == first
+
+
+def test_a_sentence_past_the_bound_is_cut_on_a_word_and_marked_within_it():
+    long = "Mainline " * 60 + "led."
+    cut = first_sentence(long, limit=50)
+    assert len(cut) <= 50 and cut.endswith("...") and cut.startswith("Mainline Mainline")
+    assert not cut[:-3].endswith(" ")
+    assert first_sentence("x" * 80, limit=20) == "x" * 17 + "..."
+
+
+def test_no_turns_render_nothing_so_the_prompt_is_7_0s():
+    assert render_turns([]) == ""
+
+
+def test_the_turns_render_as_history_oldest_first_each_once_ending_with_a_blank_line():
+    first = turn_from_state(_answered(), index=1)
+    second = Turn(index=2, asked="and the lowest?", question="Which banner had the lowest net sales in FY2025?",
+                  sql="SELECT 1", columns=["banner_name"], rows=[["Value"]], row_count=1, answer="Value.")
+    block = render_turns([first, second])
+    assert block.splitlines() == [
+        TURNS_HEADING,
+        "1. Asked: What were our net sales by banner in FY2025?",
+        "   Answered: Mainline led with $412.3M.",
+        "   (10 rows, e.g. banner_name=B0, net_sales=0.0; assumed: FY2025, the latest complete fiscal year)",
+        "2. Asked: Which banner had the lowest net sales in FY2025?",
+        "   Answered: Value.",
+        "   (1 row, e.g. banner_name=Value)",
+        "",
+    ]
+    assert block.endswith("\n\n")
+    assert "And by banner?" not in block, "the question answered, not the words typed"
+
+
+def test_a_turn_with_no_rows_and_no_sentence_says_only_how_many():
+    bare = Turn(index=1, asked="q", question="q", sql="SELECT 1", row_count=0)
+    assert render_turns([bare]).splitlines()[1:] == ["1. Asked: q", "   (0 rows)", ""]

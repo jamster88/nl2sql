@@ -315,7 +315,8 @@ conversation a question is read with: `{"turns": 5, "rows": 3,
 "max_conversations": 200, "ttl_seconds": 3600}` -- `CONVERSATION_MEMORY`,
 the rows of a remembered answer shown with it, and the two settings below.
 A server older than 8.0 sends neither, and an 8.0 server takes no turn
-until arch8's Phase 2: the settings are published ahead of what reads them.
+over REST until arch8's Phase 3: the settings are published ahead of what
+reads them.
 
 Two of those limits describe the request rather than the answer:
 

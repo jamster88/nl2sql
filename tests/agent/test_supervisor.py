@@ -298,3 +298,66 @@ def test_malformed_contract_fields_make_a_smaller_contract_not_a_crash():
 def test_an_unreachable_supervisor_leaves_the_contract_empty():
     state = screen(FakeScreeningLLM(error=ConnectionError("down")), "top 10 SKUs")
     assert (state["entities"], state["measure"], state["period"]) == ([], "", "")
+
+
+# ---------------------------------------------------------------------------
+# arch8: the question read in the light of the conversation's turns
+# ---------------------------------------------------------------------------
+
+from nl2sql_agent.memory import Turn  # noqa: E402
+from nl2sql_agent.prompts import MEMORY_RULE  # noqa: E402
+from nl2sql_agent.supervisor import ConversationScreening  # noqa: E402
+
+TURNS = [
+    Turn(index=1, asked="Net sales by banner in FY2025?", question="What were net sales by banner in FY2025?",
+         sql="SELECT 1", columns=["banner_name"], rows=[["Mainline"]], row_count=5, answer="Mainline led."),
+    Turn(index=2, asked="and the lowest?", question="Which banner had the lowest net sales in FY2025?",
+         sql="SELECT 2", row_count=1, answer="Value."),
+]
+
+
+def test_with_turns_the_supervisor_reads_them_as_history_before_the_question():
+    """The block in the human turn, oldest first, each once; the rule as a
+    paragraph of the system turn; and the question the human turn's last
+    line, as the rule promises."""
+    llm = FakeScreeningLLM(ConversationScreening(verdict="proceed"))
+    screen(llm, "and by store?", turns=TURNS)
+    (schema, messages), = llm.calls
+    assert schema is ConversationScreening
+    system, human = (str(m.content) for m in messages)
+    assert system.endswith(MEMORY_RULE) and MEMORY_RULE.startswith("\nEarlier turns of this conversation")
+    assert human.count("1. Asked: What were net sales by banner in FY2025?") == 1
+    assert human.index("1. Asked:") < human.index("2. Asked: Which banner had the lowest")
+    assert human.splitlines()[-1] == "Question: and by store?"
+    assert "and the lowest?" not in human, "the question answered, not the words typed"
+
+
+def test_without_turns_the_schema_and_the_prompt_are_7_0s():
+    """The schema is part of what the model is sent: the restatement's field
+    is asked for only when there are turns to restate against."""
+    llm = _llm(verdict="proceed")
+    screen(llm, "and by store?")
+    (schema, messages), = llm.calls
+    assert schema is Screening and "standalone" not in Screening.model_fields
+    assert "Earlier" not in "\n".join(str(m.content) for m in messages)
+
+
+def test_the_restatement_is_read_and_trimmed():
+    reading = ConversationScreening(verdict="proceed", standalone="  What were net sales by store in FY2025?  ")
+    assert screen(FakeScreeningLLM(reading), "and by store?", turns=TURNS)["standalone"] == (
+        "What were net sales by store in FY2025?")
+
+
+@pytest.mark.parametrize("odd", [None, 42, ["a list"]])
+def test_a_restatement_that_is_not_text_is_none(odd):
+    """The model's words, read as defensively as the other three fields."""
+    reading = SimpleNamespace(verdict="proceed", intent="aggregate", clarification="", entities=[], measure="",
+                              period="", standalone=odd)
+    assert screen(FakeScreeningLLM(reading), "and by store?", turns=TURNS)["standalone"] == ""
+
+
+def test_a_failed_call_restates_nothing():
+    llm = FakeScreeningLLM(error=TimeoutError("model host went away"))
+    update = screen(llm, "and by store?", turns=TURNS)
+    assert (update["verdict"], update["standalone"]) == ("proceed", "")
+    assert "supervisor" in update["node_errors"]

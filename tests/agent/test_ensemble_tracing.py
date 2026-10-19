@@ -83,6 +83,23 @@ def test_the_trace_is_tagged_with_the_agreement_and_the_whole_questions_cost():
     assert tags["nl2sql.model_calls"] == str(sum(entry.model_calls for entry in whole_trace(state)))
     assert int(tags["nl2sql.model_calls"]) >= 3
     assert tags["nl2sql.pipeline"] == state["pipeline"] == "v7_0_0"
+    assert (tags["nl2sql.remembered"], tags["nl2sql.resolved"]) == ("0", "false")
+
+
+def test_an_ensembles_follow_up_is_tagged_with_what_it_remembered_and_read():
+    from nl2sql_agent.memory import Turn
+    from nl2sql_agent.supervisor import ConversationScreening
+
+    tracer, client = traced()
+    llm = scripted([SQL])
+    llm.screening = ConversationScreening(verdict="proceed", standalone="how many stores are there in total?")
+    turn = Turn(index=1, asked="a", question="How many stores in Ohio?", sql=SQL)
+    ensemble(FakeDatabase(tables=TABLES), llm, tracer=tracer).run("and in total?", turns=[turn])
+    trace = client.only_trace()
+    assert (trace.tags["nl2sql.remembered"], trace.tags["nl2sql.resolved"]) == ("1", "true")
+    assert trace.root.inputs == {"question": "and in total?"}
+    assert trace.root.attributes["nl2sql.read_as"] == "how many stores are there in total?"
+    assert trace.root.child("Supervisor").inputs["turns"][0]["question"] == "How many stores in Ohio?"
 
 
 def test_a_second_wave_is_in_the_same_trace_its_runs_beneath_its_own_candidate_runs():

@@ -107,14 +107,28 @@ docker compose run --rm agent
 
 ```
 Connected to qwen3.8-256k at http://192.168.10.82:11434.
+Remembers the last 5 answered questions of this session
 Ask a question, or Ctrl-D to exit.
 
 > How many vendors are there?
 ```
 
-Each question is answered independently -- the agent does not remember the
-previous one, so ask complete questions rather than follow-ups like "and by
-store?".
+The session is one conversation (8.0): each answered question is
+remembered, and the next is read in the light of the last five
+(`--memory N`, `CONVERSATION_MEMORY`), so a follow-up -- "and by store?",
+"the same for FY2024" -- is answered as the complete question it means.
+When the agent restated one, the answer opens with how it read it:
+
+```
+> And by store?
+
+Read as: What were our net sales by store in fiscal year 2025?
+```
+
+A refused question, one asked back and one the agent gave up on are not
+remembered, and the session is forgotten when it ends. `--memory 0` asks
+every question alone, as before 8.0; a question given on the command line
+is always asked alone.
 
 Ctrl-D exits.
 
@@ -304,7 +318,7 @@ The pipeline by name (8.0) and the conversation's depth have a flag each:
 
 ```bash
 docker compose run --rm agent --pipeline v6_3_1 "..."  # one run a question: the ensemble off, nothing else
-docker compose run --rm agent --memory 0 "..."         # earlier turns read with, 0 to 15 (taken from arch8's Phase 2)
+docker compose run --rm agent --memory 0              # the session's questions asked alone; 0 to 15
 ```
 
 Unsaid, `--ensemble` follows the name -- on under `v7_0_0`, off under

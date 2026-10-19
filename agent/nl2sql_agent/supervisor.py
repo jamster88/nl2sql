@@ -36,7 +36,8 @@ from typing import Any, Literal, Sequence
 
 from pydantic import BaseModel, Field
 
-from .prompts import SUPERVISOR_PROMPT
+from . import memory
+from .prompts import MEMORY_RULE, SUPERVISOR_PROMPT
 from nl2sql_common.errors import MODEL_ERRORS
 
 #: A fallback description, used only when the table list cannot be read. A
@@ -130,6 +131,28 @@ class Screening(BaseModel):
     )
 
 
+class ConversationScreening(Screening):
+    """The Supervisor's output when the conversation's turns are shown
+    (arch8 section 23.3): the same six fields and the restatement.
+
+    A model of its own rather than a field on `Screening`, because the
+    schema is part of what the model is sent: a question asked alone is
+    screened with 7.0's schema as well as 7.0's prompt.
+    """
+
+    standalone: str = Field(
+        default="",
+        description=(
+            "the question restated so that it stands alone, when it refers to an "
+            "earlier turn -- 'and by store?', 'the same for FY2024', 'which of "
+            "those': every entity, measure, period and filter it takes from the "
+            "turns written out, every number, name and quoted value it contains "
+            "kept as written, and nothing added the turns do not supply; empty "
+            "when the question already stands alone"
+        ),
+    )
+
+
 #: A one-line framing added to the generator's human turn, so the class the
 #: Supervisor assigned actually shapes the SQL rather than being recorded.
 #:
@@ -162,6 +185,7 @@ def screen(
     *,
     clarify_enabled: bool = False,
     tables: Sequence[str] = (),
+    turns: Sequence[memory.Turn] = (),
 ) -> dict[str, Any]:
     """Classify and screen a question; return the partial state update.
 
@@ -176,11 +200,22 @@ def screen(
     there is nobody to answer the question the Supervisor would ask back. An
     ambiguous verdict then collapses to `proceed`, which is what v3 did with
     every ambiguous question anyway.
+
+    `turns` are the conversation's earlier answered questions (arch8): shown
+    before the question as history, with the rule that says how to read
+    them, and the reading asked for gains `standalone`, the question
+    restated so that it stands alone. The verdict is still given on the
+    words typed; what is done with the restatement is the caller's
+    (`memory.resolve`). With no turns the prompt and the schema are 7.0's.
     """
+    shape = ConversationScreening if turns else Screening
     try:
-        screening = llm.with_structured_output(Screening).invoke(
+        screening = llm.with_structured_output(shape).invoke(
             SUPERVISOR_PROMPT.format_messages(
-                domain=describe_scope(tables), question=question
+                domain=describe_scope(tables),
+                question=question,
+                memory_rule=MEMORY_RULE if turns else "",
+                memory=memory.render_turns(turns),
             )
         )
     except MODEL_ERRORS as exc:
@@ -191,6 +226,7 @@ def screen(
             "entities": [],
             "measure": "",
             "period": "",
+            "standalone": "",
             "node_errors": {"supervisor": str(exc)},
         }
 
@@ -213,6 +249,7 @@ def screen(
         "entities": _words(getattr(screening, "entities", None)),
         "measure": _text(getattr(screening, "measure", None)),
         "period": _text(getattr(screening, "period", None)),
+        "standalone": _text(getattr(screening, "standalone", None)),
     }
 
 

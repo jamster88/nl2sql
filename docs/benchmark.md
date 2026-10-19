@@ -1199,3 +1199,91 @@ agent's own sentence, and `--compare` runs the four one-run configurations
 and says why not the fifth
 ([`benchmarks/README.md`](../benchmarks/README.md#comparing-configurations)).
 
+## Memory in the agent
+
+Phase 2 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
+builds the conversation into the agent: the Supervisor reads a question in
+the light of the turns before it and restates a follow-up so that it stands
+alone, the restatement held to the words typed in code; the generator is
+shown the earlier questions with their SQL; and the answer opens with how a
+follow-up was read. It is measured on the follow-up set with five turns
+remembered, against [the follow-up set](#the-follow-up-set)'s numbers with
+none, and on the **independence**: each of the fifteen asked again as the
+second turn of a conversation -- after the question before it in the list,
+and after itself -- which must come out exactly as alone, 15 of 15.
+
+**Measured 2026-10-18**, untraced, on the host against the running 7.0
+stack, routed by the committed catalog, `--memory 5`:
+
+| | `snippets` under `v6_3_1` | `ensemble` under `v7_0_0` |
+|---|---|---|
+| follow-up accuracy, nothing remembered (Phase 0) | 1/15 | 2/15 |
+| **follow-up accuracy, five remembered** | **12/15** | **13/15** |
+| first turns right | 15/15 | 15/15 |
+| resolution rate | 13/15 | 13/15 |
+| not resolved | C2 literals 2 | C2 literals 2 |
+| the first turns' filters kept | 14/14 | 14/14 |
+| **independence**, after the question before | **15/15** | **15/15** |
+| independence, after itself | -- | 15/15 |
+| model calls, as second turns against alone | 68 against 53 | 353 against 338 |
+| the Supervisor's time, median, as a second turn against alone | 5.06s against 1.11s | 5.25s against 1.08s |
+
+**A follow-up is now answered as the complete question it means.**
+Twelve and thirteen of fifteen, where nothing remembered answered one and
+two. Thirteen restatements held, each then read as its complete question
+is (the resolution rate); the other two -- "The same for FY2024?" and "What
+about Q3?" -- were restated with "fiscal year 2024" and "the third quarter"
+for the words typed, which C2 holds verbatim, and were answered right all
+the same, asked as typed with the reading made in context and the generator
+shown the first turn. Every filter the first turns set was kept, where
+nothing remembered kept three of fourteen. The misses were read right and
+answered nearly so: B12 returns the reference's units and lift for each
+quarter, labelled "FY2025 Q1" where the reference has 1, which the
+comparison counts as another answer; and B13, "And which prices highest?",
+names the right competitor, QuickStop Grocery, with its premium as a
+difference -- $0.93 through `snippets`, 16.4 percent through the ensemble --
+where the reference states its price as a percentage of ours, 116.4. (Built
+the reference's way, in an earlier run, 7.0's completeness check refused
+116.5 as an impossible percentage.) Through `snippets` B10 missed as well, after a
+restatement that carried the first answer's values into the question
+("... (SKU100189 Ambervale T-Bone Steak, and the other 4 from the previous
+answer)"): the generator filtered to SKUs of its own. The rule asks for
+nothing the turns do not supply, and the turns supplied that; a
+restatement of the question and not of its answer is the next thing to ask
+of the prompt.
+
+**Two departures the measurement made.** Built as arch8 has it -- one
+Supervisor call reading the question in context, the generator always shown
+the turns -- the independence came out 14 of 15 twice. Under `v6_3_1`, B07
+asked after B06 was written from B06's query, its nearest exemplar, and fell
+into the grain trap B07 tests; so the generator is shown the turns only for
+a question the Supervisor read as a follow-up -- restated, a restatement a
+check discarded, or no reading at all -- and a question read as standing
+alone is written with 7.0's prompt. Then under the ensemble, B08 asked after
+B07 was read differently in context -- the measure "market share percentage"
+where alone it is "overall market share percentage", and no entity -- and
+the Paraphraser, handed those words, wrote other rewordings, three of whose
+four runs returned a fraction where alone all four returned the percentage.
+Read after the turn of the question before it, the anchor's reading of the
+fifteen kept its words for 5 at the standard rung and 6 at the light one,
+and at the light rung B11 was refused in context. So a question is now read
+in context first and then screened as 7.0 screens one -- the words typed
+when nothing was restated, the restatement when one held -- at one
+Supervisor call more for a question asked with turns (the owner's choice,
+2026-10-18). With both, the independence is 15 of 15 under each name, and 15
+of 15 with the first turn the question itself.
+
+**What it costs.** One Supervisor call more a question in a conversation,
+and none for a question asked alone: 15 calls over fifteen questions under
+each name. On this host that is about four seconds a question -- the reading
+in context on the standard rung, then 7.0's on the light -- and the
+question's median time grew from 27.9s to 31.8s through `snippets` and from
+126.3s to 130.3s through the ensemble. The follow-ups' prompts, counted by
+the model host (medians over the fifteen): 486 tokens alone, 724 with the
+one turn shown -- the rule, the block and the restatement's field -- and
+1,217 for the two calls together. A question's state grows by its turns,
+once in the outer state and once in each run's: asked after fifteen turns,
+every benchmark question's, B15's state through the ensemble's four runs
+grew from 160.4 KB to 221.0 KB, the turns themselves 12.1 KB as JSON; it was
+read as standing alone and came out as it does alone.
+

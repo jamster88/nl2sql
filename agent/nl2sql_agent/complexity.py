@@ -224,7 +224,13 @@ def prescreen(question: str) -> str | None:
     return None
 
 
-def supervisor_rung(question: str) -> tuple[str, str]:
+def supervisor_rung(question: str, *, remembered: int = 0) -> tuple[str, str]:
+    """Light unless the pre-screen flags the question; standard whenever the
+    conversation's turns are shown (arch8 section 23.3), since reading a
+    fragment against earlier answers is a harder task than screening a
+    sentence."""
+    if remembered:
+        return STANDARD, f"{remembered} turn(s) remembered -> standard"
     flag = prescreen(question)
     if flag:
         return STANDARD, f"pre-screen: {flag} -> standard"

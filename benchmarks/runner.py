@@ -251,13 +251,27 @@ class QuestionResult:
     keeps: dict[str, bool] = field(default_factory=dict)
     #: The pipeline that answered, as its state names it (arch8).
     pipeline: str = ""
+    #: How it was read against the conversation's turns, when it was asked
+    #: with any (arch8): `turn` (this question's number in it), `remembered`,
+    #: `resolved`, `read_as` and `reason` as the run's note has them; for a
+    #: follow-up also `first`, how its first turn scored, and `contract`,
+    #: whether the reading built the contract the complete question's does.
+    conversation: dict[str, Any] = field(default_factory=dict)
+    #: The independence (arch8 section 11): the question asked as the second
+    #: turn after `after`, and whether it was answered exactly as when asked
+    #: alone. None for a question asked alone.
+    after: str = ""
+    independent: bool | None = None
 
     @property
     def label(self) -> str:
         """B07 for the benchmark's own wording, B07.2 for the second
-        rewording, B07.f for the question that follows it."""
+        rewording, B07.f for the question that follows it, B07.i for it
+        asked as a second turn."""
         if self.followup_of:
             return f"{self.question_id}.f"
+        if self.after:
+            return f"{self.question_id}.i"
         return f"{self.question_id}.{self.wording}" if self.wording else self.question_id
 
     @property
@@ -434,6 +448,42 @@ class BenchmarkReport:
         confused with none kept."""
         kept, total = self.filters_kept()
         return kept / total if total else None
+
+    def read_in_context(self) -> list[QuestionResult]:
+        """The follow-ups asked after their first turn, with it remembered."""
+        return [result for result in self.followups() if result.conversation]
+
+    @property
+    def resolution_rate(self) -> float | None:
+        """arch8 section 11's second measure: the fraction of follow-ups
+        whose restatement held and builds the contract the complete
+        question's reading does. None when nothing was remembered."""
+        asked = self.read_in_context()
+        held = [r for r in asked if r.conversation.get("resolved") and r.conversation.get("contract")]
+        return len(held) / len(asked) if asked else None
+
+    def rejections_by_check(self) -> dict[str, int]:
+        """Why the follow-ups that were not read as a restatement were not:
+        the check that discarded it (`C1 numbers` ...), or `not restated`,
+        or the run's own reason, each counted."""
+        counts: dict[str, int] = {}
+        for result in self.read_in_context():
+            if not result.conversation.get("resolved"):
+                reason = (result.conversation.get("reason") or "").split(":")[0] or "none"
+                counts[reason] = counts.get(reason, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def second_turns(self) -> list[QuestionResult]:
+        """The questions asked as a second turn, for the independence."""
+        return [result for result in self.results if result.after]
+
+    @property
+    def independence(self) -> float | None:
+        """The fraction of questions answered exactly as when asked alone,
+        asked as a second turn (arch8 section 11): which must be 1.0. None
+        when the independence was not measured."""
+        seconds = self.second_turns()
+        return sum(1 for r in seconds if r.independent) / len(seconds) if seconds else None
 
     # --- the ensemble (arch7 section 11) ----------------------------------
 

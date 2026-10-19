@@ -360,8 +360,8 @@ class Settings:
     # decides `ensemble_enabled` when that is unsaid, and nothing else.
     pipeline_version: str = DEFAULT_PIPELINE
     # The answered turns of a conversation a question is read with: 0 to 15,
-    # 0 asking every question alone. Read and checked; nothing takes a turn
-    # until arch8's Phase 2.
+    # 0 asking every question alone. The CLI's interactive session keeps
+    # them (arch8 section 23.5); the REST API's conversation store is Phase 3.
     conversation_memory: int = 5
 
     def __post_init__(self) -> None:

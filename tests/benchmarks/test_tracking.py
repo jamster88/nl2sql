@@ -63,6 +63,7 @@ def test_a_configuration_is_one_run_with_its_settings_score_and_report(monkeypat
         "paraphrase_set": False,
         "followup_set": False,
         "memory": 0,
+        "independence": "",
     }
     assert run["metrics"]["accuracy"] == 1.0
     assert run["metrics"]["questions"] == 2
@@ -303,3 +304,28 @@ def test_with_the_grain_check_on_the_metrics_say_what_it_refused_and_how_those_r
             metrics["grain.repaired_failed"]) == (2, 1, 1, 0)
     off = tracking.metrics(BenchmarkReport(label="snippets", results=report.results))
     assert not [name for name in off if name.startswith("grain.")]
+
+
+def test_the_independence_is_one_run_whose_second_turns_name_the_one_before(monkeypatch, capsys):
+    mlflow = FakeMlflowWithRuns()
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "B02", "--independence", "--memory", "5"],
+           tracer=tracer_on(mlflow))
+
+    [run] = mlflow.runs.values()
+    assert run["name"] == "benchmark snippets (independence, previous)"
+    assert run["params"]["independence"] == "previous"
+    assert run["metrics"]["independence"] == 1.0
+    afters = sorted(t.tags.get("benchmark.after", "") for t in mlflow.traces.values())
+    assert afters == ["", "", "B01", "B02"]
+
+
+def test_with_memory_the_follow_up_sets_run_carries_its_resolution_rate(monkeypatch, capsys):
+    from nl2sql_agent.memory import MemoryNote
+    from nl2sql_agent.state import AnswerContract
+
+    read = {**RIGHT, "answer_contract": AnswerContract(),
+            "memory": MemoryNote(shown=1, resolved=True, read_as="What were our net sales by banner in FY2025?")}
+    mlflow = FakeMlflowWithRuns()
+    _drive(monkeypatch, read, argv=["--only", "B14", "--followups", "--memory", "5"], tracer=tracer_on(mlflow))
+    [run] = mlflow.runs.values()
+    assert (run["params"]["memory"], run["metrics"]["resolution_rate"]) == (5, 1.0)

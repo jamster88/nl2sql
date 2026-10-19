@@ -93,8 +93,9 @@ from .ensemble_state import (
 )
 from .fuse import agreement_line
 from .graph import _DETAIL, _MODEL_CALLS, _ROUTE, Nl2SqlAgent, ProgressFn, progress_to, reporter, traced_node
+from .graph import read_as as graph_read_as
 from .graph import step_label as pipeline_label
-from .memory import Turn
+from .memory import MemoryNote, Turn
 from .state import AuditReport, QueryResult, new_state
 from nl2sql_common.errors import MODEL_ERRORS
 
@@ -128,7 +129,7 @@ STEP_LABELS = {
 #: The candidate runs and the vote read whole runs, whose own spans are
 #: beneath; their spans record a line per run (`_runs`), not the runs.
 TRACE_SPANS = {
-    "screen": ("Supervisor", "AGENT", ("question",)),
+    "screen": ("Supervisor", "AGENT", ("question", "turns")),
     "refuse": ("Refusal", "TASK", ("verdict", "clarification")),
     "paraphrase": ("Paraphraser", "AGENT", ("question", "answer_contract")),
     "screen_paraphrase": ("Fidelity Gate", "GUARDRAIL", ("paraphrases",)),
@@ -298,12 +299,23 @@ class EnsembleAgent:
         of its own. With the Supervisor off nothing is screened anywhere,
         and the original's run builds its contract from its own wording as
         arch6 does.
+
+        With the conversation's turns (arch8 section 23.6) the anchor is the
+        standalone reading: a restatement that holds becomes the outer
+        `question`, which every later node reads -- the Paraphraser rewords
+        it, the fidelity gate screens each rewording against it with no
+        turns, the Judge reads it -- and the original's run is asked it.
         """
         question = state["question"]
+        turns = state.get("turns") or ()
         if not self.settings.supervisor_enabled:
             contract = self.agent.build_contract(question)
-            return {"answer_contract": contract, _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}"}
-        update, screening = self.agent.screen(question)
+            return {
+                "answer_contract": contract,
+                "memory": MemoryNote(shown=len(turns), reason="supervisor off"),
+                _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
+            }
+        update, screening = self.agent.screen(question, turns=turns)
         update["screening"] = screening
         return update
 
@@ -700,6 +712,7 @@ class EnsembleAgent:
             assumptions=state.get("assumptions") or [],
             completeness=chosen.state.get("completeness"),
             ensemble=decision,
+            read_as=graph_read_as(state),
         )
         return {
             "answer": answer,

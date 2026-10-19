@@ -19,9 +19,11 @@ class StubAgent:
     def __init__(self, state: dict) -> None:
         self._state = state
         self.questions: list[str] = []
+        self.turns: list[tuple] = []
 
-    def run(self, question: str, *, principal: str | None = None) -> dict:
+    def run(self, question: str, *, principal: str | None = None, turns=()) -> dict:
         self.questions.append(question)
+        self.turns.append(tuple(turns))
         return self._state
 
 
@@ -251,6 +253,7 @@ class _StubAgentFactory:
     def __init__(self, state: dict | None = None, tracer=None):
         self.state = state or {"result": {"columns": ["n"], "rows": [[1]], "truncated": False}}
         self.questions: list[str] = []
+        self.turns: list[tuple] = []
         self.on_progress = None
         self._tracer = tracer
 
@@ -266,8 +269,9 @@ class _StubAgentFactory:
         self.tracer = self._tracer or Tracer(settings)
         return self
 
-    def run(self, question: str, *, principal: str | None = None) -> dict:
+    def run(self, question: str, *, principal: str | None = None, turns=()) -> dict:
         self.questions.append(question)
+        self.turns.append(tuple(turns))
         return self.state
 
 
@@ -744,3 +748,91 @@ def test_json_mode_names_the_pipeline_that_answered(capsys):
 
     cli.answer(StubAgent({**new_state("q", pipeline="v6_3_1"), "sql": "SELECT 1"}), "q", as_json=True, quiet=False)
     assert json.loads(capsys.readouterr().out)["pipeline"] == "v6_3_1"
+
+
+# ---------------------------------------------------------------------------
+# arch8: the interactive session is one conversation
+# ---------------------------------------------------------------------------
+
+
+def _answered(question: str, **fields) -> dict:
+    from nl2sql_agent.state import QueryResult, new_state
+
+    return {**new_state(question), "sql": "SELECT 1", "narrative": f"{question} answered.",
+            "result": QueryResult(columns=["n"], rows=[[1]]), **fields}
+
+
+def _session(monkeypatch, questions: list[str], states, *argv: str):
+    """main() fed `questions` on stdin, the agent answering with `states`
+    in turn; the factory, to see what each question was handed."""
+    factory = _StubAgentFactory()
+    answers = iter(states)
+
+    def run(question, *, principal=None, turns=()):
+        factory.questions.append(question)
+        factory.turns.append(tuple(turns))
+        return next(answers)
+
+    factory.run = run
+    monkeypatch.setattr(cli, "build_agent", factory)
+    typed = iter(questions)
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(typed))
+    with pytest.raises(StopIteration):
+        cli.main(list(argv))
+    return factory
+
+
+def test_each_answered_question_becomes_a_turn_the_next_is_handed(monkeypatch, capsys):
+    """The last N answered, oldest first, numbered across the whole session
+    -- a refused question is no turn and does not count."""
+    from nl2sql_agent.state import new_state
+
+    states = [_answered("a?"), {**new_state("b?"), "verdict": "injection", "answer": "no."},
+              _answered("c?"), _answered("d?"), _answered("e?")]
+    factory = _session(monkeypatch, ["a?", "b?", "c?", "d?", "e?"], states, "--memory", "2")
+    assert [[turn.index for turn in turns] for turns in factory.turns] == [[], [1], [1], [1, 2], [2, 3]]
+    assert factory.turns[2][0].question == "a?"
+    assert "Remembers the last 2 answered questions of this session" in capsys.readouterr().out
+
+
+def test_with_no_memory_every_question_of_the_session_is_asked_alone(monkeypatch, capsys):
+    factory = _session(monkeypatch, ["a?", "b?"], [_answered("a?"), _answered("b?")], "--memory", "0")
+    assert factory.turns == [(), ()]
+    assert "Each question asked alone (--memory 0)" in capsys.readouterr().out
+
+
+def test_a_question_on_the_command_line_is_asked_alone(monkeypatch):
+    factory = _StubAgentFactory()
+    monkeypatch.setattr(cli, "build_agent", factory)
+    cli.main(["how", "many", "stores"])
+    assert factory.turns == [()]
+
+
+def test_a_follow_up_read_as_its_restatement_says_so_before_the_answer(capsys):
+    from nl2sql_agent.memory import MemoryNote
+
+    note = MemoryNote(shown=1, resolved=True, read_as="How many stores are in each state?")
+    cli.answer(StubAgent(_answered("and by state?", memory=note)), "and by state?", as_json=False, quiet=True)
+    out = capsys.readouterr().out
+    assert out.startswith("Read as: How many stores are in each state?\n\n")
+    assert out.index("Read as") < out.index("and by state? answered.")
+
+
+def test_json_in_the_session_carries_the_conversation_and_alone_carries_none(capsys):
+    from nl2sql_agent.memory import MemoryNote
+
+    note = MemoryNote(shown=1, resolved=True, read_as="How many stores are in each state?")
+    session = cli.Session(5)
+    session.answered = 1
+    state = _answered("How many stores are in each state?", asked="and by state?", memory=note)
+    cli.answer(StubAgent(state), "and by state?", as_json=True, quiet=False, session=session)
+    document = json.loads(capsys.readouterr().out)
+    assert document["conversation"] == {
+        "id": "session", "turn": 2, "remembered": 1, "asked": "and by state?",
+        "read_as": "How many stores are in each state?", "resolved": True, "reason": "",
+    }
+    assert (document["asked"], document["memory"]["resolved"]) == ("and by state?", True)
+    assert session.answered == 2 and len(session.turns) == 1
+
+    cli.answer(StubAgent(state), "and by state?", as_json=True, quiet=False)
+    assert json.loads(capsys.readouterr().out)["conversation"] is None

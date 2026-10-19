@@ -439,3 +439,33 @@ def test_the_conversations_placeholders_sit_where_their_text_will():
         question="q", feedback="", conversation_rule=" CLAUSE",
     )
     assert "which is the last one. CLAUSE\n\nSchema and sample data:\ns" in generator[0].content
+
+
+from nl2sql_agent.memory import Turn  # noqa: E402
+from nl2sql_agent.prompts import CONVERSATION_RULE, conversation_messages  # noqa: E402
+
+
+def test_each_earlier_turn_is_a_named_question_and_its_bare_sql():
+    turns = [Turn(index=1, asked="by banner?", question="Net sales by banner in FY2025?", sql="SELECT 1"),
+             Turn(index=2, asked="q", question="Unanswered?", sql="  "),
+             Turn(index=3, asked="and by store?", question="Net sales by store in FY2025?", sql="SELECT 3")]
+    human, ai, human3, ai3 = conversation_messages(turns)
+    assert human.content == (
+        "Asked earlier in this conversation (turn 1).\n\nQuestion: Net sales by banner in FY2025?\n\nSQL:")
+    assert (ai.type, ai.content) == ("ai", "SELECT 1")
+    assert human3.content.startswith("Asked earlier in this conversation (turn 3).") and ai3.content == "SELECT 3"
+    assert conversation_messages([]) == []
+
+
+def test_the_turns_follow_the_exemplars_and_the_clause_names_them():
+    examples = example_messages([{"question": "golden?", "sql_code": "SELECT 0"}])
+    turns = conversation_messages([Turn(index=1, asked="a", question="earlier?", sql="SELECT 1")])
+    messages = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge="", literals="", task="", examples=examples + turns,
+        question="now?", feedback="", conversation_rule=CONVERSATION_RULE,
+    )
+    contents = [m.content for m in messages]
+    assert contents[1].endswith("Question: golden?\n\nSQL:") and contents[3].startswith("Asked earlier")
+    assert contents[-1].endswith("Question: now?\n\nSQL:")
+    assert "which is the last one. The last of them, marked as asked earlier in this conversation" in contents[0]
+    assert "a follow-up usually keeps their joins, filters and calendar." in contents[0]

@@ -78,12 +78,15 @@ from .database import Database, plan_cost_problem, strip_sql
 from .examples import BY_KEYWORDS, BY_QUESTION, BY_REASONING, GoldenPairLibrary
 from .literals import LiteralMatcher, build_catalog, render_literal_map
 from .llm import build_llm, build_routed_client
-from .memory import Turn
+from . import memory
+from .memory import MemoryNote, Turn
 from .prompts import (
+    CONVERSATION_RULE,
     RETRY_FEEDBACK,
     SQL_GENERATION_PROMPT,
     TABLE_SELECTION_PROMPT,
     contract_block,
+    conversation_messages,
     example_messages,
     knowledge_block,
     literal_block,
@@ -271,7 +274,9 @@ def step_label(step: str) -> str:
 #: Beside the labels above for the same reason: a node added without one is a
 #: visible gap.
 TRACE_SPANS = {
-    "supervise": ("Supervisor", "AGENT", ("question",)),
+    # The turns each model was shown are among its inputs (arch8, S10), so a
+    # reader of the trace sees what it was given.
+    "supervise": ("Supervisor", "AGENT", ("question", "turns")),
     "refuse": ("Refusal", "TASK", ("verdict", "clarification")),
     "retrieve_schema": ("Schema Retriever", "RETRIEVER", ("question",)),
     "retrieve_literals": ("Literal Matcher", "RETRIEVER", ("question",)),
@@ -283,7 +288,7 @@ TRACE_SPANS = {
         "TASK",
         ("answer_contract", "schema_tables", "knowledge_tables", "example_tables", "snippet_hits"),
     ),
-    "generate_sql": ("SQL Generator", "AGENT", ("question", "attempts", "generation_rung", "issues")),
+    "generate_sql": ("SQL Generator", "AGENT", ("question", "turns", "memory", "attempts", "generation_rung", "issues")),
     "validate_static": ("Static Validator", "GUARDRAIL", ("sql", "selected_tables", "knowledge_about")),
     "planner_gate": ("Planner Gate", "GUARDRAIL", ("sql",)),
     "execute_query": ("Safe Executor", "TOOL", ("sql", "principal")),
@@ -695,10 +700,14 @@ class Nl2SqlAgent:
         and its contract is built from the seeded reading exactly as it
         would have been from its own.
         """
+        turns = state.get("turns") or ()
         if not self.settings.supervisor_enabled:
+            # Nothing reads the turns but the generator: nothing is restated,
+            # and the contract is built from the words typed (arch8 23.8).
             contract = self.build_contract(state["question"])
             return {
                 "answer_contract": contract,
+                "memory": MemoryNote(shown=len(turns), reason="supervisor off"),
                 _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
             }
         if state.get("screened"):
@@ -717,10 +726,12 @@ class Nl2SqlAgent:
                 "answer_contract": contract,
                 _DETAIL: f"screened by the ensemble; contract: {answer_contract.describe(contract)}",
             }
-        update, _ = self.screen(state["question"])
+        update, _ = self.screen(state["question"], turns=turns)
         return update
 
-    def screen(self, question: str, *, shaped_by: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    def screen(
+        self, question: str, *, shaped_by: str | None = None, turns: Sequence[Turn] = ()
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         """The Supervisor's reading of one question, and the contract built from it.
 
         Returns the update the Supervisor's node writes -- verdict, intent,
@@ -735,7 +746,66 @@ class Nl2SqlAgent:
         reading, its entities, measure and period, is this question's. The
         ensemble's fidelity gate reads a rewording so: held to its original's
         shape, the reading is what is compared (arch7 section 22.3's F4).
+
+        `turns` are the conversation's earlier answered questions (arch8
+        section 23.3). The Supervisor first reads the question in their
+        light, on the standard rung, and restates it; the restatement is held
+        to the words typed in code (`memory.resolve`). Then the question it
+        asks is screened as 7.0 screens a question: the words typed, when
+        nothing was restated -- so a question that stands alone is read
+        exactly as it is read alone -- or the restatement, when it held, which
+        then becomes `question`, the one field of the run rewritten, here. A
+        follow-up refused in context is refused on the words typed; one whose
+        restatement a check discarded runs as typed with the reading made in
+        context; and with no reading at all, nothing more is asked (23.8).
+        Measured, a reading made in context differs from 7.0's in its words
+        for most questions, which under the ensemble changed an answer (the
+        changelog's 8.0 departures): hence the second call.
         """
+        if not turns:
+            update, screening = self._screen_alone(question, shaped_by=shaped_by)
+            update["memory"] = MemoryNote()
+            return update, screening
+
+        routed = self.router.model("supervisor", *complexity.supervisor_rung(question, remembered=len(turns)))
+        context = supervisor.screen(
+            routed,
+            question,
+            clarify_enabled=self.settings.clarify_enabled,
+            tables=self.db.table_names(),
+            turns=turns,
+        )
+        _note_route(context, routed)
+        standalone = context.pop("standalone", "")
+        failed = "supervisor" in (context.get("node_errors") or {})
+        note = MemoryNote(reason=SUPERVISOR_FAILED) if failed else memory.resolve(question, standalone)
+        follows_up = not failed and note.reason != memory.NOT_RESTATED
+        if follows_up and context["verdict"] != "proceed":
+            # Refused on the words typed, which the run keeps: nothing is
+            # answered, so nothing is read as anything.
+            note = MemoryNote(reason=SCREENED_OUT)
+        if failed or (follows_up and not note.resolved):
+            # The one reading there is: made in context, of the words typed.
+            update, screening = self._reading(context, question, shaped_by=shaped_by)
+        else:
+            update, screening = self._screen_alone(note.read_as if note.resolved else question, shaped_by=shaped_by)
+            update[_MODEL_CALLS] += 1
+            # One route for the node: the screening the run uses, saying the
+            # reading in context came first.
+            first, route = context.get(_ROUTE) or {}, dict(update.get(_ROUTE) or {})
+            route["route"] = f"{route.get('route', '')}; read in context first ({first.get('rung')}, {first.get('model')})"
+            route["hops"] = list(first.get("hops", [])) + list(route.get("hops", []))
+            update[_ROUTE] = route
+        note.shown = len(turns)
+        if note.resolved:
+            update["question"] = note.read_as
+        update["memory"] = note
+        update[_DETAIL] += _reading(note)
+        return update, screening
+
+    def _screen_alone(self, question: str, *, shaped_by: str | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+        """The Supervisor's reading of one question as 7.0 makes it: no turns,
+        7.0's rung, prompt and schema."""
         routed = self.router.model("supervisor", *complexity.supervisor_rung(question))
         update = supervisor.screen(
             routed,
@@ -744,6 +814,14 @@ class Nl2SqlAgent:
             tables=self.db.table_names(),
         )
         _note_route(update, routed)
+        update.pop("standalone", None)
+        return self._reading(update, question, shaped_by=shaped_by)
+
+    def _reading(
+        self, update: dict[str, Any], question: str, *, shaped_by: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """A screening's update, its contract built, and the screening a run
+        made for it is seeded with."""
         screening = {
             name: update.get(name) for name in ("verdict", "intent", "clarification", *SCREENING_FIELDS)
         }
@@ -1005,6 +1083,10 @@ class Nl2SqlAgent:
                 issues="\n".join(f"- {issue.render()}" for issue in issues),
             )
         shots = state.get("example_shots", []) if self.settings.multi_shot_enabled else []
+        # The conversation's earlier turns (arch8 section 23.4): after the
+        # exemplars, nearest the question, on the first draft and every repair
+        # -- unless the Supervisor read the question as standing alone.
+        turns = generator_turns(state)
         messages = SQL_GENERATION_PROMPT.format_messages(
             dialect=self.db.dialect,
             schema=state.get("schema", ""),
@@ -1013,7 +1095,8 @@ class Nl2SqlAgent:
             literals=literal_block(render_literal_map(state.get("literal_map", []))),
             task=task_block(supervisor.intent_framing(state.get("intent", ""))),
             contract=contract_block(answer_contract.render_contract(state.get("answer_contract"))),
-            examples=example_messages([_shot_dict(s) for s in shots]),
+            examples=example_messages([_shot_dict(s) for s in shots]) + conversation_messages(turns),
+            conversation_rule=CONVERSATION_RULE if turns else "",
             question=state["question"],
             feedback=feedback,
         )
@@ -1383,8 +1466,53 @@ class Nl2SqlAgent:
             report,
             assumptions=state.get("assumptions", []),
             completeness=state.get("completeness"),
+            read_as=read_as(state),
         )
         return {"narrative": narrative, "answer": answer, _DETAIL: f"{len(answer):,} characters"}
+
+
+#: The note on a follow-up the Supervisor refused: its restatement is not
+#: checked, since the run ends on the words typed.
+SCREENED_OUT = "screened out on the words typed"
+
+#: The note when the Supervisor's call failed with turns shown.
+SUPERVISOR_FAILED = "supervisor failed"
+
+
+def generator_turns(state: Mapping[str, Any]) -> list[Turn]:
+    """The turns the generator is shown: every one, unless the Supervisor
+    read the question with them and found it stands alone ("not restated").
+
+    A question that stands alone gains nothing from the conversation's
+    earlier SQL, and the nearest exemplar is what a generator borrows from:
+    measured, one such question asked after another came out differently
+    for being shown it (arch8 R2, docs/benchmark.md). So the generator is
+    shown the turns for a question read as a follow-up -- restated, or
+    restated and discarded by a check -- and when there was no reading to
+    go by (the Supervisor off, or its call failed); a question that stands
+    alone is written with 7.0's prompt.
+    """
+    note = state.get("memory")
+    if isinstance(note, MemoryNote) and note.reason == memory.NOT_RESTATED:
+        return []
+    return list(state.get("turns") or [])
+
+
+def read_as(state: Mapping[str, Any]) -> str:
+    """The reading the run answered, when a follow-up's restatement held:
+    what the answer's "Read as" line says; empty otherwise."""
+    note = state.get("memory")
+    return note.read_as if isinstance(note, MemoryNote) and note.resolved else ""
+
+
+def _reading(note: MemoryNote) -> str:
+    """What the Supervisor made of the turns, for the progress line and the
+    trace: the reading, or why there was none."""
+    if note.resolved:
+        return f"; read as: {note.read_as}"
+    if note.reason in (memory.NOT_RESTATED, SCREENED_OUT, SUPERVISOR_FAILED):
+        return f"; {note.reason}"
+    return f"; discarded: {note.reason}"
 
 
 def _note_route(update: dict, routed: RoutedModel) -> None:

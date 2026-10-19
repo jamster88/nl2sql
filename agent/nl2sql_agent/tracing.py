@@ -331,10 +331,20 @@ class RunTrace:
         return self._span.trace_id
 
     def finish(self, state: Mapping[str, Any]) -> None:
-        """The answer as the trace's output, and how the run went as its tags."""
+        """The answer as the trace's output, and how the run went as its tags.
+
+        The root span's input is the words typed; with a conversation's
+        turns (arch8) its `nl2sql.read_as` attribute is the reading the run
+        answered, and two tags say how many turns were shown and whether a
+        restatement held.
+        """
         self._span.set_outputs(
             {"answer": state.get("answer", ""), "sql": state.get("sql", ""), "error": state.get("error")}
         )
+        note = state.get("memory")
+        read_as = getattr(note, "read_as", "") if getattr(note, "resolved", False) else ""
+        if read_as:
+            self._span.set_attributes({"nl2sql.read_as": read_as})
         result = state.get("result")
         self._mlflow.update_current_trace(
             tags={
@@ -348,6 +358,10 @@ class RunTrace:
                 "nl2sql.rows": str(len(result.rows)) if result is not None else "",
                 # Which pipeline answered, by name (arch8): PIPELINE_VERSION.
                 "nl2sql.pipeline": str(state.get("pipeline") or ""),
+                # The conversation's turns shown, and whether a follow-up's
+                # restatement held and was answered (arch8).
+                "nl2sql.remembered": str(getattr(note, "shown", 0)),
+                "nl2sql.resolved": "true" if read_as else "false",
             }
         )
 

@@ -581,7 +581,7 @@ the query is one attempt more. `GRAIN_CHECK_ENABLED=false` turns it off.
 | `--paraphrases N` | Rewordings in the ensemble's first wave, 3 to 10 |
 | `--parallel-calls N` | Model calls in flight to the Ollama host at once: what the host serves, no more (1 by default) |
 | `--fuse-columns`, `--no-fuse-columns` | Widen the chosen rows with columns other agreeing runs carried (on by default) |
-| `--memory N` | Earlier answered turns a question is read with, 0 to 15 (5 by default); read and checked, taken from arch8's Phase 2 |
+| `--memory N` | Earlier answered questions of the interactive session each question is read with, 0 to 15 (5 by default); 0 asks every question alone |
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 

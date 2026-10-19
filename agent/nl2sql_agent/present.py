@@ -994,6 +994,7 @@ def render_answer(
     assumptions: Sequence[str] = (),
     completeness: CompletenessReport | None = None,
     ensemble: Any = None,
+    read_as: str = "",
 ) -> str:
     """The markdown answer: the claims that survived the audit, then the table.
 
@@ -1012,12 +1013,18 @@ def render_answer(
     joined from another run that agreed, named with that run, since this
     answer's query does not return it; each column that would not join, and
     why; and each answer that lost, with how its query differs.
+
+    `read_as` is the reading a follow-up was answered as, when its
+    restatement held (arch8): the answer opens with it, before anything
+    else, so a wrong reading is seen rather than believed.
     """
     report = audit_report if audit_report is not None else AuditReport()
     kept = surviving_claims(claims, report)
     is_scalar = chart is not None and chart.kind == "scalar"
 
     blocks: list[str] = []
+    if read_as:
+        blocks.append(f"Read as: *{_escape_text(read_as)}*")
     line = getattr(ensemble, "line", "")
     if line:
         blocks.append(f"*{_escape_text(line)}*")

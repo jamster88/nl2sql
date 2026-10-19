@@ -213,3 +213,37 @@ def test_a_span_can_record_a_summary_of_what_its_node_wrote():
     with tracer.run("q"):
         wrapped({"claims": [], "audit": None, "completeness": None})
     assert client.only_trace().root.child("Answer").outputs == {"length": 4}
+
+
+def test_a_follow_ups_trace_shows_the_turns_each_model_was_given_and_the_reading():
+    """arch8 R3 and S10: the root's input is the words typed and its
+    attribute the reading; the Supervisor's span the turns in and the
+    rewritten question out; the generator's span the turns it was shown."""
+    from nl2sql_agent.memory import Turn
+    from nl2sql_agent.supervisor import ConversationScreening
+
+    first = Turn(index=1, asked="How many stores are there?", question="How many stores are there?",
+                 sql="SELECT count(*) AS n FROM dim_store", row_count=1)
+    tracer, client = traced()
+    llm = scripted(["SELECT count(*) AS n FROM dim_store"])
+    llm.screening = ConversationScreening(verdict="proceed", standalone="How many stores are there in each state?")
+    make_agent(FakeDatabase(tables=TABLES), llm, tracer=tracer).run("And in each state?", turns=[first])
+
+    trace = client.only_trace()
+    assert trace.root.inputs == {"question": "And in each state?"}
+    assert trace.root.attributes["nl2sql.read_as"] == "How many stores are there in each state?"
+    supervisor = trace.root.child("Supervisor")
+    assert supervisor.inputs["question"] == "And in each state?"
+    assert [turn["question"] for turn in supervisor.inputs["turns"]] == ["How many stores are there?"]
+    assert supervisor.outputs["question"] == "How many stores are there in each state?"
+    assert trace.root.child("SQL Generator").inputs["turns"][0]["sql"] == "SELECT count(*) AS n FROM dim_store"
+    assert (trace.tags["nl2sql.remembered"], trace.tags["nl2sql.resolved"]) == ("1", "true")
+
+
+def test_a_question_asked_alone_is_traced_as_remembering_nothing():
+    tracer, client = traced()
+    make_agent(FakeDatabase(tables=TABLES), scripted(["SELECT count(*) AS n FROM dim_store"]),
+               tracer=tracer).run("How many stores are there?")
+    trace = client.only_trace()
+    assert (trace.tags["nl2sql.remembered"], trace.tags["nl2sql.resolved"]) == ("0", "false")
+    assert "nl2sql.read_as" not in trace.root.attributes

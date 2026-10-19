@@ -44,14 +44,15 @@ SOURCE = "benchmarks/run_benchmark.py"
 
 
 def question_tags(
-    question: BenchmarkQuestion, configuration: str, *, wording: int = 0, followup: bool = False,
+    question: BenchmarkQuestion, configuration: str, *, wording: int = 0, followup: bool = False, after: str = "",
 ) -> dict[str, str]:
     """The tags a question's trace is filed with, whether or not it is grouped.
 
     `wording` is 0 for the question's own words and 1 to 3 for the
     paraphrase set's rewordings, so the four traces of one question can be
     told apart -- and found together by its id. A follow-up (arch8) is
-    filed under the question it follows, and says it is one.
+    filed under the question it follows, and says it is one; a question
+    asked as a second turn, for the independence, names the one before it.
     """
     tags = {
         "nl2sql.entrypoint": "benchmark",
@@ -62,6 +63,8 @@ def question_tags(
     }
     if followup:
         tags["benchmark.followup"] = "true"
+    if after:
+        tags["benchmark.after"] = after
     return tags
 
 
@@ -134,6 +137,10 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
         if total:
             values["filters_kept"] = kept
             values["consistency"] = kept / total
+        if report.resolution_rate is not None:
+            values["resolution_rate"] = report.resolution_rate
+    if report.independence is not None:
+        values["independence"] = report.independence
     if report.ensembled:
         for level, count in report.agreement_levels().items():
             values[f"agreement.{level}"] = count
@@ -158,7 +165,7 @@ def metrics(report: BenchmarkReport) -> dict[str, float]:
 
 def open_run(
     agent: Any, configuration: str, questions: list[BenchmarkQuestion], *, paraphrase_set: bool = False,
-    followups: bool = False, memory: int = 0,
+    followups: bool = False, memory: int = 0, independence: str = "",
 ) -> BenchmarkRun | None:
     """The configuration's run, or None when its traces cannot be grouped."""
     if not agent.tracer.ready():
@@ -174,7 +181,8 @@ def open_run(
     from nl2sql_agent import __version__
 
     settings = agent.settings
-    asked = " (paraphrase set)" if paraphrase_set else " (follow-up set)" if followups else ""
+    asked = (" (paraphrase set)" if paraphrase_set else " (follow-up set)" if followups
+             else f" (independence, {independence})" if independence else "")
     run = mlflow.start_run(
         run_name=f"benchmark {configuration}{asked}",
         tags={"nl2sql.entrypoint": "benchmark", "nl2sql.version": __version__},
@@ -191,6 +199,7 @@ def open_run(
             "paraphrase_set": paraphrase_set,
             "followup_set": followups,
             "memory": memory,
+            "independence": independence,
         }
     )
     return BenchmarkRun(mlflow, run.info.run_id)

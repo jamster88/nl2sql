@@ -553,7 +553,7 @@ from state the pipeline already holds; nothing in routing calls a model.
 
 | Agent | Rung | Climbs when |
 |---|---|---|
-| Supervisor | light; standard when a free pre-screen flags the question -- over 60 words, system vocabulary such as *ignore* or *reveal*, or SQL in it | never: one call |
+| Supervisor | light; standard when a free pre-screen flags the question -- over 60 words, system vocabulary such as *ignore* or *reveal*, or SQL in it. With a conversation's turns shown (8.0) it first reads the question in their light on the standard rung, then screens the question it asks as above | never: one call, and with turns shown a second when the question stands alone or its restatement held |
 | SQL Generator | scored by the Context Aggregator: the tables the answer needs, estimated from its contract (3-4 +1, 5+ +2), the intent, a ranked measure, a trap rule among the three nearest chunks, a value named exactly and found in two columns, a question over 40 words, and a near worked example (-2); 1 or less light, 2-3 standard, 4+ heavy | every repair; a gap the completeness *rules* found holds the rung once, since its fix is mechanical |
 | Completeness reflection | the generation's, capped at standard | with the generation |
 | Insight Narrator | light for at most 5 rows of at most 3 numbers, else standard | an audit send-back |
@@ -1260,7 +1260,7 @@ stops the agent at start, naming the bounds:
 | Variable | Flag | Default |
 |---|---|---|
 | `PIPELINE_VERSION` | `--pipeline` | `v7_0_0`, the ensemble; `v6_3_1` asks each question once and differs in that alone |
-| `CONVERSATION_MEMORY` | `--memory` | 5 answered turns of a conversation a question is read with; 0 to 15, 0 asks every question alone. Read and checked, and taken by nothing until arch8's Phase 2 |
+| `CONVERSATION_MEMORY` | `--memory` | 5 answered turns of a conversation a question is read with; 0 to 15, 0 asks every question alone. The CLI's interactive session is a conversation; the REST API's take turns from arch8's Phase 3 |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

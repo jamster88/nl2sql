@@ -134,6 +134,9 @@ Brings up the whole stack and opens the web interface in your browser.
                      Answer with that release's pipeline, this once: v7_0_0
                      asks every question several ways, v6_3_1 once.
                      PIPELINE_VERSION in .env makes it stick
+      --memory N     Read each question with the last N answered turns of
+                     its conversation, this once: 0 to 15, and 0 asks every
+                     question alone. CONVERSATION_MEMORY in .env makes it stick
       --restart      Recreate the containers instead of reusing what is running
   -q, --quiet        Only print problems
   -h, --help         Show this message
@@ -189,6 +192,10 @@ while [[ $# -gt 0 ]]; do
         --pipeline)
             [[ $# -ge 2 ]] || die "--pipeline needs a name: v7_0_0 or v6_3_1"
             export PIPELINE_VERSION="$2"; LAUNCH_ARGS+=(--pipeline "$2"); shift 2 ;;
+        # The same, for how much of a conversation a question is read with.
+        --memory)
+            [[ $# -ge 2 ]] || die "--memory needs a number: 0 to 15"
+            export CONVERSATION_MEMORY="$2"; LAUNCH_ARGS+=(--memory "$2"); shift 2 ;;
         --restart) LAUNCH_ARGS+=(--restart); shift ;;
         -q|--quiet) QUIET=1; LAUNCH_ARGS+=(--quiet); shift ;;
         -h|--help) usage; exit 0 ;;
@@ -218,6 +225,12 @@ if [[ "$pipeline" != v7_0_0 && "$pipeline" != v6_3_1 ]]; then
 fi
 if [[ "$pipeline" == v6_3_1 && "$(compose_env ENSEMBLE_ENABLED "" | tr '[:upper:]' '[:lower:]')" =~ ^(1|true|yes|on)$ ]]; then
     die "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"
+fi
+# And the turns a question is read with: the agent refuses anything but 0 to
+# 15 when it starts, which would be a minute from now and less plainly said.
+memory=$(compose_env CONVERSATION_MEMORY 5)
+if [[ ! "$memory" =~ ^[0-9]+$ ]] || (( 10#$memory > 15 )); then
+    die "CONVERSATION_MEMORY is '$memory': it must be 0 to 15"
 fi
 
 # --- Docker ----------------------------------------------------------------

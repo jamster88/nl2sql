@@ -11,11 +11,17 @@
  * Since 7.0 the evidence includes the other runs: the agent asks a question
  * several ways, and the SQL above is the one it delivered. What the others
  * wrote, and which of them agreed, is in the candidates pane beneath it.
+ *
+ * Since 8.0 a question asked in a conversation is staged as the question
+ * answered: a follow-up such as "and by state?" is recorded as the complete
+ * question it was read as, because that is what a golden pair is built from
+ * and a pair must stand alone. What the person typed is shown under it,
+ * "Asked as", with the turn it was and how many turns it was read with.
  */
 
 import { Candidates } from "./Candidates";
 import { plainText } from "../api/text";
-import type { SubmissionModel, Verdict } from "../api/types";
+import type { ConversationRecord, SubmissionModel, Verdict } from "../api/types";
 
 export interface OriginalProps {
   submission: SubmissionModel;
@@ -45,6 +51,7 @@ export function Original({ submission }: OriginalProps) {
       </header>
 
       <h3 className="original-question">{submission.question}</h3>
+      <AskedAs conversation={submission.conversation} question={submission.question} />
 
       {submission.comment && (
         <blockquote className="original-comment">
@@ -100,5 +107,26 @@ export function Original({ submission }: OriginalProps) {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * The words typed, when they are not the question above: a follow-up the
+ * agent restated. Nothing for a question asked alone, whose record is `{}`,
+ * or for one asked in a conversation that stood alone already.
+ */
+function AskedAs({ conversation, question }: { conversation: ConversationRecord; question: string }) {
+  const asked = conversation.asked ?? "";
+  if (!asked || asked === question) return null;
+  return (
+    <p className="original-asked">
+      <span className="muted">Asked as:</span> <q>{asked}</q>
+      {conversation.turn ? (
+        <span className="muted">
+          {" "}
+          · turn {conversation.turn}, {conversation.remembered ?? 0} remembered
+        </span>
+      ) : null}
+    </p>
   );
 }

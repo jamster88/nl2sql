@@ -160,6 +160,54 @@ describe("Original", () => {
     expect(screen.getByText(/SELECT sum\(net_sales_amt\)/)).toBeInTheDocument();
   });
 
+  describe("a follow-up, staged as the question it was read as (8.0)", () => {
+    const standalone = "How many stores are there in each state?";
+
+    it("shows the words typed under the question answered, with the turn", () => {
+      const { container } = render(
+        <Original
+          submission={makeSubmission({
+            question: standalone,
+            conversation: {
+              id: "c-1", turn: 2, remembered: 1, asked: "And in each state?",
+              read_as: standalone, resolved: true, reason: "",
+            },
+          })}
+        />,
+      );
+      expect(screen.getByRole("heading", { name: standalone })).toBeInTheDocument();
+      expect(container.querySelector(".original-asked")).toHaveTextContent(
+        "Asked as: And in each state? · turn 2, 1 remembered",
+      );
+    });
+
+    it("shows the words alone when the record names no turn", () => {
+      const { container } = render(
+        <Original submission={makeSubmission({ conversation: { asked: "and by state?" } })} />,
+      );
+      expect(container.querySelector(".original-asked")?.textContent).toBe("Asked as: and by state?");
+    });
+
+    it("says nothing for a question asked alone, or one that stood alone already", () => {
+      const { container, unmount } = render(<Original submission={makeSubmission()} />);
+      expect(container.querySelector(".original-asked")).toBeNull();
+      unmount();
+
+      const same = makeSubmission();
+      const again = render(
+        <Original submission={{ ...same, conversation: { asked: same.question, turn: 3 } }} />,
+      );
+      expect(again.container.querySelector(".original-asked")).toBeNull();
+    });
+
+    it("shows a turn with nothing remembered as nothing remembered", () => {
+      const { container } = render(
+        <Original submission={makeSubmission({ conversation: { asked: "and by state?", turn: 4 } })} />,
+      );
+      expect(container.querySelector(".original-asked")).toHaveTextContent("turn 4, 0 remembered");
+    });
+  });
+
   it("says so when the verdict was negative", () => {
     render(<Original submission={makeSubmission({ verdict: "no" })} />);
     expect(screen.getByText("Marked wrong")).toBeInTheDocument();

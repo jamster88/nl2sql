@@ -3,11 +3,11 @@ package org.nl2sql.desktop.ui;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 
@@ -21,6 +21,11 @@ import java.util.function.Consumer;
  * get good answers are sentences, and a one-line box tells the user to type
  * three words. Enter submits and shift-Enter adds a line, which is what every
  * other message box does.
+ *
+ * <p>Beside it, when the server remembers a conversation (8.0), "New
+ * conversation": the next question is read without the ones before it. The
+ * window only takes a new id; the server forgets the old conversation once it
+ * has been idle long enough.
  */
 public final class AskBox {
 
@@ -39,6 +44,7 @@ public final class AskBox {
 
     private final TextArea field = new TextArea();
     private final Button action = new Button("Ask");
+    private final Button newConversation = new Button("New conversation");
     private final FlowPane examples = new FlowPane();
     private final Label counter = new Label();
     private final VBox node = new VBox();
@@ -46,6 +52,8 @@ public final class AskBox {
     private Consumer<String> onAsk = question -> {
     };
     private Runnable onCancel = () -> {
+    };
+    private Runnable onNewConversation = () -> {
     };
     private boolean busy;
     private int maxLength = 2000;
@@ -84,8 +92,14 @@ public final class AskBox {
             }
         });
 
+        newConversation.getStyleClass().addAll("button", "button-quiet");
+        newConversation.setMinWidth(Region.USE_PREF_SIZE);
+        newConversation.setTooltip(new Tooltip("The next question is read without the ones before it"));
+        newConversation.setOnAction(event -> onNewConversation.run());
+        setConversational(false);
+
         counter.getStyleClass().add("muted");
-        HBox row = new HBox(8, field, action);
+        HBox row = new HBox(8, field, action, newConversation);
         HBox.setHgrow(field, Priority.ALWAYS);
         row.getStyleClass().add("ask-row");
 
@@ -132,6 +146,20 @@ public final class AskBox {
         this.onCancel = handler;
     }
 
+    public void setOnNewConversation(Runnable handler) {
+        this.onNewConversation = handler;
+    }
+
+    /**
+     * Whether there is a conversation to leave: the server remembers one
+     * ({@code /v1/meta}'s {@code pipeline.memory.turns} above zero). The
+     * button is drawn only then.
+     */
+    public void setConversational(boolean remembers) {
+        newConversation.setVisible(remembers);
+        newConversation.setManaged(remembers);
+    }
+
     /**
      * How long a question this server will take.
      *
@@ -149,6 +177,7 @@ public final class AskBox {
     public void setBusy(boolean working) {
         this.busy = working;
         field.setDisable(working);
+        newConversation.setDisable(working);
         action.setText(working ? "Stop" : "Ask");
         action.setDisable(working ? false : field.getText().isBlank());
         action.getStyleClass().removeAll("button-primary", "button-quiet");
@@ -177,6 +206,11 @@ public final class AskBox {
 
     public TextArea field() {
         return field;
+    }
+
+    /** The New conversation button, for the same reason. */
+    public Button newConversation() {
+        return newConversation;
     }
 
     /** Send what is in the box, if there is anything and nothing is running. */

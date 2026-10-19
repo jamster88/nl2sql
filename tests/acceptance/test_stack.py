@@ -30,7 +30,9 @@ start, with the password `setup.sh` generated -- read from the copy's `secrets/`
 and never printed -- and then: every page, a question through the web
 interface -- asked several ways since 7.0, every run of it reporting its own
 steps -- its verdict, staged with the record of those runs, and its promotion
-into the golden set, the SQL console, MLflow behind its front door with the
+into the golden set, a follow-up in the question's conversation -- read as
+the complete question it means, its SQL Generator shown the first answer's
+SQL (8.0) -- the SQL console, MLflow behind its front door with the
 question's trace in it, and the desktop client's own classes. Everything is torn down afterwards, volumes
 included, unless NL2SQL_ACCEPTANCE_KEEP is set.
 
@@ -81,6 +83,9 @@ PORTS = (
 #: secret: which host answers, with which models.
 MODEL_SETTINGS = ("OLLAMA_BASE_URL", "OLLAMA_MODEL", "EMBED_BASE_URL", "EMBED_MODEL")
 QUESTION = "How many stores are there?"
+#: B01's follow-up in the follow-up set (`benchmarks/followups.py`), asked in
+#: the first question's conversation (8.0). Alone it names nothing to count.
+FOLLOW_UP = "And how many in each state?"
 #: How long every container is watched for a process of root's: three of the
 #: ten seconds between one health check and the next, so each is seen
 #: starting more than once.
@@ -454,15 +459,11 @@ def test_the_desktop_clients_own_classes_sign_in_when_the_server_asks(stack: Sta
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
-def answered(stack: Stack, sessions) -> dict:
-    """A question through the web interface, as its page asks it."""
-    ready = _call(stack, "GET", stack.url("API_PORT", "/readyz"), timeout=60)
-    agent = (ready.body or {}).get("checks", {}).get("agent", {}) if isinstance(ready.body, dict) else {}
-    if not agent.get("ok"):
-        pytest.skip(f"the API cannot reach its chat model: {agent.get('detail', ready.body)}")
+def _ask(stack: Stack, sessions, question: str, conversation: str) -> dict:
+    """A question through the web interface, as its page asks it: in the
+    conversation the page made when it opened (8.0)."""
     page, cookie = stack.url("GUI_PORT"), sessions["GUI_PORT"]
-    asked = _call(stack, "POST", f"{page}/v1/questions?wait=1", {"question": QUESTION},
+    asked = _call(stack, "POST", f"{page}/v1/questions?wait=1", {"question": question, "conversation": conversation},
                   cookie=cookie, origin=page)
     assert asked.status in (200, 202), asked.body
     job = asked.body
@@ -471,6 +472,22 @@ def answered(stack: Stack, sessions) -> dict:
         job = _call(stack, "GET", f"{page}/v1/questions/{job['id']}?wait=20", cookie=cookie, timeout=90).body
     assert job["status"] == "succeeded", job.get("error") or job["status"]
     return job
+
+
+@pytest.fixture(scope="module")
+def answered(stack: Stack, sessions) -> dict:
+    """The first question of a conversation."""
+    ready = _call(stack, "GET", stack.url("API_PORT", "/readyz"), timeout=60)
+    agent = (ready.body or {}).get("checks", {}).get("agent", {}) if isinstance(ready.body, dict) else {}
+    if not agent.get("ok"):
+        pytest.skip(f"the API cannot reach its chat model: {agent.get('detail', ready.body)}")
+    return _ask(stack, sessions, QUESTION, str(uuid.uuid4()))
+
+
+@pytest.fixture(scope="module")
+def followed_up(stack: Stack, sessions, answered) -> dict:
+    """Its follow-up, asked in the same conversation once it was answered."""
+    return _ask(stack, sessions, FOLLOW_UP, answered["conversation"])
 
 
 def test_a_question_through_the_web_interface_is_answered_with_its_working(answered: dict):
@@ -516,6 +533,24 @@ def test_the_question_was_asked_several_ways_and_every_run_reported_its_own_step
             assert {"generate_sql", "execute_query", "finish"} <= set(steps), (index, steps)
 
 
+def test_a_follow_up_in_its_conversation_is_read_as_the_complete_question_it_means(answered, followed_up):
+    """8.0's memory, through the page: the second question is the
+    conversation's second turn, read with the first, and answered as a
+    question that stands alone."""
+    first, second = answered["answer"]["conversation"], followed_up["answer"]["conversation"]
+    assert followed_up["conversation"] == answered["conversation"] == first["id"] == second["id"]
+    assert (first["turn"], first["remembered"]) == (1, 0), first
+    assert (second["turn"], second["remembered"]) == (2, 1), second
+    assert second["asked"] == FOLLOW_UP and followed_up["question"] == FOLLOW_UP, second
+    reading = second["read_as"]
+    assert second["resolved"] and not second["reason"], second
+    # A complete sentence: a question of its own, naming what the follow-up
+    # only implied -- the stores -- beside what it added, the state.
+    assert reading != FOLLOW_UP and reading[0].isupper() and reading.endswith("?"), reading
+    assert "store" in reading.lower() and "state" in reading.lower(), reading
+    assert "state" in followed_up["answer"]["sql"].lower(), followed_up["answer"]["sql"]
+
+
 def test_its_verdict_reaches_review_and_is_promoted_into_the_golden_set(stack, sessions, answered):
     gui, review = stack.url("GUI_PORT"), stack.url("REVIEW_GUI_PORT")
     said = _call(stack, "POST", f"{gui}/v1/questions/{answered['id']}/feedback", {"verdict": "yes"},
@@ -549,29 +584,59 @@ def test_the_console_runs_sql_as_the_person_signed_in(stack, sessions):
     assert ran.body["rows"][0][0] == "admin", ran.body["rows"]
 
 
+def _tags(trace: dict) -> dict[str, str]:
+    return {tag["key"]: tag["value"] for tag in trace.get("tags", [])}
+
+
+def _traced(stack: Stack, job_id: str) -> tuple[dict, list[dict]]:
+    """A job's trace, found by the id the job store tags it with, and its spans."""
+    door, basic = stack.url("MLFLOW_PORT"), f"admin:{stack.admin_password}"
+    found = _call(stack, "GET", f"{door}/api/2.0/mlflow/experiments/search?max_results=10", basic=basic)
+    assert found.status == 200, found.body
+    [experiment] = [e for e in found.body["experiments"] if e["name"] == "nl2sql-agent"]
+    deadline, traces, mine = time.monotonic() + 120, [], []
+    while time.monotonic() < deadline:
+        listed = _call(stack, "GET", f"{door}/api/2.0/mlflow/traces?experiment_ids={experiment['experiment_id']}"
+                       f"&max_results=50", basic=basic)
+        traces = (listed.body or {}).get("traces", []) if isinstance(listed.body, dict) else []
+        mine = [trace for trace in traces if _tags(trace).get("nl2sql.job_id") == job_id]
+        if mine:
+            break
+        time.sleep(5)
+    assert len(mine) == 1, f"{len(traces)} traces, {len(mine)} of job {job_id}"
+    spans = _call(stack, "GET", f"{door}/ajax-api/2.0/mlflow/get-trace-artifact?request_id={mine[0]['request_id']}",
+                  basic=basic).body["spans"]
+    return mine[0], spans
+
+
+def _strings(value) -> str:
+    """Every string a span attribute holds, however deep it was encoded, as
+    one line: MLflow stores inputs as JSON, and a value inside them may be
+    JSON or a repr again."""
+    while isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            break
+    if isinstance(value, dict):
+        return " ".join(_strings(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_strings(item) for item in value)
+    return " ".join(str(value).replace("\\n", " ").split())
+
+
 def test_mlflow_answers_only_through_its_front_door_and_holds_the_questions_trace(stack, answered):
     door = stack.url("MLFLOW_PORT")
     search = f"{door}/api/2.0/mlflow/experiments/search?max_results=10"
     assert _call(stack, "GET", search).status == 401
-    found = _call(stack, "GET", search, basic=f"admin:{stack.admin_password}")
-    assert found.status == 200, found.body
-    [experiment] = [e for e in found.body["experiments"] if e["name"] == "nl2sql-agent"]
-    deadline, traces = time.monotonic() + 120, []
-    while time.monotonic() < deadline:
-        listed = _call(stack, "GET", f"{door}/api/2.0/mlflow/traces?experiment_ids={experiment['experiment_id']}"
-                       f"&max_results=50", basic=f"admin:{stack.admin_password}")
-        traces = (listed.body or {}).get("traces", []) if isinstance(listed.body, dict) else []
-        if any(QUESTION in json.dumps(trace) for trace in traces):
-            break
-        time.sleep(5)
-    assert any(QUESTION in json.dumps(trace) for trace in traces), f"{len(traces)} traces, none of the question"
 
     # One trace for the question, with every run inside it (7.0): a span per
     # run under the ensemble's own, holding exactly the steps that run
     # reported. A run traced beside the question rather than inside it, or a
     # step in another run's span, is the worker threads losing the context
     # the span is found by -- the same fault an empty lane would be.
-    [trace] = [trace for trace in traces if QUESTION in json.dumps(trace)]
+    trace, spans = _traced(stack, answered["id"])
+    assert QUESTION in json.dumps(trace), trace
     # The trace says what the Judge did, in the words the record implies
     # (`ensemble_state.judged`): a verdict on the trace and a record that
     # disagree would be two accounts of one question.
@@ -579,10 +644,8 @@ def test_mlflow_answers_only_through_its_front_door_and_holds_the_questions_trac
     did = ("failed" if judged["error"]
            else "accepted none" if judged["verdicts"] and not any(v["accepted"] for v in judged["verdicts"])
            else "overruled" if judged["overruled"] else "set aside" if judged["set_aside"] else "accepted")
-    tags = {tag["key"]: tag["value"] for tag in trace["tags"]}
+    tags = _tags(trace)
     assert tags.get("nl2sql.judge") == did, (tags.get("nl2sql.judge"), did)
-    spans = _call(stack, "GET", f"{door}/ajax-api/2.0/mlflow/get-trace-artifact?request_id={trace['request_id']}",
-                  basic=f"admin:{stack.admin_password}").body["spans"]
     children: dict[str | None, list[dict]] = {}
     for span in spans:
         children.setdefault(span["parent_span_id"], []).append(span)
@@ -596,6 +659,29 @@ def test_mlflow_answers_only_through_its_front_door_and_holds_the_questions_trac
     assert {span["name"]: len(children.get(span["span_id"], [])) for span in children[runs["span_id"]]} == {
         f"Candidate {index}": count for index, count in steps.items()}
     assert len(children[runs["span_id"]]) == ensemble["agreement"]["total"]
+
+
+def test_the_follow_ups_trace_shows_each_run_was_given_the_first_answers_sql(stack, answered, followed_up):
+    """Memory's second reader (arch8): the SQL Generator of every run of the
+    follow-up was shown the conversation's first turn -- the question and the
+    SQL that answered it -- and the trace says where the question stood."""
+    trace, spans = _traced(stack, followed_up["id"])
+    tags = _tags(trace)
+    assert tags.get("nl2sql.conversation") == answered["conversation"], tags
+    assert (tags.get("nl2sql.turn"), tags.get("nl2sql.remembered"), tags.get("nl2sql.resolved")) == (
+        "2", "1", "true"), tags
+    first = " ".join(answered["answer"]["sql"].split())
+    by_id = {span["span_id"]: span for span in spans}
+
+    def run_of(span: dict) -> str | None:
+        while span is not None and not span["name"].startswith("Candidate "):
+            span = by_id.get(span["parent_span_id"])
+        return span["name"] if span else None
+
+    shown = {run_of(span) for span in spans if span["name"] == "SQL Generator"
+             and first in _strings(span.get("attributes", {}).get("mlflow.spanInputs"))}
+    runs = {f"Candidate {run['index']}" for run in followed_up["answer"]["ensemble"]["candidates"]}
+    assert shown == runs, f"the first answer's SQL was shown to {sorted(shown)} of {sorted(runs)}"
 
 
 def test_the_directory_page_lists_the_administrator(stack, sessions):

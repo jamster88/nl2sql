@@ -23,14 +23,21 @@ export function leadParagraph(markup: string): string {
 }
 
 /**
- * A markdown answer without its first block.
+ * A markdown answer without its first blocks: one, unless told how many.
  *
  * Under the ensemble (7.0) the document opens with the agreement line --
  * how many runs there were and how they agreed -- before anything the runs
  * say. This page shows that line as a badge, from `Answer.ensemble.line`,
- * so the prose it falls back to is the block after it.
+ * so the prose it falls back to is the block after it. A follow-up whose
+ * restatement held (8.0) opens with one more, "Read as: ...", which the
+ * page shows under the question, from `Answer.conversation`.
  */
-export function afterLead(markup: string): string {
-  const gap = /\n\s*\n/.exec(markup);
-  return gap === null ? "" : markup.slice(gap.index + gap[0].length);
+export function afterLead(markup: string, blocks = 1): string {
+  let rest = markup;
+  for (let skipped = 0; skipped < blocks; skipped += 1) {
+    const gap = /\n\s*\n/.exec(rest);
+    if (gap === null) return "";
+    rest = rest.slice(gap.index + gap[0].length);
+  }
+  return rest;
 }

@@ -34,7 +34,8 @@ export interface AskState {
 
 export interface UseAsk extends AskState {
   busy: boolean;
-  ask: (question: string) => void;
+  /** Ask, in the conversation named, or alone when none is. */
+  ask: (question: string, conversation?: string) => void;
   cancel: () => void;
   reset: () => void;
 }
@@ -117,15 +118,14 @@ export function useAsk(client: Client, options: UseAskOptions = {}): UseAsk {
   useEffect(() => stop, [stop]);
 
   const ask = useCallback(
-    (question: string) => {
+    (question: string, conversation?: string) => {
       const trimmed = question.trim();
       if (!trimmed) return;
       stop();
       const mine = (attempt.current += 1);
       dispatch({ type: "ask" });
 
-      client
-        .ask(trimmed)
+      (conversation ? client.ask(trimmed, { conversation }) : client.ask(trimmed))
         .then((job) => {
           // Superseded while the POST was in flight. `stop()` could not have
           // closed this watch, because it did not exist yet -- so the only

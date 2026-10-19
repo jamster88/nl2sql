@@ -16,6 +16,7 @@ each step does, why it is there, and how control flows.
 | [`arch_v5_2.svg`](../arch_diagrams/arch_v5_2.svg) | v5.1 with every model call routed: the catalog and the routed chat models in the deployment, the router and the ladder, and on each step that calls a model, the rung it is routed at |
 | [`arch_v5_6.svg`](../arch_diagrams/arch_v5_6.svg) | v5.2 with the Snippet Retriever as a fifth Stage 1 branch, the snippet store and its document in the deployment, and the curation interface beside the review one |
 | [`arch_v7.svg`](../arch_diagrams/arch_v7.svg) | The question asked several ways: the outer graph's eleven nodes -- the anchor screening, the Paraphraser, the fidelity gate, the wave planner, the candidate runs, agreement, the Judge, the vote, fusion -- around the v5.6 pipeline, which is drawn as one box; the host gate and the seven-task catalog in the deployment, the second wave as the one edge that goes back, the levels an answer can have, and what each surface shows; and, in a note of its own, the one thing v7 changes inside the pipeline -- the Static Validator's grain check |
+| [`arch_v8.svg`](../arch_diagrams/arch_v8.svg) | v7 read in its conversation: the same two graphs, with the two places memory enters -- the Supervisor restating a follow-up, which code holds to the words typed, and the SQL Generator shown the earlier turns -- the conversations the REST API keeps in memory, the pipeline chosen by name, what a question in a conversation costs, and what each surface shows of it; no node added to either graph |
 
 All of them are laid out identically so the versions can be read side by side --
 everything new or changed is marked, in teal for v2's retrieval and indigo for
@@ -37,7 +38,10 @@ the pictures against `graph.py` and fail when a node is renamed. v7 is a
 second graph around the first rather than more nodes in it, so `arch_v7.svg`
 is held to `ensemble.py`'s nodes the same way, and `arch_v5_6.svg` stays the
 picture of `graph.py` -- whose nodes v7 leaves as they were, the grain
-check being one rule more inside `validate_static`. Edit the
+check being one rule more inside `validate_static`. v8 adds no node to
+either graph -- memory is two prompts reading more, not a step more -- so
+`arch_v8.svg` is held to the same two lists, and its new parts are in rose.
+Edit the
 content in the `build_v*()` functions and re-run; do not hand-edit the SVGs.
 
 Each SVG has a PNG and a TIFF beside it, for where an SVG cannot go. They

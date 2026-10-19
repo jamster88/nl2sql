@@ -527,8 +527,13 @@ docker compose run --rm agent --json "..."                      # the whole run,
 docker compose run --rm agent --json "..." | jq -r .sql         # just the SQL
 ```
 
-Each question is answered on its own -- the agent does not remember the
-previous one -- so ask complete questions rather than follow-ups.
+The interactive session is a conversation (8.0): each question is read
+with the last five answered ones (`--memory N`; 0 asks every question
+alone), so a follow-up such as "and by store?" is answered as the complete
+question it means, and the answer opens with "Read as: ..." when the agent
+restated it. A question given on the command line is asked alone. A wrong
+answer stays among the turns until the session ends, so ask again in full
+or start a new session rather than follow it up.
 
 `--json` carries everything: the Supervisor's verdict and intent, what a
 complete answer had to contain, the retrieved knowledge and examples, the
@@ -1335,6 +1340,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only |
 | `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` asks every question several ways, `v6_3_1` once (`PIPELINE_VERSION` in `.env` for good) |
+| `--memory N` | Read each question with the last N answered turns of its conversation, this run only: 0 to 15, 0 asks every question alone (`CONVERSATION_MEMORY` in `.env` for good) |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |
@@ -1355,6 +1361,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only: no directory, no auth service, every page open |
 | `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` or `v6_3_1`; a name the agent would refuse, or `ENSEMBLE_ENABLED=true` beside `v6_3_1`, stops the script before anything starts |
+| `--memory N` | Read each question with the last N answered turns of its conversation, this run only; anything but 0 to 15 stops the script before anything starts, and the turns remembered are said beside the pipeline |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |

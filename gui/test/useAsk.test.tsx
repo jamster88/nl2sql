@@ -32,6 +32,9 @@ function Inner({ client }: { client: Client }) {
       <button type="button" onClick={() => ask.ask("how many stores?")}>
         ask
       </button>
+      <button type="button" onClick={() => ask.ask("and by state?", "c-1")}>
+        ask in a conversation
+      </button>
       <button type="button" onClick={() => ask.ask("   ")}>
         ask blank
       </button>
@@ -108,6 +111,16 @@ describe("useAsk", () => {
     expect(value("busy")).toBe("false");
     expect(value("answer")).toContain("Produce led");
     expect(client.ask).toHaveBeenCalledWith("how many stores?");
+  });
+
+  it("asks in the conversation it is given, and alone when given none (8.0)", async () => {
+    const client = fakeClient();
+    render(<Harness client={client} />);
+
+    await userEvent.click(screen.getByText("ask in a conversation"));
+    expect(client.ask).toHaveBeenLastCalledWith("and by state?", { conversation: "c-1" });
+    await userEvent.click(screen.getByText("ask"));
+    expect(client.ask).toHaveBeenLastCalledWith("how many stores?");
   });
 
   it("will not send a blank question", async () => {

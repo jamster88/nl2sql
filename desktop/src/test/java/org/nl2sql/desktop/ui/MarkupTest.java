@@ -35,14 +35,24 @@ class MarkupTest {
     void under_the_ensemble_the_prose_is_the_block_after_the_agreement_line() {
         // The document opens with how the runs agreed, which the badge says.
         assertEquals("Produce led.\n\n| a |",
-                Markup.afterLead("*3 of 4 runs agreed.*\n\nProduce led.\n\n| a |"));
-        assertEquals("Produce led.", Markup.afterLead("*3 of 4 runs agreed.*\n  \nProduce led."));
+                Markup.afterLead("*3 of 4 runs agreed.*\n\nProduce led.\n\n| a |", 1));
+        assertEquals("Produce led.", Markup.afterLead("*3 of 4 runs agreed.*\n  \nProduce led.", 1));
+    }
+
+    @Test
+    void a_follow_ups_reading_is_dropped_as_well_as_the_agreement_line() {
+        // 8.0: a restated follow-up's document opens with "Read as", which the
+        // window shows under the question.
+        String document = "Read as: *q*\n\n*3 of 4 runs agreed.*\n\nProduce led.";
+        assertEquals("Produce led.", Markup.afterLead(document, 2));
+        assertEquals(document, Markup.afterLead(document, 0));
+        assertEquals("", Markup.afterLead("Read as: *q*\n\n*3 of 4 runs agreed.*", 2));
     }
 
     @Test
     void a_document_that_is_only_the_agreement_line_has_nothing_after_it() {
-        assertEquals("", Markup.afterLead("*3 of 4 runs agreed.*"));
-        assertEquals("", Markup.afterLead(""));
+        assertEquals("", Markup.afterLead("*3 of 4 runs agreed.*", 1));
+        assertEquals("", Markup.afterLead("", 1));
     }
 
     @Test

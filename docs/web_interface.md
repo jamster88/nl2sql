@@ -60,6 +60,27 @@ A rewording and a Judge's reason are a model's words, and the page renders
 them as text, never as markup. Feedback is unchanged: three buttons, on the
 answer that was delivered.
 
+**The questions asked are a conversation.** Since 8.0 a follow-up such as
+"and in each state?" is answered as the complete question it means, read
+with the answered questions before it ([remembering the
+conversation](../agent/README.md#remembering-the-conversation-arch8)). The
+page makes a conversation id when it opens and sends it with every
+question, while `/v1/meta` says the server remembers anything; the status
+bar says how much -- "remembers the last 5 turns", or "each question asked
+alone" -- and names the pipeline answering. When the agent restated a
+follow-up, the answer says so under the words typed: "Read as: *How many
+stores are there in each state?* · turn 2, 1 remembered", rendered as text
+since a model wrote it. Nothing is shown for a question read as it was
+typed. **New conversation**, beside the Ask button, takes a new id, and the
+next question is read without the ones before it. The list of earlier
+questions is not the conversation: it is the questions answered this
+session, and a new conversation leaves it as it was. Marking an answer
+wrong also takes its turn out of the conversation, so the next question is
+not read in the light of a wrong one. A question sent while the last is
+still being answered would be refused, but the ask box is closed until the
+answer is on screen; if a refusal ever arrives, it is shown under the box
+like any other question that could not be sent.
+
 **A refusal is rendered as a refusal.** `verdict` is not `proceed` for an
 out-of-scope or unsafe question, and there is no table because no query ran;
 showing an empty grid would report a failure that did not happen. An

@@ -1141,6 +1141,7 @@ FORBIDDEN_PHRASES = (
     "fourteen pipeline nodes",           # the pipeline has not had fourteen since v5
     "connects as `nl2sql`, the owner",   # everything reads as nl2sql_reader since v4
     "one person on one machine",         # the deployment tiers in SECURITY.md replaced it
+    "does not remember the previous",    # a conversation is remembered since 8.0
 )
 
 #: Where the phrases are history rather than claims: the reviews that found

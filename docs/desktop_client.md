@@ -34,6 +34,19 @@ that were not run. Everything a model wrote is drawn by a label or a text
 area, which draw a string as text. [The web
 interface](web_interface.md#the-web-interface) describes each part.
 
+**Each window is a conversation.** Since 8.0 a follow-up is answered as
+the complete question it means, and the window does what the web page does
+([the web interface](web_interface.md#the-web-interface)): it makes a
+conversation id when it opens -- a random UUID, so two windows are two
+conversations -- sends it with every question while `/v1/meta` says the
+server remembers anything, and makes a new one on **New conversation**,
+beside the Ask button. Under the words typed, a restated follow-up says how
+it was read: "Read as: ..." with its turn and how many turns it was read
+with, drawn as text. The status bar names the pipeline and says how much of
+a conversation the server remembers, or that each question is asked alone.
+The session list stays as it was when a new conversation begins: it is the
+questions answered, not the turns.
+
 **Verdicts take the same route as the web interface's.** The same endpoint,
 the same staging table, the same row-level security fence, the same review
 queue. A reviewer sees one queue because there is only one -- not because two

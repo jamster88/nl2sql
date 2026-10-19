@@ -19,6 +19,7 @@ import org.nl2sql.desktop.feedback.FeedbackStore;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -29,6 +30,13 @@ import java.util.function.Consumer;
  * <p>One question at a time, because that is what the server does. What it
  * keeps is everything already answered this session, so comparing two answers
  * is a click.
+ *
+ * <p>Since 8.0 the questions asked are a conversation, when the server
+ * remembers one: the window makes the conversation's id when it opens, sends
+ * it with every question, and makes a new one on "New conversation". Each
+ * window its own, so two windows are two conversations. The session list is
+ * not the conversation: it is the questions answered, and a new conversation
+ * leaves it as it was.
  *
  * <p>Every collaborator is a constructor parameter, including the two that
  * decide which thread things happen on. That is not ceremony: it is what lets
@@ -82,6 +90,10 @@ public final class MainWindow {
     private Models.Token signedIn;
     /** What a refused question becomes once somebody has signed in. */
     private Runnable afterSignIn;
+    /** The conversation this window's questions continue (8.0): a UUID of its own making. */
+    private String conversation = UUID.randomUUID().toString();
+    /** Whether the server remembers a conversation, from {@code /v1/meta}; no until it says so. */
+    private boolean conversing;
 
     /** As wide as the session list gets, and a third of the window at most. */
     private static final double HISTORY_WIDTH = 260;
@@ -103,6 +115,7 @@ public final class MainWindow {
         signInView.setOnSignIn(this::signIn);
         askBox.setOnAsk(this::ask);
         askBox.setOnCancel(this::cancel);
+        askBox.setOnNewConversation(this::newConversation);
         history.setOnSelect(this::select);
 
         error.getStyleClass().addAll("notice", "notice-error");
@@ -228,10 +241,14 @@ public final class MainWindow {
         hide(notice);
         answerSlot.getChildren().clear();
 
+        // Named only while the server says it remembers: one that keeps
+        // nothing would echo the id and change nothing, and one older than
+        // 8.0 would refuse a field it does not know.
+        String named = conversing ? conversation : null;
         background.execute(() -> {
             Models.Job accepted;
             try {
-                accepted = client.ask(asked, settings.waitSeconds());
+                accepted = client.ask(asked, settings.waitSeconds(), named);
             } catch (ApiException cause) {
                 onlyIfCurrent(mine, () -> failed(asked, cause));
                 return;
@@ -246,6 +263,17 @@ public final class MainWindow {
                 background.execute(() -> watch(accepted, mine));
             });
         });
+    }
+
+    /**
+     * Start a new conversation: the next question is read without the ones
+     * before it. Only the id changes. The server forgets the old one once it
+     * has been idle long enough, and the session list keeps what was asked.
+     */
+    public void newConversation() {
+        conversation = UUID.randomUUID().toString();
+        say("A new conversation: the next question is read without the ones before it. "
+                + "They stay in the session list.");
     }
 
     /** Stop watching, and tell the server to forget it if it has not answered. */
@@ -317,6 +345,11 @@ public final class MainWindow {
     /** The answer on screen, or null when there is none. */
     public AnswerView answerView() {
         return answer;
+    }
+
+    /** The id this window's next question would be sent with, were the server to remember. */
+    public String conversation() {
+        return conversation;
     }
 
     // --- the machinery -----------------------------------------------------
@@ -471,6 +504,8 @@ public final class MainWindow {
         pipeline = meta.pipeline();
         feedbackAccepted.set(meta.feedback());
         statusBar.show(meta);
+        conversing = StatusBar.remembers(meta) > 0;
+        askBox.setConversational(conversing);
         progress.setNodes(meta.pipeline().nodes());
         progress.setEnsemble(meta.pipeline().ensemble());
         if (meta.limits() != null && meta.limits().max_question_length() > 0) {

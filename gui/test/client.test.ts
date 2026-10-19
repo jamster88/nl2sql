@@ -72,6 +72,17 @@ describe("createClient", () => {
     expect(JSON.parse(String(calls[1]?.[1].body))).toEqual({ question: "b" });
   });
 
+  it("names the conversation only when given one (8.0)", async () => {
+    const { fetch, calls } = spyFetch(json(makeJob()));
+    const client = createClient({ fetch });
+
+    await client.ask("and by state?", { conversation: "c-1" });
+    expect(JSON.parse(String(calls[0]?.[1].body))).toEqual({ question: "and by state?", conversation: "c-1" });
+
+    await client.ask("b", { conversation: "" });
+    expect(JSON.parse(String(calls[1]?.[1].body))).toEqual({ question: "b" });
+  });
+
   it("escapes a job id into the path", async () => {
     const { fetch, calls } = spyFetch(json(makeJob()));
     await createClient({ fetch }).job("a/b?c");

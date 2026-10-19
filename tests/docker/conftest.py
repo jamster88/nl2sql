@@ -29,6 +29,7 @@ printf '%s\n' "$*" >> "$FAKE_LOG"
 if [[ "${1:-}" == compose ]]; then
     printf '%s\n' "${AUTH_ENABLED-unset}" >> "${FAKE_LOG%/*}/auth-enabled"
     printf '%s\n' "${PIPELINE_VERSION-unset}" >> "${FAKE_LOG%/*}/pipeline-version"
+    printf '%s\n' "${CONVERSATION_MEMORY-unset}" >> "${FAKE_LOG%/*}/conversation-memory"
 fi
 
 read_env() {  # read_env KEY DEFAULT -- reflects whatever setup.sh wrote to .env

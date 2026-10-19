@@ -119,6 +119,10 @@ Usage: ./launch.sh [options]
                    Answer with that release's pipeline, for this run: v7_0_0
                    asks every question several ways, v6_3_1 once.
                    PIPELINE_VERSION in .env makes it the default
+      --memory N   Read each question with the last N answered turns of its
+                   conversation, for this run: 0 to 15, and 0 asks every
+                   question alone. CONVERSATION_MEMORY in .env makes it the
+                   default
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -162,6 +166,9 @@ while [[ $# -gt 0 ]]; do
         --pipeline)
             [[ $# -ge 2 ]] || die "--pipeline needs a name: v7_0_0 or v6_3_1"
             export PIPELINE_VERSION="$2"; shift 2 ;;
+        --memory)
+            [[ $# -ge 2 ]] || die "--memory needs a number: 0 to 15"
+            export CONVERSATION_MEMORY="$2"; shift 2 ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -220,6 +227,12 @@ fi
 ensemble_enabled=$(compose_env ENSEMBLE_ENABLED "" | tr '[:upper:]' '[:lower:]')
 if [[ "$pipeline" == v6_3_1 && "$ensemble_enabled" =~ ^(1|true|yes|on)$ ]]; then
     die "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"
+fi
+# And the turns of a conversation a question is read with, which the agent
+# refuses outside 0 to 15 when it starts.
+memory=$(compose_env CONVERSATION_MEMORY 5)
+if [[ ! "$memory" =~ ^[0-9]+$ ]] || (( 10#$memory > 15 )); then
+    die "CONVERSATION_MEMORY is '$memory': it must be 0 to 15"
 fi
 
 # --- Passwords and tokens --------------------------------------------------------
@@ -675,6 +688,14 @@ else
     info "the pipeline is v7_0_0: every question is asked $((paraphrases + 1)) ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)"
     info "the model host is asked $slots call(s) at a time (OLLAMA_PARALLEL_CALLS)"
 fi
+# --- Remembering the conversation (arch8) ---------------------------------------
+# Said beside the pipeline, as the other setting a person chooses at spin-up:
+# a follow-up is read with this many answered turns of its conversation.
+case $((10#$memory)) in
+    0) info "each question is asked alone (CONVERSATION_MEMORY=0)" ;;
+    1) info "the agent remembers the last turn of a conversation (CONVERSATION_MEMORY)" ;;
+    *) info "the agent remembers the last $((10#$memory)) turns of a conversation (CONVERSATION_MEMORY)" ;;
+esac
 
 # --- The REST API ----------------------------------------------------------
 # The same image as the agent, started as a server instead of a command. It

@@ -72,6 +72,17 @@ alone, as before 8.0, and with `CONVERSATION_MEMORY=0` every question is.
 [`agent/API.md`](../agent/API.md#in-a-conversation-conversation-80) has
 the rest.
 
+Two fields of `Answer.conversation` are the question twice: `asked` is the
+words typed, and `read_as` the complete question the agent answered when it
+restated a follow-up, with `resolved` true. Show both, as the web interface
+does -- the words typed as the heading, "Read as: ..." under it -- so a
+wrong reading is seen rather than believed, and show `read_as` as text: it
+is a model's sentence. Send the id only while `/v1/meta`'s
+`pipeline.memory.turns` is above zero: a server that remembers nothing
+echoes it and changes nothing, and one older than 8.0 refuses a field it
+does not know. Make a new id for a new conversation; the old one is
+forgotten once it has been idle long enough.
+
 **Watch the job; do not hold the connection for it.** A question asked
 several ways takes several runs' time -- minutes, where one run took about
 one. `?wait=` still works and is still bounded by `API_MAX_WAIT_SECONDS`

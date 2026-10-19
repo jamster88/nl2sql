@@ -228,6 +228,17 @@
     -fx-line-spacing: 2;
 }
 
+/* How a follow-up was read (8.0): under the words typed, smaller than them. */
+.answer-read-as Text {
+    -fx-font-size: 13px;
+    -fx-fill: -text-muted;
+}
+
+.answer-read-as .read-as-reading {
+    -fx-font-style: italic;
+    -fx-fill: -text-primary;
+}
+
 /*
  * A Text node rather than a Label, so that TextFlow can break it across
  * lines -- which means `-fx-fill` rather than `-fx-text-fill`, and an

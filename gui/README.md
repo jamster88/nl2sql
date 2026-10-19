@@ -377,7 +377,7 @@ failing over a file that was never going to exist.
 
     cd gui && npm test
 
-386 tests, 100% of statements, branches, functions and lines -- matching the
+408 tests, 100% of statements, branches, functions and lines -- matching the
 Python side, and for the same reason: a threshold below 100 is a number
 nobody looks at, while a failing build is read immediately. Only `main.tsx`
 is excluded, and a test pins that list.

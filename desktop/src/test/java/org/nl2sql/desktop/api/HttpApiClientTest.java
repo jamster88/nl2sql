@@ -157,19 +157,28 @@ class HttpApiClientTest {
         HttpApiClient client = https(Map.of("/v1/questions", 202),
                 exchange -> Json.write(Fakes.queued()), "--wait", "30");
 
-        assertEquals("job-1", client.ask("how many stores", 30).id());
+        assertEquals("job-1", client.ask("how many stores", 30, null).id());
         assertEquals(List.of("POST /v1/questions?wait=30"), requested);
-        // No conversation named: the window asks each question alone until
-        // it keeps a conversation of its own (arch8's Phase 4).
+        // No conversation named: the question is asked alone.
         assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{},"
                 + "\"conversation\":null}", bodies.get(0));
+    }
+
+    @Test
+    void a_question_in_a_conversation_names_it() {
+        HttpApiClient client = https(Map.of("/v1/questions", 202), exchange -> Json.write(Fakes.queued()));
+
+        client.ask("and in each state?", 0, "6f1c2b9e-0d4a-4e7b-9c3f-2a5d8e1b7c40");
+
+        assertEquals("{\"question\":\"and in each state?\",\"principal\":null,\"metadata\":{},"
+                + "\"conversation\":\"6f1c2b9e-0d4a-4e7b-9c3f-2a5d8e1b7c40\"}", bodies.get(0));
     }
 
     @Test
     void asking_without_a_wait_sends_no_wait_at_all() {
         HttpApiClient client = https(Map.of(), exchange -> Json.write(Fakes.queued()));
 
-        client.ask("how many stores", 0);
+        client.ask("how many stores", 0, null);
 
         assertEquals(List.of("POST /v1/questions"), requested);
     }

@@ -412,6 +412,17 @@ pre {
   font-variant-numeric: tabular-nums;
 }
 
+/* How a follow-up was read (8.0): under the words typed, smaller than them. */
+.answer-read-as {
+  margin: -6px 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.answer-read-as em {
+  color: var(--text-primary);
+}
+
 .answer-headline {
   margin: 0;
   font-size: 1.22rem;

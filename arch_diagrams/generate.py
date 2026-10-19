@@ -62,6 +62,10 @@ GREEN = "#2e7d4f"
 # bluer than v2's teal, greener than the database blue, and nothing else here
 # sits between them.
 CYAN = "#0b7a9e"
+# v8's accent, for the conversation. A vivid rose: lighter and far more
+# saturated than v4's dull red-violet, pinker than the brick of the loop, and
+# so the one place left on the wheel that reads as none of them.
+ROSE = "#c2185b"
 
 SANS = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace"
@@ -2274,38 +2278,10 @@ V7_SURFACES = [
 ]
 
 
-def build_v7():
-    parts, y = [], 56
-    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
-                 f'font-weight="700" fill="{INK}">NL2SQL Agent v7 '
-                 f'<tspan fill="{MUTED}" font-weight="400">— the question, asked several '
-                 f'ways</tspan></text>')
-    y += 26
-    intro = ("v5.6's pipeline, its nodes unchanged, run once for the question as asked and once "
-             "for each faithful rewording of it; the answers compared, read by a Judge, voted on, "
-             "and one delivered with how the runs agreed (arch7.3). Everything marked in green is "
-             "new in v7. The pipeline inside each run is drawn as one box here and node by node "
-             "in arch_v5_6.svg; what v7 changes inside it is the grain check.")
-    blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
-    parts.append(blk); y += h + 26
-
-    svg, h = deployment(y, {"name": "nl2sql-agent",
-                            "desc": "python -m nl2sql_agent, or the same image serving the REST "
-                                    "API. With ENSEMBLE_ENABLED the agent is the outer graph, "
-                                    "holding one pipeline it runs once per wording."},
-                        [PG_V5, VECTORDB_V4, CHUNKDB, SNIPPETSDB_V56],
-                        [OLLAMA_CHAT_V7, OLLAMA_EMBED_V4, CATALOG_V7])
-    parts.append(svg); y += h + 18
-    svg, h = note_row(y, "What v7 adds: asking it several ways", V7_ADDED, color=GREEN, x=MARGIN,
-                      w=CONTENT_R - MARGIN, dashed=False)
-    parts.append(svg); y += h + 18
-    svg, h = note_row(y, "What it costs", V7_COST, color=PURPLE, x=MARGIN, w=CONTENT_R - MARGIN)
-    parts.append(svg); y += h + 18
-    svg, h = note_row(y, "What v7 changes inside the pipeline: the grain check", V7_GRAIN,
-                      color=GREEN, x=MARGIN, w=CONTENT_R - MARGIN, dashed=False)
-    parts.append(svg); y += h + 36
-
-    rows = [
+def _v7_rows() -> list[dict]:
+    """The outer graph's rows as v7 draws them: v8 draws the same eleven
+    nodes, three of them reading the turns."""
+    return [
         {"id": "screen", "kind": "step", "n": 1, "name": "screen",
          "badge": "new in v7", "badge_color": GREEN, "accent": GREEN,
          "does": "The Supervisor, on the question as asked: verdict, intent, and the answer "
@@ -2395,6 +2371,40 @@ def build_v7():
          "tags": [("no model call", GREEN), ("Answer.ensemble", BLUE)],
          "why": V7_DELIVER_WHY},
     ]
+
+
+def build_v7():
+    parts, y = [], 56
+    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                 f'font-weight="700" fill="{INK}">NL2SQL Agent v7 '
+                 f'<tspan fill="{MUTED}" font-weight="400">— the question, asked several '
+                 f'ways</tspan></text>')
+    y += 26
+    intro = ("v5.6's pipeline, its nodes unchanged, run once for the question as asked and once "
+             "for each faithful rewording of it; the answers compared, read by a Judge, voted on, "
+             "and one delivered with how the runs agreed (arch7.3). Everything marked in green is "
+             "new in v7. The pipeline inside each run is drawn as one box here and node by node "
+             "in arch_v5_6.svg; what v7 changes inside it is the grain check.")
+    blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
+    parts.append(blk); y += h + 26
+
+    svg, h = deployment(y, {"name": "nl2sql-agent",
+                            "desc": "python -m nl2sql_agent, or the same image serving the REST "
+                                    "API. With ENSEMBLE_ENABLED the agent is the outer graph, "
+                                    "holding one pipeline it runs once per wording."},
+                        [PG_V5, VECTORDB_V4, CHUNKDB, SNIPPETSDB_V56],
+                        [OLLAMA_CHAT_V7, OLLAMA_EMBED_V4, CATALOG_V7])
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v7 adds: asking it several ways", V7_ADDED, color=GREEN, x=MARGIN,
+                      w=CONTENT_R - MARGIN, dashed=False)
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What it costs", V7_COST, color=PURPLE, x=MARGIN, w=CONTENT_R - MARGIN)
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v7 changes inside the pipeline: the grain check", V7_GRAIN,
+                      color=GREEN, x=MARGIN, w=CONTENT_R - MARGIN, dashed=False)
+    parts.append(svg); y += h + 36
+
+    rows = _v7_rows()
     svg, h, nodes = pipeline(
         y, rows,
         heading="the ensemble — an outer langgraph stategraph around the pipeline",
@@ -2418,11 +2428,169 @@ def build_v7():
                     "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE, CYAN))
 
 
+# --- v8: the question, read in its conversation -----------------------------
+
+CONVERSATIONS_V8 = {"name": "conversations — in memory", "color": ROSE,
+                    "desc": "Kept by the REST API's process, never on disk: per person and per id "
+                            "the page or the window made, the last CONVERSATION_MEMORY (5) "
+                            "answered turns -- each the question answered, three rows of its "
+                            "answer, its SQL. One question at a time a conversation; forgotten "
+                            "idle after an hour, on DELETE, or for a turn marked wrong.",
+                    "link": "→ the turns a question is read with"}
+
+V8_ADDED = ("A follow-up -- \"and in each state?\" -- names nothing, so asked alone it is refused "
+            "or answered as something else. v8 reads it with the conversation's last answered "
+            "turns, at two places and nowhere else. The Supervisor reads the words typed in their "
+            "light and restates a follow-up so that it stands alone; code then holds the "
+            "restatement to the words typed -- C1 every number, C2 every quoted value, C3 every "
+            "direction, C4 its shape -- and discards it otherwise, with no model call. The "
+            "restatement, when it held, is the question every later stage answers, and the words "
+            "typed are kept beside it everywhere. The SQL Generator is shown the earlier turns' "
+            "questions and SQL after its worked examples, since a follow-up usually keeps their "
+            "joins, filters and calendar. Everything in rose is new in v8: no node is added to "
+            "either graph, and with no turns every prompt is v7's, byte for byte.")
+
+V8_NAME = ("PIPELINE_VERSION names the pipeline a deployment answers with, so two releases can be "
+           "compared by name. v7_0_0, the default, is this drawing: every question asked several "
+           "ways. v6_3_1 is the ensemble off and nothing else -- one run of the pipeline inside, "
+           "the grain check and the conversation still applying -- so a comparison of the two "
+           "names measures one difference. ENSEMBLE_ENABLED unset follows the name; set, it is "
+           "what was said, and true under v6_3_1 is refused at start.")
+
+V8_COST = ("A question asked in a conversation, with turns to read, costs one Supervisor call "
+           "more: the reading in context at the standard rung, then v7's screening of the words "
+           "it settled on. A question asked alone, or with CONVERSATION_MEMORY=0, costs what it "
+           "did in v7, call for call.")
+
+V8_SCREEN_WHY = ("Memory enters here and the generator only. The Supervisor screens the words "
+                 "typed, so an injection hidden in a follow-up is screened as typed; and a "
+                 "restatement is model output about to become every later stage's question, so "
+                 "code holds it to what the person wrote before anything runs. A follow-up that "
+                 "stood alone already is left as it was, which is why a question asked alone is "
+                 "answered as v7 answered it.")
+
+V8_INSIDE = ("supervise (handed the anchor's screening, so no model call) → the five retrievers "
+             "→ aggregate → generate_sql (shown the earlier turns, after the worked examples) → "
+             "validate_static (with the grain check) → planner_gate → execute_query → review → "
+             "visualise → narrate → audit → finish, with its one repair loop and one attempts "
+             "counter. Nineteen nodes, none added and none renamed: drawn node by node in "
+             "arch_v5_6.svg.")
+
+V8_SURFACES = [
+    {"name": "The terminal", "color": SLATE, "tag": "--memory · --pipeline",
+     "does": "The interactive session is one conversation; a follow-up prints \"Read as\"; a "
+             "question on the command line is asked alone."},
+    {"name": "The REST API", "color": BLUE, "tag": "Answer.conversation",
+     "does": "A request names its conversation; the answer says its turn and how it was read; "
+             "409 while one runs; DELETE forgets it."},
+    {"name": "Web and desktop", "color": ROSE, "tag": "id · button · Read as",
+     "does": "An id per page or window, a New conversation button, \"Read as\" under a "
+             "follow-up, and the status bar saying what is remembered."},
+    {"name": "MLflow", "color": PURPLE, "tag": "nl2sql.conversation",
+     "does": "The pipeline, conversation, turn, remembered and resolved tags; the Supervisor's "
+             "span shows the turns it was given."},
+    {"name": "Review", "color": AMBER, "tag": "asked as",
+     "does": "A follow-up is staged as the question answered, and the words typed are shown "
+             "beside it; a wrong verdict forgets the turn."},
+]
+
+
+def _v8_rows() -> list[dict]:
+    """v7's eleven nodes, unbadged, with the three that read a conversation
+    marked: the anchor screening, the candidate runs and the delivery."""
+    rows = []
+    for row in _v7_rows():
+        # v7's green is "new in v7", which is not news here: slate, as a
+        # node no version of this drawing changed.
+        row = {key: value for key, value in row.items() if key not in ("badge", "badge_color")}
+        if row.get("accent") == GREEN:
+            row["accent"] = SLATE
+        if "tags" in row:
+            row["tags"] = [(text, SLATE if color == GREEN else color) for text, color in row["tags"]]
+        rows.append(row)
+    by_id = {row["id"]: row for row in rows}
+    by_id["screen"].update(
+        badge="reads the turns", badge_color=ROSE, accent=ROSE,
+        does="The Supervisor, on the question as typed. In a conversation, first a reading in "
+             "the light of its last answered turns, restating a follow-up so that it stands "
+             "alone, held in code to every number, quoted value and direction typed; then v7's "
+             "screening of the words it settled on: verdict, intent and the answer contract.",
+        tags=[("LLM · Supervision", PURPLE), ("+1 call with turns", ROSE), ("C1-C4 · code", ROSE)],
+        wrap_tags=True, why=V8_SCREEN_WHY)
+    by_id["answer"]["tags"] = [("the v5.6 pipeline, once per wording", MAGENTA),
+                               ("generate_sql shown the turns", ROSE), ("host gate", PURPLE)]
+    by_id["answer"]["wrap_tags"] = True
+    by_id["inside"]["body"] = V8_INSIDE
+    by_id["deliver"].update(
+        badge="Read as", badge_color=ROSE, accent=ROSE,
+        does="Render the answer: \"Read as: ...\" when a follow-up was restated, the agreement "
+             "line, the claims, the table, then the notes. With no run to deliver, the "
+             "original's own ending. The answer becomes a turn of its conversation. → END",
+        tags=[("no model call", SLATE), ("Answer.conversation", ROSE)])
+    return rows
+
+
+def build_v8():
+    parts, y = [], 56
+    parts.append(f'<text x="{MARGIN}" y="{y}" font-family="{SANS}" font-size="27" '
+                 f'font-weight="700" fill="{INK}">NL2SQL Agent v8 '
+                 f'<tspan fill="{MUTED}" font-weight="400">— the question, read in its '
+                 f'conversation</tspan></text>')
+    y += 26
+    intro = ("v7's two graphs, their nodes and edges unchanged, with a conversation behind them: "
+             "a question asked in one is read with its last answered turns, and the release "
+             "a deployment answers with is named. Everything marked in rose is new in v8. The "
+             "pipeline inside each run is drawn as one box here and node by node in "
+             "arch_v5_6.svg; v7's own additions are drawn in arch_v7.svg.")
+    blk, h = text_block(MARGIN, y, intro, CONTENT_R - MARGIN, 13.5, MUTED)
+    parts.append(blk); y += h + 26
+
+    svg, h = deployment(y, {"name": "nl2sql-agent",
+                            "desc": "python -m nl2sql_agent, or the same image serving the REST "
+                                    "API, which keeps the conversations. PIPELINE_VERSION names "
+                                    "the pipeline: v7_0_0 the outer graph drawn here, v6_3_1 one "
+                                    "run of the pipeline inside it."},
+                        [PG_V5, VECTORDB_V4, CHUNKDB, SNIPPETSDB_V56],
+                        [CONVERSATIONS_V8, OLLAMA_CHAT_V7, OLLAMA_EMBED_V4, CATALOG_V7])
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What v8 adds: the conversation", V8_ADDED, color=ROSE, x=MARGIN,
+                      w=CONTENT_R - MARGIN, dashed=False)
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "The pipeline by name", V8_NAME, color=ROSE, x=MARGIN,
+                      w=CONTENT_R - MARGIN, dashed=False)
+    parts.append(svg); y += h + 18
+    svg, h = note_row(y, "What it costs", V8_COST, color=PURPLE, x=MARGIN, w=CONTENT_R - MARGIN)
+    parts.append(svg); y += h + 36
+
+    svg, h, nodes = pipeline(
+        y, _v8_rows(),
+        heading="the ensemble — an outer langgraph stategraph around the pipeline",
+        state_line="state: EnsembleState (TypedDict) &#183; question is the standalone reading, "
+                   "asked the words typed, turns what was remembered",
+        returns=[{"from": "vote", "to": "plan_wave",
+                  "label": "second wave &#183; only when the vote is unsettled"}])
+    parts.append(svg); y += h + 34
+    svg, h = outcomes(y, V7_LEVELS, V7_LEVELS_NOTE); parts.append(svg); y += h + 26
+    svg, h = panes_row(y, "what the surfaces show", V8_SURFACES)
+    parts.append(svg); y += h + 26
+    svg, h = legend(y, [("solid", "control flow", SLATE),
+                        ("line", "second wave", RED),
+                        ("pill", "model call", PURPLE), ("pill", "database access", BLUE),
+                        ("pill", "new in v8", ROSE),
+                        ("pill", "v5.6's pipeline", MAGENTA)])
+    parts.append(svg); y += h
+    return document("NL2SQL Agent v8 architecture",
+                    "v7's ensemble, read in the light of the conversation: the Supervisor "
+                    "restating a follow-up, held in code, and the generator shown the earlier "
+                    "turns; and the pipeline named by its release",
+                    "\n".join(parts), y + 34, nodes, extra_colors=(GREEN, ORANGE, CYAN, ROSE))
+
+
 DIAGRAMS = (("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"),
             ("arch_v3.svg", "build_v3"), ("arch_v4.svg", "build_v4"),
             ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
             ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6"),
-            ("arch_v7.svg", "build_v7"))
+            ("arch_v7.svg", "build_v7"), ("arch_v8.svg", "build_v8"))
 
 
 def main(output_dir: Path | None = None) -> None:

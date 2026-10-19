@@ -70,16 +70,25 @@ public final class Markup {
     }
 
     /**
-     * A markdown answer without its first block.
+     * A markdown answer without its first {@code blocks} blocks.
      *
      * <p>Under the ensemble (7.0) the document opens with the agreement line
      * -- how many runs there were and how they agreed -- before anything the
      * runs say. This application shows that line as a badge, from
      * {@code Ensemble.line}, so the prose it falls back to is the block after
-     * it.
+     * it. A follow-up whose restatement held (8.0) opens with one more,
+     * "Read as: ...", which the window shows under the question, from
+     * {@code Answer.conversation}.
      */
-    public static String afterLead(String markup) {
-        Matcher gap = GAP.matcher(markup);
-        return gap.find() ? markup.substring(gap.end()) : "";
+    public static String afterLead(String markup, int blocks) {
+        String rest = markup;
+        for (int skipped = 0; skipped < blocks; skipped++) {
+            Matcher gap = GAP.matcher(rest);
+            if (!gap.find()) {
+                return "";
+            }
+            rest = rest.substring(gap.end());
+        }
+        return rest;
     }
 }

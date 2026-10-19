@@ -54,6 +54,11 @@ export interface AskOptions {
   wait?: number;
   /** Opaque pairs echoed back on the job, for correlating with a UI turn. */
   metadata?: Record<string, string>;
+  /**
+   * The conversation this question continues (8.0): the id the page made.
+   * Omitted, the question is asked alone.
+   */
+  conversation?: string;
   signal?: AbortSignal;
 }
 
@@ -140,6 +145,7 @@ export function createClient(options: ClientOptions = {}): Client {
     ask(question, opts = {}) {
       const payload: AskRequest = { question };
       if (opts.metadata) payload.metadata = opts.metadata;
+      if (opts.conversation) payload.conversation = opts.conversation;
       return request<Job>("/v1/questions", {
         method: "POST",
         headers: headers({ "Content-Type": "application/json" }),

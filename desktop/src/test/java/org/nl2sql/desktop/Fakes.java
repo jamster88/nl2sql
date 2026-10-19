@@ -204,6 +204,28 @@ public final class Fakes {
                 Map.of("enabled", true), "bearer", feedback, Map.of());
     }
 
+    /** The same server, naming its pipeline and remembering {@code turns} turns of a conversation (8.0). */
+    public static Models.Meta remembering(int turns, String version) {
+        Models.Meta meta = meta(true);
+        Models.Pipeline pipeline = meta.pipeline();
+        return new Models.Meta(meta.service(), meta.version(), meta.model(), meta.intents(),
+                meta.tables(), meta.scope(), meta.limits(),
+                new Models.Pipeline(pipeline.supervisor(), pipeline.literals(), pipeline.narrate(),
+                        pipeline.audit(), pipeline.schema_retrieval(), pipeline.nodes(), null, version,
+                        new Models.MemorySettings(turns, 3, 200, 3600)),
+                meta.tls(), meta.authentication(), meta.feedback(), meta.routing());
+    }
+
+    /** The sample answer, given as a step of a conversation (8.0). */
+    public static Models.Answer answer(Models.Conversation conversation) {
+        Models.Answer base = answer();
+        return new Models.Answer(base.answer(), base.narrative(), base.sql(), base.verdict(),
+                base.intent(), base.clarification(), base.tables(), base.literals(),
+                base.result(), base.chart(), base.claims(), base.audit(), base.plan_cost(),
+                base.attempts(), base.trace(), base.retrieval_errors(), base.node_errors(),
+                null, "v7_0_0", conversation);
+    }
+
     /** The same server, saying how it wants to be told who is asking. */
     public static Models.Meta meta(boolean feedback, String authentication) {
         Models.Meta meta = meta(feedback);
@@ -247,6 +269,8 @@ public final class Fakes {
         public IOException failEvents;
 
         public final List<String> asked = new ArrayList<>();
+        /** The conversation each question was asked in, null for one asked alone. */
+        public final List<String> conversations = new ArrayList<>();
         public final List<String> cancelled = new ArrayList<>();
         public final List<String> withdrawn = new ArrayList<>();
         public final List<String> votes = new ArrayList<>();
@@ -280,8 +304,9 @@ public final class Fakes {
         }
 
         @Override
-        public Models.Job ask(String question, int waitSeconds) {
+        public Models.Job ask(String question, int waitSeconds, String conversation) {
             asked.add(question);
+            conversations.add(conversation);
             if (failAsk != null) {
                 throw failAsk;
             }

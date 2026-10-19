@@ -34,6 +34,13 @@
  * The markdown `answer` opens with that same line, so the prose this falls
  * back to is the block after it.
  *
+ * A follow-up the agent restated (8.0) says how it was read, under the words
+ * typed: "Read as: ..." and where it stands in its conversation. Only when
+ * the restatement held -- one the checks discarded was not what ran, so it
+ * is not shown -- and as text, since it is a model's sentence. The markdown
+ * `answer` opens with the same line, so the prose this falls back to is
+ * after it too.
+ *
  * Three cases are not an answer at all and are handled before any of it:
  *
  * * **A refusal is a success.** The agent decided the question was out of
@@ -56,7 +63,7 @@ import { ResultTable, cellKey } from "./ResultTable";
 import { useFeedback } from "../feedback/useFeedback";
 import { afterLead, leadParagraph, plainText } from "../api/text";
 import type { FeedbackStore } from "../feedback/store";
-import type { Answer, Job, Pipeline } from "../api/types";
+import type { Answer, Conversation, Job, Pipeline } from "../api/types";
 
 export interface AnswerViewProps {
   job: Job;
@@ -78,6 +85,8 @@ export function AnswerView({ job, store, pipeline }: AnswerViewProps) {
           <span className="answer-timing muted">{(job.duration_ms / 1000).toFixed(1)}s</span>
         )}
       </header>
+
+      <ReadAs conversation={answer?.conversation} />
 
       {job.status === "failed" || answer === null ? (
         <Failure job={job} />
@@ -166,9 +175,11 @@ interface NarrativeProps {
  */
 function Narrative({ answer, onHighlight }: NarrativeProps) {
   if (answer.claims.length === 0) {
-    // Under the ensemble the document opens with the agreement line, which
-    // the badge above already says.
-    const document = answer.ensemble?.line ? afterLead(answer.answer) : answer.answer;
+    // The document opens with what the page shows elsewhere: the reading
+    // of a follow-up, under the question, and under the ensemble the
+    // agreement line, which the badge above says.
+    const lead = (readAs(answer) ? 1 : 0) + (answer.ensemble?.line ? 1 : 0);
+    const document = afterLead(answer.answer, lead);
     const text = plainText(answer.narrative) || leadParagraph(document);
     return text ? <p className="answer-headline">{text}</p> : null;
   }
@@ -188,6 +199,26 @@ function Narrative({ answer, onHighlight }: NarrativeProps) {
           {claim.formula && <code className="claim-formula">{claim.formula}</code>}{" "}
         </span>
       ))}
+    </p>
+  );
+}
+
+/** The reading a follow-up was answered as, when its restatement held; "" otherwise. */
+export function readAs(answer: Answer): string {
+  const conversation = answer.conversation;
+  return conversation?.resolved ? conversation.read_as : "";
+}
+
+function ReadAs({ conversation }: { conversation: Conversation | null | undefined }) {
+  if (!conversation?.resolved || !conversation.read_as) return null;
+  const { read_as, turn, remembered } = conversation;
+  return (
+    <p className="answer-read-as">
+      Read as: <em>{read_as}</em>
+      <span className="muted">
+        {" "}
+        · turn {turn}, {remembered} remembered
+      </span>
     </p>
   );
 }

@@ -126,9 +126,11 @@ Read as: What were our net sales by store in fiscal year 2025?
 ```
 
 A refused question, one asked back and one the agent gave up on are not
-remembered, and the session is forgotten when it ends. `--memory 0` asks
-every question alone, as before 8.0; a question given on the command line
-is always asked alone.
+remembered, and the session is forgotten when it ends. A wrong answer is
+remembered like a right one -- the session has no verdict to forget it by,
+as the REST API does -- so after one, ask the next question in full, or
+start a new session. `--memory 0` asks every question alone, as before
+8.0; a question given on the command line is always asked alone.
 
 Ctrl-D exits.
 
@@ -238,6 +240,22 @@ filter on it -- and the CLI says where its traces go before it answers:
 
 ```
 [tracing] tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent
+```
+
+In the interactive session, or with questions piped in, each document
+carries `conversation` (8.0): the same block the REST API's answer carries,
+saying which turn the question was, how many it was read with and, for a
+follow-up the agent restated, what it was read as. `asked` is the words
+typed. A question given on the command line is asked alone, and its
+`conversation` is `null`.
+
+```bash
+printf 'How many stores are there?\nAnd in each state?\n' | docker compose run --rm -T agent --json | jq -c .conversation
+```
+
+```
+{"id":"session","turn":1,"remembered":0,"asked":"How many stores are there?","read_as":"","resolved":false,"reason":""}
+{"id":"session","turn":2,"remembered":1,"asked":"And in each state?","read_as":"How many stores are there in each state?","resolved":true,"reason":""}
 ```
 
 The exit code is 0 on success and 1 when the agent could not answer, so it

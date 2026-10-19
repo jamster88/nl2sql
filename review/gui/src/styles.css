@@ -314,6 +314,12 @@ body {
   font-size: 1.02rem;
 }
 
+/* A follow-up's words typed (8.0), under the question it was read as. */
+.original-asked {
+  margin: -6px 0 10px;
+  font-size: 0.9rem;
+}
+
 .original-comment {
   margin: 10px 0;
   padding: 8px 12px;

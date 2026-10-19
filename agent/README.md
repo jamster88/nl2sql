@@ -102,6 +102,16 @@ below -- with the catalog made by
 [`models/build_catalog.py`](../models/build_catalog.py) and measured by
 [`models/calibrate.py`](../models/calibrate.py).
 
+Since 8.0 a question asked in a conversation is read with the conversation's
+last answered turns, at two nodes of this pipeline and no others, and no
+node is added: `supervise` reads the words typed in the light of the turns
+and restates a follow-up so that it stands alone, held in code to the words
+typed, and `generate_sql` is shown the earlier questions with their SQL.
+[Remembering the conversation](#remembering-the-conversation-arch8) has the
+rest, and [`arch_diagrams/arch_v8.svg`](../arch_diagrams/arch_v8.svg) draws
+it, beside [`arch_v7.svg`](../arch_diagrams/arch_v7.svg) for the ensemble
+around this pipeline.
+
 ```
 supervise --+-- retrieve_schema ----+
             |-- retrieve_literals --|
@@ -121,7 +131,7 @@ supervise --+-- retrieve_schema ----+
 
 | Stage | Node | What it does | LLM |
 |---|---|---|---|
-| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period) | screens |
+| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period). In a conversation (8.0), first reads the question in the light of its turns and restates a follow-up | screens |
 | 1. Intake | `refuse` | Answers a refused or ambiguous question without touching the database | -- |
 | 1. Context | `retrieve_schema` | Tables from the DDL-chunk vectors | -- |
 | 1. Context | `retrieve_literals` | Phrases in the question resolved to the real values they name -- the whole value, or a close spelling of it (7.0) | -- |
@@ -129,7 +139,7 @@ supervise --+-- retrieve_schema ----+
 | 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
 | 1. Context | `retrieve_snippets` | SQL snippets -- joins, filters, measures, dimensions -- found by keyword phrase and by meaning (v5.6) | -- |
 | 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described; the snippets over those tables | -- |
-| 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
+| 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair; shown a follow-up's earlier turns and their SQL (8.0) | writes SQL |
 | 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope; and the grain check (7.0): no two tables of different grains joined without being brought to one | -- |
 | 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
 | 3. Execute | `execute_query` | Reader role, READ ONLY, statement timeout, row cap | -- |
@@ -307,6 +317,17 @@ Re-measure with `python benchmarks/run_benchmark.py`, which now reports
 per-agent timing, model calls per node, and the fraction of the narrative the
 audit could trace back to the result.
 
+**Follow-ups (8.0).** The follow-up set gives each benchmark question a
+second turn written as people write them -- "And how many in each state?"
+-- scored against the complete question it means
+([benchmark](../docs/benchmark.md#memory-in-the-agent)). Asked with nothing
+remembered, as 7.0 asks every question, 1 of 15 was right under `v6_3_1`
+and 2 under `v7_0_0`. With five turns remembered, 12 and 13; every filter
+the first turns set was kept; and each of the fifteen asked as the second
+turn of a conversation came out exactly as it does alone, 15 of 15 under
+both names. A question in a conversation costs one Supervisor call more,
+about four seconds on the measuring host.
+
 ## Asking it several ways (arch7)
 
 Temperature is zero everywhere, so the only independent second opinion the
@@ -453,6 +474,57 @@ the wrong name. The name is said wherever a run is recorded: the routing
 table's first line, the trace's `nl2sql.pipeline` tag, `Answer.pipeline`,
 `/v1/meta`'s `pipeline.version`, the verdict's snapshot and the benchmark's
 report ([arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)).
+
+## Remembering the conversation (arch8)
+
+A follow-up names nothing of its own: "and in each state?", asked alone, is
+refused or answered as some other question. arch8
+([`Multi-Agent_NL2SQL_arch8.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md),
+built in phases by
+[`..._implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_implementation.md)
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_risks_by_phase.md))
+reads a question with the last answered turns of its conversation --
+`CONVERSATION_MEMORY` of them, 5 by default, 0 to 15, and 0 for none -- at
+two places and no others:
+
+- **The Supervisor** reads the words typed in the light of the turns and
+  restates a follow-up so that it stands alone. The restatement is model
+  output about to become every later stage's question, so
+  [`memory.py`](nl2sql_agent/memory.py) holds it to the words typed in
+  code, with no model call: C1 every number typed, C2 every quoted value,
+  C3 every direction (*highest*, *fewest*, *excluding*), C4 not blank and
+  no longer than a question may be. One that fails is discarded, and so is
+  one that is the words typed again; either way the question runs as
+  typed. Then the question settled on
+  is screened as 7.0 screens one, so a question asked with turns costs one
+  Supervisor call more, on the standard rung, and a question asked alone
+  costs none.
+- **The SQL Generator** is shown the earlier turns' questions with their
+  SQL after its worked examples, for a question read as a follow-up: a
+  follow-up usually keeps their joins, filters and calendar.
+
+A turn is an answered question: the question as answered, the first
+sentence and three rows of its answer, and its SQL (`MEMORY_ROWS`,
+`MEMORY_ANSWER_CHARS`). A refusal, a question asked back and a give-up are
+not turns. Nothing else reads one, and with none every prompt is 7.0's,
+byte for byte. Under the ensemble the anchor screening reads the turns and
+every run's generator is shown them; the Paraphraser rewords the complete
+question, and the Judge reads it. The answer opens with "Read as: ..." when
+a restatement held, so a wrong reading is seen rather than believed, and
+the words typed are kept beside it everywhere as `asked`.
+
+The agent is stateless -- `run(question, principal, turns=())` -- and the
+conversation is kept by whoever asks:
+
+| Asked from | The conversation | After a wrong answer |
+|---|---|---|
+| The terminal | The interactive session, or the questions piped in, in the order they arrive; a question given on the command line is asked alone ([USAGE](USAGE.md#interactive-session)) | The turn stays for the session: ask the next question in full, or start a new session |
+| The REST API | Named by the client, `AskRequest.conversation`, and kept per person in the serving process's memory ([`conversations.py`](nl2sql_agent/api/conversations.py)): one question at a time, forgotten after `API_CONVERSATION_TTL_SECONDS` idle or on `DELETE /v1/conversations/{id}`, never written down ([API](API.md#in-a-conversation-conversation-80)) | A `no` verdict forgets its turn at once; `incomplete` keeps it |
+| The web interface and the desktop client | An id per page or window, made when it opens and again by **New conversation** | As the REST API |
+| The benchmark | None: every question asked alone, except `--followups` | -- |
+
+Measured on the follow-up set ([above](#measured)), and drawn in
+[`arch_diagrams/arch_v8.svg`](../arch_diagrams/arch_v8.svg).
 
 ## Serving it over HTTP
 

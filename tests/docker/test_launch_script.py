@@ -1099,6 +1099,59 @@ def test_the_pipeline_flag_reaches_every_service_compose_starts_this_run_only(ru
     assert "PIPELINE_VERSION" not in (result.workdir / ".env").read_text()
 
 
+# ---------------------------------------------------------------------------
+# Remembering the conversation (arch8): said beside the pipeline, and a
+# number the agent would refuse refused here first
+# ---------------------------------------------------------------------------
+
+
+def _remembered(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if "(CONVERSATION_MEMORY" in line]
+
+
+@pytest.mark.parametrize(
+    ("said", "line"),
+    [
+        ("", "the agent remembers the last 5 turns of a conversation (CONVERSATION_MEMORY)"),
+        ("0", "each question is asked alone (CONVERSATION_MEMORY=0)"),
+        ("1", "the agent remembers the last turn of a conversation (CONVERSATION_MEMORY)"),
+        ("015", "the agent remembers the last 15 turns of a conversation (CONVERSATION_MEMORY)"),
+    ],
+    ids=["default", "none", "one", "fifteen"],
+)
+def test_it_says_how_much_of_a_conversation_a_question_is_read_with(run_launch, said, line):
+    result = run_launch(env={"CONVERSATION_MEMORY": said})
+    assert result.returncode == 0
+    assert _remembered(result.output) == [line]
+
+
+@pytest.mark.parametrize("value", ["16", "five", "-1"])
+def test_a_memory_the_agent_would_refuse_is_refused_naming_the_bounds(run_launch, value):
+    result = run_launch("--memory", value)
+    assert result.returncode != 0
+    assert f"ERROR: CONVERSATION_MEMORY is '{value}': it must be 0 to 15" in result.output
+    assert not result.calls_matching("compose up")
+    from_env = run_launch(env={"CONVERSATION_MEMORY": ""}, env_file=f"IMAGE_NAME=x\nCONVERSATION_MEMORY={value}\n")
+    assert f"ERROR: CONVERSATION_MEMORY is '{value}': it must be 0 to 15" in from_env.output
+
+
+def test_the_memory_flag_needs_a_number(run_launch):
+    result = run_launch("--memory")
+    assert result.returncode != 0
+    assert "ERROR: --memory needs a number: 0 to 15" in result.output
+
+
+def test_the_memory_flag_reaches_every_service_compose_starts_this_run_only(run_launch):
+    """Exported, as --pipeline is: compose reads the shell before .env, and
+    .env is not written."""
+    result = run_launch("--api", "--memory", "0", env={"CONVERSATION_MEMORY": ""})
+    assert result.returncode == 0
+    told = (result.workdir.parent / "conversation-memory").read_text().split()
+    assert told and set(told) == {"0"}
+    assert _remembered(result.output) == ["each question is asked alone (CONVERSATION_MEMORY=0)"]
+    assert "CONVERSATION_MEMORY" not in (result.workdir / ".env").read_text()
+
+
 def test_the_probe_says_a_setting_the_agent_refuses_rather_than_a_traceback():
     """S9 of arch8's risks: `Settings.from_env` raises ValueError on a
     contradiction, which the probe once let out as a traceback the script

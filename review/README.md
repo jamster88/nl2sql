@@ -121,6 +121,11 @@ submission from before 8.0, holds `{}`. Added on start the same way,
 `JSONB NOT NULL DEFAULT '{}'::jsonb`; the API asks which of the three a
 table has in one query and leaves out what it lacks, saying so once.
 
+The review page shows it under the question: when the words typed differ
+from the question answered, an "Asked as" line quotes them, with the turn
+and how many turns it was read with, drawn as text. A question asked alone
+shows no such line. The curation page shows nothing of it.
+
 The verdict itself is one of three: `yes` (correct), `no` (wrong), or
 `incomplete` (correct but incomplete -- the SQL was right and the answer
 left out something a reader needed). Each has its own pane in the review
@@ -830,7 +835,7 @@ whether the stores caught up.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 197 tests, 100% coverage
+npm run test     # review GUI: 201 tests, 100% coverage
 ```
 
 ## Tests

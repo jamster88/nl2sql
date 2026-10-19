@@ -128,6 +128,31 @@ and `launch.sh` says so -- and no SQL console before `v5_3`, whose container
 then stops, saying the module is missing, which `launch.sh --console` passes
 on.
 
+Going to `v8_0` adds a conversation and a pipeline's name, and moves
+nothing in the databases but two columns:
+
+* **A follow-up is read with the conversation.** The web interface and the
+  desktop client send a conversation's id with each question, and the
+  server reads it with the last `CONVERSATION_MEMORY` answered turns (five
+  by default, at most fifteen, none at 0, or `--memory N` on either script
+  for one run). A question in a conversation costs one Supervisor call more;
+  a question asked alone costs what it did. The turns are held in the API's
+  memory and nowhere else -- at most `API_MAX_CONVERSATIONS` of them, each
+  forgotten after `API_CONVERSATION_TTL_SECONDS` of silence -- so a restart
+  forgets every conversation.
+* **Clients and servers of either release work together.** A client before
+  8.0 names no conversation, so each of its questions is asked alone; an 8.0
+  client names one only to a server whose `/v1/meta` says it remembers, so
+  it asks a 7.0 server as a 7.0 client did.
+* **The pipeline has a name.** `PIPELINE_VERSION` is `v7_0_0` by default --
+  every question asked several ways, as in 7.0 -- or `v6_3_1`, one run a
+  question. An `ENSEMBLE_ENABLED` the `.env` already sets keeps its meaning
+  under `v7_0_0`; `ENSEMBLE_ENABLED=true` beside `v6_3_1` is refused at
+  start.
+* **A verdict carries its pipeline and its conversation** once the review
+  service has started: it adds the two columns on its first start, as 7.0's
+  record was added, and a vote cast before then is recorded without them.
+
 Going to `v7_0` changes what a question costs and what one run answers,
 and moves nothing in the databases:
 

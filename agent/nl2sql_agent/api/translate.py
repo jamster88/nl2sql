@@ -30,6 +30,7 @@ from .models import (
     AuditReport,
     ChartSpec,
     Claim,
+    Conversation,
     DeclinedColumn,
     DiscardedRewording,
     Ensemble,
@@ -81,7 +82,14 @@ def _codes(errors: Any, failed: str) -> dict[str, str]:
     }
 
 
-def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> Answer:
+def answer_from_state(
+    state: dict[str, Any] | None,
+    *,
+    detail: bool = True,
+    conversation: str | None = None,
+    turn: int = 0,
+    asked: str = "",
+) -> Answer:
     """The public answer for a finished run.
 
     A state that refused the question, or gave up inside its retry budget,
@@ -99,6 +107,11 @@ def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> A
     Without `detail` -- anyone but an operator (V6-32) -- `retrieval_errors`
     and `node_errors` say which part failed and not the driver's words for
     it, which name hosts and ports.
+
+    `conversation` and `turn` are the job's, not the state's (arch8's S5):
+    with them the answer says where it stands in its conversation and how
+    its question was read; without, `conversation` is None. `asked` is the
+    words typed, for a state that does not have them.
     """
     state = state or {}
     run = run_state(state)
@@ -129,6 +142,35 @@ def answer_from_state(state: dict[str, Any] | None, *, detail: bool = True) -> A
         node_errors=node_errors if detail else _codes(node_errors, "failed"),
         ensemble=ensemble_from_state(state, detail=detail) if is_ensemble(state) else None,
         pipeline=state.get("pipeline") or "",
+        conversation=conversation_block(state, conversation, turn, asked) if conversation else None,
+    )
+
+
+def conversation_block(state: dict[str, Any], conversation: str, turn: int, asked: str = "") -> Conversation:
+    """The turn and the reading, from the state's note: a `MemoryNote`, or
+    its dict once a state has been through `to_jsonable`."""
+    note = to_jsonable(state.get("memory")) or {}
+    return Conversation(
+        id=conversation,
+        turn=turn,
+        remembered=int(note.get("shown") or 0),
+        asked=state.get("asked") or asked,
+        read_as=note.get("read_as") or "",
+        resolved=bool(note.get("resolved")),
+        reason=note.get("reason") or "",
+    )
+
+
+def answer_for(job: Job, *, detail: bool = True) -> Answer:
+    """A job's answer, with the conversation it continued when a store
+    admitted it to one: the one translation the job's document and the
+    staged snapshot both go through."""
+    return answer_from_state(
+        job.state,
+        detail=detail,
+        conversation=job.conversation if job.turn is not None else None,
+        turn=job.turn or 0,
+        asked=job.question,
     )
 
 
@@ -212,7 +254,8 @@ def job_model(job: Job, *, base: str = "", detail: bool = True) -> JobModel:
         finished_at=job.finished_at,
         duration_ms=job.duration_ms,
         progress=[progress_event(record) for record in job.progress],
-        answer=answer_from_state(job.state, detail=detail) if job.state is not None else None,
+        answer=answer_for(job, detail=detail) if job.state is not None else None,
         error=(job.fault or job.error) if detail else job.error,
         links=JobLinks(self=href, events=f"{href}/events"),
+        conversation=job.conversation,
     )

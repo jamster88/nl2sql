@@ -468,6 +468,7 @@ together and why.
 | [`tls.py`](nl2sql_agent/api/tls.py) | Generates the development certificate, reads one off disk, and enforces `API_TLS_ALLOW_SELF_SIGNED` |
 | [`models.py`](nl2sql_agent/api/models.py) | The published request and response shapes -- what becomes `/openapi.json` |
 | [`jobs.py`](nl2sql_agent/api/jobs.py) | Questions in flight: a bounded thread pool, numbered progress events, and the resumable stream over them |
+| [`conversations.py`](nl2sql_agent/api/conversations.py) | The conversations a question may continue (8.0): each person's, by the id their client named, its last turns, one question at a time, forgotten on request, on silence or on a wrong answer, never written down |
 | [`translate.py`](nl2sql_agent/api/translate.py) | The seam between `state.py` and `models.py`, so a field renamed inside the graph breaks one file |
 | [`app.py`](nl2sql_agent/api/app.py) | The routes, the authentication, the error shape, CORS |
 | [`server.py`](nl2sql_agent/api/server.py) | Flags, the certificate decision, the startup banner, uvicorn |
@@ -1260,7 +1261,7 @@ stops the agent at start, naming the bounds:
 | Variable | Flag | Default |
 |---|---|---|
 | `PIPELINE_VERSION` | `--pipeline` | `v7_0_0`, the ensemble; `v6_3_1` asks each question once and differs in that alone |
-| `CONVERSATION_MEMORY` | `--memory` | 5 answered turns of a conversation a question is read with; 0 to 15, 0 asks every question alone. The CLI's interactive session is a conversation; the REST API's take turns from arch8's Phase 3 |
+| `CONVERSATION_MEMORY` | `--memory` | 5 answered turns of a conversation a question is read with; 0 to 15, 0 asks every question alone. The CLI's interactive session is a conversation, and so is every REST question that names one (`AskRequest.conversation`); at 0 the API keeps none |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

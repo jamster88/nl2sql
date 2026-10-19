@@ -108,9 +108,18 @@ without it, and says so once in its log; the first vote after carries it.
 Since 8.0 it also carries **`pipeline`**: the name of the pipeline that
 answered -- `v7_0_0`, the ensemble, or `v6_3_1`, one run a question -- the
 API's `Answer.pipeline`. A submission from before 8.0 holds `''`. The
-column is added on start the same way, `TEXT NOT NULL DEFAULT ''`, and the
-API asks which of the two a table has in one query and leaves out what it
-lacks, saying so once.
+column is added on start the same way, `TEXT NOT NULL DEFAULT ''`.
+
+And **`conversation`** (JSONB, 8.0): where the answer stood in its
+conversation -- the API's `Answer.conversation`: the turn, the turns it was
+read with, `asked`, the words typed, and `read_as`, the complete question a
+follow-up was read as. Inside a conversation `question` is the question
+answered, which a golden pair is built from and promotion reads as it
+always has: a pair must stand alone, and "and by store?" does not. The
+words typed are in `conversation.asked`. A question asked alone, and a
+submission from before 8.0, holds `{}`. Added on start the same way,
+`JSONB NOT NULL DEFAULT '{}'::jsonb`; the API asks which of the three a
+table has in one query and leaves out what it lacks, saying so once.
 
 The verdict itself is one of three: `yes` (correct), `no` (wrong), or
 `incomplete` (correct but incomplete -- the SQL was right and the answer

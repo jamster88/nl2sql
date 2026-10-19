@@ -309,13 +309,28 @@ public final class Models {
         }
     }
 
+    /**
+     * Where an answer stands in its conversation, and how its question was
+     * read (8.0): the turn, the turns it was read with, the words typed and,
+     * when a follow-up was restated, the complete question answered.
+     */
+    public record Conversation(String id, int turn, int remembered, String asked, String read_as,
+                               boolean resolved, String reason) {
+        public Conversation {
+            id = text(id);
+            asked = text(asked);
+            read_as = text(read_as);
+            reason = text(reason);
+        }
+    }
+
     /** Everything the pipeline produced for one question. */
     public record Answer(String answer, String narrative, String sql, String verdict, String intent,
                          String clarification, List<String> tables, List<LiteralMatch> literals,
                          ResultTable result, ChartSpec chart, List<Claim> claims, AuditReport audit,
                          Double plan_cost, int attempts, List<TraceEntry> trace,
                          Map<String, String> retrieval_errors, Map<String, String> node_errors,
-                         Ensemble ensemble, String pipeline) {
+                         Ensemble ensemble, String pipeline, Conversation conversation) {
         public Answer {
             answer = text(answer);
             narrative = text(narrative);
@@ -343,7 +358,8 @@ public final class Models {
     /** A question in flight, or one that has finished. One shape throughout. */
     public record Job(String id, JobStatus status, String question, Map<String, String> metadata,
                       String created_at, String started_at, String finished_at, Double duration_ms,
-                      List<ProgressEvent> progress, Answer answer, String error, JobLinks links) {
+                      List<ProgressEvent> progress, Answer answer, String error, JobLinks links,
+                      String conversation) {
         public Job {
             id = text(id);
             question = text(question);
@@ -381,7 +397,8 @@ public final class Models {
      */
     public record Limits(int max_rows, int max_attempts, double max_plan_cost,
                          int statement_timeout_ms, int max_concurrency, double max_wait_seconds,
-                         int max_question_length, int max_metadata_entries) {
+                         int max_question_length, int max_metadata_entries,
+                         int max_conversation_id_length) {
     }
 
     /**
@@ -455,7 +472,8 @@ public final class Models {
     }
 
     /** What a client may send. */
-    public record AskRequest(String question, String principal, Map<String, String> metadata) {
+    public record AskRequest(String question, String principal, Map<String, String> metadata,
+                             String conversation) {
     }
 
     /**

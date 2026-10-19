@@ -31,6 +31,23 @@ export type Verdict = "yes" | "no" | "incomplete";
  * where evidence changes. Edits live in `draft`.
  */
 /**
+ * Where the answer stood in its conversation, as the agent staged it (8.0).
+ * Every part optional: a question asked alone holds `{}`, as does a
+ * submission from before 8.0. `question` is the question answered -- the
+ * restatement, when a follow-up was read as one -- and `asked` the words
+ * typed. `agent/API.md` documents the whole of it as `Answer.conversation`.
+ */
+export interface ConversationRecord {
+  id?: string;
+  turn?: number;
+  remembered?: number;
+  asked?: string;
+  read_as?: string;
+  resolved?: boolean;
+  reason?: string;
+}
+
+/**
  * The agent's record of asking the question several ways (7.0), as staged.
  *
  * The review service keeps it as the agent wrote it and models none of it:
@@ -87,6 +104,7 @@ export interface SubmissionModel {
   agent_version: string;
   ensemble: EnsembleRecord;
   pipeline: string;
+  conversation: ConversationRecord;
   submitted_at: string | null;
   state: State;
   reviewer: string;

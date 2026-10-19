@@ -134,7 +134,7 @@ class JobWatcherTest {
                 finished.question(), finished.metadata(), finished.created_at(),
                 finished.started_at(), finished.finished_at(), finished.duration_ms(),
                 List.of(Fakes.step(1, "screen", "screening"), Fakes.step(2, "run_sql", "rows")),
-                finished.answer(), null, finished.links());
+                finished.answer(), null, finished.links(), null);
         client.streams.add(stream(event("done", Json.write(withProgress))));
 
         watching(Fakes.queued()).run();
@@ -295,7 +295,7 @@ class JobWatcherTest {
         client.pollAnswers.add(new Models.Job(finished.id(), Models.JobStatus.RUNNING,
                 finished.question(), finished.metadata(), finished.created_at(),
                 finished.started_at(), null, null,
-                List.of(Fakes.step(1, "screen", "screening")), null, null, finished.links()));
+                List.of(Fakes.step(1, "screen", "screening")), null, null, finished.links(), null));
         client.pollAnswers.add(Fakes.answered());
 
         watching(Fakes.queued()).run();

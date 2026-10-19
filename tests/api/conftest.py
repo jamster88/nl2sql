@@ -53,7 +53,8 @@ def make_runner(
     observe it: the runner blocks on it until the test lets go.
     """
 
-    def runner(question: str, principal: str | None, on_progress) -> dict:
+    def runner(question: str, principal: str | None, on_progress, turns=()) -> dict:
+        runner.turns.append(tuple(turns))
         for step in steps:
             on_progress(step, f"{step} for {question}")
         if gate is not None:
@@ -66,6 +67,8 @@ def make_runner(
             answered["principal"] = principal
         return answered
 
+    #: The turns each question was handed, in the order they ran (arch8).
+    runner.turns = []
     return runner
 
 
@@ -155,7 +158,7 @@ class FakeAgent:
         self.settings = settings or Settings()
         self.db = FakeDb()
 
-    def run(self, question: str, *, principal=None, on_progress=None) -> dict:
+    def run(self, question: str, *, principal=None, on_progress=None, turns=()) -> dict:
         if on_progress:
             on_progress("finish", "done")
         return dict(ANSWERED, question=question)

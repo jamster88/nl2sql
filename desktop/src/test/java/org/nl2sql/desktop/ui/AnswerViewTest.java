@@ -27,7 +27,7 @@ class AnswerViewTest {
         Models.Job base = Fakes.answered();
         return new Models.Job(base.id(), status, base.question(), base.metadata(),
                 base.created_at(), base.started_at(), base.finished_at(), base.duration_ms(),
-                base.progress(), answer, error, base.links());
+                base.progress(), answer, error, base.links(), null);
     }
 
     private static Models.Answer answerWith(String verdict, String clarification,
@@ -37,7 +37,7 @@ class AnswerViewTest {
         return new Models.Answer(base.answer(), base.narrative(), base.sql(), verdict,
                 base.intent(), clarification, base.tables(), base.literals(), base.result(),
                 base.chart(), claims, audit, base.plan_cost(), base.attempts(), base.trace(),
-                Map.of(), Map.of(), null, "");
+                Map.of(), Map.of(), null, "", null);
     }
 
     private static List<String> summaries(Node root) {
@@ -81,7 +81,7 @@ class AnswerViewTest {
             Models.Answer retried = new Models.Answer(base.answer(), base.narrative(), base.sql(),
                     base.verdict(), base.intent(), null, base.tables(), base.literals(),
                     base.result(), base.chart(), base.claims(), base.audit(), base.plan_cost(), 3,
-                    base.trace(), Map.of(), Map.of(), null, "");
+                    base.trace(), Map.of(), Map.of(), null, "", null);
             AnswerView view = new AnswerView(with(retried, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
 
@@ -183,7 +183,7 @@ class AnswerViewTest {
             Models.Answer bare = new Models.Answer(base.answer(), "", base.sql(), "proceed",
                     base.intent(), null, base.tables(), base.literals(), base.result(),
                     base.chart(), List.of(), base.audit(), base.plan_cost(), 1, base.trace(),
-                    Map.of(), Map.of(), null, "");
+                    Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(bare, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -205,7 +205,7 @@ class AnswerViewTest {
         Models.Answer base = Fakes.answer();
         return new Models.Answer(document, "", base.sql(), "proceed", base.intent(), null,
                 base.tables(), base.literals(), base.result(), base.chart(), List.of(),
-                base.audit(), base.plan_cost(), 1, base.trace(), Map.of(), Map.of(), ensemble, "");
+                base.audit(), base.plan_cost(), 1, base.trace(), Map.of(), Map.of(), ensemble, "", null);
     }
 
     @Test
@@ -299,7 +299,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer refused = new Models.Answer("Out of scope.", "", "", "refused",
                     base.intent(), null, List.of(), List.of(), null, null, List.of(), base.audit(),
-                    null, 0, List.of(), Map.of(), Map.of(), none, "");
+                    null, 0, List.of(), Map.of(), Map.of(), none, "", null);
 
             AnswerView view = asked(refused);
 
@@ -381,7 +381,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer refused = new Models.Answer(base.answer(), "", base.sql(),
                     "out_of_domain", base.intent(), null, base.tables(), List.of(), null, null,
-                    List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(refused, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -398,7 +398,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer ambiguous = new Models.Answer(base.answer(), "", base.sql(), "ambiguous",
                     base.intent(), "Which fiscal year did you mean?", base.tables(), List.of(),
-                    null, null, List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    null, null, List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(ambiguous, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -414,7 +414,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer odd = new Models.Answer(base.answer(), "", base.sql(), "deferred",
                     base.intent(), null, base.tables(), List.of(), null, null, List.of(),
-                    base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             assertTrue(Nodes.says(new AnswerView(with(odd, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null).node(), "did not answer"));
@@ -580,7 +580,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer noSql = new Models.Answer(base.answer(), base.narrative(), "",
                     base.verdict(), base.intent(), null, List.of(), List.of(), base.result(),
-                    base.chart(), base.claims(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    base.chart(), base.claims(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(noSql, Models.JobStatus.FAILED, "no plan"),
                     Stores.of(new Stores.Recording()), null);
@@ -596,7 +596,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer bare = new Models.Answer(base.answer(), base.narrative(), "",
                     "proceed", base.intent(), null, List.of(), List.of(), base.result(), null,
-                    List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(bare, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -613,7 +613,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer thin = new Models.Answer(base.answer(), base.narrative(), base.sql(),
                     "proceed", base.intent(), null, List.of(), List.of(), base.result(),
-                    base.chart(), base.claims(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    base.chart(), base.claims(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(thin, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -631,7 +631,7 @@ class AnswerViewTest {
             Models.Answer tabular = new Models.Answer(base.answer(), base.narrative(), base.sql(),
                     "proceed", base.intent(), null, base.tables(), base.literals(), base.result(),
                     new Models.ChartSpec("table", null, List.of("net_sales"), null), base.claims(),
-                    base.audit(), base.plan_cost(), 1, base.trace(), Map.of(), Map.of(), null, "");
+                    base.audit(), base.plan_cost(), 1, base.trace(), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(tabular, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -647,7 +647,7 @@ class AnswerViewTest {
             Models.Job base = Fakes.answered();
             Models.Job untimed = new Models.Job(base.id(), base.status(), base.question(),
                     base.metadata(), base.created_at(), base.started_at(), base.finished_at(),
-                    null, base.progress(), base.answer(), null, base.links());
+                    null, base.progress(), base.answer(), null, base.links(), null);
 
             assertEquals(0, Nodes.withClass(
                     new AnswerView(untimed, Stores.of(new Stores.Recording()), null).node(),
@@ -663,7 +663,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer rowless = new Models.Answer(base.answer(), base.narrative(), base.sql(),
                     "proceed", base.intent(), null, base.tables(), List.of(), null, null,
-                    base.claims(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    base.claims(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
             AnswerView view = new AnswerView(with(rowless, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
 
@@ -698,7 +698,7 @@ class AnswerViewTest {
             Models.Answer busy = new Models.Answer(base.answer(), base.narrative(), base.sql(),
                     "proceed", base.intent(), null, base.tables(), base.literals(), base.result(),
                     base.chart(), base.claims(), base.audit(), base.plan_cost(), 1,
-                    List.of(new Models.TraceEntry("generate_sql", 100, 3, "", "", "", "", List.of())), Map.of(), Map.of(), null, "");
+                    List.of(new Models.TraceEntry("generate_sql", 100, 3, "", "", "", "", List.of())), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(busy, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -717,7 +717,7 @@ class AnswerViewTest {
                     "proceed", base.intent(), null, base.tables(), base.literals(), base.result(),
                     base.chart(), base.claims(), base.audit(), base.plan_cost(), 1,
                     List.of(new Models.TraceEntry("generate_sql", 100, 1, "", "coder:14b", "standard",
-                            "attempt 1, score 4", List.of())), Map.of(), Map.of(), null, "");
+                            "attempt 1, score 4", List.of())), Map.of(), Map.of(), null, "", null);
 
             AnswerView view = new AnswerView(with(routed, Models.JobStatus.SUCCEEDED, null),
                     Stores.of(new Stores.Recording()), null);
@@ -746,7 +746,7 @@ class AnswerViewTest {
                 "What were our total net sales for the Produce department in fiscal year 2025, "
                         + "broken down by banner and by state?",
                 job.metadata(), job.created_at(), job.started_at(), job.finished_at(),
-                job.duration_ms(), job.progress(), job.answer(), null, job.links());
+                job.duration_ms(), job.progress(), job.answer(), null, job.links(), null);
         AnswerView view = new AnswerView(wordy, Stores.of(new Stores.Recording()), null);
         javafx.stage.Stage stage =
                 FxToolkit.render(new javafx.scene.layout.VBox(view.node()), width, 900);
@@ -794,7 +794,7 @@ class AnswerViewTest {
             Models.Answer base = Fakes.answer();
             Models.Answer refused = new Models.Answer(base.answer(), "", base.sql(),
                     "out_of_domain", base.intent(), LONG_CLAIM, base.tables(), List.of(), null,
-                    null, List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "");
+                    null, List.of(), base.audit(), null, 1, List.of(), Map.of(), Map.of(), null, "", null);
 
             assertTrue(noticeHeight(refused, null, 380) > noticeHeight(refused, null, 900));
             assertTrue(noticeHeight(null, LONG_CLAIM, 380) > noticeHeight(null, LONG_CLAIM, 900));

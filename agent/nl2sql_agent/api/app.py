@@ -50,6 +50,7 @@ from nl2sql_common.errors import DATABASE_ERRORS
 from nl2sql_common.roles import READER
 from nl2sql_identity import Guard, GuardSettings
 from nl2sql_identity.postgres import membership_lookup
+from .conversations import ConversationStore
 from .feedback import FeedbackSink, build_sink
 from .jobs import JobStore
 from .routes import ApiContext, _error_response, routers
@@ -117,6 +118,19 @@ def default_guard(settings: Settings, api: ApiSettings) -> Guard:
             service_name=api.token_name,
         ),
         recheck=membership_lookup(settings.database_url) if api.auth_enabled else None,
+    )
+
+
+def conversation_store(settings: Settings, api: ApiSettings) -> ConversationStore | None:
+    """The conversations this server keeps, or None when it keeps none:
+    `CONVERSATION_MEMORY=0` builds no store, and a request's conversation is
+    then echoed on its job and its question asked alone (arch8 23.8)."""
+    if not settings.conversation_memory:
+        return None
+    return ConversationStore(
+        depth=settings.conversation_memory,
+        max_conversations=api.max_conversations,
+        ttl_seconds=api.conversation_ttl_seconds,
     )
 
 
@@ -242,11 +256,12 @@ def create_app(
     if warning:
         log.warning(warning)
 
-    def default_runner(question: str, principal: str | None, on_progress) -> dict:
+    def default_runner(question: str, principal: str | None, on_progress, turns=()) -> dict:
         # The callback goes to `run`, not to the agent: one agent answers
         # several questions at once here, and an instance-level callback
-        # would put one caller's progress on another caller's stream.
-        return holder.get().run(question, principal=principal, on_progress=on_progress)
+        # would put one caller's progress on another caller's stream. The
+        # turns are the job's, from its conversation (arch8).
+        return holder.get().run(question, principal=principal, on_progress=on_progress, turns=turns)
 
     jobs = store or JobStore(
         default_runner,
@@ -256,6 +271,7 @@ def create_app(
         max_queued=api.max_queued,
         max_per_person=api.max_per_person,
         queue_ttl_seconds=api.queue_ttl_seconds,
+        conversations=conversation_store(settings, api),
     )
     started = time.monotonic()
 
@@ -283,6 +299,7 @@ def create_app(
     app.state.settings = settings
     app.state.api_settings = api
     app.state.jobs = jobs
+    app.state.conversations = jobs.conversations
     app.state.agent = holder
     app.state.certificate = certificate
     app.state.feedback = sink

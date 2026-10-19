@@ -184,6 +184,27 @@ class ModelsTest {
     }
 
     @Test
+    void where_an_answer_stands_in_its_conversation_parses() {
+        // 8.0: the block beside the answer, the id echoed on the job, and
+        // the id's bound among the limits.
+        Models.Answer answer = Json.read("""
+                {"conversation": {"id": "c-1", "turn": 2, "remembered": 1, "asked": "and by store?",
+                 "read_as": "What were net sales by store in FY2025?", "resolved": true, "reason": ""}}
+                """, Models.Answer.class);
+        assertEquals(new Models.Conversation("c-1", 2, 1, "and by store?",
+                "What were net sales by store in FY2025?", true, ""), answer.conversation());
+        assertEquals("c-1", Json.read("{\"conversation\": \"c-1\"}", Models.Job.class).conversation());
+        assertEquals(64, Json.read("{\"max_conversation_id_length\": 64}", Models.Limits.class)
+                .max_conversation_id_length());
+        // Asked alone, or of a server older than 8.0: no block, nothing
+        // echoed, and a block's missing words are empty rather than null.
+        assertNull(Json.read("{}", Models.Answer.class).conversation());
+        assertNull(Json.read("{}", Models.Job.class).conversation());
+        Models.Conversation bare = Json.read("{}", Models.Conversation.class);
+        assertEquals(List.of("", "", "", ""), List.of(bare.id(), bare.asked(), bare.read_as(), bare.reason()));
+    }
+
+    @Test
     void a_reload_says_what_was_read_again_and_nothing_is_a_null() {
         // Mirrored for completeness: this client does not reload.
         Models.Reloaded reloaded = Json.read(
@@ -284,8 +305,9 @@ class ModelsTest {
 
     @Test
     void an_ask_carries_the_question_and_whatever_the_caller_wanted_echoed_back() {
-        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{}}",
-                Json.write(new Models.AskRequest("how many stores", null, Map.of())));
+        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{},"
+                        + "\"conversation\":null}",
+                Json.write(new Models.AskRequest("how many stores", null, Map.of(), null)));
     }
 
     @Test

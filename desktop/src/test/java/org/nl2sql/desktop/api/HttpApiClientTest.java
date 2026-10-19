@@ -159,8 +159,10 @@ class HttpApiClientTest {
 
         assertEquals("job-1", client.ask("how many stores", 30).id());
         assertEquals(List.of("POST /v1/questions?wait=30"), requested);
-        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{}}",
-                bodies.get(0));
+        // No conversation named: the window asks each question alone until
+        // it keeps a conversation of its own (arch8's Phase 4).
+        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{},"
+                + "\"conversation\":null}", bodies.get(0));
     }
 
     @Test
@@ -440,7 +442,7 @@ class HttpApiClientTest {
         Models.Job withQuery = new Models.Job(job.id(), job.status(), job.question(),
                 job.metadata(), job.created_at(), job.started_at(), job.finished_at(),
                 job.duration_ms(), job.progress(), job.answer(), job.error(),
-                new Models.JobLinks(job.links().self(), job.links().events() + "?replay=1"));
+                new Models.JobLinks(job.links().self(), job.links().events() + "?replay=1"), null);
 
         assertTrue(client.eventsUrl(withQuery, 4).toString().endsWith("?replay=1&from_seq=4"));
     }

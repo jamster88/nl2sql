@@ -138,7 +138,7 @@ def test_a_progress_event_carries_its_candidate_and_the_right_label():
 
 
 def test_a_job_records_which_run_each_step_came_from():
-    def runner(question, principal, on_progress):
+    def runner(question, principal, on_progress, turns=()):
         on_progress("screen", "proceed")
         on_progress("generate_sql", SQL, candidate=0)
         return {"answer": "ok"}

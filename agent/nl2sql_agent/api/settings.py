@@ -139,9 +139,9 @@ class ApiSettings:
     # that drop idle connections see traffic.
     keepalive_seconds: float = 15.0
     # Conversations kept at once, and how long an idle one is kept, when the
-    # agent remembers any (CONVERSATION_MEMORY above zero, arch8). Read and
-    # reported in /v1/meta; the conversation store that holds them to it is
-    # arch8's Phase 3.
+    # agent remembers any (CONVERSATION_MEMORY above zero, arch8): the
+    # conversation store's bounds (`conversations.py`), each at least 1, and
+    # reported in /v1/meta.
     max_conversations: int = 200
     conversation_ttl_seconds: float = 3600.0
 

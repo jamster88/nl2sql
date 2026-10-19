@@ -284,13 +284,23 @@ def _as_before(owner: str, *columns: str) -> None:
 
 
 def _as_before_7_0(owner: str) -> None:
-    """A 6.3 review service's table: neither `ensemble` nor `pipeline`."""
-    _as_before(owner, "ensemble", "pipeline")
+    """A 6.3 review service's table: no `ensemble`, `pipeline` or `conversation`."""
+    _as_before(owner, "ensemble", "pipeline", "conversation")
 
 
 def _as_before_8_0(owner: str) -> None:
-    """A 7.0 review service's table: `ensemble`, and no `pipeline`."""
-    _as_before(owner, "pipeline")
+    """A 7.0 review service's table: `ensemble`, and neither of 8.0's."""
+    _as_before(owner, "pipeline", "conversation")
+
+
+def _as_8_0_phase_1(owner: str) -> None:
+    """A table an 8.0 build of arch8's Phase 1 left: `pipeline`, and no `conversation`."""
+    _as_before(owner, "conversation")
+
+
+#: Where a follow-up stood in its conversation, as the API stages it.
+CONVERSATION = {"id": "c-1", "turn": 2, "remembered": 1, "asked": "And in each state?",
+                "read_as": "How many stores are there in each state?", "resolved": True, "reason": ""}
 
 
 def test_a_table_from_before_7_0_gains_the_column_and_its_rows_read_as_one_run(repo, owner):
@@ -309,14 +319,16 @@ def test_a_table_from_before_7_0_gains_the_column_and_its_rows_read_as_one_run(r
 
     assert _columns(owner)["ensemble"] == ("jsonb", "NO", "'{}'::jsonb")
     assert _columns(owner)["pipeline"] == ("text", "NO", "''::text")
+    assert _columns(owner)["conversation"] == ("jsonb", "NO", "'{}'::jsonb")
     old = repo.get_by_job("job-old")
-    assert (old.ensemble, old.pipeline, old.verdict) == ({}, "", "yes")
+    assert (old.ensemble, old.pipeline, old.conversation, old.verdict) == ({}, "", {}, "yes")
     assert [submission.ensemble for submission in repo.listing()] == [{}]
 
 
-def test_a_table_from_7_0_gains_the_pipeline_and_its_rows_name_none(repo, owner):
-    """arch8 (R7): the second optional column, added beside the first's
-    migration, every staged row reading `''` and keeping its ensemble."""
+def test_a_table_from_7_0_gains_the_pipeline_and_the_conversation_and_its_rows_name_neither(repo, owner):
+    """arch8 (R7): 8.0's two optional columns, added beside the first's
+    migration, every staged row reading `''` and `{}` and keeping its
+    ensemble -- a question asked alone, as every 7.0 question was."""
     _as_before_8_0(owner)
     with psycopg.connect(owner) as conn:
         conn.execute(
@@ -329,8 +341,28 @@ def test_a_table_from_7_0_gains_the_pipeline_and_its_rows_name_none(repo, owner)
     repo.setup(WRITER_PASSWORD)
 
     assert _columns(owner)["pipeline"] == ("text", "NO", "''::text")
+    assert _columns(owner)["conversation"] == ("jsonb", "NO", "'{}'::jsonb")
     old = repo.get_by_job("job-old")
-    assert (old.ensemble, old.pipeline) == ({"chosen": 0}, "")
+    assert (old.ensemble, old.pipeline, old.conversation) == ({"chosen": 0}, "", {})
+
+
+def test_a_table_from_phase_1_gains_the_conversation_and_keeps_its_pipeline(repo, owner):
+    """The table an 8.0 build of Phase 1 left, which named the pipeline and
+    kept no conversation."""
+    _as_8_0_phase_1(owner)
+    with psycopg.connect(owner) as conn:
+        conn.execute(
+            f"INSERT INTO {SUBMISSIONS} (id, job_id, verdict, question, pipeline) "
+            "VALUES ('old', 'job-old', 'yes', 'q', 'v6_3_1')"
+        )
+        conn.commit()
+
+    repo.setup(WRITER_PASSWORD)
+    repo.setup(WRITER_PASSWORD)
+
+    assert _columns(owner)["conversation"] == ("jsonb", "NO", "'{}'::jsonb")
+    old = repo.get_by_job("job-old")
+    assert (old.pipeline, old.conversation) == ("v6_3_1", {})
 
 
 def test_the_column_is_added_by_the_tables_owner_who_is_no_superuser(owner):
@@ -351,19 +383,22 @@ def test_the_column_is_added_by_the_tables_owner_who_is_no_superuser(owner):
             ensure_schema(conn)
             conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP COLUMN ensemble")
             conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP COLUMN pipeline")
+            conn.execute(f"ALTER TABLE {SUBMISSIONS} DROP COLUMN conversation")
             conn.commit()
             ensure_schema(conn)
             ensure_schema(conn)
             assert conn.execute("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").fetchone() == {
                 "rolsuper": False}
-        assert (_columns(owner)["ensemble"][0], _columns(owner)["pipeline"][0]) == ("jsonb", "text")
+        columns = _columns(owner)
+        assert (columns["ensemble"][0], columns["pipeline"][0], columns["conversation"][0]) == ("jsonb", "text", "jsonb")
     finally:
         with psycopg.connect(owner, autocommit=True) as admin:
             admin.execute(f"DROP OWNED BY {role}")
             admin.execute(f"DROP ROLE {role}")
 
 
-@pytest.mark.parametrize("older", [_as_before_7_0, _as_before_8_0], ids=["6.3 table", "7.0 table"])
+@pytest.mark.parametrize("older", [_as_before_7_0, _as_before_8_0, _as_8_0_phase_1],
+                         ids=["6.3 table", "7.0 table", "phase 1 table"])
 def test_a_vote_is_recorded_on_a_store_the_review_service_has_not_migrated(repo, owner, writer_url, older):
     """A stack upgraded and started without the review service, which is a
     compose profile: the table is an older release's and nothing will add
@@ -372,7 +407,7 @@ def test_a_vote_is_recorded_on_a_store_the_review_service_has_not_migrated(repo,
     older(owner)
     writer = PostgresSink(writer_url)
 
-    before = capture(ensemble=ENSEMBLE, pipeline="v7_0_0")
+    before = capture(ensemble=ENSEMBLE, pipeline="v7_0_0", conversation=CONVERSATION)
     writer.record(before)
     with psycopg.connect(owner) as conn:
         assert conn.execute(f"SELECT verdict FROM {SUBMISSIONS} WHERE job_id = %s", (before.job_id,)).fetchone() == (
@@ -381,20 +416,22 @@ def test_a_vote_is_recorded_on_a_store_the_review_service_has_not_migrated(repo,
     # The review service starts for the first time since the upgrade. The
     # same API process, restarted by nobody, stages the next answer whole.
     repo.setup(WRITER_PASSWORD)
-    after = capture(ensemble=ENSEMBLE, pipeline="v7_0_0")
+    after = capture(ensemble=ENSEMBLE, pipeline="v7_0_0", conversation=CONVERSATION)
     writer.record(after)
 
     staged = repo.get_by_job(before.job_id)
-    assert staged.pipeline == ""
+    assert staged.conversation == {}
+    assert staged.pipeline == ("v7_0_0" if older is _as_8_0_phase_1 else "")
     assert staged.ensemble == ({} if older is _as_before_7_0 else ENSEMBLE)
-    assert (repo.get_by_job(after.job_id).ensemble, repo.get_by_job(after.job_id).pipeline) == (ENSEMBLE, "v7_0_0")
+    whole = repo.get_by_job(after.job_id)
+    assert (whole.ensemble, whole.pipeline, whole.conversation) == (ENSEMBLE, "v7_0_0", CONVERSATION)
 
 
 def test_the_writer_is_shown_the_column_by_the_catalog(repo, writer_url):
     """What the API's question rests on: `information_schema.columns` shows a
     role the columns it has a privilege on, and INSERT on the table is one."""
     with psycopg.connect(writer_url) as conn:
-        assert {"ensemble", "pipeline"} <= set(PostgresSink(writer_url).columns(conn))
+        assert {"ensemble", "pipeline", "conversation"} <= set(PostgresSink(writer_url).columns(conn))
 
 
 def test_a_store_restored_from_before_7_0_under_a_running_api_still_takes_votes(repo, owner, sink):

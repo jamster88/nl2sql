@@ -204,6 +204,8 @@ And the work in *Known limits*, which no setting replaces.
 | The Judge gives a verdict on each answer it was shown and nothing else: it is never told how many runs gave an answer, a verdict on an answer it was not shown is discarded, it writes no SQL, and it cannot take the answer away (7.0) | `tests/agent/test_judge.py`, `tests/agent/test_ensemble.py` |
 | What a model wrote -- a rewording, the Judge's reason -- is drawn as text by every client, never as markup (7.0) | `gui/test/ensemble.test.tsx`, `review/gui/test/candidates.test.tsx`, `desktop/src/test/java/org/nl2sql/desktop/ui/EnsembleViewTest.java` |
 | The API stages a verdict as the INSERT-only writer whether or not the staging table has 7.0's column yet; it adds none (7.0) | `tests/api/test_feedback.py`, `tests/review/test_store_live.py` (`--run-docker`) |
+| A conversation is its person's: kept by who asked and the id they named, so another person's id of the same spelling is another conversation, and a caller forgets only their own; a turn holds what that person's own answer showed them, and nothing of a conversation is written to disk (8.0) | `tests/api/test_conversations.py`, `tests/api/test_signin.py`, `tests/api/test_memory_wire.py` |
+| What a conversation keeps is bounded: an id of at most 64 characters of a fixed alphabet, at most `API_MAX_CONVERSATIONS` conversations of at most `CONVERSATION_MEMORY` turns, each turn three rows, a sentence and one query; one question at a time a conversation, and none kept past `API_CONVERSATION_TTL_SECONDS` of silence (8.0) | `tests/api/test_conversations.py`, `tests/api/test_jobs.py`, `tests/api/test_memory_wire.py` |
 
 `tests/security/` is the tier for posture: what the stack exposes by
 default, read from the files that decide it.

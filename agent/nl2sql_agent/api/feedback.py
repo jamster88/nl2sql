@@ -60,18 +60,20 @@ COLUMNS = (
     "agent_version",
     "ensemble",
     "pipeline",
+    "conversation",
 )
 
-#: The columns a store may not have yet: `ensemble` (7.0) and `pipeline`
-#: (8.0). The review service adds each when it starts, and the review
-#: service is a compose profile: a stack upgraded and started without it
-#: holds the older table until the day it is. This process cannot add a
-#: column -- it is the INSERT-only writer -- so it asks the catalog which are
-#: there and leaves the others out until they are (`PostgresSink.columns`).
-OPTIONAL = ("ensemble", "pipeline")
+#: The columns a store may not have yet: `ensemble` (7.0), `pipeline` and
+#: `conversation` (8.0). The review service adds each when it starts, and
+#: the review service is a compose profile: a stack upgraded and started
+#: without it holds the older table until the day it is. This process cannot
+#: add a column -- it is the INSERT-only writer -- so it asks the catalog
+#: which are there and leaves the others out until they are
+#: (`PostgresSink.columns`).
+OPTIONAL = ("ensemble", "pipeline", "conversation")
 
 #: The columns Postgres stores as JSON, encoded on the way in.
-JSON_COLUMNS = ("columns", "ensemble")
+JSON_COLUMNS = ("columns", "ensemble", "conversation")
 
 
 class FeedbackUnavailable(Unavailable, RuntimeError):
@@ -99,6 +101,9 @@ class Capture:
     ensemble: dict[str, Any] = field(default_factory=dict)
     #: The pipeline that answered, by name (arch8): `Answer.pipeline`.
     pipeline: str = ""
+    #: The wire `Conversation` as JSON -- the turn, the words typed and how
+    #: they were read (arch8) -- and `{}` for a question asked alone.
+    conversation: dict[str, Any] = field(default_factory=dict)
 
     def values(self, columns: tuple[str, ...] = COLUMNS) -> list[Any]:
         """Positional values for `columns`, with the JSON columns encoded."""
@@ -179,7 +184,8 @@ class PostgresSink:
         the life of the process; one without is asked again at the next
         vote, so the first one after the review service has started carries
         them all, and what it lacks is said once in the log, because a
-        snapshot without its runs or its pipeline is otherwise silent.
+        snapshot without its runs, its pipeline or its conversation is
+        otherwise silent.
         """
         if not self._whole:
             rows = conn.execute(
@@ -190,10 +196,11 @@ class PostgresSink:
             lacking = [column for column in OPTIONAL if column not in self._present]
             if lacking and not self._said:
                 self._said = True
+                named = [repr(column) for column in lacking]
                 log.warning(
                     "the staging table has no %s column yet, so verdicts are recorded without "
                     "them until the review service has started once",
-                    " or ".join(repr(column) for column in lacking),
+                    " or ".join([", ".join(named[:-1]), named[-1]]) if len(named) > 1 else named[0],
                 )
         return tuple(c for c in COLUMNS if c not in OPTIONAL or c in self._present)
 

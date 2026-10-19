@@ -51,6 +51,7 @@ MIRRORED = {
     "EnsembleCandidate": models.EnsembleCandidate,
     "DiscardedRewording": models.DiscardedRewording,
     "Ensemble": models.Ensemble,
+    "Conversation": models.Conversation,
     "Answer": models.Answer,
     "JobLinks": models.JobLinks,
     "Job": models.Job,

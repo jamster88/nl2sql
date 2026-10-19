@@ -51,7 +51,7 @@ public final class Fakes {
                 125767.4, 1,
                 List.of(new Models.TraceEntry("generate_sql", 8123.4, 1, "3 tables, 2 examples", "", "", "", List.of()),
                         new Models.TraceEntry("run_sql", 210.0, 0, "", "", "", "", List.of())),
-                Map.of(), Map.of(), null, "v7_0_0");
+                Map.of(), Map.of(), null, "v7_0_0", null);
     }
 
     public static Models.Job job(String id, Models.JobStatus status, Models.Answer answer) {
@@ -60,7 +60,7 @@ public final class Fakes {
                 status.terminal() ? "2026-09-25T10:01:02Z" : null,
                 status.terminal() ? 61432.5 : null,
                 List.of(), answer, null,
-                new Models.JobLinks("/v1/questions/" + id, "/v1/questions/" + id + "/events"));
+                new Models.JobLinks("/v1/questions/" + id, "/v1/questions/" + id + "/events"), null);
     }
 
     /** A finished, successful job with the sample answer on it. */
@@ -162,7 +162,7 @@ public final class Fakes {
                 base.intent(), base.clarification(), base.tables(), base.literals(),
                 base.result(), base.chart(), base.claims(), base.audit(), base.plan_cost(),
                 base.attempts(), base.trace(), base.retrieval_errors(), base.node_errors(),
-                ensemble, "");
+                ensemble, "", null);
     }
 
     /**
@@ -198,7 +198,7 @@ public final class Fakes {
     public static Models.Meta meta(boolean feedback) {
         return new Models.Meta("nl2sql-agent", "7.0.0", "qwen3.8-256k",
                 List.of("aggregate"), TABLES, SCOPE,
-                new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20),
+                new Models.Limits(500, 3, 2_000_000, 30_000, 2, 900, 2000, 20, 64),
                 new Models.Pipeline(true, true, true, true, "hybrid",
                         List.of("screen", "generate_sql", "run_sql"), null, "", null),
                 Map.of("enabled", true), "bearer", feedback, Map.of());

@@ -241,3 +241,23 @@ def test_a_finished_job_carries_the_whole_answer_and_its_metadata():
     model = job_model(job)
     assert model.metadata == {"turn": "7"}
     assert model.answer is not None and model.answer.tables == ["dim_store"]
+
+
+def test_a_job_in_a_conversation_carries_its_id_and_its_answer_where_it_stands():
+    """arch8's S5: the id and the turn are the job's, so the job hands them
+    to the translation; the reading is the state's."""
+    from nl2sql_agent.memory import MemoryNote
+
+    state = {**full_state(), "asked": "and in Produce?", "memory": MemoryNote(shown=1, reason="not restated")}
+    model = job_model(Job(id="a", question="and in Produce?", state=state, status="succeeded", conversation="c-1",
+                          turn=2))
+    assert model.conversation == "c-1"
+    assert model.answer.conversation.model_dump() == {"id": "c-1", "turn": 2, "remembered": 1,
+                                                      "asked": "and in Produce?", "read_as": "", "resolved": False,
+                                                      "reason": "not restated"}
+
+
+def test_a_job_whose_conversation_no_store_kept_echoes_the_id_and_nothing_more():
+    model = job_model(Job(id="a", question="q", state=full_state(), status="succeeded", conversation="c-1"))
+    assert model.conversation == "c-1" and model.answer.conversation is None
+    assert job_model(Job(id="b", question="q", state=full_state(), status="succeeded")).conversation is None

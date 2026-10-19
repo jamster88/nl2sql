@@ -119,6 +119,35 @@ def test_the_snapshot_is_taken_from_the_job_not_from_the_request(client, sink):
     assert captured.agent_version
 
 
+def test_inside_a_conversation_the_snapshot_holds_the_question_answered_and_the_words_typed(make_client, sink):
+    """arch8 R8: the `question` column is what a golden pair is built from,
+    and a golden pair must stand alone, so it holds the restatement; the
+    words typed are beside it in the same row."""
+    from nl2sql_agent.api.conversations import ConversationStore
+
+    from .test_memory_wire import READ_AS, remembering
+
+    remembering.turns = []
+    client = make_client(remembering, conversations=ConversationStore(depth=5), feedback=sink)
+    first = ask(client, "How many stores are there?", conversation="c-1")
+    second = ask(client, "And in each state?", conversation="c-1")
+    for job in (first, second):
+        client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
+
+    alone, followed = sink.captures
+    assert alone.question == "How many stores are there?"
+    assert alone.conversation == first["answer"]["conversation"] and alone.conversation["turn"] == 1
+    assert followed.question == READ_AS
+    assert followed.conversation == {"id": "c-1", "turn": 2, "remembered": 1, "asked": "And in each state?",
+                                     "read_as": READ_AS, "resolved": True, "reason": ""}
+
+
+def test_a_question_asked_alone_is_captured_with_no_conversation(client, sink):
+    job = ask(client, conversation="c-1")
+    client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
+    assert sink.captures[0].conversation == {}, "this server keeps no conversation"
+
+
 def test_one_runs_answer_is_captured_with_no_ensemble(client, sink):
     job = ask(client)
     client.post(f"/v1/questions/{job['id']}/feedback", json={"verdict": "yes"})
@@ -547,7 +576,8 @@ def test_the_postgres_sink_deletes_before_inserting():
     assert conn.committed
 
 
-# The optional columns -- 7.0's `ensemble`, 8.0's `pipeline` -- on a store
+# The optional columns -- 7.0's `ensemble`, 8.0's `pipeline` and
+# `conversation` -- on a store
 # that may not have them yet. The review service adds each at its own start
 # and is a compose profile; this process is the INSERT-only writer and can
 # add nothing.
@@ -571,14 +601,16 @@ def test_a_migrated_store_is_sent_every_column_and_asked_about_them_once():
     conn = FakeConnection()
     sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
 
-    sink.record(Capture(job_id="a", verdict="yes", question="q", ensemble={"chosen": 0}, pipeline="v7_0_0"))
+    sink.record(Capture(job_id="a", verdict="yes", question="q", ensemble={"chosen": 0}, pipeline="v7_0_0",
+                        conversation={"id": "c", "turn": 2}))
     sink.record(Capture(job_id="b", verdict="yes", question="q"))
 
     assert sum(ASKED in statement for statement in conn.statements) == 1
     assert _inserts(conn) == [["id", *COLUMNS]] * 2
     first, second = (dict(zip(["id", *COLUMNS], values)) for values in conn.inserted)
-    assert (first["ensemble"], first["pipeline"]) == ('{"chosen": 0}', "v7_0_0")
-    assert (second["ensemble"], second["pipeline"]) == ("{}", "")
+    assert (first["ensemble"], first["pipeline"], first["conversation"]) == (
+        '{"chosen": 0}', "v7_0_0", '{"id": "c", "turn": 2}')
+    assert (second["ensemble"], second["pipeline"], second["conversation"]) == ("{}", "", "{}")
 
 
 @pytest.mark.parametrize("missing", OPTIONAL)
@@ -602,7 +634,7 @@ def test_a_store_without_a_column_takes_the_verdict_without_it(caplog, missing):
                     "them until the review service has started once"]
 
 
-def test_a_store_from_before_7_0_has_neither_and_the_log_names_both(caplog):
+def test_a_store_from_before_7_0_has_none_of_them_and_the_log_names_each(caplog):
     conn = FakeConnection(present=((),))
     sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
 
@@ -610,7 +642,19 @@ def test_a_store_from_before_7_0_has_neither_and_the_log_names_both(caplog):
         sink.record(Capture(job_id="a", verdict="yes", question="q", ensemble={"chosen": 0}, pipeline="v7_0_0"))
 
     assert _inserts(conn) == [["id", *(c for c in COLUMNS if c not in OPTIONAL)]]
-    assert "no 'ensemble' or 'pipeline' column yet" in caplog.records[0].getMessage()
+    assert "no 'ensemble', 'pipeline' or 'conversation' column yet" in caplog.records[0].getMessage()
+
+
+def test_a_store_from_7_0_lacks_the_two_and_the_log_names_both(caplog):
+    """The table a 7.0 review service left: its runs, and neither of 8.0's."""
+    conn = FakeConnection(present=(("ensemble",),))
+    sink = PostgresSink("postgresql://x/y", connect=lambda url: conn)
+
+    with caplog.at_level("WARNING", logger="nl2sql_agent.api.feedback"):
+        sink.record(Capture(job_id="a", verdict="yes", question="q", conversation={"turn": 2}))
+
+    assert _inserts(conn) == [["id", *(c for c in COLUMNS if c not in ("pipeline", "conversation"))]]
+    assert "no 'pipeline' or 'conversation' column yet" in caplog.records[0].getMessage()
 
 
 @pytest.mark.parametrize("missing", OPTIONAL)
@@ -637,7 +681,7 @@ def test_a_column_that_went_away_is_asked_about_again_and_the_verdict_kept():
     kinds = [statement.split()[0] for statement in conn.statements]
     assert kinds == ["SELECT", "DELETE", "INSERT", "SELECT", "DELETE", "INSERT"]
     assert conn.rolled_back == 1 and conn.committed
-    assert _inserts(conn) == [["id", *COLUMNS], ["id", *(c for c in COLUMNS if c != "pipeline")]]
+    assert _inserts(conn) == [["id", *COLUMNS], ["id", *(c for c in COLUMNS if c not in ("pipeline", "conversation"))]]
 
 
 def test_a_column_the_catalog_names_and_the_table_refuses_is_reported_not_retried_for_ever():

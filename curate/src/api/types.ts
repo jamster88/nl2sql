@@ -81,6 +81,8 @@ export interface SubmissionModel {
   ensemble: Record<string, unknown>;
   /** The pipeline that answered, by name (8.0); empty for a submission from before. */
   pipeline: string;
+  /** Where the answer stood in its conversation (8.0); `{}` for a question asked alone. */
+  conversation: Record<string, unknown>;
   submitted_at: string | null;
   state: string;
   reviewer: string;

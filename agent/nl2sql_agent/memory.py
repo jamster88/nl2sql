@@ -22,10 +22,10 @@ the measure, the period, the entity -- and may drop nothing the question
 said. A restatement that is the words typed again, case and punctuation
 aside, is "not restated": the question stands alone, which is no failure.
 
-`resolve` is built ahead of the Supervisor's reading it will check (arch8's
+`resolve` was built ahead of the Supervisor's reading it checks (arch8's
 Phase 0, and S1 of its risks by phase): the hand-written follow-up set
 (`benchmarks/followups.py`) holds it to every standalone a person wrote,
-and nothing in the pipeline calls it yet. The API takes
+and `graph.screen` holds every restatement to it. The API takes
 `MAX_QUESTION_LENGTH` from here, so the longest question a request may ask
 and the longest a restatement may be are one number.
 

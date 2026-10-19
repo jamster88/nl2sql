@@ -379,7 +379,7 @@ def test_a_question_that_waited_too_long_is_failed_rather_than_run(store):
     asked: list[str] = []
     runner = make_runner(gate=gate)
 
-    def counting(question, principal, on_progress):
+    def counting(question, principal, on_progress, turns=()):
         asked.append(question)
         return runner(question, principal, on_progress)
 
@@ -456,10 +456,168 @@ def test_a_jobs_run_carries_its_id_onto_the_trace(store):
 
     seen = []
 
-    def runner(question, principal, on_progress):
+    def runner(question, principal, on_progress, turns=()):
         seen.append(dict(tracing._tags.get()))
         return {"question": question}
 
     jobs = store(runner)
     job = finished(jobs, jobs.submit("q"))
     assert seen == [{"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id}]
+
+
+# ---------------------------------------------------------------------------
+# A question in a conversation (arch8, R4 and S2 of its risks by phase)
+# ---------------------------------------------------------------------------
+
+
+from nl2sql_agent.api.conversations import ConversationBusy, ConversationStore  # noqa: E402
+
+
+def _admitted(jobs: JobStore, conversation: str = "c") -> Job:
+    """A question in the conversation, which only a free one admits."""
+    job = jobs.submit("next", conversation=conversation)
+    assert job.turn is not None
+    return job
+
+
+def test_a_question_in_a_conversation_is_handed_the_turns_before_it(store):
+    runner = make_runner()
+    jobs = store(runner, conversations=ConversationStore(depth=5))
+    first = finished(jobs, jobs.submit("how many stores?", conversation="c"))
+    second = finished(jobs, jobs.submit("and by state?", conversation="c"))
+    assert (first.conversation, first.turn, first.turns) == ("c", 1, ())
+    assert second.turn == 2 and runner.turns == [(), second.turns]
+    [turn] = second.turns
+    assert (turn.question, turn.job_id) == ("how many stores?", first.id)
+
+
+def test_with_no_conversation_store_the_id_is_kept_and_nothing_handed_on(store):
+    runner = make_runner()
+    jobs = store(runner)
+    finished(jobs, jobs.submit("q1", conversation="c"))
+    job = finished(jobs, jobs.submit("q2", conversation="c"))
+    assert (job.conversation, job.turn, job.turns) == ("c", None, ())
+    assert runner.turns == [(), ()] and jobs.conversations is None
+
+
+def test_a_conversation_is_free_again_after_its_question_is_answered(store):
+    jobs = store(conversations=ConversationStore(depth=5))
+    finished(jobs, jobs.submit("q", conversation="c"))
+    assert finished(jobs, _admitted(jobs)).turn == 2
+
+
+def test_a_conversation_is_free_again_after_its_question_raised(store):
+    jobs = store(make_runner(raises=RuntimeError("ollama went away")), conversations=ConversationStore(depth=5))
+    finished(jobs, jobs.submit("q", conversation="c"))
+    assert finished(jobs, _admitted(jobs)).turn == 1, "a question that raised made no turn"
+
+
+def test_a_conversation_is_free_again_after_its_question_was_cancelled_while_queued(store):
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), max_concurrency=1, conversations=ConversationStore(depth=5))
+    _running(jobs.submit("first", conversation="other"))
+    queued = jobs.submit("q", conversation="c")
+    assert jobs.cancel(queued.id) == "cancelled"
+    again = _admitted(jobs)
+    gate.set()
+    assert finished(jobs, again).turn == 1 and finished(jobs, queued).status == "cancelled"
+
+
+def test_a_conversation_is_free_again_after_its_question_expired_in_the_queue(store):
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), max_concurrency=1, queue_ttl_seconds=0.05,
+                 conversations=ConversationStore(depth=5))
+    _running(jobs.submit("first", conversation="other"))
+    stale = jobs.submit("q", conversation="c")
+    time.sleep(0.1)
+    gate.set()
+    assert finished(jobs, stale).error.startswith("expired")
+    assert finished(jobs, _admitted(jobs)).turn == 1
+
+
+def test_a_conversation_whose_question_is_in_flight_refuses_the_next(store):
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), conversations=ConversationStore(depth=5))
+    first = jobs.submit("q", conversation="c")
+    with pytest.raises(ConversationBusy):
+        jobs.submit("next", conversation="c")
+    assert len(jobs.list()) == 1, "the refused question is not a job"
+    gate.set()
+    finished(jobs, first)
+
+
+def test_a_question_the_queue_refuses_leaves_its_conversation_free(store):
+    """The 429 is decided before the conversation is marked busy, so a
+    refused question never holds its conversation."""
+    gate = threading.Event()
+    conversations = ConversationStore(depth=5)
+    jobs = store(make_runner(gate=gate), max_concurrency=1, max_queued=1, conversations=conversations)
+    running = jobs.submit("running")
+    _running(running)
+    waiting = jobs.submit("waiting")
+    with pytest.raises(QueueFull):
+        jobs.submit("refused", conversation="c")
+    assert conversations.count() == 0
+    gate.set()
+    finished(jobs, running)
+    finished(jobs, waiting)
+    assert finished(jobs, _admitted(jobs)).turn == 1
+
+
+def test_a_question_that_could_not_be_scheduled_frees_its_conversation(store):
+    conversations = ConversationStore(depth=5)
+    jobs = store(conversations=conversations)
+    jobs._pool.shutdown()
+    with pytest.raises(RuntimeError, match="after shutdown"):
+        jobs.submit("q", conversation="c")
+    assert conversations.begin(None, "c", "probe") == ((), 1)
+
+
+def test_the_conversation_is_free_before_anyone_is_told_the_job_has_ended(store):
+    """A client that asks its follow-up the moment `?wait=` hands it the
+    answer must find the conversation free and the turn in it, not a 409
+    for a question that has been answered."""
+    gate = threading.Event()
+    seen: list[str] = []
+
+    class Watching(ConversationStore):
+        def finish(self, job_id, state):
+            seen.append(job.status)
+            super().finish(job_id, state)
+
+    jobs = store(make_runner(gate=gate), conversations=Watching(depth=5))
+    job = jobs.submit("q", conversation="c")
+    follow_ups: list[Job] = []
+
+    def ask_at_once() -> None:
+        jobs.wait(job, timeout=5)
+        follow_ups.append(jobs.submit("next", conversation="c"))
+
+    waiter = threading.Thread(target=ask_at_once)
+    waiter.start()
+    gate.set()
+    waiter.join(timeout=5)
+    assert seen[0] == "running", "freed before the status changed"
+    [follow_up] = follow_ups
+    assert follow_up.turn == 2 and len(follow_up.turns) == 1
+    finished(jobs, follow_up)
+
+
+def test_a_jobs_run_in_a_conversation_carries_its_id_and_turn_onto_the_trace(store):
+    """The id and the turn are the job's, not the state's, so the job store
+    tags them beside its own id (R12)."""
+    from nl2sql_agent import tracing
+
+    seen = []
+
+    def runner(question, principal, on_progress, turns=()):
+        seen.append(dict(tracing._tags.get()))
+        return {"question": question}
+
+    jobs = store(runner, conversations=ConversationStore(depth=5))
+    job = finished(jobs, jobs.submit("q", conversation="c-1"))
+    alone = finished(jobs, jobs.submit("q"))
+    assert seen == [
+        {"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id, "nl2sql.conversation": "c-1", "nl2sql.turn": "1"},
+        {"nl2sql.entrypoint": "api", "nl2sql.job_id": alone.id},
+    ]

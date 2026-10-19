@@ -47,7 +47,11 @@ conversation's earlier turns is tagged with how many were shown
 (`nl2sql.remembered`) and whether its restatement held and was answered
 (`nl2sql.resolved`, `true` or `false`). The root span's input stays the
 words typed, and its `nl2sql.read_as` attribute is the reading the run
-answered. The *Supervisor*'s span records the turns it was shown among its
+answered. Over REST the job store tags it with the conversation the
+request named (`nl2sql.conversation`) and its turn in it (`nl2sql.turn`),
+beside `nl2sql.job_id`, since both are the job's rather than the run's: a
+conversation's questions are a filter away,
+``tags.`nl2sql.conversation` = '<id>'``. The *Supervisor*'s span records the turns it was shown among its
 inputs and the rewritten `question` among its outputs, and holds two model
 calls where it made two -- the reading in context, then the screening of
 the question it asks, the words typed or the restatement, as 7.0 screens

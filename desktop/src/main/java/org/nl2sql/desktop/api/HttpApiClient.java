@@ -67,7 +67,7 @@ public final class HttpApiClient implements ApiClient {
         if (waitSeconds > 0) {
             query.put("wait", String.valueOf(waitSeconds));
         }
-        String body = Json.write(new Models.AskRequest(question, null, Map.of()));
+        String body = Json.write(new Models.AskRequest(question, null, Map.of(), null));
         return Json.read(send(request("/v1/questions", query)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))

@@ -38,9 +38,10 @@ export function makeSubmission(overrides: Partial<SubmissionModel> = {}): Submis
     comment: "",
     agent_version: "4.2.0",
     // Staged before 7.0, as every submission on a 6.3 stack was: no runs
-    // recorded, and no pipeline named (8.0).
+    // recorded, and no pipeline or conversation (8.0).
     ensemble: {},
     pipeline: "",
+    conversation: {},
     submitted_at: "2026-09-24T10:00:00Z",
     state: "pending",
     reviewer: "",

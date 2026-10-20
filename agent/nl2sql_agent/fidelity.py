@@ -32,7 +32,10 @@ counts them.
 
 The extractors are shared: arch8 holds a follow-up's restatement to the
 words typed with the same ones, in subset form (`memory.resolve`), which is
-why `words` and `unkept` are public.
+why `words` and `unkept` are public. So are F4's period spellings
+(`spell_period`), which the contract's period comparison reads, and C2's
+one allowance over F2 (`spelled_out`): a period written short and a
+restatement that writes it out in place.
 """
 
 from __future__ import annotations
@@ -218,6 +221,42 @@ def unkept(original: str, text: str) -> list[str]:
         literal for literal in sorted(literals(original))
         if not re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", folded)
     ]
+
+
+#: How a period is written, made one spelling (F4): what the Supervisor
+#: copies out of a question is the question's own words, and a faithful
+#: rewording may say "FY2025" where the question said "fiscal year 2025".
+#: The contract's period comparison spells both out with these.
+PERIOD_SPELLINGS = (
+    (re.compile(r"\bfy\s*-?\s*(\d{2,4})\b"), r"fiscal year \1"),
+    (re.compile(r"\bq\s*([1-4])\b"), r"quarter \1"),
+    (re.compile(r"\b(\d+)(?:st|nd|rd|th)\b"), r"\1"),
+)
+
+
+def spell_period(text: str) -> str:
+    """`text` case-folded, its spaces collapsed and a period's abbreviations
+    spelled out: "FY2025" is "fiscal year 2025", "Q4" is "quarter 4", "4th"
+    is "4"."""
+    text = " ".join(text.casefold().split())
+    for pattern, spelled in PERIOD_SPELLINGS:
+        text = pattern.sub(spelled, text)
+    return text
+
+
+def spelled_out(literal: str, text: str) -> bool:
+    """Whether `text` carries `literal`, a period written short, written out
+    in place: "fy2024" as "fiscal year 2024", "q3" as "fiscal quarter 3".
+
+    Grown (arch8, Phase 5): C2's, not F2's. The Supervisor calibrated with
+    turns shown restated "The same for FY2024?" with "fiscal year 2024" and
+    "What about Q3?" with "fiscal quarter 3", and the reference reads each
+    restatement as the contract of the complete question; C2 had discarded
+    both. Only in place: "the third quarter" is not "Q3" here, since the
+    reference reads it as another period than a fiscal Q3.
+    """
+    spelled = spell_period(literal)
+    return spelled != literal and bool(re.search(rf"(?<!\w){re.escape(spelled)}(?!\w)", spell_period(text)))
 
 
 def _difference(original: Counter[str] | set[str], rewording: Counter[str] | set[str]) -> str:

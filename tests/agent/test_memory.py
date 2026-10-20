@@ -63,13 +63,35 @@ def test_a_name_is_kept_whatever_its_case():
 @pytest.mark.parametrize(
     "asked,standalone,literal",
     [
-        ("The same for FY2024?", "What were our total net sales in fiscal year 2024?", "fy2024"),
+        ("The same for FY2024?", "What were our total net sales in fiscal 2024?", "fy2024"),
         ("Which vendor paid the most in SCAN_BACK?", "Which vendor paid the most in scan-back allowances?", "scan_back"),
         ('and the "Back to School" ones?', "and the back-to-school promotions?", "back to school"),
     ],
 )
 def test_a_code_a_mixed_token_and_a_quoted_value_are_literals_too(asked, standalone, literal):
     assert resolve(asked, standalone).reason == f"C2 literals: '{literal}' missing"
+
+
+@pytest.mark.parametrize(
+    "asked,standalone",
+    [
+        ("The same for FY2024?", "What were our total net sales in fiscal year 2024?"),
+        ("What about Q3?", "What was the total markdown discount given in fiscal quarter 3 of fiscal year 2025?"),
+    ],
+)
+def test_a_period_written_short_may_be_written_out_in_place(asked, standalone):
+    """Grown (arch8, Phase 5, the risks by phase's R1): the Supervisor
+    calibrated with turns shown wrote these for B04's and B06's follow-ups,
+    the reference reads each as the complete question's contract, and C2
+    had discarded both."""
+    assert resolve(asked, standalone) == MemoryNote(resolved=True, read_as=standalone)
+
+
+def test_the_third_quarter_is_not_q3_to_c2():
+    """The reference reads "the third quarter of fiscal year 2025" as
+    another period than "fiscal Q3 of fiscal year 2025"."""
+    note = resolve("What about Q3?", "What was the total markdown discount in the third quarter of fiscal year 2025?")
+    assert note.reason == "C2 literals: 'q3' missing"
 
 
 # ---------------------------------------------------------------------------

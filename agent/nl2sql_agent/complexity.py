@@ -228,7 +228,13 @@ def supervisor_rung(question: str, *, remembered: int = 0) -> tuple[str, str]:
     """Light unless the pre-screen flags the question; standard whenever the
     conversation's turns are shown (arch8 section 23.3), since reading a
     fragment against earlier answers is a harder task than screening a
-    sentence."""
+    sentence.
+
+    Measured (arch8's Phase 5, R9 of its risks by phase): calibration reads
+    the follow-up set at the rung this gives a reading with turns, and on
+    the committed catalog's host the light rung's model, which screens every
+    benchmark question as the reference does, left most follow-ups as typed.
+    So the rule stands; the catalog's `remembered` says what each model read."""
     if remembered:
         return STANDARD, f"{remembered} turn(s) remembered -> standard"
     flag = prescreen(question)

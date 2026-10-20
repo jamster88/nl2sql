@@ -11,7 +11,7 @@ model:
 | Check | Holds | Fails when |
 |---|---|---|
 | C1 numbers | every number the words typed have, the restatement has; "five" is 5 | "the top 5 of those" became "the top banners" |
-| C2 literals | every quoted string, name, code and FY2025 the words typed have is in the restatement, word for word, case aside | "and for Dairy & Eggs?" became "and for dairy products?" |
+| C2 literals | every quoted string, name, code and FY2025 the words typed have is in the restatement, word for word, case aside, or a period written short written out in place ("FY2025" as "fiscal year 2025", "Q3" as "fiscal quarter 3") | "and for Dairy & Eggs?" became "and for dairy products?" |
 | C3 polarity | every direction the words typed have -- high, low, up, down, negation -- the restatement has | "and the lowest?" became "and the highest?" |
 | C4 shape | the restatement is not the words typed again, and is no longer than a question may be | it is 2,001 characters long |
 
@@ -113,7 +113,7 @@ def resolve(asked: str, standalone: str, *, max_length: int = MAX_QUESTION_LENGT
     numbers = fidelity.numerals(asked) - fidelity.numerals(standalone)
     if numbers:
         return MemoryNote(reason=f"C1 numbers: {', '.join(sorted(numbers))} missing")
-    literals = fidelity.unkept(asked, standalone)
+    literals = [literal for literal in fidelity.unkept(asked, standalone) if not fidelity.spelled_out(literal, standalone)]
     if literals:
         return MemoryNote(reason=f"C2 literals: '{literals[0]}' missing")
     directions = fidelity.polarity(asked) - fidelity.polarity(standalone)

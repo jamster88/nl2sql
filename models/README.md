@@ -223,6 +223,7 @@ suitability only, unless `MODEL_ROUTE_ON_PRIOR=true` says otherwise.
 .venv/bin/python models/calibrate.py --resume                 # carry on where a run stopped
 .venv/bin/python models/calibrate.py --models <model> <model> --tasks supervisor narrator
 .venv/bin/python models/calibrate.py --tasks paraphraser judge  # the ensemble's two, after a 6.3 catalog's rebuild
+.venv/bin/python models/calibrate.py --tasks supervisor         # the Supervisor read with turns shown, after 7.0
 .venv/bin/python models/calibrate.py --questions B01 B07 B15 --host-memory 128G
 ```
 
@@ -235,7 +236,7 @@ one probe per task:
 | Task | Probe | Right when |
 |---|---|---|
 | generator | the benchmark questions, the pipeline run with `MODEL_ROUTE_GENERATOR` pinned to the model | execution accuracy, as the benchmark scores it, with every draft the model's own |
-| supervisor | the benchmark questions, which should all proceed, and [`probes/triage.json`](probes/triage.json) | the verdict is the expected one |
+| supervisor | the benchmark questions, which should all proceed, and [`probes/triage.json`](probes/triage.json); since 8.0 also the follow-up set ([`benchmarks/followups.py`](../benchmarks/followups.py)), each follow-up read after its first turn, and each benchmark question read after an unrelated one | the verdict is the expected one; a follow-up's restatement holds and builds the contract the reference reads from the complete question; a question that stands alone is left as it stands, or restated to the same reading |
 | reflection | each benchmark question's accepted result, replayed | the model agrees with the reference model's own reflection |
 | narrator | each accepted result, narrated again | the audit passes every claim and every assumption is stated |
 | repair | [`probes/repair.json`](probes/repair.json): six real Postgres errors the classifier cannot place | the diagnosis names the fix -- never a word the error itself contains, or a model that only repeated the error would pass |
@@ -271,6 +272,37 @@ reference's own run read it -- its contract, its knowledge, its assumptions
 -- and a wrong answer in the Judge's probe that cannot run, or that returns
 the reference's rows, is left out and said, so the probe never asks a Judge
 to set a right answer aside.
+
+**The Supervisor with a conversation's turns shown (8.0).** In a
+conversation the Supervisor's first call reads the question in the light of
+the earlier answers and restates a follow-up so that it stands alone, and
+that call is routed at the standard rung. Its probe asks the same of each
+model: each follow-up of the follow-up set read after its first turn --
+the benchmark question answered by its reference SQL and rows, so every
+model reads the same right answer -- and each benchmark question read after
+the one before it in the list, which it does not follow up. A follow-up is
+right when its restatement holds against the words typed (the checks in
+code, `memory.resolve`) and the reference reads from it the contract it
+reads from the complete question; a question that stands alone is right
+when it is left as it stands, or restated to the same reading. Both halves
+count at the rung the rule routes a reading with turns to, so a model is
+suited to that rung only if it reads them as the reference does, and the
+router needs nothing more: the rung's model is the fastest one that does,
+or `OLLAMA_MODEL`. Beside the rungs the catalog keeps `remembered`: how
+many of each half the model got, and why it missed the rest -- the check
+that discarded a restatement, a fragment left as typed, a reading the
+reference makes otherwise, a refusal or a failed call. A run prints each
+miss with what the model wrote, so a check that discards a restatement the
+reference reads as the complete question shows; its spelling then goes in
+the checks' list, as "fiscal year 2024" for a typed "FY2024" did in 8.0.
+A catalog calibrated
+before 8.0 has only the flagged triage cases at the Supervisor's standard
+rung, too few to be a measurement, so a reading with turns goes to
+`OLLAMA_MODEL` until
+`--tasks supervisor` measures it again; `--resume` counts a Supervisor
+measured before 8.0 as not measured. The end of a run prints, for each rung
+the Supervisor is routed at, what its model read with turns beside the
+reference.
 
 It also times each model's cold load and reads how much memory it holds
 once loaded (`--no-load` skips both), and with `--host-memory` it warns when

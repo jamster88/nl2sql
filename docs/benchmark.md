@@ -1287,3 +1287,15 @@ every benchmark question's, B15's state through the ensemble's four runs
 grew from 160.4 KB to 221.0 KB, the turns themselves 12.1 KB as JSON; it was
 read as standing alone and came out as it does alone.
 
+**A period written out (Phase 5).** Calibrating the Supervisor with turns
+shown prints each restatement a check discarded, and the reference's two
+were C2's, on a period written short: "fiscal year 2024" for "FY2024" and
+"fiscal quarter 3" for "Q3". The reference reads each as the contract of
+the complete question, so C2 now counts a period written short as kept when
+the restatement writes it out in place, with the contract's own spellings
+(`fidelity.spelled_out`). "The third quarter", which the run above wrote for
+"Q3", is still discarded: the reference reads it as another period than a
+fiscal Q3. The paraphrase gate's F2 is unchanged. Measured 2026-10-19 on B04
+and B06 alone, `--memory 5`: both restated, held and read as their complete
+questions, and both answered right, under `v6_3_1` and under `v7_0_0`.
+

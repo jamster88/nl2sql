@@ -268,6 +268,20 @@ def test_the_switch_that_refuses_the_development_certificate_is_documented(agent
     assert "API_TLS_ALLOW_SELF_SIGNED=false" in _doc("rest_api.md")
 
 
+def test_the_model_catalog_document_names_no_model():
+    """The owner's rule: what is written about the calibrated models stays
+    generic, since every deployment has models of its own (arch8 Phase 5's
+    acceptance). No family of a model the committed catalog lists -- the
+    name up to its tag, size or build -- is named in docs/model_catalog.md."""
+    import json
+
+    catalog = json.loads((REPO_ROOT / "models" / "catalog.json").read_text())
+    families = {re.split(r"[-_:]", model["name"])[0].lower() for model in catalog["models"]}
+    text = _doc("model_catalog.md").lower()
+    named = sorted(f for f in families if re.search(r"(?<![a-z0-9])" + re.escape(f) + r"(?![a-z])", text))
+    assert len(families) > 5 and named == [], f"docs/model_catalog.md names {named}"
+
+
 def test_the_documented_version_is_the_packaged_one(agent_readme: str, root_readme: str):
     from nl2sql_agent import __version__
 

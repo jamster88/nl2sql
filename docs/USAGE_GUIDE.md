@@ -1258,6 +1258,33 @@ and moves nothing in the databases:
   the directory's image installs; an older `nl2sql-ldap` under this
   checkout's compose file is unhealthy.
 
+Upgrading to `v8_0` adds a conversation and a pipeline's name, and moves
+nothing in the databases but two columns:
+
+- **A follow-up is read with the conversation.** The web interface and the
+  desktop client keep one per window, and the server reads a question with
+  its last `CONVERSATION_MEMORY` answered turns (five by default, fifteen at
+  most, none at 0; `--memory N` on either script for one run). A question
+  in a conversation costs one Supervisor call more; one asked alone costs
+  what it did. The turns live in the API's memory, so a restart forgets
+  every conversation ([Remembering the
+  conversation](../agent/README.md#remembering-the-conversation-arch8)).
+- **Clients and servers of either release work together.** A 7.0 client
+  asks every question alone; an 8.0 client asks a 7.0 server as a 7.0
+  client did.
+- **The pipeline has a name**, `PIPELINE_VERSION`: `v7_0_0` by default,
+  which answers a question asked alone as 7.0.0 did, or `v6_3_1`, one run a
+  question. `ENSEMBLE_ENABLED=false` already in `.env` is one run, as
+  before, and `PIPELINE_VERSION=v6_3_1` is the same answer under a name
+  every record carries; `ENSEMBLE_ENABLED=true` beside `v6_3_1` is refused
+  at start.
+- **A verdict carries its pipeline and its conversation** once the review
+  service has started at 8.0, which adds the two columns; a vote cast
+  before then is recorded without them.
+- **A calibrated catalog of your own from before 8.0** is read as it is:
+  the Supervisor's reading of a conversation goes to `OLLAMA_MODEL` until
+  `python models/calibrate.py --tasks supervisor` measures it.
+
 An agent from before `v6_0` does not check sessions, so pinned with
 `--agent-tag`, its API answers according to its own `API_TOKEN`, signed in
 or not. An agent or a page from before `v6_1` does not know the stack's CA,

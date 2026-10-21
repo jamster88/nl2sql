@@ -68,7 +68,7 @@ RUN mkdir -p /etc/nl2sql/tls
 
 EXPOSE 8444
 
-ARG REVIEW_VERSION=7.0.0
+ARG REVIEW_VERSION=8.0.0
 ENV REVIEW_VERSION=${REVIEW_VERSION}
 
 # Docker runs this as the user the container was started as, which is root

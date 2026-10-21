@@ -1299,3 +1299,28 @@ fiscal Q3. The paraphrase gate's F2 is unchanged. Measured 2026-10-19 on B04
 and B06 alone, `--memory 5`: both restated, held and read as their complete
 questions, and both answered right, under `v6_3_1` and under `v7_0_0`.
 
+**At the release** (2026-10-20 UTC, 8.0.0): the release's run, against
+the stack upgraded to the published `v8_0` images, untraced, routed by the
+catalog Phase 5 rebuilt, `--memory 5`:
+
+| | `snippets` under `v6_3_1` | `ensemble` under `v7_0_0` |
+|---|---|---|
+| **follow-up accuracy** | **12/15** | **13/15** |
+| first turns right | 15/15 | 15/15 |
+| resolution rate | 15/15 | 15/15 |
+| the first turns' filters kept | 14/14 | 14/14 |
+| **independence**, after the question before | **15/15** | **15/15** |
+| the fifteen, alone and asked again, right | 30/30 | 30/30 |
+| model calls, as second turns against alone | 68 against 53 | 353 against 338 |
+| the Supervisor's time, median, as a second turn against alone | 6.34s against 1.08s | 6.27s against 1.06s |
+
+The accuracy is Phase 2's, and so are the misses: B12 and B13 under both
+names, and B10 through `snippets`, each as described above. Every
+restatement now holds, fifteen of fifteen where Phase 2 held thirteen,
+because Phase 5 keeps a period written out: B04 read as "fiscal year 2024"
+and B06 as "fiscal quarter 3 of fiscal year 2025". The independence, the
+release's blocker, is 15 of 15 under each name: every question asked after
+the one before it was answered as it is alone, and none was restated. The
+reading in context took a second or so longer than Phase 2 measured on the
+same host; the model calls are the same.
+

@@ -67,6 +67,33 @@ def test_restart_recreates_rather_than_reusing(run_launch):
     assert run_launch("--restart").called("compose up -d --force-recreate")
 
 
+#: Every long-running service launch.sh starts, each by an `up` of its own.
+EVERY_SERVICE = ("postgres stores", "ldap auth", "api", "directorygui", "gui", "review", "reviewgui", "curategui",
+                 "console", "consolegui", "mlflowdb", "mlflow", "mlflowproxy")
+
+
+def test_restart_recreates_every_service_it_starts_not_only_the_databases(run_launch):
+    """`--restart` dates from 3.0, when the databases were the whole stack,
+    and every service added since was started without it: a proxy still
+    trusting an old certificate -- what docs/USAGE_GUIDE.md sends people to
+    `./start.sh --restart` for -- was never recreated. Each `up` is handed
+    the flag; compose recreates only the services an `up` names, so a page
+    recreated does not take the databases down again behind it."""
+    result = run_launch("--restart", "--gui", "--review", "--curate", "--console", "--mlflow")
+    assert result.returncode == 0
+    for services in EVERY_SERVICE:
+        assert result.called(f"up -d --force-recreate {services}"), services
+    assert not result.calls_matching("up -d --force-recreate --")
+
+
+def test_without_restart_every_service_is_reused(run_launch):
+    result = run_launch("--gui", "--review", "--curate", "--console", "--mlflow")
+    assert result.returncode == 0
+    assert not result.calls_matching("--force-recreate")
+    for services in EVERY_SERVICE:
+        assert result.called(f"up -d {services}"), services
+
+
 # ---------------------------------------------------------------------------
 # Handing off to setup.sh
 # ---------------------------------------------------------------------------
@@ -624,6 +651,18 @@ def test_the_closing_lines_say_a_judgement_can_be_taken_back(run_launch):
     assert "its pair out of the golden set, or its fix out of its store, first" in output
 
 
+def test_the_closing_lines_say_a_follow_up_is_staged_as_the_question_it_was_read_as(run_launch):
+    """8.0 stages a follow-up as its restatement, the words typed beside it,
+    and 8.0.1 refuses to promote one the agent ran as typed: the reviewer is
+    the one who has to rewrite it, so it is said here. Said whatever
+    CONVERSATION_MEMORY is now, since verdicts outlive the setting."""
+    for said in ("", "0"):
+        output = run_launch("--review", env={"CONVERSATION_MEMORY": said}).output
+        assert "A follow-up asked in a conversation is staged as the complete question" in output
+        assert "it was read as, with the words typed under it." in output
+        assert "is promoted only once the draft's question stands" in output
+
+
 # ---------------------------------------------------------------------------
 # A proxy still trusting a certificate that has been reissued
 # ---------------------------------------------------------------------------
@@ -1152,6 +1191,66 @@ def test_the_memory_flag_reaches_every_service_compose_starts_this_run_only(run_
     assert "CONVERSATION_MEMORY" not in (result.workdir / ".env").read_text()
 
 
+@pytest.mark.parametrize(
+    ("said", "reach"),
+    [
+        ("", "the last 5 answered questions"),
+        ("1", "the last answered question"),
+        ("15", "the last 15 answered questions"),
+    ],
+    ids=["default", "one", "fifteen"],
+)
+def test_the_terminal_session_is_said_to_keep_a_conversation(run_launch, said, reach):
+    """The interactive session is one conversation (8.0): the closing lines
+    say so beside the questions they suggest, with how far back it reaches."""
+    output = run_launch(env={"CONVERSATION_MEMORY": said}).output
+    assert "Leave the question off for a session that keeps a conversation. Each" in output
+    assert f"question is read with {reach}, so a follow-up --\n" in output
+    assert '"and by store?" -- is answered as the complete question it means:' in output
+    assert "\n    docker compose run --rm agent\n" in output
+    # The lines after it are still there, once.
+    assert output.count("./launch.sh --help     other options") == 1
+
+
+def test_with_memory_off_no_interface_is_said_to_keep_a_conversation(run_launch):
+    """CONVERSATION_MEMORY=0 asks every question alone: no follow-up to
+    describe in the terminal, the API, the page or the window."""
+    for flags in ((), ("--api",), ("--gui",), ("--desktop",)):
+        output = run_launch(*flags, env={"CONVERSATION_MEMORY": "0"}).output
+        assert "follow-up" not in output.split("==> Ready.", 1)[1].split("==> The review", 1)[0], flags
+        assert "New conversation" not in output
+        assert "/v1/conversations" not in output
+        assert "Leave the question off for a session" not in output
+        assert output.count("./launch.sh --help     other options") == 1
+
+
+def test_the_api_lines_say_how_to_name_a_conversation_and_forget_it(run_launch):
+    output = run_launch("--api", env={"CONVERSATION_MEMORY": "3"}).output
+    assert 'Send "conversation": "<an id of your own>" with each question of a' in output
+    assert "conversation, and a follow-up is read with the last 3 answered questions\n" in output
+    assert "before it; DELETE /v1/conversations/<id> forgets it." in output
+    # Still after the contract's line, inside the API's block.
+    assert output.index("agent/API.md is the contract") < output.index('Send "conversation"')
+
+
+def test_the_web_interface_lines_say_a_follow_up_is_read_with_the_answers_before_it(run_launch):
+    output = run_launch("--gui").output
+    assert "A follow-up is read with the last 5 answered questions before it, and\n" in output
+    assert "opens with the question it was read as; New conversation, beside the" in output
+    assert "ask box, starts again." in output
+    block = output.split("==> The web interface is up:", 1)[1]
+    assert block.index("New conversation") < block.index("logs -f gui") < block.index("gui/README.md")
+
+
+def test_the_desktop_lines_say_the_window_keeps_a_conversation_too(run_launch):
+    output = run_launch("--desktop", env={"CONVERSATION_MEMORY": "1"}).output
+    assert "The window keeps a conversation, as the web interface does: a" in output
+    assert "follow-up is read with the last answered question before it.\n" in output
+    assert "New conversation starts again." in output
+    block = output.split("==> The desktop client is built:", 1)[1]
+    assert block.index("whichever was used") < block.index("New conversation") < block.index("desktop/README.md")
+
+
 def test_the_probe_says_a_setting_the_agent_refuses_rather_than_a_traceback():
     """S9 of arch8's risks: `Settings.from_env` raises ValueError on a
     contradiction, which the probe once let out as a traceback the script
@@ -1558,7 +1657,7 @@ def test_with_the_api_the_directory_and_auth_service_start_after_it(run_launch):
     # The database's half -- the group roles, the sync's login, the pg_hba
     # lines -- is the dbprep service's, which the auth service waits for.
     assert result.index_of("compose run --rm --no-deps -T dbprep") < result.index_of("--profile api up -d api")
-    assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d auth")
+    assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d ldap auth")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-ldap")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-auth")
     assert result.called("--profile api --profile auth --profile directorygui up -d directorygui")

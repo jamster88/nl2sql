@@ -221,12 +221,20 @@ $ ./launch.sh
 
 ==> Checking model routing
     model routing: 3 models -- qwen3.8-256k:latest (OLLAMA_MODEL), ...
-    every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)
+    the pipeline is v7_0_0: every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)
     the model host is asked 1 call(s) at a time (OLLAMA_PARALLEL_CALLS)
+    the agent remembers the last 5 turns of a conversation (CONVERSATION_MEMORY)
 
 ==> Ready. Ask a question:
 
     docker compose run --rm agent "How many stores are there?"
+    ...
+
+    Leave the question off for a session that keeps a conversation. Each
+    question is read with the last 5 answered questions, so a follow-up --
+    "and by store?" -- is answered as the complete question it means:
+
+    docker compose run --rm agent
 ```
 
 Then ask. That is the whole contract: one script, then one command per
@@ -247,7 +255,16 @@ says how many ways each question will be asked and how many calls the model
 host is asked at a time -- read as compose reads them, the shell and then
 `.env` -- so that an answer taking several times as long as 6.3's reads as
 the setting it is (`ENSEMBLE_ENABLED=false` is one run;
-`OLLAMA_PARALLEL_CALLS` widens the gate for a host that serves more). The snippet store
+`OLLAMA_PARALLEL_CALLS` widens the gate for a host that serves more). Since
+8.0 the first of those lines names the pipeline (`PIPELINE_VERSION`, `v6_3_1`
+for one run a question), and the last says how many answered turns of its
+conversation a question is read with (`CONVERSATION_MEMORY`, `--memory N` for
+one run). The closing lines then say where each interface keeps a
+conversation -- the terminal's session, the API's conversation id and its
+`DELETE`, New conversation in the page and the window -- how far back a
+follow-up reaches, and that the review page stages a follow-up as the
+complete question it was read as. That last is said whatever the setting,
+since a verdict outlives it; with memory off the rest is not. The snippet store
 is the one thing it fills rather than checks: the store is built from a
 tracked document, and whenever the document's hash differs from the one the
 last complete load recorded, the loader runs before anything is asked.

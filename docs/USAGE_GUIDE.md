@@ -1393,7 +1393,7 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only: no directory, no auth service, every page open |
 | `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` or `v6_3_1`; a name the agent would refuse, or `ENSEMBLE_ENABLED=true` beside `v6_3_1`, stops the script before anything starts |
-| `--memory N` | Read each question with the last N answered turns of its conversation, this run only; anything but 0 to 15 stops the script before anything starts, and the turns remembered are said beside the pipeline |
+| `--memory N` | Read each question with the last N answered turns of its conversation, this run only; anything but 0 to 15 stops the script before anything starts, and the turns remembered are said beside the pipeline and, in the closing lines, beside each interface that keeps a conversation |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |

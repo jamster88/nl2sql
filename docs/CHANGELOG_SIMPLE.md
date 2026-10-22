@@ -37,6 +37,11 @@ A correction to 8.0 on the memory path, found by validating the release against 
 **Verified**
 - The acceptance tier passed, 14 of 14, from a clean copy. The benchmark came out as at 8.0: every question that stands alone was answered as it is alone, 15 of 15 under each pipeline name; follow-ups came out 12 and 13 of 15 right, every restatement held, and every one of the ninety questions was read with the same words as at the release. The Supervisor's calibration repeats the catalog's counts.
 
+**After publishing** (not in the images)
+- `launch.sh`'s closing lines say where each interface keeps a conversation and how far back a follow-up reaches, and the review interface's how a follow-up is staged; none of it with memory off. `docs/stack.md` shows 8.0's pipeline and memory lines.
+- `--restart` recreates every service `launch.sh` starts, as its help says; it had recreated only the four databases since 3.0.
+- The coverage and relevance audit, the work since 7.0 first: every compose variable new since 7.0 documented and tested, one coverage exclusion, every fake switch set, no test of a removed part, the tests' own unexecuted lines all skip and failure paths; the desktop client's test count corrected to 474 and the review interface's to 204 in `docs/tests.md`; every tier run and green, Python coverage 100% of 19,181 statements and the shell scripts 1,788 of 1,788 commands.
+
 ## v8_0 (8.0.0) -- 2026-10-19
 
 arch8, the conversation remembered -- a follow-up read with the answers before it and restated as the complete question it means, in every client -- and the pipeline chosen by name. Published as `v8_0`, which `setup.sh` pins; `./start.sh` upgrades a 7.0 stack in place.

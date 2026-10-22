@@ -160,6 +160,34 @@ def seed_draft(submission: Submission) -> Draft:
     )
 
 
+#: The agent's note on a follow-up it found to stand alone: no restatement
+#: was needed, and the question staged is the question answered.
+_NOT_RESTATED = "not restated"
+
+
+def follow_up_reason(submission: Submission) -> str:
+    """Why the staged question may not stand alone, or "" (8.0.1).
+
+    Inside a conversation the agent stages the question it answered, which
+    is the words typed when a follow-up was not restated -- a check
+    discarded the restatement, or there was no reading (the Supervisor off,
+    or its call failed). "And the top 3?" is then the staged question, and
+    a golden pair built from it would be retrieved for every later
+    fragment. The reason is the agent's own, from `conversation.reason`.
+    Empty for a question asked alone, one read as standing alone, and one
+    whose restatement held: those are complete questions.
+    """
+    record = submission.conversation or {}
+    if not record.get("remembered") or record.get("resolved"):
+        return ""
+    reason = str(record.get("reason") or "")
+    return "" if reason in ("", _NOT_RESTATED) else reason
+
+
+def _same_words(a: str, b: str) -> bool:
+    return " ".join(a.split()).casefold() == " ".join(b.split()).casefold()
+
+
 def _title_from(question: str, limit: int = 80) -> str:
     """A first guess at the heading, which the curator is expected to edit."""
     text = " ".join(question.strip().rstrip("?").split())
@@ -857,6 +885,17 @@ def reviewing_routes(ctx: ReviewContext) -> APIRouter:
             )
 
         draft = Draft.from_mapping(body.draft.model_dump())
+        unresolved = follow_up_reason(found)
+        if unresolved and _same_words(draft.question, found.question):
+            # A follow-up run as typed is staged as the words typed, which
+            # mean something only with the turns before them (8.0.1). The
+            # curator rewrites the question; the evidence stays as it was.
+            raise ReviewHTTPError(
+                HTTP_422_UNPROCESSABLE,
+                "not_standalone",
+                f"the question was typed as a follow-up in a conversation and run as typed ({unresolved}); "
+                "rewrite the draft's question so that it stands alone before promoting it",
+            )
         # Since 5.6 a pair's SQL is run before it is written, whoever wrote
         # it: the curator may have edited the agent's query in the draft.
         checked = _golden_check(draft.sql_code)

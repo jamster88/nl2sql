@@ -189,7 +189,70 @@ def test_a_turn_renders_as_json_its_cells_already_text():
 # The turn, made from a finished run (arch8 section 23.2)
 # ---------------------------------------------------------------------------
 
-from nl2sql_agent.memory import TURNS_HEADING, first_sentence, render_turns, turn_from_state  # noqa: E402
+# ---------------------------------------------------------------------------
+# 8.0.1: the checks' blind spots
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("asked", "standalone"),
+    [("and the second one?", "What were net sales for the Value banner in FY2025?"),
+     ("just the first", "What were net sales for the Mainline banner in FY2025?"),
+     ("the 2nd of those?", "What were net sales for the Value banner in FY2025?"),
+     ("Just the first one, by month", "What were the Mainline banner's net sales by month in FY2025?"),
+     ("The same for the fourth fiscal quarter?", "What were net sales by banner in fiscal quarter 4 of FY2025?")],
+    ids=["second one", "the first", "2nd of those", "first one, by month", "an ordinal that orders"],
+)
+def test_an_ordinal_that_points_at_a_row_counts_nothing(asked, standalone):
+    """C1's exemption (8.0.1): "the second one" names the second row of the
+    last answer, which a restatement names rather than numbers, and the
+    "one" after it is no count either. An ordinal that orders something is
+    still its number, as the paraphrase set found (B06)."""
+    assert resolve(asked, standalone).resolved
+
+
+@pytest.mark.parametrize(
+    ("asked", "standalone", "reason"),
+    [("The same for the fourth fiscal quarter?", "What were net sales by banner in the fiscal quarter?",
+      "C1 numbers: 4 missing"),
+     ("and the top 3 of those?", "What were the top banners by net sales in FY2025?", "C1 numbers: 3 missing"),
+     ("and the second one of the top 5?", "What were net sales for the Value banner in FY2025?",
+      "C1 numbers: 5 missing")],
+    ids=["an ordinal before a noun", "a count", "a count beside a reference"],
+)
+def test_every_other_number_still_counts(asked, standalone, reason):
+    assert resolve(asked, standalone).reason == reason
+
+
+@pytest.mark.parametrize(
+    ("asked", "standalone", "held"),
+    [("without Mainline", "What were net sales by banner in FY2025 other than Mainline?", True),
+     ("without Mainline", "What were net sales by banner in FY2025 apart from Mainline?", True),
+     ("not Mainline", "What were net sales for the banners aside from Mainline in FY2025?", True),
+     ("but not Mainline", "What were net sales by banner in FY2025 other than Mainline?", True),
+     ("other than Mainline?", "What were net sales for the Mainline banner in FY2025?", False),
+     ("without Mainline", "What were net sales for the Mainline banner in FY2025?", False)],
+    ids=["other than", "apart from", "aside from", "but not", "a phrase typed and dropped", "dropped"],
+)
+def test_a_negation_written_as_a_phrase_is_a_negation_on_either_side(asked, standalone, held):
+    """C3's phrase pass (8.0.1): the restatement that writes "without" as
+    "other than" keeps the exclusion, and one that drops a phrase typed
+    loses it."""
+    note = resolve(asked, standalone)
+    assert note.resolved is held
+    if not held:
+        assert note.reason == "C3 polarity: negation missing"
+
+
+def test_a_fiscal_year_written_year_first_is_the_year_typed_and_a_quarter_is_not():
+    """C2's allowance grown (8.0.1): "the 2024 fiscal year" is FY2024; "the
+    3rd quarter" is still not Q3, which the reference reads as another period."""
+    assert resolve("Same for FY2024?", "What were net sales by banner in the 2024 fiscal year?").resolved
+    assert resolve("and Q3?", "What were net sales by banner in the 3rd quarter of FY2025?").reason == (
+        "C2 literals: 'q3' missing")
+
+
+from nl2sql_agent.memory import TURNS_HEADING, cell_text, first_sentence, render_turns, turn_from_state  # noqa: E402
 from nl2sql_agent.state import QueryResult, new_state  # noqa: E402
 
 
@@ -284,3 +347,33 @@ def test_the_turns_render_as_history_oldest_first_each_once_ending_with_a_blank_
 def test_a_turn_with_no_rows_and_no_sentence_says_only_how_many():
     bare = Turn(index=1, asked="q", question="q", sql="SELECT 1", row_count=0)
     assert render_turns([bare]).splitlines()[1:] == ["1. Asked: q", "   (0 rows)", ""]
+
+
+# ---------------------------------------------------------------------------
+# 8.0.1: a turn bounded in characters, not only in counts
+# ---------------------------------------------------------------------------
+
+
+def test_a_cell_is_one_line_of_at_most_its_bound_with_the_cut_marked_within_it():
+    """arch8's R4 bounded a turn by rows and a sentence; a cell of a text
+    column could still be a page, and a line break in one broke the row's
+    line in the prompt."""
+    page = "word " * 40
+    state = _answered(result=QueryResult(columns=["note", "n"], rows=[[page, "a\nb  c"]]))
+    [row] = turn_from_state(state, index=1).rows
+    assert len(row[0]) == memory.MEMORY_CELL_CHARS and row[0].endswith("...")
+    assert row[0].startswith("word word") and "  " not in row[0]
+    assert row[1] == "a b c"
+    assert (cell_text(None), cell_text(12), cell_text("x" * 80)) == ("NULL", "12", "x" * 80)
+    assert cell_text("y" * 81) == "y" * 77 + "..."
+
+
+def test_the_first_row_shows_at_most_memory_columns_and_says_how_many_more():
+    def wide(count: int) -> Turn:
+        return Turn(index=1, asked="q", question="q", sql="SELECT 1", columns=[f"c{i}" for i in range(count)],
+                    rows=[[str(i) for i in range(count)]], row_count=1)
+
+    assert render_turns([wide(11)]).splitlines()[2] == (
+        "   (1 row, e.g. c0=0, c1=1, c2=2, c3=3, c4=4, c5=5, c6=6, c7=7, and 3 more columns)")
+    assert render_turns([wide(9)]).splitlines()[2].endswith("c7=7, and 1 more column)")
+    assert render_turns([wide(8)]).splitlines()[2].endswith("c7=7)"), "eight is shown whole"

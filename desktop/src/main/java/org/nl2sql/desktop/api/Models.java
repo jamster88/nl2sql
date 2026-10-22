@@ -1,6 +1,7 @@
 package org.nl2sql.desktop.api;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 import java.util.ArrayList;
@@ -471,9 +472,18 @@ public final class Models {
         }
     }
 
-    /** What a client may send. */
+    /**
+     * What a client may send.
+     *
+     * <p>{@code conversation} is left out of the JSON when there is none
+     * (8.0.1) rather than sent as {@code null}: a 7.0 server refuses a
+     * request with a field it does not know, so a window that asks alone
+     * -- because the server remembers nothing, or is older than the
+     * conversation -- must ask as a 7.0 client did. {@code principal} was
+     * in 7.0's request already, and goes as it always has.
+     */
     public record AskRequest(String question, String principal, Map<String, String> metadata,
-                             String conversation) {
+                             @JsonInclude(JsonInclude.Include.NON_NULL) String conversation) {
     }
 
     /**

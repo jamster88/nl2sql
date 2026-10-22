@@ -54,8 +54,10 @@ docker compose --profile '*' down                 # stop; your data is kept
 
 8.0 remembers the conversation
 ([the design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)).
-Every image is published as `v8_0`, and `./start.sh` upgrades a 7.0 stack
-in place ([upgrading](docs/images.md#upgrading-an-existing-checkout)):
+Every image is published as `v8_0_1` -- 8.0.0 with seven corrections on
+the memory path, listed in [the changelog](docs/CHANGELOG.md), and nothing
+else different -- and `./start.sh` upgrades a 7.0 or an 8.0 stack in place
+([upgrading](docs/images.md#upgrading-an-existing-checkout)):
 
 - **A follow-up is read with the answers before it.** Ask "And how many in
   each state?" after "How many stores are there?" and the Supervisor reads

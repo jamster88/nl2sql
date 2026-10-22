@@ -71,7 +71,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from langgraph.graph import END, START, StateGraph
 
@@ -95,7 +95,7 @@ from .fuse import agreement_line
 from .graph import _DETAIL, _MODEL_CALLS, _ROUTE, Nl2SqlAgent, ProgressFn, progress_to, reporter, traced_node
 from .graph import read_as as graph_read_as
 from .graph import step_label as pipeline_label
-from .memory import MemoryNote, Turn
+from .memory import NOT_RESTATED, MemoryNote, Turn
 from .state import AuditReport, QueryResult, new_state
 from nl2sql_common.errors import MODEL_ERRORS
 
@@ -345,9 +345,19 @@ class EnsembleAgent:
 
         With the Supervisor off nothing is reworded: no rewording runs that
         the Supervisor has not read (R7), and with it off nobody reads one.
+        Nor is a follow-up that could not be restated (8.0.1): its words
+        mean something only with the turns, which the Paraphraser is not
+        shown and the fidelity gate screens without (arch8 section 23.6),
+        so a rewording of "and the top 3?" is another fragment, read with
+        nothing. The words typed run alone, with the turns shown to their
+        generator, and the answer says it was asked one way.
         """
         if not self.settings.supervisor_enabled:
             return {"paraphrases": [], _DETAIL: "skipped: the Supervisor is off, and no rewording runs unread"}
+        as_typed = runs_as_typed(state)
+        if as_typed:
+            return {"paraphrases": [], _DETAIL: f"skipped: the follow-up runs as typed ({as_typed}), "
+                                                 "and a rewording of it would be read with no turns"}
         question = state["question"]
         routed = self.router.model("paraphraser", *complexity.paraphraser_rung(question))
         update: dict[str, Any] = {}
@@ -385,6 +395,10 @@ class EnsembleAgent:
         """
         if not self.settings.supervisor_enabled:
             return {_DETAIL: "skipped: the Supervisor is off"}
+        if runs_as_typed(state):
+            # Nothing was written, and the one retry would write the
+            # fragment's rewordings that `_paraphrase` declined to (8.0.1).
+            return {_DETAIL: "skipped: the follow-up runs as typed, and nothing was reworded"}
         question = state["question"]
         contract = state["answer_contract"]
         paraphrases = list(state.get("paraphrases") or [])
@@ -719,6 +733,19 @@ class EnsembleAgent:
             "narrative": " ".join(claim.text for claim in claims),
             _DETAIL: f"{state['agreement'].level}: [{decision.chosen}]",
         }
+
+
+def runs_as_typed(state: Mapping[str, Any]) -> str:
+    """Why the question runs in the words typed and is not reworded (8.0.1),
+    or "": a follow-up read with turns and not restated -- a check discarded
+    the restatement, or no reading was made -- means something only with
+    the turns, which the Paraphraser and the fidelity gate are not shown
+    (arch8 section 23.6). A question read as standing alone, and a
+    restatement that held, are complete questions and are reworded."""
+    note = state.get("memory")
+    if isinstance(note, MemoryNote) and note.shown and not note.resolved and note.reason != NOT_RESTATED:
+        return note.reason
+    return ""
 
 
 def _ignore(step: str, detail: str, candidate: int | None = None) -> None:

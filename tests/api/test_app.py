@@ -19,6 +19,7 @@ import time
 
 import pytest
 from nl2sql_agent import __version__
+from nl2sql_agent.api.conversations import ConversationStore
 from nl2sql_agent.api.models import MAX_METADATA_ENTRIES, MAX_QUESTION_LENGTH
 from nl2sql_agent.api.settings import ApiSettings
 from nl2sql_agent.config import Settings
@@ -533,6 +534,26 @@ def test_a_running_job_reports_that_it_cannot_be_interrupted(make_client):
     response = client.delete(created["links"]["self"])
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "job_running"
+    assert "conversation" not in response.json()["error"]["message"], "asked alone, there is none to free"
+    gate.set()
+
+
+def test_stopping_a_running_question_in_a_conversation_frees_it(make_client):
+    """8.0.1: Stop in a client calls this; the next question in the
+    conversation must not be a 409 for the rest of the abandoned run."""
+    gate = threading.Event()
+    client = make_client(make_runner(gate=gate), conversations=ConversationStore(depth=5))
+    created = client.post("/v1/questions", json={"question": "q", "conversation": "c"}).json()
+    for _ in range(100):
+        if client.get(created["links"]["self"]).json()["status"] == "running":
+            break
+        time.sleep(0.01)
+    response = client.delete(created["links"]["self"])
+    assert response.status_code == 409 and response.json()["error"]["code"] == "job_running"
+    assert "its conversation is free for the next question" in response.json()["error"]["message"]
+    again = client.post("/v1/questions", json={"question": "next", "conversation": "c"})
+    assert again.status_code == 202, again.text
+    assert again.json()["conversation"] == "c"
     gate.set()
 
 

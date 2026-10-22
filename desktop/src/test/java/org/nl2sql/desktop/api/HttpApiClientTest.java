@@ -159,9 +159,11 @@ class HttpApiClientTest {
 
         assertEquals("job-1", client.ask("how many stores", 30, null).id());
         assertEquals(List.of("POST /v1/questions?wait=30"), requested);
-        // No conversation named: the question is asked alone.
-        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{},"
-                + "\"conversation\":null}", bodies.get(0));
+        // No conversation named: the question is asked alone, with the
+        // request 7.0 took -- a 7.0 server refuses a field it does not
+        // know, even as null (8.0.1).
+        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{}}",
+                bodies.get(0));
     }
 
     @Test

@@ -305,9 +305,13 @@ class ModelsTest {
 
     @Test
     void an_ask_carries_the_question_and_whatever_the_caller_wanted_echoed_back() {
-        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{},"
-                        + "\"conversation\":null}",
+        // Asked alone, the request is 7.0's: no `conversation` at all, not a
+        // null one, which a 7.0 server refuses as a field it does not know.
+        assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{}}",
                 Json.write(new Models.AskRequest("how many stores", null, Map.of(), null)));
+        assertEquals("{\"question\":\"and by state?\",\"principal\":null,\"metadata\":{},"
+                        + "\"conversation\":\"c-1\"}",
+                Json.write(new Models.AskRequest("and by state?", null, Map.of(), "c-1")));
     }
 
     @Test

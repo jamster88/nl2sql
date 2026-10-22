@@ -755,12 +755,15 @@ class Nl2SqlAgent:
         nothing was restated -- so a question that stands alone is read
         exactly as it is read alone -- or the restatement, when it held, which
         then becomes `question`, the one field of the run rewritten, here. A
-        follow-up refused in context is refused on the words typed; one whose
-        restatement a check discarded runs as typed with the reading made in
-        context; and with no reading at all, nothing more is asked (23.8).
-        Measured, a reading made in context differs from 7.0's in its words
-        for most questions, which under the ensemble changed an answer (the
-        changelog's 8.0 departures): hence the second call.
+        question the reading in context refuses, or asks back, ends on the
+        words typed whether or not it was restated (8.0.1: 8.0 honoured the
+        verdict only with a restatement, and otherwise let the second call
+        decide); one whose restatement a check discarded runs as typed with
+        the reading made in context; and with no reading at all, nothing
+        more is asked (23.8). Measured, a reading made in context differs
+        from 7.0's in its words for most questions, which under the ensemble
+        changed an answer (the changelog's 8.0 departures): hence the second
+        call.
         """
         if not turns:
             update, screening = self._screen_alone(question, shaped_by=shaped_by)
@@ -778,13 +781,16 @@ class Nl2SqlAgent:
         _note_route(context, routed)
         standalone = context.pop("standalone", "")
         failed = "supervisor" in (context.get("node_errors") or {})
-        note = MemoryNote(reason=SUPERVISOR_FAILED) if failed else memory.resolve(question, standalone)
-        follows_up = not failed and note.reason != memory.NOT_RESTATED
-        if follows_up and context["verdict"] != "proceed":
-            # Refused on the words typed, which the run keeps: nothing is
-            # answered, so nothing is read as anything.
+        if failed:
+            note = MemoryNote(reason=SUPERVISOR_FAILED)
+        elif context["verdict"] != "proceed":
+            # Refused, or asked back, on the words typed, which the run
+            # keeps: nothing is answered, so nothing is read as anything,
+            # and a restatement that came with the verdict is not checked.
             note = MemoryNote(reason=SCREENED_OUT)
-        if failed or (follows_up and not note.resolved):
+        else:
+            note = memory.resolve(question, standalone)
+        if not (note.resolved or note.reason == memory.NOT_RESTATED):
             # The one reading there is: made in context, of the words typed.
             update, screening = self._reading(context, question, shaped_by=shaped_by)
         else:

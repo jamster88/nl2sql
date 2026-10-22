@@ -905,3 +905,30 @@ def test_under_the_ensemble_with_the_supervisor_off_nothing_is_restated():
     agent = ensemble(FakeDatabase(tables=TABLES), model(written=rewordings(*FAITHFUL)), supervisor_enabled=False)
     state = agent.run(FRAGMENT, turns=[turn])
     assert (state["question"], state["memory"]) == (FRAGMENT, MemoryNote(shown=1, reason="supervisor off"))
+
+
+@pytest.mark.parametrize(
+    ("screening", "reason"),
+    [(ConversationScreening(verdict="proceed", intent="aggregate", standalone="Which banners sold the most?"),
+      "C1 numbers: 3 missing"),
+     (TimeoutError("the model host went away"), "supervisor failed")],
+    ids=["discarded", "no reading"],
+)
+def test_a_follow_up_run_as_typed_is_not_reworded(screening, reason):
+    """8.0.1: a rewording of "and the top 3?" is another fragment, which the
+    fidelity gate would read with no turns (arch8 section 23.6). The words
+    typed run alone, the Paraphraser is not called, and the answer says the
+    question was asked one way."""
+    turn = Turn(index=1, asked="net sales by banner?", question="What were net sales by banner in FY2025?",
+                sql=SQL, columns=["banner_name", "n"], rows=[["Mainline", "3"]], row_count=4, answer="Mainline led.")
+    seen: list[tuple[str, str]] = []
+    llm = model(written=rewordings(*FAITHFUL), screening=screening)
+    agent = ensemble(FakeDatabase(tables=TABLES), llm,
+                     on_progress=lambda step, detail, candidate=None: seen.append((step, detail)))
+    state = agent.run("and the top 3?", turns=[turn])
+
+    assert (state["memory"].reason, state["question"]) == (reason, "and the top 3?")
+    assert calls(llm, Rewordings) == 0 and state["paraphrases"] == []
+    assert [c.origin for c in state["candidates"]] == ["original"]
+    assert state["answer"].startswith("*Asked 1 way; one run answered.")
+    assert any(detail.startswith(f"skipped: the follow-up runs as typed ({reason})") for _, detail in seen)

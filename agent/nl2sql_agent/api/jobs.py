@@ -356,7 +356,8 @@ class JobStore:
     def _free(self, job: Job, state: dict[str, Any] | None) -> None:
         """Hand the job's conversation its finished run, freeing it; nothing
         for a job no conversation admitted. Safe to call twice: the second
-        finds the conversation no longer busy with this job."""
+        finds the conversation no longer busy with this job, which is how a
+        run abandoned by `cancel` adds no turn when it ends."""
         if self._conversations is not None and job.turn is not None:
             self._conversations.finish(job.id, state)
 
@@ -390,7 +391,11 @@ class JobStore:
         A running job cannot be stopped: it is inside a LangGraph invocation
         that owns a database cursor and an HTTP call to Ollama, and there is
         no truthful way to interrupt that from here. Saying so is better than
-        marking it cancelled and letting it finish anyway.
+        marking it cancelled and letting it finish anyway. Its conversation
+        is freed all the same (8.0.1): the person has moved on, and the
+        answer nobody is waiting for adds no turn when the run ends -- the
+        store is no longer busy with the job by then, and ignores it -- so
+        the next question is read with the turns before the abandoned one.
         """
         with self._lock:
             job = self._jobs.get(job_id)
@@ -401,6 +406,7 @@ class JobStore:
                     self._ended(job, "cancelled")
                     return "cancelled"
                 if job.status == "running":
+                    self._free(job, None)
                     return "running"
             del self._jobs[job_id]
             return "forgotten"

@@ -68,7 +68,12 @@ as the complete question it stood for, and that is the snapshot's
 typed are kept beside it, in the snapshot's `conversation` as `asked`, with
 the turn it was and how many turns it was read with. Outside a conversation
 the two are the same words. The review page shows the words typed under
-the question, as "Asked as", whenever they differ. A *wrong* verdict on an answer in a conversation
+the question, as "Asked as", whenever they differ. A follow-up the agent
+ran as typed -- its restatement discarded by a check, or no reading made --
+is staged as the words typed; the review page says so under the question,
+with the check, and the review service refuses to promote the pair (`422
+not_standalone`) until the draft's question is rewritten to stand alone
+(8.0.1). A *wrong* verdict on an answer in a conversation
 also forgets its turn, so the person's next question is not read in the
 light of a wrong answer; *correct but incomplete* keeps it, since its SQL
 was right as far as it went.

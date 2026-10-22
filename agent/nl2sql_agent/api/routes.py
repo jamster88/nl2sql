@@ -562,19 +562,31 @@ def question_routes(ctx: ApiContext) -> APIRouter:
             HTTP_404_NOT_FOUND: {"model": ApiError},
             HTTP_409_CONFLICT: {"model": ApiError},
         },
+        description=(
+            "A queued question is cancelled and a finished one forgotten. A running one cannot be "
+            "interrupted (409 job_running), but its conversation, if it is in one, is free for the "
+            "next question at once and its answer is not remembered (8.0.1)."
+        ),
     )
     def delete_job(job_id: str, identity: Identity = Depends(ctx.asker)) -> Response:
         if jobs.get(job_id) is not None:
             ctx.require_job(job_id, identity)
+        known = jobs.get(job_id)
         outcome = jobs.cancel(job_id)
         if outcome == "missing":
             raise ApiHTTPError(HTTP_404_NOT_FOUND, "not_found", f"no job {job_id}")
         if outcome == "running":
+            # Freed, though not stopped (8.0.1): the message says so for a
+            # question in a conversation, and the same as before for one
+            # asked alone.
+            freed = known is not None and known.turn is not None
             raise ApiHTTPError(
                 HTTP_409_CONFLICT,
                 "job_running",
                 "this question is already running and cannot be interrupted; "
-                "it can be deleted once it finishes",
+                "it can be deleted once it finishes"
+                + ("; its conversation is free for the next question, and this answer will not be remembered"
+                   if freed else ""),
             )
         return Response(status_code=204)
 

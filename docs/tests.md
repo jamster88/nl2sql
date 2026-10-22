@@ -4,9 +4,9 @@
 
 ```bash
 pip install -r tests/requirements.txt
-pytest                                          # 5854 tests, no Docker, npm, JDK or network needed
+pytest                                          # 5885 tests, no Docker, npm, JDK or network needed
 pytest --run-docker --run-node --run-java       # and the ones that need a daemon, npm or a JDK
-pytest --run-docker --run-node --run-java --run-acceptance   # all 6717, the whole stack included
+pytest --run-docker --run-node --run-java --run-acceptance   # all 6748, the whole stack included
 ```
 
 The proxy image's start-up tests use this machine's `envsubst`, which
@@ -248,7 +248,7 @@ cd auth/gui && npm test      # the directory page
 **100% of statements, branches, functions and lines** across 408 tests, with
 only `main.tsx` excluded -- it mounts React onto a DOM element that exists
 only in a browser, and a test pins the exclusion list so nothing else joins
-it. The review interface is held to the same thresholds in its 201-test
+it. The review interface is held to the same thresholds in its 204-test
 review GUI suite: it decides what goes into the question set the agent is
 measured against, so a partially tested path there is a partially tested
 benchmark. The console's is held to them in its 157-test console GUI suite:

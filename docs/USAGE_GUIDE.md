@@ -1258,6 +1258,11 @@ and moves nothing in the databases:
   the directory's image installs; an older `nl2sql-ldap` under this
   checkout's compose file is unhealthy.
 
+Upgrading to `v8_0_1` moves nothing: it is 8.0 with seven corrections on
+the memory path ([the changelog](CHANGELOG.md#v8_0_1-801----2026-10-21)),
+pulled by `./start.sh` as any newer tags are; the desktop jar is the one
+to replace on purpose, since 8.0.0's cannot ask a 7.0 server.
+
 Upgrading to `v8_0` adds a conversation and a pipeline's name, and moves
 nothing in the databases but two columns:
 

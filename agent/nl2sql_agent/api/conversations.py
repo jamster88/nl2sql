@@ -27,7 +27,9 @@ above zero:
 A conversation is marked busy by `begin`, when its question is admitted,
 and freed by `finish`, which the job store calls on every way a job can
 end -- the one thing that keeps a conversation from being refused for the
-life of the process (R4 and S2 of arch8's risks by phase).
+life of the process (R4 and S2 of arch8's risks by phase) -- and on a
+cancel of a running question (8.0.1), with no state: the person has moved
+on, and the run's answer, when it comes, is not remembered.
 """
 
 from __future__ import annotations

@@ -320,6 +320,11 @@ body {
   font-size: 0.9rem;
 }
 
+.original-unresolved {
+  padding: 6px 10px;
+  border-left: 3px solid var(--warn);
+}
+
 .original-comment {
   margin: 10px 0;
   padding: 8px 12px;

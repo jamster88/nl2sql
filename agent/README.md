@@ -493,9 +493,13 @@ two places and no others:
   [`memory.py`](nl2sql_agent/memory.py) holds it to the words typed in
   code, with no model call: C1 every number typed, C2 every quoted value,
   C3 every direction (*highest*, *fewest*, *excluding*), C4 not blank and
-  no longer than a question may be. One that fails is discarded, and so is
-  one that is the words typed again; either way the question runs as
-  typed. Then the question settled on
+  no longer than a question may be. An ordinal that points at a row of the
+  last answer ("the second one") is no number to C1, "other than" is a
+  negation to C3, and "the 2024 fiscal year" is FY2024 to C2 (8.0.1). One
+  that fails is discarded, and so is one that is the words typed again;
+  either way the question runs as typed. A verdict other than proceed from
+  the reading in context ends the run on the words typed, restated or not
+  (8.0.1). Then the question settled on
   is screened as 7.0 screens one, so a question asked with turns costs one
   Supervisor call more, on the standard rung, and a question asked alone
   costs none.
@@ -504,12 +508,16 @@ two places and no others:
   follow-up usually keeps their joins, filters and calendar.
 
 A turn is an answered question: the question as answered, the first
-sentence and three rows of its answer, and its SQL (`MEMORY_ROWS`,
-`MEMORY_ANSWER_CHARS`). A refusal, a question asked back and a give-up are
+sentence and three rows of its answer -- each cell one line of at most 80
+characters, and the Supervisor shown eight cells of the first row -- and
+its SQL, whole (`MEMORY_ROWS`, `MEMORY_ANSWER_CHARS`, `MEMORY_CELL_CHARS`,
+`MEMORY_COLUMNS`). A refusal, a question asked back and a give-up are
 not turns. Nothing else reads one, and with none every prompt is 7.0's,
 byte for byte. Under the ensemble the anchor screening reads the turns and
 every run's generator is shown them; the Paraphraser rewords the complete
-question, and the Judge reads it. The answer opens with "Read as: ..." when
+question, and the Judge reads it. A follow-up that could not be restated
+runs as typed, one way: a rewording of a fragment would be read with no
+turns (8.0.1). The answer opens with "Read as: ..." when
 a restatement held, so a wrong reading is seen rather than believed, and
 the words typed are kept beside it everywhere as `asked`.
 

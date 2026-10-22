@@ -10,9 +10,9 @@ model:
 
 | Check | Holds | Fails when |
 |---|---|---|
-| C1 numbers | every number the words typed have, the restatement has; "five" is 5 | "the top 5 of those" became "the top banners" |
-| C2 literals | every quoted string, name, code and FY2025 the words typed have is in the restatement, word for word, case aside, or a period written short written out in place ("FY2025" as "fiscal year 2025", "Q3" as "fiscal quarter 3") | "and for Dairy & Eggs?" became "and for dairy products?" |
-| C3 polarity | every direction the words typed have -- high, low, up, down, negation -- the restatement has | "and the lowest?" became "and the highest?" |
+| C1 numbers | every number the words typed have, the restatement has; "five" is 5. An ordinal that points at a row of the last answer -- "the second one", "just the first" -- counts nothing (`ORDINAL_REFERENCE`, 8.0.1) | "the top 5 of those" became "the top banners" |
+| C2 literals | every quoted string, name, code and FY2025 the words typed have is in the restatement, word for word, case aside, or a period written short written out in place ("FY2025" as "fiscal year 2025" or "the 2025 fiscal year", "Q3" as "fiscal quarter 3") | "and for Dairy & Eggs?" became "and for dairy products?" |
+| C3 polarity | every direction the words typed have -- high, low, up, down, negation -- the restatement has; "other than", "apart from" and "aside from" are negation on either side (`NEGATION_PHRASES`, 8.0.1) | "and the lowest?" became "and the highest?" |
 | C4 shape | the restatement is not the words typed again, and is no longer than a question may be | it is 2,001 characters long |
 
 They are the fidelity gate's extractors (`fidelity.py`) in subset form. A
@@ -53,10 +53,41 @@ MAX_QUESTION_LENGTH = 2000
 #: The note on a restatement that says nothing the words typed do not.
 NOT_RESTATED = "not restated"
 
-#: Rows of a remembered answer shown to the Supervisor, and how much of its
-#: narrative: the bounds on what a turn costs a prompt.
+#: Rows of a remembered answer shown to the Supervisor, how much of its
+#: narrative, how much of each cell, and how many cells of its first row:
+#: the bounds on what a turn costs a prompt, in characters as well as in
+#: counts, since a cell of a text column can be a page and a row can be
+#: forty columns wide (8.0.1). The SQL is kept whole: the generator reads
+#: it as an exemplar, and a query cut short is no exemplar.
 MEMORY_ROWS = 3
 MEMORY_ANSWER_CHARS = 300
+MEMORY_CELL_CHARS = 80
+MEMORY_COLUMNS = 8
+
+#: C1's one exemption (8.0.1): an ordinal that points at a row of the last
+#: answer rather than counting anything -- "the second one", "just the
+#: first", "the 2nd of those" -- which a restatement names ("the Value
+#: banner") and need not number. It is "the" and the ordinal, followed by
+#: "one", "ones", "of those", "of them", "of these" or by nothing more; "the
+#: fourth fiscal quarter" is still quarter 4, as the paraphrase set found
+#: it (B06). Taken out of the words typed, the "one" after it included,
+#: before C1 counts them. The fidelity gate's F1 does not know it: a
+#: rewording is held to its original both ways, and keeps the ordinal.
+_ORDINAL = "|".join([*fidelity.ORDINALS, r"\d+(?:st|nd|rd|th)"])
+ORDINAL_REFERENCE = re.compile(
+    rf"\bthe\s+(?:{_ORDINAL})\b(?:\s+(?:one|ones|of\s+(?:those|them|these))\b|(?=\s*[?.!,;:]*\s*$))",
+    re.IGNORECASE,
+)
+
+#: C3's phrase pass (8.0.1): a negation written as a phrase, which the
+#: direction words are blind to -- "other than Mainline" for the "without
+#: Mainline" typed -- read as "excluding" on either side, so a restatement
+#: that writes the exclusion so keeps it, and one that drops a phrase typed
+#: loses it. "But not" and "except for" carry a direction word already. The
+#: gate's F3 does not know it either.
+NEGATION_PHRASES = ("other than", "apart from", "aside from")
+_NEGATION_PHRASE = re.compile(r"\b(?:" + "|".join(re.escape(phrase) for phrase in NEGATION_PHRASES) + r")\b",
+                              re.IGNORECASE)
 
 
 @dataclass
@@ -110,19 +141,25 @@ def resolve(asked: str, standalone: str, *, max_length: int = MAX_QUESTION_LENGT
     """
     if not standalone.strip() or fidelity.words(standalone) == fidelity.words(asked):
         return MemoryNote(reason=NOT_RESTATED)
-    numbers = fidelity.numerals(asked) - fidelity.numerals(standalone)
+    numbers = fidelity.numerals(ORDINAL_REFERENCE.sub(" ", asked)) - fidelity.numerals(standalone)
     if numbers:
         return MemoryNote(reason=f"C1 numbers: {', '.join(sorted(numbers))} missing")
     literals = [literal for literal in fidelity.unkept(asked, standalone) if not fidelity.spelled_out(literal, standalone)]
     if literals:
         return MemoryNote(reason=f"C2 literals: '{literals[0]}' missing")
-    directions = fidelity.polarity(asked) - fidelity.polarity(standalone)
+    directions = _polarity(asked) - _polarity(standalone)
     if directions:
         return MemoryNote(reason=f"C3 polarity: {', '.join(sorted(directions))} missing")
     read_as = " ".join(standalone.split())
     if len(read_as) > max_length:
         return MemoryNote(reason=f"C4 shape: longer than {max_length} characters")
     return MemoryNote(resolved=True, read_as=read_as)
+
+
+def _polarity(text: str) -> set[str]:
+    """C3's reading of a text's directions: F3's, the negation phrases read
+    as the word."""
+    return fidelity.polarity(_NEGATION_PHRASE.sub(" excluding ", text))
 
 
 # --- the turn: made from a finished run, read by the Supervisor ---------------
@@ -145,13 +182,28 @@ def first_sentence(text: str, limit: int = MEMORY_ANSWER_CHARS) -> str:
     return cut.rstrip(" ,;:") + "..."
 
 
+def cell_text(cell: Any, limit: int = MEMORY_CELL_CHARS) -> str:
+    """A cell as a turn keeps it: text, on one line, at most `limit`
+    characters with the cut marked within them; NULL for None. A turn is
+    rendered into a prompt, where a page of a text column would cost what
+    the row count was meant to bound (arch8's R4), and a line break inside
+    a cell would break the row's line (8.0.1)."""
+    if cell is None:
+        return "NULL"
+    text = " ".join(str(cell).split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
 def turn_from_state(state: Mapping[str, Any], *, index: int, job_id: str = "") -> Turn | None:
     """What a conversation remembers of a finished run, or None when it
     answered nothing: a refusal, a give-up, or a run with no SQL or no rows.
 
     Reads only the fields both agents' states carry at the top level --
     the ensemble's `deliver` copies the chosen run's up -- so one function
-    makes a turn from either.
+    makes a turn from either. Each cell is `cell_text`: the bound on a
+    turn is set here, once, for every keeper of one.
     """
     from .tracing import ANSWERED, outcome
 
@@ -167,7 +219,7 @@ def turn_from_state(state: Mapping[str, Any], *, index: int, job_id: str = "") -
         question=question,
         sql=state["sql"],
         columns=[str(column) for column in columns],
-        rows=[["NULL" if cell is None else str(cell) for cell in row] for row in list(rows)[:MEMORY_ROWS]],
+        rows=[[cell_text(cell) for cell in row] for row in list(rows)[:MEMORY_ROWS]],
         row_count=len(rows),
         answer=first_sentence(state.get("narrative") or ""),
         assumptions=[str(assumption) for assumption in state.get("assumptions") or []],
@@ -183,8 +235,9 @@ def render_turns(turns: Sequence[Turn]) -> str:
     """The Supervisor's block, arch8 section 23.2's shape, oldest first:
     each turn's question -- the one answered, so a chain of follow-ups
     resolves against complete questions -- the first sentence of its answer,
-    and its first row as `column=value` pairs. Ends with a blank line, so
-    the question is the human turn's last line; empty for no turns."""
+    and its first row as `column=value` pairs, the first `MEMORY_COLUMNS`
+    of them and how many more there are. Ends with a blank line, so the
+    question is the human turn's last line; empty for no turns."""
     if not turns:
         return ""
     lines = [TURNS_HEADING]
@@ -194,7 +247,11 @@ def render_turns(turns: Sequence[Turn]) -> str:
             lines.append(f"   Answered: {turn.answer}")
         rows = f"{turn.row_count} row{'s' if turn.row_count != 1 else ''}"
         if turn.rows:
-            rows += ", e.g. " + ", ".join(f"{column}={value}" for column, value in zip(turn.columns, turn.rows[0]))
+            cells = list(zip(turn.columns, turn.rows[0]))
+            rows += ", e.g. " + ", ".join(f"{column}={value}" for column, value in cells[:MEMORY_COLUMNS])
+            if len(cells) > MEMORY_COLUMNS:
+                more = len(cells) - MEMORY_COLUMNS
+                rows += f", and {more} more column{'s' if more != 1 else ''}"
         if turn.assumptions:
             rows += "; assumed: " + "; ".join(turn.assumptions)
         lines.append(f"   ({rows})")

@@ -15,6 +15,28 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v8_0_1 (8.0.1) -- 2026-10-21
+
+A correction to 8.0 on the memory path, found by validating the release against its specifications: seven things, and a question asked alone answered byte for byte as 8.0.0 answers it. Published as `v8_0_1`, which `setup.sh` pins; `./start.sh` upgrades a 7.0 or an 8.0 stack in place.
+
+**Fixed**
+- The desktop client could not ask a 7.0 server: it sent `"conversation": null` when it asked alone, which 7.0 refuses; it now sends 7.0's request.
+- A follow-up the agent ran as typed could be promoted as a golden pair that stands alone for nobody; the review service now refuses it (`not_standalone`) until the question is rewritten, and the review page says why.
+- A refusal, or a question asked back, from the Supervisor's reading in context was dropped when no restatement came with it, and a second call that never saw the turns decided; the verdict given in context now ends the run on the words typed.
+- Stop left the conversation busy for the rest of the abandoned run, and then remembered its answer; a cancel of a running question frees the conversation at once, and the answer is not remembered.
+- Under the ensemble a follow-up that could not be restated was reworded into more fragments, read with no turns; it now runs as typed, one way.
+- "The second one", "other than Mainline" and "the 2024 fiscal year" discarded a restatement that kept what was typed; the checks in code now read an ordinal that points at a row as no number, the three phrases as a negation, and a year written first as the year. The fidelity gate is untouched.
+- A turn's cells are now bounded in characters -- one line of at most 80 each, eight of the first row shown -- where a page in a text column cost what the row count was meant to bound.
+
+**Updated**
+- Version 8.0.1 in every declaration; `setup.sh` pins `v8_0_1`.
+
+**Published**
+- All twelve tags as `v8_0_1`; the dataset images are unchanged. The upgrade was rehearsed on an 8.0 stack of its own first, with each of the seven corrections tried live -- Stop, the ordinal follow-up, a wide first answer, the desktop client alone and in a conversation, and a follow-up run as typed voted on, refused for promotion and promoted once rewritten; then `start.sh` upgraded a running 8.0 stack with every check passing.
+
+**Verified**
+- The acceptance tier passed, 14 of 14, from a clean copy. The benchmark came out as at 8.0: every question that stands alone was answered as it is alone, 15 of 15 under each pipeline name; follow-ups came out 12 and 13 of 15 right, every restatement held, and every one of the ninety questions was read with the same words as at the release. The Supervisor's calibration repeats the catalog's counts.
+
 ## v8_0 (8.0.0) -- 2026-10-19
 
 arch8, the conversation remembered -- a follow-up read with the answers before it and restated as the complete question it means, in every client -- and the pipeline chosen by name. Published as `v8_0`, which `setup.sh` pins; `./start.sh` upgrades a 7.0 stack in place.

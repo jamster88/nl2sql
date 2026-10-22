@@ -246,17 +246,26 @@ def spell_period(text: str) -> str:
 
 def spelled_out(literal: str, text: str) -> bool:
     """Whether `text` carries `literal`, a period written short, written out
-    in place: "fy2024" as "fiscal year 2024", "q3" as "fiscal quarter 3".
+    in place: "fy2024" as "fiscal year 2024" or "the 2024 fiscal year", "q3"
+    as "fiscal quarter 3".
 
     Grown (arch8, Phase 5): C2's, not F2's. The Supervisor calibrated with
     turns shown restated "The same for FY2024?" with "fiscal year 2024" and
     "What about Q3?" with "fiscal quarter 3", and the reference reads each
     restatement as the contract of the complete question; C2 had discarded
     both. Only in place: "the third quarter" is not "Q3" here, since the
-    reference reads it as another period than a fiscal Q3.
+    reference reads it as another period than a fiscal Q3. A fiscal year
+    written year first, "the 2024 fiscal year", is the same year (8.0.1); a
+    quarter written so is not, for the reason above.
     """
     spelled = spell_period(literal)
-    return spelled != literal and bool(re.search(rf"(?<!\w){re.escape(spelled)}(?!\w)", spell_period(text)))
+    if spelled == literal:
+        return False
+    written = spell_period(text)
+    if re.search(rf"(?<!\w){re.escape(spelled)}(?!\w)", written):
+        return True
+    year = re.fullmatch(r"fiscal year (\d{2,4})", spelled)
+    return bool(year and re.search(rf"(?<!\w){year.group(1)} fiscal year(?!\w)", written))
 
 
 def _difference(original: Counter[str] | set[str], rewording: Counter[str] | set[str]) -> str:

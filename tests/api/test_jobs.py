@@ -621,3 +621,22 @@ def test_a_jobs_run_in_a_conversation_carries_its_id_and_turn_onto_the_trace(sto
         {"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id, "nl2sql.conversation": "c-1", "nl2sql.turn": "1"},
         {"nl2sql.entrypoint": "api", "nl2sql.job_id": alone.id},
     ]
+
+
+def test_stopping_a_running_question_frees_its_conversation_and_forgets_its_answer(store):
+    """8.0.1: the run cannot be interrupted, but the person has moved on.
+    The next question is admitted at once and read with the turns before
+    the abandoned one, and the abandoned run's answer adds no turn."""
+    gate = threading.Event()
+    jobs = store(make_runner(gate=gate), conversations=ConversationStore(depth=5))
+    abandoned = jobs.submit("q", conversation="c")
+    _running(abandoned)
+    assert jobs.cancel(abandoned.id) == "running"
+    again = jobs.submit("next", conversation="c")
+    assert (again.turn, again.turns) == (1, ())
+    gate.set()
+    finished(jobs, abandoned)
+    finished(jobs, again)
+    assert abandoned.status == "succeeded", "the run itself was not stopped"
+    third = finished(jobs, jobs.submit("third", conversation="c"))
+    assert third.turn == 2 and [turn.question for turn in third.turns] == ["next"]

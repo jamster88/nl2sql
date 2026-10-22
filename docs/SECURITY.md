@@ -205,7 +205,7 @@ And the work in *Known limits*, which no setting replaces.
 | What a model wrote -- a rewording, the Judge's reason -- is drawn as text by every client, never as markup (7.0) | `gui/test/ensemble.test.tsx`, `review/gui/test/candidates.test.tsx`, `desktop/src/test/java/org/nl2sql/desktop/ui/EnsembleViewTest.java` |
 | The API stages a verdict as the INSERT-only writer whether or not the staging table has 7.0's column yet; it adds none (7.0) | `tests/api/test_feedback.py`, `tests/review/test_store_live.py` (`--run-docker`) |
 | A conversation is its person's: kept by who asked and the id they named, so another person's id of the same spelling is another conversation, and a caller forgets only their own; a turn holds what that person's own answer showed them, and nothing of a conversation is written to disk (8.0) | `tests/api/test_conversations.py`, `tests/api/test_signin.py`, `tests/api/test_memory_wire.py` |
-| What a conversation keeps is bounded: an id of at most 64 characters of a fixed alphabet, at most `API_MAX_CONVERSATIONS` conversations of at most `CONVERSATION_MEMORY` turns, each turn three rows, a sentence and one query; one question at a time a conversation, and none kept past `API_CONVERSATION_TTL_SECONDS` of silence (8.0) | `tests/api/test_conversations.py`, `tests/api/test_jobs.py`, `tests/api/test_memory_wire.py` |
+| What a conversation keeps is bounded: an id of at most 64 characters of a fixed alphabet, at most `API_MAX_CONVERSATIONS` conversations of at most `CONVERSATION_MEMORY` turns, each turn three rows of cells cut at 80 characters, a sentence and one query; one question at a time a conversation, and none kept past `API_CONVERSATION_TTL_SECONDS` of silence (8.0) | `tests/api/test_conversations.py`, `tests/api/test_jobs.py`, `tests/api/test_memory_wire.py` |
 | A conversation's turns are history, never instructions: the Supervisor's prompt labels them so and ends on the question; only answered turns are remembered, and the verdict is given on the words typed. A restatement is a model's text about to become a prompt, and is held to the words typed in code -- a number, a quoted string, a name or a direction it changes, or a shape out of bounds, discards it and the question runs as typed (8.0) | `tests/agent/test_memory.py`, `tests/agent/test_supervisor.py`, `tests/agent/test_prompts.py` |
 | How a follow-up was read is drawn as text by both clients, never as markup, and only when it was restated (8.0) | `gui/test/conversation.test.tsx`, `desktop/src/test/java/org/nl2sql/desktop/ui/ConversationTest.java` |
 
@@ -233,7 +233,7 @@ with its plan item.
 - **This project's own images are pinned by tag, and carry no signature or
   provenance.** Every image it does not build is pinned by digest since
   6.3, and every Python dependency installed from a hash-checked lock since
-  6.2; but `.env` names `v8_0`, and nothing proves who built what is behind
+  6.2; but `.env` names `v8_0_1`, and nothing proves who built what is behind
   it. (M-09; V6-42.)
 - **The dbprep one-shot is every database's superuser while it runs.** It
   holds every socket and most passwords for the seconds before each start,

@@ -156,6 +156,10 @@ def test_a_period_written_short_is_spelled_out(text, spelled):
         ("fy2024", "What were our total net sales in fiscal year 2025?", False),
         ("q3", "What was the total markdown discount in the third quarter of fiscal year 2025?", False),
         ("q3", "What were the top 3 stores by quarter?", False),
+        # 8.0.1: a fiscal year written year first is the year; a quarter so written is not the quarter.
+        ("fy2024", "What were our total net sales in the 2024 fiscal year?", True),
+        ("fy2024", "What were our total net sales in the 2025 fiscal year?", False),
+        ("q3", "What was the total markdown discount in the 3rd quarter of fiscal year 2025?", False),
         ("frozen foods", "What was the margin for frozen products?", False),
         ("scan_back", "Which vendor paid the most in scan back allowances?", False),
     ],

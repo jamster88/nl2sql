@@ -1163,6 +1163,16 @@ with arch8's rules in view, so they are kinder to the checks than a
 model's restatements will be; Phase 2's rejections by check are the number
 for those.
 
+**Grown at 8.0.1**, from probing `resolve` with restatements a model
+plausibly writes rather than from the set: an ordinal that points at a row
+of the last answer ("the second one", "just the first") is no number to C1,
+and the "one" after it none either; "other than", "apart from" and "aside
+from" are a negation to C3 on either side; and "the 2024 fiscal year" is
+FY2024 to C2, as "fiscal year 2024" was. The fidelity gate's F1-F3 are
+untouched, so a question asked alone is screened as it was; none of the
+fifteen fragments or standalones carries any of the three, so the number
+above and the catalog's `remembered` counts are unmoved.
+
 ## The pipeline by name
 
 Phase 1 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
@@ -1323,4 +1333,36 @@ release's blocker, is 15 of 15 under each name: every question asked after
 the one before it was answered as it is alone, and none was restated. The
 reading in context took a second or so longer than Phase 2 measured on the
 same host; the model calls are the same.
+
+**At 8.0.1** (2026-10-21, the correction's run before its publication: a
+snapshot of the 8.0.1 tree on the host against the running `v8_0` stack's
+databases, untraced, routed by the committed catalog, `--memory 5`):
+
+| | `snippets` under `v6_3_1` | `ensemble` under `v7_0_0` |
+|---|---|---|
+| **follow-up accuracy** | **12/15** | **13/15** |
+| first turns right | 15/15 | 15/15 |
+| resolution rate | 15/15 | 15/15 |
+| the first turns' filters kept | 14/14 | 14/14 |
+| **independence**, after the question before | **15/15** | **15/15** |
+| the fifteen, alone and asked again, right | 30/30 | 30/30 |
+| model calls, as second turns against alone | 68 against 53 | 353 against 338 |
+| the Supervisor's time, median, as a second turn against alone | 5.72s against 1.35s | 5.57s against 1.13s |
+
+The release's numbers, as the correction said they would be: none of the
+fifteen fragments or standalones carries an ordinal reference, a negation
+phrase or a year written first, and a question asked alone is screened as
+it was. Every one of the ninety questions -- the fifteen follow-ups and
+the thirty of the independence, under each name -- was read with the same
+words as at the release, the same restatement or none, and came out the
+same way. The misses are the release's, B12 and B13 under both names and
+B10 through `snippets`, each answered as it was answered then; every other
+follow-up was read as its complete question and answered right. The
+independence held under each name with none of the thirty second turns
+restated, and the grain check refused no reference in any of the four
+runs. The reading in context cost what it did at the
+release: one Supervisor call more a second turn, five to six seconds at
+the median. The four runs took 4,325.6 s and 3,484.0 s through the
+ensemble and 949.8 s and 622.7 s through `snippets`, with a second
+instance of the stack running beside the one asked.
 

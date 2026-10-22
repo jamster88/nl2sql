@@ -272,7 +272,7 @@ rather than run for a caller who has very likely gone.
 | `GET` | `/v1/questions` | yes | Recent questions, newest first |
 | `GET` | `/v1/questions/{job_id}` | yes | One question. `?wait=<seconds>` to block |
 | `GET` | `/v1/questions/{job_id}/events` | yes | Progress, as Server-Sent Events |
-| `DELETE` | `/v1/questions/{job_id}` | yes | Cancel a queued question, forget a finished one |
+| `DELETE` | `/v1/questions/{job_id}` | yes | Cancel a queued question, forget a finished one. A running one goes on, but its conversation is freed (8.0.1) |
 | `POST` | `/v1/questions/{job_id}/feedback` | yes | Say whether the answer was right |
 | `DELETE` | `/v1/questions/{job_id}/feedback` | yes | Withdraw a verdict |
 | `DELETE` | `/v1/conversations/{conversation_id}` | yes | Forget the caller's conversation of that id: the next question with it begins it afresh (8.0) |
@@ -771,7 +771,7 @@ Branch on `code`; the message is for a person.
 | `sign_in_unavailable` | 503 | The auth service has not written its key yet |
 | `roles_unavailable` | 503 | Postgres could not be asked which groups the caller is in |
 | `not_found` | 404 | No such job. Finished jobs are kept `API_JOB_TTL_SECONDS` |
-| `job_running` | 409 | A question in flight cannot be interrupted |
+| `job_running` | 409 | A question in flight cannot be interrupted. Its conversation, if it is in one, is free for the next question from then on, and its answer is not remembered (8.0.1) |
 | `conversation_busy` | 409 | The conversation's last question is still queued or running (8.0). `Retry-After` says when to ask again |
 | `conversation_not_found` | 404 | The caller has no conversation of that id: never begun, forgotten, someone else's, or a server that keeps none (8.0) |
 | `queue_full` | 429 | Too many questions are waiting, or the caller has `API_MAX_PER_PERSON` in the air. `Retry-After` says when to ask again |

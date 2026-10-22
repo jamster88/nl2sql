@@ -113,7 +113,7 @@ certificate, or another page's, is unhealthy; the `wget
 ```bash
 docker build -f proxy/Dockerfile -t nl2sql-proxy .
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v8_0 .
+  -f proxy/Dockerfile --push -t mcfaddja/nl2sql-proxy:v8_0_1 .
 ```
 
 [`tests/proxy/test_proxy_startup.py`](../tests/proxy/test_proxy_startup.py)

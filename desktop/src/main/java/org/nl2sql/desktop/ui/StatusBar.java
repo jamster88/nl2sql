@@ -21,6 +21,10 @@ import java.util.List;
  * padlock; this application was told, by a flag, and the answer can be "not at
  * all" -- so it says which, for as long as it is true.
  *
+ * <p>Since 8.0 it also names the pipeline answering and how much of a
+ * conversation it remembers, because "why did it read my question that way"
+ * is the next question asked of an answer, and the answer starts here.
+ *
  * <p>The failure case earns more room than the success case: a client that
  * cannot reach its API should say so in words, since every other part of the
  * window will simply look empty.
@@ -114,6 +118,10 @@ public final class StatusBar {
                 }),
                 muted(connection),
                 muted(meta.feedback() ? "feedback staged for review" : "feedback kept locally"));
+        if (!meta.pipeline().version().isEmpty()) {
+            node.getChildren().add(muted("pipeline " + meta.pipeline().version()));
+        }
+        node.getChildren().add(muted(memorySentence(meta)));
         if (who != null) {
             Hyperlink out = new Hyperlink("Sign out");
             out.setOnAction(event -> signOut.run());
@@ -127,6 +135,20 @@ public final class StatusBar {
             label.getStyleClass().setAll("status-warning");
             node.getChildren().add(label);
         }
+    }
+
+    /** How many answered turns this server reads a question with; 0 for none, or a server older than 8.0. */
+    static int remembers(Models.Meta meta) {
+        Models.MemorySettings memory = meta.pipeline().memory();
+        return memory == null ? 0 : memory.turns();
+    }
+
+    static String memorySentence(Models.Meta meta) {
+        int turns = remembers(meta);
+        if (turns == 0) {
+            return "each question asked alone";
+        }
+        return turns == 1 ? "remembers the last turn" : "remembers the last " + turns + " turns";
     }
 
     private Label muted(String text) {

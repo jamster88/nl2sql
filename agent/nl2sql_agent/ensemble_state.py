@@ -23,8 +23,10 @@ from __future__ import annotations
 
 import operator
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypedDict
+from typing import Annotated, Any, Sequence, TypedDict
 
+from .config import DEFAULT_PIPELINE
+from .memory import MemoryNote, Turn
 from .state import (
     RUN,
     AnswerContract,
@@ -227,9 +229,16 @@ class EnsembleState(TypedDict, total=False):
     """
 
     # --- input -----------------------------------------------------------
+    #: The question answered, as `AgentState.question`: the words typed
+    #: unless the anchor screening's restatement held (arch8).
     question: str
     principal: str | None
     parallel_calls: int
+    #: As `AgentState`'s four, and handed to every run as they are.
+    asked: str
+    turns: list[Turn]
+    memory: MemoryNote
+    pipeline: str
 
     # --- stage 0: the anchor and the rewordings -----------------------------
     verdict: Verdict
@@ -272,13 +281,23 @@ class EnsembleState(TypedDict, total=False):
 
 
 def new_ensemble_state(
-    question: str, *, principal: str | None = None, deadline: float = 0.0, parallel_calls: int = 1
+    question: str,
+    *,
+    principal: str | None = None,
+    deadline: float = 0.0,
+    parallel_calls: int = 1,
+    turns: Sequence[Turn] = (),
+    pipeline: str = DEFAULT_PIPELINE,
 ) -> EnsembleState:
     """The initial state for one question: everything a node might read, empty."""
     return {
         "question": question,
         "principal": principal,
         "parallel_calls": parallel_calls,
+        "asked": question,
+        "turns": list(turns),
+        "memory": MemoryNote(shown=len(turns)),
+        "pipeline": pipeline,
         "verdict": "proceed",
         "intent": "aggregate",
         "clarification": None,

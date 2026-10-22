@@ -33,6 +33,7 @@ from nl2sql_agent.ensemble_state import (
     wave_reset,
     whole_trace,
 )
+from nl2sql_agent.memory import MemoryNote, Turn
 from nl2sql_agent.state import RUN, QueryResult, TraceEntry, merge_errors, new_state, to_jsonable
 
 from .conftest import FakeDatabase
@@ -66,6 +67,14 @@ def test_a_new_state_seeds_every_field():
     state = new_ensemble_state("q", principal="jo", deadline=12.5, parallel_calls=2)
     assert (state["principal"], state["deadline"], state["parallel_calls"]) == ("jo", 12.5, 2)
     assert state["candidates"] == [] and state["waves"] == 0
+    assert (state["asked"], state["turns"], state["memory"], state["pipeline"]) == ("q", [], MemoryNote(), "v7_0_0")
+
+
+def test_the_turns_and_the_name_are_seeded_and_the_turns_copied():
+    turns = [Turn(index=1, asked="a", question="a", sql="SELECT 1")]
+    state = new_ensemble_state("and b?", turns=turns, pipeline="v6_3_1")
+    assert state["turns"] == turns and state["turns"] is not turns
+    assert (state["asked"], state["memory"], state["pipeline"]) == ("and b?", MemoryNote(shown=1), "v6_3_1")
 
 
 def test_the_keys_several_writers_share_have_reducers():

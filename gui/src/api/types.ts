@@ -186,6 +186,23 @@ export interface DiscardedRewording {
   reason: string;
 }
 
+/** Where an answer stands in its conversation, and how its question was read (8.0). */
+export interface Conversation {
+  /** The conversation, as the request named it. */
+  id: string;
+  /** This question's turn: the answered turns before it, and one. 1 for a conversation begun afresh. */
+  turn: number;
+  /** The turns the question was read with. */
+  remembered: number;
+  /** The words typed. */
+  asked: string;
+  /** The complete question answered, when a follow-up was restated; empty when it was not. */
+  read_as: string;
+  resolved: boolean;
+  /** When nothing was restated: why. */
+  reason: string;
+}
+
 /** The question asked several ways (7.0): the vote, the delivered run, every run's record. */
 export interface Ensemble {
   agreement: EnsembleAgreement;
@@ -227,6 +244,14 @@ export interface Answer {
   node_errors: Record<string, string>;
   /** `null` with the ensemble off; absent from a server older than 7.0. */
   ensemble?: Ensemble | null;
+  /** The pipeline that answered, by name: v7_0_0 or v6_3_1. Absent from a server older than 8.0. */
+  pipeline?: string;
+  /**
+   * The conversation the question continued (8.0). `null` for a question
+   * asked alone, or on a server that keeps no conversation; absent from a
+   * server older than 8.0.
+   */
+  conversation?: Conversation | null;
 }
 
 export interface JobLinks {
@@ -248,6 +273,8 @@ export interface Job {
   answer: Answer | null;
   error: string | null;
   links: JobLinks;
+  /** The conversation the request named, echoed. Absent from a server older than 8.0. */
+  conversation?: string | null;
 }
 
 export interface JobList {
@@ -278,6 +305,8 @@ export interface Limits {
   max_wait_seconds: number;
   max_question_length: number;
   max_metadata_entries: number;
+  /** Absent from a server older than 8.0. */
+  max_conversation_id_length?: number;
 }
 
 /**
@@ -303,6 +332,15 @@ export interface EnsembleSettings {
   nodes: string[];
 }
 
+/** How much of a conversation this server reads a question with (8.0). */
+export interface MemorySettings {
+  /** Answered turns a question is read with; 0 is none. */
+  turns: number;
+  rows: number;
+  max_conversations: number;
+  ttl_seconds: number;
+}
+
 export interface Pipeline {
   supervisor: boolean;
   literals: boolean;
@@ -312,6 +350,10 @@ export interface Pipeline {
   nodes: string[];
   /** Absent from a server older than 7.0. */
   ensemble?: EnsembleSettings | null;
+  /** PIPELINE_VERSION: v7_0_0 or v6_3_1. Absent from a server older than 8.0. */
+  version?: string;
+  /** Absent from a server older than 8.0. */
+  memory?: MemorySettings | null;
 }
 
 /** Everything a client needs to configure itself against this server. */
@@ -373,6 +415,8 @@ export interface AskRequest {
   question: string;
   principal?: string;
   metadata?: Record<string, string>;
+  /** The conversation this question continues, named by the client (8.0); omit to ask alone. */
+  conversation?: string;
 }
 
 /**

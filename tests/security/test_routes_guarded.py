@@ -52,7 +52,7 @@ def _api() -> FastAPI:
     from nl2sql_agent.api.settings import ApiSettings
     from nl2sql_agent.config import Settings
 
-    store = JobStore(lambda question, principal, on_progress: {})
+    store = JobStore(lambda question, principal, on_progress, turns=(): {})
     store.shutdown()
     return create_app(settings=Settings(), api_settings=ApiSettings(tls_enabled=False), store=store)
 

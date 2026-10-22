@@ -29,6 +29,13 @@ test (Phase 0, and S1 of `Multi-Agent_NL2SQL_arch7_risks_by_phase.md`).
 What was added for a rewording the starting lists discarded is marked
 "grown" below, with the rewording that showed it; `docs/benchmark.md`
 counts them.
+
+The extractors are shared: arch8 holds a follow-up's restatement to the
+words typed with the same ones, in subset form (`memory.resolve`), which is
+why `words` and `unkept` are public. So are F4's period spellings
+(`spell_period`), which the contract's period comparison reads, and C2's
+one allowance over F2 (`spelled_out`): a period written short and a
+restatement that writes it out in place.
 """
 
 from __future__ import annotations
@@ -108,7 +115,8 @@ def _fold(text: str) -> str:
     return " ".join(text.replace("’", "'").casefold().split())
 
 
-def _words(text: str) -> list[str]:
+def words(text: str) -> list[str]:
+    """The text's words, case-folded, its punctuation gone."""
     return _WORD.findall(_fold(text))
 
 
@@ -121,7 +129,7 @@ def _number(digits: str) -> str:
 def numerals(text: str) -> Counter[str]:
     """F1: every number in the text, as digits; a number word counts as its number."""
     found = Counter(_number(match) for match in _NUMBER.findall(text))
-    found.update(_NUMBERS[word] for word in _words(text) if word in _NUMBERS)
+    found.update(_NUMBERS[word] for word in words(text) if word in _NUMBERS)
     return found
 
 
@@ -194,7 +202,7 @@ def polarity(text: str) -> set[str]:
 
 def similarity(a: str, b: str) -> float:
     """Token Jaccard, case-folded and with the punctuation stripped."""
-    left, right = set(_words(a)), set(_words(b))
+    left, right = set(words(a)), set(words(b))
     if not left and not right:
         return 1.0
     return len(left & right) / len(left | right)
@@ -203,6 +211,61 @@ def similarity(a: str, b: str) -> float:
 def distinct(text: str, others: Sequence[str], *, max_jaccard: float = MAX_JACCARD) -> bool:
     """F5: no closer than `max_jaccard` to any of `others`."""
     return all(similarity(text, other) <= max_jaccard for other in others)
+
+
+def unkept(original: str, text: str) -> list[str]:
+    """F2's search: the literals of `original` that `text` does not carry
+    word for word, case-folded, in order."""
+    folded = _fold(text)
+    return [
+        literal for literal in sorted(literals(original))
+        if not re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", folded)
+    ]
+
+
+#: How a period is written, made one spelling (F4): what the Supervisor
+#: copies out of a question is the question's own words, and a faithful
+#: rewording may say "FY2025" where the question said "fiscal year 2025".
+#: The contract's period comparison spells both out with these.
+PERIOD_SPELLINGS = (
+    (re.compile(r"\bfy\s*-?\s*(\d{2,4})\b"), r"fiscal year \1"),
+    (re.compile(r"\bq\s*([1-4])\b"), r"quarter \1"),
+    (re.compile(r"\b(\d+)(?:st|nd|rd|th)\b"), r"\1"),
+)
+
+
+def spell_period(text: str) -> str:
+    """`text` case-folded, its spaces collapsed and a period's abbreviations
+    spelled out: "FY2025" is "fiscal year 2025", "Q4" is "quarter 4", "4th"
+    is "4"."""
+    text = " ".join(text.casefold().split())
+    for pattern, spelled in PERIOD_SPELLINGS:
+        text = pattern.sub(spelled, text)
+    return text
+
+
+def spelled_out(literal: str, text: str) -> bool:
+    """Whether `text` carries `literal`, a period written short, written out
+    in place: "fy2024" as "fiscal year 2024" or "the 2024 fiscal year", "q3"
+    as "fiscal quarter 3".
+
+    Grown (arch8, Phase 5): C2's, not F2's. The Supervisor calibrated with
+    turns shown restated "The same for FY2024?" with "fiscal year 2024" and
+    "What about Q3?" with "fiscal quarter 3", and the reference reads each
+    restatement as the contract of the complete question; C2 had discarded
+    both. Only in place: "the third quarter" is not "Q3" here, since the
+    reference reads it as another period than a fiscal Q3. A fiscal year
+    written year first, "the 2024 fiscal year", is the same year (8.0.1); a
+    quarter written so is not, for the reason above.
+    """
+    spelled = spell_period(literal)
+    if spelled == literal:
+        return False
+    written = spell_period(text)
+    if re.search(rf"(?<!\w){re.escape(spelled)}(?!\w)", written):
+        return True
+    year = re.fullmatch(r"fiscal year (\d{2,4})", spelled)
+    return bool(year and re.search(rf"(?<!\w){year.group(1)} fiscal year(?!\w)", written))
 
 
 def _difference(original: Counter[str] | set[str], rewording: Counter[str] | set[str]) -> str:
@@ -223,10 +286,9 @@ def check(original: str, rewording: str, kept: Sequence[str] = ()) -> str | None
     """
     if numerals(original) != numerals(rewording):
         return f"F1 numbers: {_difference(numerals(original), numerals(rewording))}"
-    folded = _fold(rewording)
-    for literal in sorted(literals(original)):
-        if not re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", folded):
-            return f"F2 literals: '{literal}' not found"
+    lost = unkept(original, rewording)
+    if lost:
+        return f"F2 literals: '{lost[0]}' not found"
     if polarity(original) != polarity(rewording):
         return f"F3 polarity: {_difference(polarity(original), polarity(rewording))}"
     for index, other in enumerate((original, *kept)):

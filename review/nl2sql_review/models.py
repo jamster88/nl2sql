@@ -55,6 +55,14 @@ class SubmissionModel(Wire):
     #: Kept as the agent wrote it rather than modelled here: the two services
     #: are different images, and this one only shows it.
     ensemble: dict[str, Any] = Field(default_factory=dict)
+    #: The pipeline that answered, by name: v7_0_0 or v6_3_1; empty for a
+    #: submission from before 8.0.
+    pipeline: str = ""
+    #: The agent's `Conversation` as it was staged (8.0): the turn, the
+    #: words typed (`asked`) and how they were read -- `question` above is
+    #: the question answered. Empty for a question asked alone and for a
+    #: submission from before 8.0; kept as the agent wrote it, as `ensemble` is.
+    conversation: dict[str, Any] = Field(default_factory=dict)
     submitted_at: datetime | None = None
     state: State = "pending"
     reviewer: str = ""

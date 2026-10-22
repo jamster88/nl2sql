@@ -26,6 +26,7 @@ from nl2sql_agent.ensemble import STEP_LABELS, EnsembleAgent, build_agent, run_p
 from nl2sql_agent.ensemble_state import Paraphrase, new_ensemble_state
 from nl2sql_agent.graph import Nl2SqlAgent
 from nl2sql_agent.judge import Ruling, Rulings
+from nl2sql_agent.memory import MemoryNote, Turn
 from nl2sql_agent.paraphrase import Rewording, Rewordings
 from nl2sql_agent.present import Narrative
 from nl2sql_agent.supervisor import Screening
@@ -142,6 +143,23 @@ def test_each_rewording_runs_seeded_with_the_reading_made_of_its_own_words():
     assert [c.state["intent"] for c in state["candidates"]] == ["aggregate", "lookup", "compare", "trend"]
     assert all(c.state["screened"] for c in state["candidates"])
     assert state["paraphrases"][0].screening["intent"] == "lookup"
+
+
+def test_every_run_is_handed_the_questions_words_turns_name_and_reading():
+    """arch8's seam: `run` and the ensemble's `_answer` are the only ways a
+    state is given turns, and every run carries the question's record -- the
+    words typed, the turns, the name, the note -- whatever its own wording."""
+    turn = Turn(index=1, asked="How many stores?", question="How many stores?", sql=SQL)
+    state = ensemble(FakeDatabase(tables=TABLES), model(written=rewordings(*FAITHFUL))).run(QUESTION, turns=[turn])
+
+    # The anchor read the question against the turn and did not restate it.
+    assert (state["asked"], state["turns"], state["memory"]) == (
+        QUESTION, [turn], MemoryNote(shown=1, reason="not restated"))
+    assert [c.state["question"] for c in state["candidates"]] == [QUESTION, *FAITHFUL]
+    for candidate in state["candidates"]:
+        assert (candidate.state["asked"], candidate.state["turns"], candidate.state["pipeline"]) == (
+            QUESTION, [turn], "v7_0_0")
+        assert candidate.state["memory"] == state["memory"]
 
 
 def test_the_first_wave_is_the_original_and_the_first_faithful_rewordings_in_the_order_written():
@@ -840,3 +858,77 @@ def test_every_run_is_held_to_the_contract_read_from_the_question_as_asked():
 
     assert all(c.state["answer_contract"] == state["answer_contract"] for c in state["candidates"])
     assert all(c.state["screening_fields"]["contract"] is state["answer_contract"] for c in state["candidates"])
+
+
+# ---------------------------------------------------------------------------
+# arch8: the anchor reads the conversation; every later node, the standalone
+# ---------------------------------------------------------------------------
+
+from nl2sql_agent.supervisor import ConversationScreening  # noqa: E402
+
+FRAGMENT = "and in total?"
+
+
+def _contents(messages) -> str:
+    return "\n".join(str(getattr(m, "content", m)) for m in messages)
+
+
+def test_the_anchor_restates_and_every_later_reader_reads_the_standalone():
+    """arch8 section 23.6: the Paraphraser rewords the standalone, the
+    fidelity gate screens each rewording without the turns, the Judge reads
+    the standalone, every run is asked it, and the answer opens with it."""
+    turn = Turn(index=1, asked="How many stores in Ohio?", question="How many stores are there in Ohio?",
+                sql=SQL, columns=["n"], rows=[["3"]], row_count=1, answer="There are 3.")
+    anchor = ConversationScreening(verdict="proceed", intent="aggregate", standalone=QUESTION)
+    llm = model(written=rewordings(*FAITHFUL), screening=[anchor, Screening(verdict="proceed", intent="aggregate")])
+    state = ensemble(FakeDatabase(tables=TABLES), llm).run(FRAGMENT, turns=[turn])
+
+    assert (state["question"], state["asked"]) == (QUESTION, FRAGMENT)
+    assert state["memory"] == MemoryNote(shown=1, resolved=True, read_as=QUESTION)
+    calls = llm.structured_invocations
+    screenings = [(schema, messages) for schema, messages in calls if schema in (Screening, ConversationScreening)]
+    (first_schema, first_messages), *gate = screenings
+    assert first_schema is ConversationScreening and "1. Asked: How many stores are there in Ohio?" in _contents(
+        first_messages)
+    assert gate and all(schema is Screening and "Earlier in this conversation" not in _contents(messages)
+                        for schema, messages in gate), "the rewordings are screened with no turns"
+    [paraphrase] = [messages for schema, messages in calls if schema is Rewordings]
+    assert f"Question: {QUESTION}" in _contents(paraphrase) and FRAGMENT not in _contents(paraphrase)
+    [judge] = [messages for schema, messages in calls if schema is Rulings]
+    assert f"Question: {QUESTION}" in _contents(judge)
+    assert state["candidates"][0].state["question"] == QUESTION
+    assert state["answer"].startswith(f"Read as: *{QUESTION}*\n\n*Agreed by 4 of 4")
+
+
+def test_under_the_ensemble_with_the_supervisor_off_nothing_is_restated():
+    turn = Turn(index=1, asked="a", question="a", sql=SQL)
+    agent = ensemble(FakeDatabase(tables=TABLES), model(written=rewordings(*FAITHFUL)), supervisor_enabled=False)
+    state = agent.run(FRAGMENT, turns=[turn])
+    assert (state["question"], state["memory"]) == (FRAGMENT, MemoryNote(shown=1, reason="supervisor off"))
+
+
+@pytest.mark.parametrize(
+    ("screening", "reason"),
+    [(ConversationScreening(verdict="proceed", intent="aggregate", standalone="Which banners sold the most?"),
+      "C1 numbers: 3 missing"),
+     (TimeoutError("the model host went away"), "supervisor failed")],
+    ids=["discarded", "no reading"],
+)
+def test_a_follow_up_run_as_typed_is_not_reworded(screening, reason):
+    """8.0.1: a rewording of "and the top 3?" is another fragment, which the
+    fidelity gate would read with no turns (arch8 section 23.6). The words
+    typed run alone, the Paraphraser is not called, and the answer says the
+    question was asked one way."""
+    turn = Turn(index=1, asked="net sales by banner?", question="What were net sales by banner in FY2025?",
+                sql=SQL, columns=["banner_name", "n"], rows=[["Mainline", "3"]], row_count=4, answer="Mainline led.")
+    seen: list[tuple[str, str]] = []
+    llm = model(written=rewordings(*FAITHFUL), screening=screening)
+    agent = ensemble(FakeDatabase(tables=TABLES), llm,
+                     on_progress=lambda step, detail, candidate=None: seen.append((step, detail)))
+    state = agent.run("and the top 3?", turns=[turn])
+
+    assert (state["memory"].reason, state["question"]) == (reason, "and the top 3?")
+    assert calls(llm, Rewordings) == 0 and state["paraphrases"] == []
+    assert [c.origin for c in state["candidates"]] == ["original"]
+    assert state["answer"].startswith("*Asked 1 way; one run answered.")
+    assert any(detail.startswith(f"skipped: the follow-up runs as typed ({reason})") for _, detail in seen)

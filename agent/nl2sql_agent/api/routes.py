@@ -37,10 +37,12 @@ from .. import __version__
 from ..config import Settings
 from .. import ensemble
 from ..graph import STEP_LABELS
+from ..memory import MEMORY_ROWS
 from ..supervisor import INTENT_FRAMING, describe_scope
 from ..tracing import Tracer
 from nl2sql_common.envelope import ApiError, Check, Health, Readiness
 from nl2sql_identity import ADMINS, USERS, Guard, Identity
+from .conversations import MAX_CONVERSATION_ID_LENGTH, ConversationBusy
 from .feedback import AlreadyReviewed, Capture, FeedbackSink, FeedbackUnavailable
 from .jobs import Job, JobStore, QueueFull, StreamChunk
 from .models import (
@@ -53,13 +55,14 @@ from .models import (
     Job as JobModel,
     JobList,
     Limits,
+    MemorySettings,
     Meta,
     Pipeline,
     Reloaded,
 )
 from .settings import ApiSettings
 from .tls import CertificateInfo
-from .translate import answer_from_state, job_model, progress_event
+from .translate import answer_for, job_model, progress_event
 
 
 class ApiHTTPError(HTTPException):
@@ -172,19 +175,25 @@ class ApiContext:
         than from the request, so a submission can never describe an answer
         this server did not give.
 
-        The snapshot is taken through `answer_from_state`, which is the same
+        The snapshot is taken through `answer_for`, which is the same
         translation the job's own document goes through. Reading `job.state`
         directly here would be a second translation to keep in step with the
         first -- and the one that handles a `Decimal` out of Postgres, a
         refusal with no result, and a chart that is a dataclass in one code
         path and a dict in another is the one that already exists.
+
+        `question` is the question answered (arch8, R8): the run's, which is
+        the restatement when a follow-up was read as one -- the column a
+        golden pair is built from, and a golden pair must stand alone. The
+        words typed are beside it in `conversation.asked`. Outside a
+        conversation the two are the same words.
         """
-        answer = answer_from_state(job.state)
+        answer = answer_for(job)
         table = answer.result
         return Capture(
             job_id=job.id,
             verdict=body.verdict,
-            question=job.question,
+            question=(job.state or {}).get("question") or job.question,
             sql_code=answer.sql,
             answer=answer.answer,
             narrative=answer.narrative,
@@ -195,6 +204,8 @@ class ApiContext:
             comment=body.comment,
             agent_version=__version__,
             ensemble=answer.ensemble.model_dump(mode="json") if answer.ensemble else {},
+            pipeline=answer.pipeline,
+            conversation=answer.conversation.model_dump(mode="json") if answer.conversation else {},
         )
 
 
@@ -284,6 +295,7 @@ def question_routes(ctx: ApiContext) -> APIRouter:
                 max_wait_seconds=api.max_wait_seconds,
                 max_question_length=MAX_QUESTION_LENGTH,
                 max_metadata_entries=MAX_METADATA_ENTRIES,
+                max_conversation_id_length=MAX_CONVERSATION_ID_LENGTH,
             ),
             pipeline=Pipeline(
                 supervisor=settings.supervisor_enabled,
@@ -302,6 +314,13 @@ def question_routes(ctx: ApiContext) -> APIRouter:
                     judge=settings.ensemble_judge_enabled,
                     fuse_columns=settings.ensemble_fuse_columns,
                     nodes=outer,
+                ),
+                version=settings.pipeline_version,
+                memory=MemorySettings(
+                    turns=settings.conversation_memory,
+                    rows=MEMORY_ROWS,
+                    max_conversations=api.max_conversations,
+                    ttl_seconds=api.conversation_ttl_seconds,
                 ),
             ),
             tls=(
@@ -322,6 +341,10 @@ def question_routes(ctx: ApiContext) -> APIRouter:
         summary="Ask a question",
         responses={
             HTTP_400_BAD_REQUEST: {"model": ApiError},
+            HTTP_409_CONFLICT: {
+                "model": ApiError,
+                "description": "The conversation's last question is still running; Retry-After says when to ask again.",
+            },
             HTTP_429_TOO_MANY_REQUESTS: {
                 "model": ApiError,
                 "description": "Too many questions waiting; Retry-After says when to ask again.",
@@ -371,10 +394,15 @@ def question_routes(ctx: ApiContext) -> APIRouter:
                 principal=principal,
                 owner=identity.principal,
                 metadata=body.metadata,
+                conversation=body.conversation,
             )
         except QueueFull as exc:
             raise ApiHTTPError(
                 HTTP_429_TOO_MANY_REQUESTS, "queue_full", str(exc), **{"Retry-After": str(exc.retry_after)}
+            ) from exc
+        except ConversationBusy as exc:
+            raise ApiHTTPError(
+                HTTP_409_CONFLICT, "conversation_busy", str(exc), **{"Retry-After": str(exc.retry_after)}
             ) from exc
         except RuntimeError as exc:
             raise ApiHTTPError(HTTP_503_SERVICE_UNAVAILABLE, "unavailable", str(exc)) from exc
@@ -444,7 +472,9 @@ def question_routes(ctx: ApiContext) -> APIRouter:
             "job's question, SQL and result shape are captured with it, because "
             "the job itself is forgotten after API_JOB_TTL_SECONDS and a verdict "
             "pointing at a forgotten job is not reviewable.\n\n"
-            "Voting again replaces the verdict, until a reviewer has acted on it."
+            "Voting again replaces the verdict, until a reviewer has acted on it. "
+            "A `no` also forgets the answer's turn in its conversation, so the next "
+            "question is not read in the light of a wrong answer."
         ),
     )
     def record_feedback(
@@ -468,6 +498,13 @@ def question_routes(ctx: ApiContext) -> APIRouter:
             raise ApiHTTPError(
                 HTTP_503_SERVICE_UNAVAILABLE, "feedback_unavailable", str(exc)
             ) from exc
+        # A wrong answer is no turn to read the next question with (arch8,
+        # R10): forgotten once the staging database has the verdict, so a
+        # verdict it refused forgets nothing. `incomplete` keeps the turn --
+        # its SQL was right as far as it went -- and withdrawing the verdict
+        # does not bring it back.
+        if body.verdict == "no" and jobs.conversations is not None:
+            jobs.conversations.forget_turn(job.id)
         # And on the run's trace, when it was traced. After the staging
         # database has it, because that is the record a reviewer acts on;
         # MLflow not taking it is logged and costs the response nothing.
@@ -525,19 +562,63 @@ def question_routes(ctx: ApiContext) -> APIRouter:
             HTTP_404_NOT_FOUND: {"model": ApiError},
             HTTP_409_CONFLICT: {"model": ApiError},
         },
+        description=(
+            "A queued question is cancelled and a finished one forgotten. A running one cannot be "
+            "interrupted (409 job_running), but its conversation, if it is in one, is free for the "
+            "next question at once and its answer is not remembered (8.0.1)."
+        ),
     )
     def delete_job(job_id: str, identity: Identity = Depends(ctx.asker)) -> Response:
         if jobs.get(job_id) is not None:
             ctx.require_job(job_id, identity)
+        known = jobs.get(job_id)
         outcome = jobs.cancel(job_id)
         if outcome == "missing":
             raise ApiHTTPError(HTTP_404_NOT_FOUND, "not_found", f"no job {job_id}")
         if outcome == "running":
+            # Freed, though not stopped (8.0.1): the message says so for a
+            # question in a conversation, and the same as before for one
+            # asked alone.
+            freed = known is not None and known.turn is not None
             raise ApiHTTPError(
                 HTTP_409_CONFLICT,
                 "job_running",
                 "this question is already running and cannot be interrupted; "
-                "it can be deleted once it finishes",
+                "it can be deleted once it finishes"
+                + ("; its conversation is free for the next question, and this answer will not be remembered"
+                   if freed else ""),
+            )
+        return Response(status_code=204)
+
+    @router.delete(
+        "/v1/conversations/{conversation_id}",
+        tags=["questions"],
+        status_code=204,
+        summary="Forget a conversation",
+        responses={HTTP_404_NOT_FOUND: {"model": ApiError}},
+        description=(
+            "Forgets the caller's conversation of that id: its turns, and its place in the store. "
+            "The next question with the id begins it afresh, at turn 1. A question of it still "
+            "running adds no turn when it ends. Someone else's conversation, like one this server "
+            "never had, is a 404."
+        ),
+    )
+    def forget_conversation(conversation_id: str, identity: Identity = Depends(ctx.asker)) -> Response:
+        store = jobs.conversations
+        if store is None:
+            raise ApiHTTPError(
+                HTTP_404_NOT_FOUND,
+                "conversation_not_found",
+                "this server keeps no conversation (CONVERSATION_MEMORY=0)",
+            )
+        # Keyed by the caller, as the jobs are: another person's id of the
+        # same spelling is not found, which says nothing about whether it exists.
+        if not store.forget(identity.principal, conversation_id):
+            raise ApiHTTPError(
+                HTTP_404_NOT_FOUND,
+                "conversation_not_found",
+                f"no conversation {conversation_id}. An idle one is forgotten after "
+                f"API_CONVERSATION_TTL_SECONDS ({store.ttl_seconds:g} s).",
             )
         return Response(status_code=204)
 

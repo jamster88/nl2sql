@@ -6,6 +6,7 @@ model on the Ollama host is suited to.
     python models/calibrate.py --models gemma4:12b-mlx mistral:7b --tasks supervisor narrator
     python models/calibrate.py --questions B01 B07 B15 --host-memory 128G
     python models/calibrate.py --tasks paraphraser judge             # the ensemble's two (7.0)
+    python models/calibrate.py --tasks supervisor                    # read with turns shown (8.0)
 
 Step 5 of section 15.1 of multi-agent_arch_specs/Multi-Agent_NL2SQL_arch5_2.md,
 measured the way section 15.5 describes. Each model is run through a probe
@@ -18,7 +19,7 @@ probes -- the Supervisor within none (`build_catalog.TOLERANCE`) -- and
 | Task | Probe | Correct when |
 |---|---|---|
 | generator | the benchmark questions, the pipeline run with MODEL_ROUTE_GENERATOR pinned to the model | execution accuracy, as the benchmark scores it |
-| supervisor | the benchmark questions (all proceed) and probes/triage.json | the verdict is the expected one |
+| supervisor | the benchmark questions (all proceed) and probes/triage.json; since 8.0 the follow-up set (benchmarks/followups.py), each read after its first turn, and each benchmark question read after an unrelated one | the verdict is the expected one; a follow-up's restatement holds and builds the contract the reference reads from the complete question; a question that stands alone is left as it stands |
 | reflection | each benchmark question's accepted result, replayed | the model agrees with the reference model's own reflection |
 | narrator | each benchmark question's accepted result, narrated again | the audit passes every claim and every assumption is stated |
 | repair | probes/repair.json: errors the classifier cannot place | the diagnosis names the fault |
@@ -32,6 +33,19 @@ Judge (7.0) read each question as the reference's own run read it -- its
 answer contract, its knowledge, its assumptions -- and the Judge's
 measurement counts, beside its score, how often it set the reference
 answer aside: a Judge's way of taking a right answer away.
+
+The Supervisor with a conversation's turns shown (arch8, Phase 5) is the
+same task asked a harder thing: to read a fragment against an earlier
+answer and restate it. Each first turn is the benchmark question answered
+by its reference SQL and rows, so every model reads the same right turn;
+each restatement is held to the words typed by the checks in code
+(`memory.resolve`), and its contract and the complete question's are both
+the reference's readings, so what is compared is the restatement alone.
+The cases count at the rung the rule routes a reading with turns to
+(`complexity.supervisor_rung(..., remembered=1)`), so a model is suited to
+that rung only if it reads follow-ups as the reference does; the
+catalog's `remembered`, beside the rungs, says how many of each half it
+got and why it missed the rest.
 
 It needs the agent and the stack, so it runs where the benchmark runs -- the
 repository's virtualenv, against the stack's published ports -- and against
@@ -75,23 +89,27 @@ for _path in (HERE, REPO_ROOT, REPO_ROOT / "agent", REPO_ROOT / "common"):
         sys.path.insert(0, str(_path))
 
 import build_catalog  # noqa: E402 -- models/build_catalog.py, beside this file
+from benchmarks.followups import FOLLOWUPS, Followup  # noqa: E402
 from benchmarks.questions import QUESTIONS, BenchmarkQuestion  # noqa: E402
 from benchmarks.run_benchmark import build_settings, parse_args as benchmark_args, reference_rows  # noqa: E402
 from benchmarks.runner import result_matches  # noqa: E402
-from nl2sql_agent import complexity, fidelity, paraphrase, present, supervisor  # noqa: E402
+from nl2sql_agent import complexity, fidelity, memory, paraphrase, present, supervisor  # noqa: E402
 from nl2sql_agent import judge as judges  # noqa: E402
 from nl2sql_agent import repair as repair_agent  # noqa: E402
 from nl2sql_agent.ensemble import f4_reason  # noqa: E402
 from nl2sql_agent.ensemble_state import ORIGINAL, PARAPHRASE, Candidate, Group  # noqa: E402
 from nl2sql_agent.completeness import entity_tables, read_query, reflect  # noqa: E402
 from nl2sql_agent.config import Settings  # noqa: E402
-from nl2sql_agent.contract import load_resources  # noqa: E402
+from nl2sql_agent.contract import load_resources, same_contract  # noqa: E402
 from nl2sql_agent.router import window_for  # noqa: E402
 from nl2sql_agent.state import PLANNER, AnswerContract, Attempt, Issue, QueryResult  # noqa: E402
 from nl2sql_common.errors import MODEL_ERRORS, NETWORK_ERRORS, PARSE_ERRORS
 
 TASKS = build_catalog.TASKS
 PROBES = HERE / "probes"
+#: The two halves of the Supervisor's probe with a conversation's turns
+#: shown (arch8, Phase 5), as the catalog's `remembered` names them.
+FOLLOWUPS_READ, LEFT_ALONE = "followups", "independent"
 
 
 @dataclass
@@ -105,6 +123,11 @@ class Sample:
     correct: bool
     seconds: float | None
     rejected: bool = False
+    #: The Supervisor read with turns shown (arch8): which half of that probe
+    #: the sample is, and why it missed -- the check that discarded the
+    #: restatement, or what else went wrong. Empty for every other probe.
+    reading: str = ""
+    missed: str = ""
 
 
 def tally(samples: Sequence[Sample]) -> dict[str, dict[str, Any]]:
@@ -125,6 +148,36 @@ def tally(samples: Sequence[Sample]) -> dict[str, dict[str, Any]]:
             if any(s.rejected for s in mine):
                 out[rung]["rejected_reference"] = sum(s.rejected for s in mine)
     return out
+
+
+def readings(samples: Sequence[Sample]) -> dict[str, Any] | None:
+    """The catalog's `remembered` for the Supervisor (arch8, Phase 5): the
+    follow-ups read as the reference reads them, the questions that stand
+    alone left as they stand, and each miss by its reason. None for a probe
+    that read nothing with turns."""
+    read = [sample for sample in samples if sample.reading]
+    if not read:
+        return None
+    out: dict[str, Any] = {}
+    for half in (FOLLOWUPS_READ, LEFT_ALONE):
+        mine = [sample for sample in read if sample.reading == half]
+        out[half] = {"correct": sum(sample.correct for sample in mine), "of": len(mine)}
+    missed: dict[str, int] = {}
+    for sample in read:
+        if sample.missed:
+            missed[sample.missed] = missed.get(sample.missed, 0) + 1
+    out["missed"] = dict(sorted(missed.items()))
+    return out
+
+
+def said_read(remembered: dict[str, Any] | None) -> str:
+    """A `remembered` measurement as the calibrator says it."""
+    if not remembered:
+        return "not measured with turns"
+    followups, alone = remembered[FOLLOWUPS_READ], remembered[LEFT_ALONE]
+    missed = ", ".join(f"{reason} {count}" for reason, count in remembered["missed"].items())
+    return (f"follow-ups {followups['correct']}/{followups['of']} read as the reference reads them, "
+            f"{alone['correct']}/{alone['of']} questions left as they stand" + (f"; missed: {missed}" if missed else ""))
 
 
 def _score(rung: str, tallied: dict[str, Any]) -> str:
@@ -152,6 +205,9 @@ class Probes:
     triage: list[dict[str, str]] = field(default_factory=list)
     repair: list[dict[str, Any]] = field(default_factory=list)
     judge: list[dict[str, Any]] = field(default_factory=list)
+    #: The follow-up set (arch8): the second question after each benchmark
+    #: question, read by the Supervisor with its first turn shown.
+    followups: list[Followup] = field(default_factory=list)
 
     @classmethod
     def load(cls, questions: list[BenchmarkQuestion], directory: Path = PROBES) -> "Probes":
@@ -160,6 +216,7 @@ class Probes:
             triage=json.loads((directory / "triage.json").read_text())["cases"],
             repair=json.loads((directory / "repair.json").read_text())["cases"],
             judge=json.loads((directory / "judge.json").read_text())["cases"],
+            followups=[FOLLOWUPS[question.id] for question in questions if question.id in FOLLOWUPS],
         )
 
 
@@ -241,6 +298,8 @@ class Calibrator:
         self._expected: dict[str, set[str]] | None = None
         self._screener: Any = None
         self._f4: dict[tuple[str, str], str | None] = {}
+        self._turns: dict[str, memory.Turn | None] = {}
+        self._contracts: dict[str, AnswerContract] = {}
         self._answers: dict[str, list[tuple[str, QueryResult, bool]]] = {}
 
     # --- the reference ---------------------------------------------------------
@@ -325,7 +384,81 @@ class Calibrator:
                 "node_errors", {}
             )
             samples.append(Sample((complexity.supervisor_rung(case["question"])[0],), correct, seconds))
+        return samples + self._read_with_turns(client, tables)
+
+    def _read_with_turns(self, client: Any, tables: list[str]) -> list[Sample]:
+        """The Supervisor with a conversation's turns shown (arch8, Phase 5),
+        as the agent's first Supervisor call reads a question in a
+        conversation: each follow-up after its first turn, right when its
+        restatement holds and builds the contract the reference reads from
+        the complete question; and each benchmark question after the one
+        before it in the list -- the last after the first -- right when it is
+        left as it stands, or restated to the same reading. Counted at the
+        rung the rule routes a reading with turns to."""
+        questions = self.probes.questions
+        by_id = {question.id: question for question in questions}
+        cases = [(f"{followup.first}.f", FOLLOWUPS_READ, followup.fragment, by_id[followup.first],
+                  followup.standalone)
+                 for followup in self.probes.followups if followup.first in by_id]
+        cases += [(f"{question.id} after {questions[index - 1].id}", LEFT_ALONE, question.question,
+                   questions[index - 1], question.question)
+                  for index, question in enumerate(questions)]
+        samples = []
+        for label, half, asked, first, meant in cases:
+            started = self.clock()
+            read = supervisor.screen(client, asked, clarify_enabled=False, tables=tables, turns=(self._turn(first),))
+            seconds = self.clock() - started
+            missed = self._missed(half, asked, read, meant)
+            if missed:
+                # Said with what the model wrote, so a check that discards a
+                # good restatement is seen: its word goes in the extractor's
+                # list (the risks by phase's R1).
+                written = read.get("standalone") or ""
+                self.say(f"    {label}: {missed}" + (f" -- {written!r}" if written else ""))
+            samples.append(Sample((complexity.supervisor_rung(asked, remembered=1)[0],), not missed, seconds,
+                                  reading=half, missed=missed))
         return samples
+
+    def _turn(self, question: BenchmarkQuestion) -> memory.Turn | None:
+        """A conversation's first turn: the benchmark question answered by its
+        reference SQL and rows -- a right answer, and the same one for every
+        model measured. Made once a question."""
+        if question.id not in self._turns:
+            answered = {"question": question.question, "sql": question.reference_sql,
+                        "result": self._result(question.reference_sql)}
+            self._turns[question.id] = memory.turn_from_state(answered, index=1)
+        return self._turns[question.id]
+
+    def _missed(self, half: str, asked: str, read: dict[str, Any], meant: str) -> str:
+        """Why a reading with turns is not the one wanted, or '' when it is: a
+        failed call, a refusal, the check in code that discarded the
+        restatement, a fragment left unrestated, or a restatement the
+        reference reads otherwise than it reads `meant`."""
+        if "supervisor" in (read.get("node_errors") or {}):
+            return "failed"
+        if read["verdict"] != "proceed":
+            return "refused"
+        note = memory.resolve(asked, read.get("standalone") or "")
+        if half == LEFT_ALONE and note.reason == memory.NOT_RESTATED:
+            return ""
+        if not note.resolved:
+            return note.reason.split(":")[0]
+        return "" if same_contract(self._contract(note.read_as), self._contract(meant)) else "another reading"
+
+    def _contract(self, text: str) -> AnswerContract:
+        """The contract the reference reads from a question asked alone -- as
+        the agent's second Supervisor call screens a restatement that held.
+        Made once a question."""
+        if text not in self._contracts:
+            self._contracts[text] = self._reference_agent().screen(text)[0]["answer_contract"]
+        return self._contracts[text]
+
+    def _reference_agent(self) -> Any:
+        """The agent on the reference model, for the readings probes compare
+        against: built once, when first wanted."""
+        if self._screener is None:
+            self._screener = self.agent_factory(self.settings)
+        return self._screener
 
     def narrator(self, model: str, client: Any) -> list[Sample]:
         samples = []
@@ -450,9 +583,7 @@ class Calibrator:
         reference model: why the rewording's reading is not the question's,
         or None. Remembered, since another model may write the same words."""
         if (question, text) not in self._f4:
-            if self._screener is None:
-                self._screener = self.agent_factory(self.settings)
-            update, _ = self._screener.screen(text, shaped_by=question)
+            update, _ = self._reference_agent().screen(text, shaped_by=question)
             self._f4[(question, text)] = f4_reason(update, contract)
         return self._f4[(question, text)]
 
@@ -551,6 +682,10 @@ class Calibrator:
             measured[task] = tally(samples)
             scores = ", ".join(_score(r, v) for r, v in measured[task].items())
             self.say(f"  {task}: {scores or 'no probes'}")
+            remembered = readings(samples)
+            if remembered is not None:
+                measured[task]["remembered"] = remembered
+                self.say(f"  {task} with turns: {said_read(remembered)}")
         return measured
 
     def twins(self, name: str) -> list[str]:
@@ -575,6 +710,31 @@ class Calibrator:
             entry["suited"], entry["suited_from"] = build_catalog.suitability(entry, reference)
         stamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         self.catalog["calibrated"] = stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def measured_already(done: dict[str, Any], task: str) -> bool:
+    """Whether `--resume` may pass a task over: measured, and the Supervisor
+    measured with turns shown as well (8.0) -- a measurement from before it
+    counts fewer probes at the standard rung, so it is not comparable with
+    one taken since."""
+    return task in done and (task != "supervisor" or "remembered" in done[task])
+
+
+def remembered_lines(table: Any, catalog: dict[str, Any]) -> list[str]:
+    """Phase 5's report (arch8): for each rung of the table, what the model
+    the Supervisor is routed to there measured with turns shown, beside the
+    reference -- the numbers that say whether reading a follow-up needs the
+    rung the rule routes it to."""
+    found = {
+        model["name"]: ((model.get("measured") or {}).get("supervisor") or {}).get("remembered")
+        for model in catalog["models"]
+    }
+    lines = ["The Supervisor with a conversation's turns shown:"]
+    for rung in build_catalog.RUNGS:
+        model = table.cells[("supervisor", rung)].model
+        lines.append(f"  {rung} ({model}): {said_read(found.get(model))}")
+    lines.append(f"  the reference ({catalog['reference']}): {said_read(found.get(catalog['reference']))}")
+    return lines
 
 
 def residency_note(table: Any, catalog: dict[str, Any], host_memory: int | None) -> str | None:
@@ -665,7 +825,7 @@ def main(argv: list[str] | None = None, *, calibrator_factory: Callable[..., Cal
         twins = calibrator.twins(name)
         also = f" (and its twins {', '.join(twins)})" if twins else ""
         done = calibrator.models[name]["measured"]
-        if args.resume and all(task in done for task in args.tasks):
+        if args.resume and all(measured_already(done, task) for task in args.tasks):
             calibrator.say(f"[{number}/{len(order)}] {name}{also}: measured already")
             continue
         calibrator.say(f"[{number}/{len(order)}] {name}{also}")
@@ -688,6 +848,8 @@ def main(argv: list[str] | None = None, *, calibrator_factory: Callable[..., Cal
                         host=listed_models(settings.ollama_base_url, settings.ollama_connect_timeout))
     print()
     print("\n".join(table.lines()))
+    print()
+    print("\n".join(remembered_lines(table, catalog)))
     note = residency_note(table, catalog, args.host_memory)
     if note:
         print(note, file=sys.stderr)

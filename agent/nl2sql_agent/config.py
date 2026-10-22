@@ -62,6 +62,19 @@ DEFAULT_MLFLOW_EXPERIMENT = "nl2sql-agent"
 MIN_PARAPHRASES = 3
 MAX_PARAPHRASES = 10
 
+# The pipeline's two names (arch8): the release whose pipeline answers.
+# v7_0_0 asks each question several ways (arch7); v6_3_1 asks it once, and
+# differs in that alone -- the grain check and 7.0's other refinements of one
+# run apply under both (the owner's decision 42). A string the record
+# carries, compared against these and nothing else.
+V7_0_0 = "v7_0_0"
+V6_3_1 = "v6_3_1"
+PIPELINES = (V7_0_0, V6_3_1)
+DEFAULT_PIPELINE = V7_0_0
+
+# The most answered turns of a conversation a question is read with (arch8).
+MAX_CONVERSATION_MEMORY = 15
+
 # The periods a table's grain is measured against (arch7.3 section 22.14):
 # the fiscal week and the fiscal month, as the date dimension spells them.
 DEFAULT_GRAIN_PERIODS = "fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num"
@@ -304,10 +317,11 @@ class Settings:
     # --- arch7: asking it several ways --------------------------------------
     # The question reworded, the pipeline run once per wording, the results
     # judged, voted on and one chosen (arch7.1 section 22). Off is arch6 to
-    # the answer. 7.0 is built in phases, and so far there is one wave and no
-    # fusion: ENSEMBLE_WAVES, ENSEMBLE_DEADLINE_SECONDS and ENSEMBLE_MAX_CLAIMS
-    # are read, checked and carried for the stages that will read them.
-    ensemble_enabled: bool = True
+    # the answer. None is unsaid: `validate` resolves it from
+    # `pipeline_version` -- on under v7_0_0, off under v6_3_1 -- and refuses
+    # it on beside v6_3_1. Whoever sets `pipeline_version` after construction
+    # sets this back to None, or to what they mean, before `validate`.
+    ensemble_enabled: bool | None = None
     # Rewordings in the first wave, beside the original: 3 to 10.
     ensemble_paraphrases: int = 3
     # The most the Paraphraser writes, and a second wave spends from.
@@ -341,6 +355,16 @@ class Settings:
     # list of the date dimension's columns that together name one period.
     grain_periods: str = DEFAULT_GRAIN_PERIODS
 
+    # --- arch8: the pipeline by name, and the conversation -------------------
+    # Which pipeline answers, by the release that built it (PIPELINES). It
+    # decides `ensemble_enabled` when that is unsaid, and nothing else.
+    pipeline_version: str = DEFAULT_PIPELINE
+    # The answered turns of a conversation a question is read with: 0 to 15,
+    # 0 asking every question alone. The CLI's interactive session keeps
+    # them, and the REST API's conversation store, built only above zero
+    # (arch8 section 23.5).
+    conversation_memory: int = 5
+
     def __post_init__(self) -> None:
         self.validate()
 
@@ -354,9 +378,21 @@ class Settings:
 
         Run on construction, and again by whoever sets a field afterwards --
         the CLI's flags, the benchmark's configurations -- since a dataclass
-        does not check an assignment.
+        does not check an assignment. An unsaid `ensemble_enabled` is
+        resolved here first, from the pipeline's name, and a contradiction
+        checked second.
         """
         problems = []
+        if self.pipeline_version not in PIPELINES:
+            problems.append(f"PIPELINE_VERSION is {self.pipeline_version!r}; it must be {V7_0_0} or {V6_3_1}")
+        elif self.ensemble_enabled is None:
+            self.ensemble_enabled = self.pipeline_version == V7_0_0
+        elif self.ensemble_enabled and self.pipeline_version == V6_3_1:
+            problems.append(f"PIPELINE_VERSION {V6_3_1} asks each question once; ENSEMBLE_ENABLED=true contradicts it")
+        if not 0 <= self.conversation_memory <= MAX_CONVERSATION_MEMORY:
+            problems.append(
+                f"CONVERSATION_MEMORY is {self.conversation_memory}; it must be 0 to {MAX_CONVERSATION_MEMORY}"
+            )
         if not MIN_PARAPHRASES <= self.ensemble_paraphrases <= MAX_PARAPHRASES:
             problems.append(
                 f"ENSEMBLE_PARAPHRASES is {self.ensemble_paraphrases}; it must be "
@@ -455,7 +491,8 @@ class Settings:
             ollama_keep_alive=_env_str("OLLAMA_KEEP_ALIVE", "30m"),
             mlflow_tracking_uri=_env_str("MLFLOW_TRACKING_URI", ""),
             mlflow_experiment_name=_env_str("MLFLOW_EXPERIMENT_NAME", DEFAULT_MLFLOW_EXPERIMENT),
-            ensemble_enabled=_env_bool("ENSEMBLE_ENABLED", True),
+            # Unset is unsaid, for the pipeline's name to decide.
+            ensemble_enabled=_env_bool("ENSEMBLE_ENABLED", None),
             ensemble_paraphrases=_env_int("ENSEMBLE_PARAPHRASES", 3),
             ensemble_max_paraphrases=_env_int("ENSEMBLE_MAX_PARAPHRASES", MAX_PARAPHRASES),
             ensemble_waves=_env_int("ENSEMBLE_WAVES", 2),
@@ -468,4 +505,6 @@ class Settings:
             model_route_judge=_env_str("MODEL_ROUTE_JUDGE", ""),
             grain_check_enabled=_env_bool("GRAIN_CHECK_ENABLED", True),
             grain_periods=_env_str("GRAIN_PERIODS", DEFAULT_GRAIN_PERIODS),
+            pipeline_version=_env_str("PIPELINE_VERSION", DEFAULT_PIPELINE),
+            conversation_memory=_env_int("CONVERSATION_MEMORY", 5),
         )

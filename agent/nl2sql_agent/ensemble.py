@@ -71,7 +71,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from typing import Any, Callable, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from langgraph.graph import END, START, StateGraph
 
@@ -93,7 +93,9 @@ from .ensemble_state import (
 )
 from .fuse import agreement_line
 from .graph import _DETAIL, _MODEL_CALLS, _ROUTE, Nl2SqlAgent, ProgressFn, progress_to, reporter, traced_node
+from .graph import read_as as graph_read_as
 from .graph import step_label as pipeline_label
+from .memory import NOT_RESTATED, MemoryNote, Turn
 from .state import AuditReport, QueryResult, new_state
 from nl2sql_common.errors import MODEL_ERRORS
 
@@ -127,7 +129,7 @@ STEP_LABELS = {
 #: The candidate runs and the vote read whole runs, whose own spans are
 #: beneath; their spans record a line per run (`_runs`), not the runs.
 TRACE_SPANS = {
-    "screen": ("Supervisor", "AGENT", ("question",)),
+    "screen": ("Supervisor", "AGENT", ("question", "turns")),
     "refuse": ("Refusal", "TASK", ("verdict", "clarification")),
     "paraphrase": ("Paraphraser", "AGENT", ("question", "answer_contract")),
     "screen_paraphrase": ("Fidelity Gate", "GUARDRAIL", ("paraphrases",)),
@@ -217,13 +219,16 @@ class EnsembleAgent:
         *,
         principal: str | None = None,
         on_progress: ProgressFn | None = None,
+        turns: Sequence[Turn] = (),
     ) -> EnsembleState:
         """Answer one question, asked several ways.
 
         One trace for the question, as for one run: the outer nodes are its
         spans, and each candidate's run is a span of its own beneath them.
         `on_progress` overrides the constructor's callback for this question
-        only; a candidate's steps reach it with `candidate=k`.
+        only; a candidate's steps reach it with `candidate=k`. `turns` are
+        the conversation's earlier answered questions (arch8), handed on to
+        every run.
         """
         seconds = self.settings.ensemble_deadline_seconds
         deadline = time.monotonic() + seconds if seconds else 0.0
@@ -234,6 +239,8 @@ class EnsembleAgent:
                     principal=principal,
                     deadline=deadline,
                     parallel_calls=self.settings.ollama_parallel_calls,
+                    turns=turns,
+                    pipeline=self.settings.pipeline_version,
                 ),
                 config={"recursion_limit": RECURSION_LIMIT},
             )
@@ -292,12 +299,23 @@ class EnsembleAgent:
         of its own. With the Supervisor off nothing is screened anywhere,
         and the original's run builds its contract from its own wording as
         arch6 does.
+
+        With the conversation's turns (arch8 section 23.6) the anchor is the
+        standalone reading: a restatement that holds becomes the outer
+        `question`, which every later node reads -- the Paraphraser rewords
+        it, the fidelity gate screens each rewording against it with no
+        turns, the Judge reads it -- and the original's run is asked it.
         """
         question = state["question"]
+        turns = state.get("turns") or ()
         if not self.settings.supervisor_enabled:
             contract = self.agent.build_contract(question)
-            return {"answer_contract": contract, _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}"}
-        update, screening = self.agent.screen(question)
+            return {
+                "answer_contract": contract,
+                "memory": MemoryNote(shown=len(turns), reason="supervisor off"),
+                _DETAIL: f"disabled; contract: {answer_contract.describe(contract)}",
+            }
+        update, screening = self.agent.screen(question, turns=turns)
         update["screening"] = screening
         return update
 
@@ -327,9 +345,19 @@ class EnsembleAgent:
 
         With the Supervisor off nothing is reworded: no rewording runs that
         the Supervisor has not read (R7), and with it off nobody reads one.
+        Nor is a follow-up that could not be restated (8.0.1): its words
+        mean something only with the turns, which the Paraphraser is not
+        shown and the fidelity gate screens without (arch8 section 23.6),
+        so a rewording of "and the top 3?" is another fragment, read with
+        nothing. The words typed run alone, with the turns shown to their
+        generator, and the answer says it was asked one way.
         """
         if not self.settings.supervisor_enabled:
             return {"paraphrases": [], _DETAIL: "skipped: the Supervisor is off, and no rewording runs unread"}
+        as_typed = runs_as_typed(state)
+        if as_typed:
+            return {"paraphrases": [], _DETAIL: f"skipped: the follow-up runs as typed ({as_typed}), "
+                                                 "and a rewording of it would be read with no turns"}
         question = state["question"]
         routed = self.router.model("paraphraser", *complexity.paraphraser_rung(question))
         update: dict[str, Any] = {}
@@ -367,6 +395,10 @@ class EnsembleAgent:
         """
         if not self.settings.supervisor_enabled:
             return {_DETAIL: "skipped: the Supervisor is off"}
+        if runs_as_typed(state):
+            # Nothing was written, and the one retry would write the
+            # fragment's rewordings that `_paraphrase` declined to (8.0.1).
+            return {_DETAIL: "skipped: the follow-up runs as typed, and nothing was reworded"}
         question = state["question"]
         contract = state["answer_contract"]
         paraphrases = list(state.get("paraphrases") or [])
@@ -474,10 +506,18 @@ class EnsembleAgent:
                 screening = {**screening, "contract": state["answer_contract"]}
             began = time.perf_counter()
             with tracing.agent_span(f"Candidate {index}", "AGENT", lambda: {"question": wording}) as span:
-                finished = self.agent.answer(
-                    new_state(wording, principal=state.get("principal"), screening=screening),
-                    on_progress=_for_candidate(report, index),
+                # The question's words, turns, name and reading, handed on:
+                # the one place besides `run` a state is given its turns.
+                seeded = new_state(
+                    wording,
+                    principal=state.get("principal"),
+                    screening=screening,
+                    turns=state.get("turns") or (),
+                    asked=state.get("asked"),
+                    pipeline=state.get("pipeline") or self.settings.pipeline_version,
+                    memory=state.get("memory"),
                 )
+                finished = self.agent.answer(seeded, on_progress=_for_candidate(report, index))
                 tracing.finish_run_span(span, finished)
             return Candidate(
                 index=index,
@@ -686,12 +726,26 @@ class EnsembleAgent:
             assumptions=state.get("assumptions") or [],
             completeness=chosen.state.get("completeness"),
             ensemble=decision,
+            read_as=graph_read_as(state),
         )
         return {
             "answer": answer,
             "narrative": " ".join(claim.text for claim in claims),
             _DETAIL: f"{state['agreement'].level}: [{decision.chosen}]",
         }
+
+
+def runs_as_typed(state: Mapping[str, Any]) -> str:
+    """Why the question runs in the words typed and is not reworded (8.0.1),
+    or "": a follow-up read with turns and not restated -- a check discarded
+    the restatement, or no reading was made -- means something only with
+    the turns, which the Paraphraser and the fidelity gate are not shown
+    (arch8 section 23.6). A question read as standing alone, and a
+    restatement that held, are complete questions and are reworded."""
+    note = state.get("memory")
+    if isinstance(note, MemoryNote) and note.shown and not note.resolved and note.reason != NOT_RESTATED:
+        return note.reason
+    return ""
 
 
 def _ignore(step: str, detail: str, candidate: int | None = None) -> None:

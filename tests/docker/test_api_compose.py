@@ -181,7 +181,7 @@ def test_every_api_variable_compose_sets_is_one_the_server_reads(api: dict):
 
 
 def test_an_unset_api_setting_arrives_empty_so_the_default_stands(api: dict):
-    for name in ("API_MAX_CONCURRENCY", "API_CORS_ORIGINS"):
+    for name in ("API_MAX_CONCURRENCY", "API_CORS_ORIGINS", "API_MAX_CONVERSATIONS", "API_CONVERSATION_TTL_SECONDS"):
         assert api["environment"][name] == "", f"{name} is pinned in compose rather than forwarded"
 
 

@@ -128,7 +128,7 @@ class HttpApiClientTest {
                         ? Json.write(Fakes.meta(true))
                         : Json.write(Fakes.ready()));
 
-        assertEquals("7.0.0", client.meta().version());
+        assertEquals("8.0.0", client.meta().version());
         assertTrue(client.readiness().ready());
         assertEquals(List.of("GET /v1/meta", "GET /readyz"), requested);
     }
@@ -157,17 +157,30 @@ class HttpApiClientTest {
         HttpApiClient client = https(Map.of("/v1/questions", 202),
                 exchange -> Json.write(Fakes.queued()), "--wait", "30");
 
-        assertEquals("job-1", client.ask("how many stores", 30).id());
+        assertEquals("job-1", client.ask("how many stores", 30, null).id());
         assertEquals(List.of("POST /v1/questions?wait=30"), requested);
+        // No conversation named: the question is asked alone, with the
+        // request 7.0 took -- a 7.0 server refuses a field it does not
+        // know, even as null (8.0.1).
         assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{}}",
                 bodies.get(0));
+    }
+
+    @Test
+    void a_question_in_a_conversation_names_it() {
+        HttpApiClient client = https(Map.of("/v1/questions", 202), exchange -> Json.write(Fakes.queued()));
+
+        client.ask("and in each state?", 0, "6f1c2b9e-0d4a-4e7b-9c3f-2a5d8e1b7c40");
+
+        assertEquals("{\"question\":\"and in each state?\",\"principal\":null,\"metadata\":{},"
+                + "\"conversation\":\"6f1c2b9e-0d4a-4e7b-9c3f-2a5d8e1b7c40\"}", bodies.get(0));
     }
 
     @Test
     void asking_without_a_wait_sends_no_wait_at_all() {
         HttpApiClient client = https(Map.of(), exchange -> Json.write(Fakes.queued()));
 
-        client.ask("how many stores", 0);
+        client.ask("how many stores", 0, null);
 
         assertEquals(List.of("POST /v1/questions"), requested);
     }
@@ -292,7 +305,7 @@ class HttpApiClientTest {
         HttpApiClient client = https(Map.of(), exchange -> Json.write(Fakes.meta(true)),
                 "--insecure");
 
-        assertEquals("7.0.0", client.meta().version());
+        assertEquals("8.0.0", client.meta().version());
     }
 
     @Test
@@ -440,7 +453,7 @@ class HttpApiClientTest {
         Models.Job withQuery = new Models.Job(job.id(), job.status(), job.question(),
                 job.metadata(), job.created_at(), job.started_at(), job.finished_at(),
                 job.duration_ms(), job.progress(), job.answer(), job.error(),
-                new Models.JobLinks(job.links().self(), job.links().events() + "?replay=1"));
+                new Models.JobLinks(job.links().self(), job.links().events() + "?replay=1"), null);
 
         assertTrue(client.eventsUrl(withQuery, 4).toString().endsWith("?replay=1&from_seq=4"));
     }

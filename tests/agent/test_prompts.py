@@ -406,3 +406,66 @@ def test_the_snippet_block_carries_its_own_instruction():
     assert "exactly as written -- its casts, NULLIFs and join keys" in rendered
     assert "a note says what the piece guards against" in rendered
     assert rendered.endswith("SELECT SUM(f.net_sales_amt)\n\n")
+
+
+# ---------------------------------------------------------------------------
+# arch8: the conversation's placeholders, empty unless a run has turns
+# ---------------------------------------------------------------------------
+
+
+def test_every_optional_block_defaults_to_nothing_and_every_other_input_is_required():
+    """The two partials 7.0 has and arch8's three, listed beside the inputs
+    every caller must give: a placeholder added without a default fails
+    here, rather than changing every answer."""
+    assert SUPERVISOR_PROMPT.partial_variables == {"memory_rule": "", "memory": ""}
+    assert sorted(SUPERVISOR_PROMPT.input_variables) == ["domain", "question"]
+    assert SQL_GENERATION_PROMPT.partial_variables == {"contract": "", "snippets": "", "conversation_rule": ""}
+    assert sorted(SQL_GENERATION_PROMPT.input_variables) == [
+        "dialect", "examples", "feedback", "knowledge", "literals", "question", "schema", "task",
+    ]
+
+
+def test_the_conversations_placeholders_sit_where_their_text_will():
+    """The rule closes the Supervisor's system turn and the turns open its
+    human turn, so the question is the last line; the generator's clause
+    closes the sentence about earlier turns, before the schema."""
+    supervisor = SUPERVISOR_PROMPT.format_messages(
+        domain="d", question="and by store?", memory_rule="\nRULE", memory="TURNS\n\n"
+    )
+    assert supervisor[0].content.endswith("does not depend on time at all.\nRULE")
+    assert supervisor[1].content == "TURNS\n\nQuestion: and by store?"
+    generator = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge="", literals="", task="", examples=[],
+        question="q", feedback="", conversation_rule=" CLAUSE",
+    )
+    assert "which is the last one. CLAUSE\n\nSchema and sample data:\ns" in generator[0].content
+
+
+from nl2sql_agent.memory import Turn  # noqa: E402
+from nl2sql_agent.prompts import CONVERSATION_RULE, conversation_messages  # noqa: E402
+
+
+def test_each_earlier_turn_is_a_named_question_and_its_bare_sql():
+    turns = [Turn(index=1, asked="by banner?", question="Net sales by banner in FY2025?", sql="SELECT 1"),
+             Turn(index=2, asked="q", question="Unanswered?", sql="  "),
+             Turn(index=3, asked="and by store?", question="Net sales by store in FY2025?", sql="SELECT 3")]
+    human, ai, human3, ai3 = conversation_messages(turns)
+    assert human.content == (
+        "Asked earlier in this conversation (turn 1).\n\nQuestion: Net sales by banner in FY2025?\n\nSQL:")
+    assert (ai.type, ai.content) == ("ai", "SELECT 1")
+    assert human3.content.startswith("Asked earlier in this conversation (turn 3).") and ai3.content == "SELECT 3"
+    assert conversation_messages([]) == []
+
+
+def test_the_turns_follow_the_exemplars_and_the_clause_names_them():
+    examples = example_messages([{"question": "golden?", "sql_code": "SELECT 0"}])
+    turns = conversation_messages([Turn(index=1, asked="a", question="earlier?", sql="SELECT 1")])
+    messages = SQL_GENERATION_PROMPT.format_messages(
+        dialect="postgresql", schema="s", knowledge="", literals="", task="", examples=examples + turns,
+        question="now?", feedback="", conversation_rule=CONVERSATION_RULE,
+    )
+    contents = [m.content for m in messages]
+    assert contents[1].endswith("Question: golden?\n\nSQL:") and contents[3].startswith("Asked earlier")
+    assert contents[-1].endswith("Question: now?\n\nSQL:")
+    assert "which is the last one. The last of them, marked as asked earlier in this conversation" in contents[0]
+    assert "a follow-up usually keeps their joins, filters and calendar." in contents[0]

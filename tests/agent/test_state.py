@@ -29,6 +29,7 @@ from nl2sql_agent.state import (
     new_state,
     to_jsonable,
 )
+from nl2sql_agent.memory import MemoryNote, Turn
 
 # ---------------------------------------------------------------------------
 # The reducers Stage 1's fan-out depends on
@@ -150,6 +151,37 @@ def test_a_screening_can_bring_the_contract_the_run_is_held_to():
 def test_a_principal_is_carried_for_row_level_security():
     assert new_state("q", principal="analyst_jo")["principal"] == "analyst_jo"
     assert new_state("q")["principal"] is None
+
+
+# ---------------------------------------------------------------------------
+# arch8: the words typed, the turns, the reading and the pipeline's name
+# ---------------------------------------------------------------------------
+
+
+def test_a_run_alone_is_asked_as_typed_with_no_turns_by_the_default_pipeline():
+    state = new_state("And by store?")
+    assert state["asked"] == state["question"] == "And by store?"
+    assert (state["turns"], state["memory"], state["pipeline"]) == ([], MemoryNote(), "v7_0_0")
+
+
+def test_the_four_are_seeded_as_given():
+    """What the ensemble hands each of its runs: the question's words,
+    turns, name and reading, where the run's own question is a rewording."""
+    turn = Turn(index=1, asked="Net sales by banner?", question="Net sales by banner in FY2025?", sql="SELECT 1")
+    note = MemoryNote(shown=1, resolved=True, read_as="Net sales by store in FY2025?")
+    state = new_state("Sales by store, FY2025?", turns=[turn], asked="And by store?", pipeline="v6_3_1", memory=note)
+    assert (state["question"], state["asked"], state["pipeline"]) == (
+        "Sales by store, FY2025?", "And by store?", "v6_3_1")
+    assert state["turns"] == [turn] and state["memory"] is note
+
+
+def test_the_turns_are_copied_and_counted_as_shown_unless_a_note_says_otherwise():
+    turns = [Turn(index=1, asked="a", question="a", sql="SELECT 1")]
+    state = new_state("and b?", turns=turns)
+    assert state["turns"] == turns and state["turns"] is not turns
+    assert state["memory"] == MemoryNote(shown=1)
+    turns.append(Turn(index=2, asked="c", question="c", sql="SELECT 2"))
+    assert len(state["turns"]) == 1
 
 
 # ---------------------------------------------------------------------------

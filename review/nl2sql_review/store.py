@@ -85,6 +85,8 @@ SUBMISSION_COLUMNS = (
     "comment",
     "agent_version",
     "ensemble",
+    "pipeline",
+    "conversation",
 )
 
 
@@ -116,6 +118,14 @@ class Submission:
     #: wording's run, the Judge's verdicts, the vote. `{}` for a submission
     #: from before 7.0, and for an answer one run gave.
     ensemble: dict[str, Any] = field(default_factory=dict)
+    #: The pipeline that answered, by name (8.0): v7_0_0 or v6_3_1. `''`
+    #: for a submission from before 8.0.
+    pipeline: str = ""
+    #: Where the answer stood in its conversation (8.0): the turn, the words
+    #: typed (`asked`) beside `question`, which is the question answered,
+    #: and how they were read. `{}` for a question asked alone, and for a
+    #: submission from before 8.0.
+    conversation: dict[str, Any] = field(default_factory=dict)
     submitted_at: datetime | None = None
     state: str = "pending"
     reviewer: str = ""
@@ -167,6 +177,8 @@ def ensure_schema(conn: psycopg.Connection) -> None:
                 comment          TEXT NOT NULL DEFAULT '',
                 agent_version    TEXT NOT NULL DEFAULT '',
                 ensemble         JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                pipeline         TEXT NOT NULL DEFAULT '',
+                conversation     JSONB NOT NULL DEFAULT '{{}}'::jsonb,
                 submitted_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                 state            TEXT NOT NULL DEFAULT 'pending',
                 reviewer         TEXT NOT NULL DEFAULT '',
@@ -178,16 +190,20 @@ def ensure_schema(conn: psycopg.Connection) -> None:
             """
         ).format(sql.Identifier(SUBMISSIONS))
     )
-    # A table created before 7.0 has no `ensemble`, and CREATE TABLE IF NOT
-    # EXISTS leaves it that way. A constant default adds the column without
-    # rewriting a row, and every submission already staged reads `{}`. The
-    # agent's API cannot do this -- it is the INSERT-only writer -- so until
-    # this has run once it records its verdicts without the column.
-    conn.execute(
-        sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} JSONB NOT NULL DEFAULT '{{}}'::jsonb").format(
-            sql.Identifier(SUBMISSIONS), sql.Identifier("ensemble")
+    # A table created before 7.0 has no `ensemble`, and one created before
+    # 8.0 no `pipeline` or `conversation`; CREATE TABLE IF NOT EXISTS leaves
+    # them that way. A constant default adds a column without rewriting a
+    # row, and every submission already staged reads `{}`, `''` and `{}`.
+    # The agent's API cannot do this -- it is the INSERT-only writer -- so
+    # until this has run once it records its verdicts without them.
+    for column, definition in (("ensemble", "JSONB NOT NULL DEFAULT '{{}}'::jsonb"),
+                               ("pipeline", "TEXT NOT NULL DEFAULT ''"),
+                               ("conversation", "JSONB NOT NULL DEFAULT '{{}}'::jsonb")):
+        conn.execute(
+            sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} " + definition).format(
+                sql.Identifier(SUBMISSIONS), sql.Identifier(column)
+            )
         )
-    )
     # Both CHECKs are (re)applied rather than declared inline: a table
     # created before `incomplete` or `corrected` existed carries the narrower
     # constraint, and CREATE TABLE IF NOT EXISTS would leave it that way. The
@@ -325,8 +341,8 @@ def ensure_writer_role(conn: psycopg.Connection, password: str) -> None:
 
 
 def _row_to_submission(row: dict[str, Any]) -> Submission:
-    # `columns`, `ensemble` and `draft` are JSONB, which psycopg hands back
-    # already decoded, so there is nothing to parse here.
+    # `columns`, `ensemble`, `conversation` and `draft` are JSONB, which
+    # psycopg hands back already decoded, so there is nothing to parse here.
     return Submission(**dict(row))
 
 

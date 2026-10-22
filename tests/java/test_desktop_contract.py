@@ -57,6 +57,7 @@ MIRRORED = {
     "EnsembleCandidate": models.EnsembleCandidate,
     "DiscardedRewording": models.DiscardedRewording,
     "Ensemble": models.Ensemble,
+    "Conversation": models.Conversation,
     "Answer": models.Answer,
     "JobLinks": models.JobLinks,
     "Job": models.Job,
@@ -64,6 +65,7 @@ MIRRORED = {
     "Reloaded": models.Reloaded,
     "Limits": models.Limits,
     "EnsembleSettings": models.EnsembleSettings,
+    "MemorySettings": models.MemorySettings,
     "Pipeline": models.Pipeline,
     "Meta": models.Meta,
     # The health envelope every service shares (`nl2sql_common.envelope`).

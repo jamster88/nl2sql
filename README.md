@@ -50,6 +50,45 @@ own:
 docker compose --profile '*' down                 # stop; your data is kept
 ```
 
+## What's new in 8.0
+
+8.0 remembers the conversation
+([the design](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)).
+Every image is published as `v8_0_1` -- 8.0.0 with seven corrections on
+the memory path, listed in [the changelog](docs/CHANGELOG.md), and nothing
+else different -- and `./start.sh` upgrades a 7.0 or an 8.0 stack in place
+([upgrading](docs/images.md#upgrading-an-existing-checkout)):
+
+- **A follow-up is read with the answers before it.** Ask "And how many in
+  each state?" after "How many stores are there?" and the Supervisor reads
+  it in the light of the earlier answer and restates it as the complete
+  question it means -- "How many stores are there in each state?" -- which
+  the answer opens with: "Read as: ...". The restatement is held to the
+  words typed in code, with no model call: a number, a name, a code or a
+  direction typed and missing from it, and it is discarded and the
+  question answered as typed. The generator is shown the earlier
+  questions' SQL. The last `CONVERSATION_MEMORY` answered turns are
+  remembered, five by default, fifteen at most, none at 0. Measured on the
+  follow-up set -- the question a person asks after each of the fifteen
+  benchmark answers -- 12 and 13 of 15 are answered right, one run a
+  question and the ensemble, where nothing remembered answered 1 and 2; and
+  every question that stands alone is still answered as it is alone, 15 of
+  15 ([the measurement](docs/benchmark.md#memory-in-the-agent)).
+- **Every client keeps a conversation.** The web interface and the desktop
+  client start one when they open and a new one on **New conversation**,
+  and say how each follow-up was read under the words typed; the command
+  line's interactive session is one; the REST API takes a conversation's id
+  with a question and keeps its turns in memory, one question at a time a
+  conversation. The review page shows the words a follow-up was asked as
+  beside the question it was read as.
+- **The pipeline has a name.** `PIPELINE_VERSION` is `v7_0_0` -- every
+  question asked several ways, as in 7.0 -- or `v6_3_1`, one run a
+  question; `/v1/meta`, every answer and every verdict say which.
+- **The Supervisor's reading of a conversation is calibrated.**
+  `python models/calibrate.py --tasks supervisor` asks each model the
+  follow-ups, and a reading with turns goes only to a model that reads them
+  as the reference does.
+
 ## What's new in 7.0
 
 7.0 answers a hard question several ways, has a Judge read the answers,
@@ -243,7 +282,7 @@ Everything that was in this file is in [`docs/`](docs), a document a topic.
 | [`docs/CHANGELOG_SIMPLE.md`](docs/CHANGELOG_SIMPLE.md) | Every version, one line per change |
 | [`docs/CHANGELOG.md`](docs/CHANGELOG.md) | Every version, with every artifact it created, updated or fixed, and the tags it published |
 | [`docs/basic_agent_steps.md`](docs/basic_agent_steps.md) | The five steps the first agent was built from |
-| [`multi-agent_arch_specs/`](multi-agent_arch_specs) | The architecture as designed and as built; [`Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md) is the current one, with 6.2 and 6.3 beside it, and [`Multi-Agent_NL2SQL_arch7.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) the design of what comes next -- the question asked several ways, the answers validated against each other, one chosen or fused -- with its build plan, module by module, in [`Multi-Agent_NL2SQL_arch7_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch7_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md); [`Multi-Agent_NL2SQL_arch7_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md) is arch7 with the Judge before the vote and what 7.0's build taught it, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md), and supersedes arch7's three where they differ; and [`Multi-Agent_NL2SQL_arch7_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md) is arch7.1 with its Phase 3 as built -- a dissent that reads how each query combines its facts -- and a grain check, a phase of its own, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_risks_by_phase.md), superseding arch7.1's three where they differ; and [`Multi-Agent_NL2SQL_arch7_3.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md) is arch7.2 with the owner's decisions on the grain check -- in 7.0.0, on by default, its grains measured, a join on no date caught too -- with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md), superseding arch7.2's three where they differ |
+| [`multi-agent_arch_specs/`](multi-agent_arch_specs) | The architecture as designed and as built; [`Multi-Agent_NL2SQL_arch6.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md) is the current one, with 6.2 and 6.3 beside it, and [`Multi-Agent_NL2SQL_arch7.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7.md) the design of what comes next -- the question asked several ways, the answers validated against each other, one chosen or fused -- with its build plan, module by module, in [`Multi-Agent_NL2SQL_arch7_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch7_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_risks_by_phase.md); [`Multi-Agent_NL2SQL_arch7_1.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1.md) is arch7 with the Judge before the vote and what 7.0's build taught it, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_1_risks_by_phase.md), and supersedes arch7's three where they differ; and [`Multi-Agent_NL2SQL_arch7_2.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2.md) is arch7.1 with its Phase 3 as built -- a dissent that reads how each query combines its facts -- and a grain check, a phase of its own, with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_2_risks_by_phase.md), superseding arch7.1's three where they differ; and [`Multi-Agent_NL2SQL_arch7_3.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3.md) is arch7.2 with the owner's decisions on the grain check -- in 7.0.0, on by default, its grains measured, a join on no date caught too -- with its own [implementation specification](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_implementation.md) and [risks by phase](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch7_3_risks_by_phase.md), superseding arch7.2's three where they differ; and [`Multi-Agent_NL2SQL_arch8.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md) is the current design, released in 8.0.0 -- the conversation remembered, so a follow-up is read in the light of the last `CONVERSATION_MEMORY` answered turns (five by default, fifteen at most, none at zero), and the pipeline chosen by release name at start (`PIPELINE_VERSION`: `v7_0_0` the question asked several ways, `v6_3_1` one run a question), said in every record -- with its diagram, its build plan, module by module, in [`Multi-Agent_NL2SQL_arch8_implementation.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_implementation.md), and that plan's risks placed on its phases in [`Multi-Agent_NL2SQL_arch8_risks_by_phase.md`](multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_risks_by_phase.md) |
 | [`adversary_reviews/`](adversary_reviews) | The adversarial reviews each hardening release answered, and what the second one's plan left open at 6.3.0 ([`v6_1_review_misses.md`](adversary_reviews/v6_1_review_misses.md)) |
 | [`LICENSE`](LICENSE) | The license |
 

@@ -342,7 +342,7 @@ docker compose --profile desktop run --rm desktop      # take the jar out
 cd desktop && mvn package                   # with Maven, if you have it
 ```
 
-There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v7_0-mac-aarch64`
+There is a published tag per platform -- `mcfaddja/nl2sql-desktop-build:v8_0_1-mac-aarch64`
 and four siblings -- so the usual path is a 33 MB pull rather than a Maven
 build. The image carries the jar and nothing that could have produced it: the
 builder stage is Maven, a JDK and half a gigabyte of dependency cache, and
@@ -395,7 +395,7 @@ pytest tests/java --run-java    # the same thing, from the Python suite
 pytest tests/java              # the parts that need no JDK: the contract
 ```
 
-459 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
+474 tests, 100% of lines and branches, enforced by JaCoCo — a threshold below
 100 is a number nobody looks at, while a failing build is read immediately.
 `Main` is the one exclusion: it calls `Application.launch()`, which does not
 return until the window is closed.

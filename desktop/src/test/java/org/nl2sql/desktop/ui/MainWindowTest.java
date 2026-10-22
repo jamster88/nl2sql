@@ -65,7 +65,7 @@ class MainWindowTest {
 
             window.start();
 
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 7.0.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 8.0.0"));
             assertTrue(feedbackAccepted.get());
             // The pipeline's nodes become the steps still to come.
             assertTrue(Nodes.says(window.root(), "0 / 3"));
@@ -84,7 +84,7 @@ class MainWindowTest {
                     meta.intents(), meta.tables(), meta.scope(), meta.limits(),
                     new Models.Pipeline(pipeline.supervisor(), pipeline.literals(),
                             pipeline.narrate(), pipeline.audit(), pipeline.schema_retrieval(),
-                            Fakes.ensembleNodes(), Fakes.ensembleSettings(true, 2)),
+                            Fakes.ensembleNodes(), Fakes.ensembleSettings(true, 2), "", null),
                     meta.tls(), meta.authentication(), meta.feedback(), meta.routing());
             Models.Job answered = Fakes.job("job-1", Models.JobStatus.SUCCEEDED,
                     Fakes.answer(Fakes.ensemble()));
@@ -119,7 +119,7 @@ class MainWindowTest {
 
             assertTrue(Nodes.says(window.root(), "ollama: connection refused"));
             assertTrue(Nodes.says(window.root(), "no token with a wildcard origin"));
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 7.0.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 8.0.0"));
             window.close();
         });
     }
@@ -229,7 +229,7 @@ class MainWindowTest {
             Models.Job other = new Models.Job("job-2", Models.JobStatus.SUCCEEDED,
                     "a different question", Map.of(), "2026-09-25T09:00:00Z", null,
                     "2026-09-25T09:01:00Z", 1000.0, List.of(), Fakes.answer(), null,
-                    new Models.JobLinks("/v1/questions/job-2", "/v1/questions/job-2/events"));
+                    new Models.JobLinks("/v1/questions/job-2", "/v1/questions/job-2/events"), null);
             MainWindow window = window();
             window.ask("how many stores");
             window.history().remember(other);
@@ -295,7 +295,7 @@ class MainWindowTest {
                     meta.intents(), meta.tables(), meta.scope(),
                     new Models.Limits(limits.max_rows(), limits.max_attempts(),
                             limits.max_plan_cost(), limits.statement_timeout_ms(),
-                            limits.max_concurrency(), limits.max_wait_seconds(), 12, 20),
+                            limits.max_concurrency(), limits.max_wait_seconds(), 12, 20, 64),
                     meta.pipeline(), Map.of(), "none", false, Map.of());
             MainWindow window = window();
 
@@ -316,7 +316,7 @@ class MainWindowTest {
                     meta.intents(), meta.tables(), meta.scope(),
                     new Models.Limits(limits.max_rows(), limits.max_attempts(),
                             limits.max_plan_cost(), limits.statement_timeout_ms(),
-                            limits.max_concurrency(), limits.max_wait_seconds(), 0, 0),
+                            limits.max_concurrency(), limits.max_wait_seconds(), 0, 0, 64),
                     meta.pipeline(), Map.of(), "none", false, Map.of());
             MainWindow window = window();
 
@@ -510,11 +510,11 @@ class MainWindowTest {
                         + "2025, which is an increase of eleven per cent over the previous year "
                         + "across every banner in the group.", 719279.97,
                         List.of(List.of(0, "net_sales")), null)),
-                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of(), null);
+                base.audit(), base.plan_cost(), base.attempts(), base.trace(), Map.of(), Map.of(), null, "", null);
         Models.Job job = Fakes.answered();
         return new Models.Job(job.id(), job.status(), job.question(), job.metadata(),
                 job.created_at(), job.started_at(), job.finished_at(), job.duration_ms(),
-                job.progress(), answer, null, job.links());
+                job.progress(), answer, null, job.links(), null);
     }
 
 
@@ -683,7 +683,7 @@ class MainWindowTest {
             signInAs(window, "ada", "pw");
 
             assertFalse(window.signInView().node().isVisible());
-            assertTrue(Nodes.says(window.root(), "nl2sql-agent 7.0.0"));
+            assertTrue(Nodes.says(window.root(), "nl2sql-agent 8.0.0"));
             assertTrue(Nodes.says(window.root(), "signed in as Ada Lovelace (ada)"));
             window.close();
         });

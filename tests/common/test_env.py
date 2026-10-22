@@ -36,6 +36,19 @@ def test_a_switch_is_on_only_when_it_says_so(monkeypatch, raw, expected):
     assert env.env_bool("NL2SQL_TEST", not expected) is expected
 
 
+@pytest.mark.parametrize("raw", [None, "", "   "])
+def test_a_switch_with_no_default_is_unsaid_until_it_says_something(monkeypatch, raw):
+    """`ENSEMBLE_ENABLED`, which the pipeline's name decides when unsaid
+    (arch8): compose forwards it empty, and empty is no word either way."""
+    if raw is None:
+        monkeypatch.delenv("NL2SQL_TEST", raising=False)
+    else:
+        monkeypatch.setenv("NL2SQL_TEST", raw)
+    assert env.env_bool("NL2SQL_TEST", None) is None
+    monkeypatch.setenv("NL2SQL_TEST", "off")
+    assert env.env_bool("NL2SQL_TEST", None) is False
+
+
 def test_a_list_drops_its_blanks(monkeypatch):
     monkeypatch.setenv("NL2SQL_TEST", " a, ,b ,")
     assert env.env_tuple("NL2SQL_TEST", ()) == ("a", "b")

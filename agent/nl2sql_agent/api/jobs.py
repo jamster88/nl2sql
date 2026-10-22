@@ -16,6 +16,10 @@ of an animation that means nothing.
 Everything here is plain threads. The agent is synchronous, Ollama is the
 bottleneck, and a thread pool of two is a truthful model of a machine that
 can have two questions in the air at once.
+
+A question may continue a conversation (arch8): the job store asks the
+conversation store for the turns before it when it admits the question, and
+hands it the finished run when the question ends, however it ends.
 """
 
 from __future__ import annotations
@@ -27,15 +31,20 @@ import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterator
+from typing import TYPE_CHECKING, Any, Callable, Iterator
 
 from .. import tracing
+from ..memory import Turn
+
+if TYPE_CHECKING:
+    from .conversations import ConversationStore
 
 #: What the store is handed to actually answer a question:
-#: `runner(question, principal, on_progress) -> AgentState`, where
+#: `runner(question, principal, on_progress, turns=()) -> AgentState`, where
 #: `on_progress(step, detail, candidate=None)` -- the ensemble names the
-#: wording whose run a step belongs to (arch7).
-Runner = Callable[[str, str | None, Callable[..., None]], dict]
+#: wording whose run a step belongs to (arch7) -- and `turns` are the
+#: conversation's turns before it, oldest first (arch8).
+Runner = Callable[..., dict]
 
 TERMINAL = ("succeeded", "failed", "cancelled")
 
@@ -98,6 +107,14 @@ class Job:
     #: And as an operator is (V6-32): a crash's own words, which may name a
     #: host, a port or a path. None when `error` already says everything.
     fault: str | None = None
+    #: The conversation the request named (arch8), echoed on the job even
+    #: when the server keeps none. None for a question asked alone.
+    conversation: str | None = None
+    #: Its turn in that conversation and the turns it is read with, from
+    #: the conversation store: None and () when the store did not admit it
+    #: -- asked alone, or on a server that keeps no conversation.
+    turn: int | None = None
+    turns: tuple[Turn, ...] = ()
     condition: threading.Condition = field(
         default_factory=lambda: threading.Condition(threading.RLock()), repr=False
     )
@@ -148,8 +165,10 @@ class JobStore:
         max_queued: int = 20,
         max_per_person: int = 3,
         queue_ttl_seconds: float = 600.0,
+        conversations: ConversationStore | None = None,
     ) -> None:
         self._runner = runner
+        self._conversations = conversations
         self._max_jobs = max(1, max_jobs)
         self._ttl = ttl_seconds
         self._max_queued = max(1, max_queued)
@@ -162,6 +181,12 @@ class JobStore:
         )
         self._closed = False
 
+    @property
+    def conversations(self) -> ConversationStore | None:
+        """The conversations this store's questions continue; None when the
+        server keeps none (CONVERSATION_MEMORY=0)."""
+        return self._conversations
+
     # --- lifecycle --------------------------------------------------------
 
     def submit(
@@ -171,7 +196,15 @@ class JobStore:
         principal: str | None = None,
         owner: str | None = None,
         metadata: dict[str, str] | None = None,
+        conversation: str | None = None,
     ) -> Job:
+        """Queue a question, in `conversation` when it names one.
+
+        The queue admits it first and the conversation second, both under
+        the store's lock: a question the queue refuses (`QueueFull`) never
+        marks its conversation busy, and one the conversation refuses
+        (`ConversationBusy`) is refused with nothing to undo.
+        """
         if self._closed:
             raise RuntimeError("the job store is shut down")
         job = Job(
@@ -180,12 +213,21 @@ class JobStore:
             principal=principal,
             owner=owner,
             metadata=dict(metadata or {}),
+            conversation=conversation,
         )
         with self._lock:
             self._prune_locked()
             self._admit_locked(owner)
+            if conversation is not None and self._conversations is not None:
+                job.turns, job.turn = self._conversations.begin(owner, conversation, job.id)
             self._jobs[job.id] = job
-        self._pool.submit(self._run, job)
+        try:
+            self._pool.submit(self._run, job)
+        except RuntimeError:
+            # Shut down between the check above and here: the question will
+            # never run, so its conversation must not wait for it.
+            self._free(job, None)
+            raise
         return job
 
     def _admit_locked(self, owner: str | None) -> None:
@@ -213,6 +255,16 @@ class JobStore:
             )
 
     def _run(self, job: Job) -> None:
+        try:
+            self._answer(job)
+        finally:
+            # Every way out of `_answer` frees the job's conversation before
+            # its waiters are told the job has ended (`_ended`); this is the
+            # one for a way nobody wrote down. A conversation left busy is
+            # refused until the process restarts (R4 of arch8's risks).
+            self._free(job, None)
+
+    def _answer(self, job: Job) -> None:
         with job.condition:
             # Cancelled between submit and pickup: never start it. This is the
             # only point at which cancellation is honest, which is why DELETE
@@ -224,13 +276,14 @@ class JobStore:
             if waited > self._queue_ttl:
                 # Whoever asked has very likely stopped waiting, and the run
                 # would cost a minute of the model host for nobody.
-                job.status = "failed"
-                job.error = (
-                    f"expired: waited {waited:.0f} s in the queue, longer than "
-                    f"API_QUEUE_TTL_SECONDS ({self._queue_ttl:.0f}); ask again"
+                self._ended(
+                    job,
+                    "failed",
+                    error=(
+                        f"expired: waited {waited:.0f} s in the queue, longer than "
+                        f"API_QUEUE_TTL_SECONDS ({self._queue_ttl:.0f}); ask again"
+                    ),
                 )
-                job.finished_at = _now()
-                job.condition.notify_all()
                 return
             job.status = "running"
             job.started_at = _now()
@@ -249,30 +302,64 @@ class JobStore:
                 )
                 job.condition.notify_all()
 
+        # The job's id on the run's MLflow trace, which is how a job -- and
+        # the verdict given on it -- finds its trace; and its conversation's
+        # id and its turn in it, which are the job's and not the run's.
+        tags = {"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id}
+        if job.turn is not None:
+            tags.update({"nl2sql.conversation": job.conversation, "nl2sql.turn": str(job.turn)})
         try:
-            # The job's id on the run's MLflow trace, which is how a job --
-            # and the verdict given on it -- finds its trace.
-            with tracing.tagged({"nl2sql.entrypoint": "api", "nl2sql.job_id": job.id}):
-                state = self._runner(job.question, job.principal, on_progress)
+            with tracing.tagged(tags):
+                state = self._runner(job.question, job.principal, on_progress, turns=job.turns)
         except BaseException as exc:  # noqa: BLE001 -- the job records it, the server survives
-            with job.condition:
-                job.status = "failed"
-                job.error = f"the question could not be answered: {type(exc).__name__}"
-                job.fault = f"{type(exc).__name__}: {exc}"
-                job.finished_at = _now()
-                job.condition.notify_all()
+            self._ended(
+                job,
+                "failed",
+                error=f"the question could not be answered: {type(exc).__name__}",
+                fault=f"{type(exc).__name__}: {exc}",
+            )
             return
 
+        # A pipeline that refuses a question or exhausts its retries still
+        # returns a state; `error` there is the agent's own verdict, not a
+        # server fault, and the job reports it as a failed run with the state
+        # attached so a GUI can still show the attempts.
+        error = (state or {}).get("error")
+        self._ended(job, "failed" if error else "succeeded", state=state, error=error)
+
+    def _ended(
+        self,
+        job: Job,
+        status: str,
+        *,
+        state: dict[str, Any] | None = None,
+        error: str | None = None,
+        fault: str | None = None,
+    ) -> None:
+        """The one way a job ends: its conversation freed first, with the
+        turn its answer makes, then the status every waiter reads.
+
+        In that order, under the job's condition, so a client that asks its
+        follow-up the moment the answer arrives finds the conversation free
+        and the turn in it, rather than a 409 for a question that has
+        already been answered.
+        """
         with job.condition:
+            self._free(job, state)
             job.state = state
-            # A pipeline that refuses a question or exhausts its retries
-            # still returns a state; `error` there is the agent's own verdict,
-            # not a server fault, and the job reports it as a failed run with
-            # the state attached so a GUI can still show the attempts.
-            job.error = (state or {}).get("error")
-            job.status = "failed" if job.error else "succeeded"
+            job.error = error
+            job.fault = fault
+            job.status = status
             job.finished_at = _now()
             job.condition.notify_all()
+
+    def _free(self, job: Job, state: dict[str, Any] | None) -> None:
+        """Hand the job's conversation its finished run, freeing it; nothing
+        for a job no conversation admitted. Safe to call twice: the second
+        finds the conversation no longer busy with this job, which is how a
+        run abandoned by `cancel` adds no turn when it ends."""
+        if self._conversations is not None and job.turn is not None:
+            self._conversations.finish(job.id, state)
 
     def shutdown(self, *, wait: bool = False) -> None:
         self._closed = True
@@ -304,7 +391,11 @@ class JobStore:
         A running job cannot be stopped: it is inside a LangGraph invocation
         that owns a database cursor and an HTTP call to Ollama, and there is
         no truthful way to interrupt that from here. Saying so is better than
-        marking it cancelled and letting it finish anyway.
+        marking it cancelled and letting it finish anyway. Its conversation
+        is freed all the same (8.0.1): the person has moved on, and the
+        answer nobody is waiting for adds no turn when the run ends -- the
+        store is no longer busy with the job by then, and ignores it -- so
+        the next question is read with the turns before the abandoned one.
         """
         with self._lock:
             job = self._jobs.get(job_id)
@@ -312,11 +403,10 @@ class JobStore:
                 return "missing"
             with job.condition:
                 if job.status == "queued":
-                    job.status = "cancelled"
-                    job.finished_at = _now()
-                    job.condition.notify_all()
+                    self._ended(job, "cancelled")
                     return "cancelled"
                 if job.status == "running":
+                    self._free(job, None)
                     return "running"
             del self._jobs[job_id]
             return "forgotten"

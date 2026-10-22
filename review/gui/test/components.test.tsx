@@ -160,6 +160,118 @@ describe("Original", () => {
     expect(screen.getByText(/SELECT sum\(net_sales_amt\)/)).toBeInTheDocument();
   });
 
+  describe("a follow-up, staged as the question it was read as (8.0)", () => {
+    const standalone = "How many stores are there in each state?";
+
+    it("shows the words typed under the question answered, with the turn", () => {
+      const { container } = render(
+        <Original
+          submission={makeSubmission({
+            question: standalone,
+            conversation: {
+              id: "c-1", turn: 2, remembered: 1, asked: "And in each state?",
+              read_as: standalone, resolved: true, reason: "",
+            },
+          })}
+        />,
+      );
+      expect(screen.getByRole("heading", { name: standalone })).toBeInTheDocument();
+      expect(container.querySelector(".original-asked")).toHaveTextContent(
+        "Asked as: And in each state? · turn 2, 1 remembered",
+      );
+    });
+
+    it("shows the words alone when the record names no turn", () => {
+      const { container } = render(
+        <Original submission={makeSubmission({ conversation: { asked: "and by state?" } })} />,
+      );
+      expect(container.querySelector(".original-asked")?.textContent).toBe("Asked as: and by state?");
+    });
+
+    it("says nothing for a question asked alone, or one that stood alone already", () => {
+      const { container, unmount } = render(<Original submission={makeSubmission()} />);
+      expect(container.querySelector(".original-asked")).toBeNull();
+      unmount();
+
+      const same = makeSubmission();
+      const again = render(
+        <Original submission={{ ...same, conversation: { asked: same.question, turn: 3 } }} />,
+      );
+      expect(again.container.querySelector(".original-asked")).toBeNull();
+    });
+
+    it("says why a follow-up run as typed must be rewritten before it is promoted (8.0.1)", () => {
+      const { container } = render(
+        <Original
+          submission={makeSubmission({
+            question: "And the top 3?",
+            conversation: {
+              id: "c-1", turn: 2, remembered: 1, asked: "And the top 3?",
+              read_as: "", resolved: false, reason: "C1 numbers: 3 missing",
+            },
+          })}
+        />,
+      );
+      expect(container.querySelector(".original-unresolved")).toHaveTextContent(
+        "Run as typed: this follow-up was not restated (C1 numbers: 3 missing) · turn 2, 1 remembered. "
+          + "Rewrite the question in the draft so that it stands alone before promoting it.",
+      );
+      expect(container.querySelector(".original-asked q")).toBeNull();
+    });
+
+    it("says so without the turn when the record names none", () => {
+      const { container } = render(
+        <Original
+          submission={makeSubmission({
+            conversation: { remembered: 2, asked: "and for Produce?", resolved: false, reason: "supervisor off" },
+          })}
+        />,
+      );
+      expect(container.querySelector(".original-unresolved")?.textContent).toBe(
+        "Run as typed: this follow-up was not restated (supervisor off). "
+          + "Rewrite the question in the draft so that it stands alone before promoting it.",
+      );
+    });
+
+    it("says nothing of the kind for a question read as standing alone, or restated, or with no reason", () => {
+      const same = makeSubmission();
+      const alone = render(
+        <Original
+          submission={{
+            ...same,
+            conversation: { id: "c-1", turn: 2, remembered: 1, asked: same.question, resolved: false, reason: "not restated" },
+          }}
+        />,
+      );
+      expect(alone.container.querySelector(".original-unresolved")).toBeNull();
+      expect(alone.container.querySelector(".original-asked")).toBeNull();
+      alone.unmount();
+
+      const unsaid = render(
+        <Original submission={{ ...same, conversation: { turn: 2, remembered: 1, asked: same.question } }} />,
+      );
+      expect(unsaid.container.querySelector(".original-unresolved")).toBeNull();
+      unsaid.unmount();
+
+      const restated = render(
+        <Original
+          submission={makeSubmission({
+            conversation: { id: "c-1", turn: 2, remembered: 1, asked: "and for Produce?", resolved: true, reason: "" },
+          })}
+        />,
+      );
+      expect(restated.container.querySelector(".original-unresolved")).toBeNull();
+      expect(restated.container.querySelector(".original-asked")).toHaveTextContent("Asked as: and for Produce?");
+    });
+
+    it("shows a turn with nothing remembered as nothing remembered", () => {
+      const { container } = render(
+        <Original submission={makeSubmission({ conversation: { asked: "and by state?", turn: 4 } })} />,
+      );
+      expect(container.querySelector(".original-asked")).toHaveTextContent("turn 4, 0 remembered");
+    });
+  });
+
   it("says so when the verdict was negative", () => {
     render(<Original submission={makeSubmission({ verdict: "no" })} />);
     expect(screen.getByText("Marked wrong")).toBeInTheDocument();

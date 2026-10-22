@@ -24,8 +24,11 @@ public interface ApiClient {
      * {@code waitSeconds} is positive -- once the answer is ready or the wait
      * runs out, whichever comes first. Both return the same document, so
      * waiting is an optimisation rather than a second way of asking.
+     *
+     * <p>{@code conversation} names the conversation the question continues
+     * (8.0), the id the window made; null asks it alone.
      */
-    Models.Job ask(String question, int waitSeconds);
+    Models.Job ask(String question, int waitSeconds, String conversation);
 
     Models.Job job(String id);
 

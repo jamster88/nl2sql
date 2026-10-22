@@ -15,6 +15,55 @@ dataset images (`retail-postgres`, `rag-vectordb`, `rag-chunkdb`) version on
 their own and are listed under the release they shipped with. A version marked
 *unpublished* is a checkpoint in the repository that published no image tag.
 
+## v8_0_1 (8.0.1) -- 2026-10-21
+
+A correction to 8.0 on the memory path, found by validating the release against its specifications: seven things, and a question asked alone answered byte for byte as 8.0.0 answers it. Published as `v8_0_1`, which `setup.sh` pins; `./start.sh` upgrades a 7.0 or an 8.0 stack in place.
+
+**Fixed**
+- The desktop client could not ask a 7.0 server: it sent `"conversation": null` when it asked alone, which 7.0 refuses; it now sends 7.0's request.
+- A follow-up the agent ran as typed could be promoted as a golden pair that stands alone for nobody; the review service now refuses it (`not_standalone`) until the question is rewritten, and the review page says why.
+- A refusal, or a question asked back, from the Supervisor's reading in context was dropped when no restatement came with it, and a second call that never saw the turns decided; the verdict given in context now ends the run on the words typed.
+- Stop left the conversation busy for the rest of the abandoned run, and then remembered its answer; a cancel of a running question frees the conversation at once, and the answer is not remembered.
+- Under the ensemble a follow-up that could not be restated was reworded into more fragments, read with no turns; it now runs as typed, one way.
+- "The second one", "other than Mainline" and "the 2024 fiscal year" discarded a restatement that kept what was typed; the checks in code now read an ordinal that points at a row as no number, the three phrases as a negation, and a year written first as the year. The fidelity gate is untouched.
+- A turn's cells are now bounded in characters -- one line of at most 80 each, eight of the first row shown -- where a page in a text column cost what the row count was meant to bound.
+
+**Updated**
+- Version 8.0.1 in every declaration; `setup.sh` pins `v8_0_1`.
+
+**Published**
+- All twelve tags as `v8_0_1`; the dataset images are unchanged. The upgrade was rehearsed on an 8.0 stack of its own first, with each of the seven corrections tried live -- Stop, the ordinal follow-up, a wide first answer, the desktop client alone and in a conversation, and a follow-up run as typed voted on, refused for promotion and promoted once rewritten; then `start.sh` upgraded a running 8.0 stack with every check passing.
+
+**Verified**
+- The acceptance tier passed, 14 of 14, from a clean copy. The benchmark came out as at 8.0: every question that stands alone was answered as it is alone, 15 of 15 under each pipeline name; follow-ups came out 12 and 13 of 15 right, every restatement held, and every one of the ninety questions was read with the same words as at the release. The Supervisor's calibration repeats the catalog's counts.
+
+**After publishing** (not in the images)
+- `launch.sh`'s closing lines say where each interface keeps a conversation and how far back a follow-up reaches, and the review interface's how a follow-up is staged; none of it with memory off. `docs/stack.md` shows 8.0's pipeline and memory lines.
+- `--restart` recreates every service `launch.sh` starts, as its help says; it had recreated only the four databases since 3.0.
+- The coverage and relevance audit, the work since 7.0 first: every compose variable new since 7.0 documented and tested, one coverage exclusion, every fake switch set, no test of a removed part, the tests' own unexecuted lines all skip and failure paths; the desktop client's test count corrected to 474 and the review interface's to 204 in `docs/tests.md`; every tier run and green, Python coverage 100% of 19,181 statements and the shell scripts 1,788 of 1,788 commands.
+
+## v8_0 (8.0.0) -- 2026-10-19
+
+arch8, the conversation remembered -- a follow-up read with the answers before it and restated as the complete question it means, in every client -- and the pipeline chosen by name. Published as `v8_0`, which `setup.sh` pins; `./start.sh` upgrades a 7.0 stack in place.
+
+**Added**
+- arch8's first phase: the follow-up set -- the question a person asks after each of the fifteen answers, with the complete question it means -- asked through 7.0 with nothing remembered (`run_benchmark.py --followups`), and the check in code that will hold a restated follow-up to the words typed. Asked alone, 1 of the 15 follow-ups comes out right through `snippets` and 2 through `ensemble`, where the complete questions all do.
+- arch8's second phase: the pipeline chosen by name -- `PIPELINE_VERSION`, `v7_0_0` the ensemble or `v6_3_1` one run a question, and nothing else different -- said in every record, and on the command line and both start scripts (`--pipeline`); measured against 7.0's own code, no answer changed.
+- arch8's third phase: the agent remembers the conversation -- in the command line's interactive session, the last five answered questions -- and reads a follow-up such as "and by store?" as the complete question it means, held to the words typed in code and shown as "Read as: ..."; measured, 12 and 13 of the 15 follow-ups answered right where 1 and 2 were, every question that stands alone answered as it is alone, at one model call more a question in a conversation.
+- arch8's fourth phase: the conversation over the REST API -- a question names its conversation, the server keeps the last five answered turns of each, under the person who asked, and reads the next question with them; one question at a time a conversation (a second while the first runs is refused), a conversation forgotten on request, after an hour of silence or on a restart, and an answer marked wrong forgotten at once; the answer says which turn it was and how it was read, and so does the snapshot a verdict stages, whose question is now the complete question a follow-up meant.
+- arch8's fifth phase: the conversation in the web page and the desktop window -- each starts one when it opens and a new one on a New conversation button; a follow-up says how it was read, "Read as: ...", under the words typed; the status bar says how many turns the server remembers; the review page shows the words a follow-up was asked as; `--memory N` on both start scripts; the architecture drawn again as `arch_v8.svg`; and the acceptance tier asks a follow-up through the web page and finds it read with the first answer.
+- arch8's sixth phase: the Supervisor's reading of a conversation calibrated -- each model reads the follow-ups after their first answers and each question after one it does not follow up, and the catalog keeps what it got as `remembered`; the reading stays on the standard rung, now measured; and a follow-up's restatement that writes a period out, "fiscal year 2024" for the "FY2024" typed, is no longer discarded.
+
+**Updated**
+- The version is 8.0.0 everywhere it is declared, and `setup.sh` pins `v8_0`.
+- The upgrade notes say what going to `v8_0` changes: a follow-up read with the conversation, clients and servers of either release together, the pipeline's name and what an `ENSEMBLE_ENABLED` already set gets under it, a verdict's two columns, and an older catalog read as it is.
+
+**Published**
+- All twelve tags as `v8_0`; the dataset images are unchanged. The upgrade was rehearsed on a 7.0 stack of its own first, in both orders of a vote and the review service's first start, with a conversation through the web interface, the desktop client and the command line; then `start.sh` upgraded a running 7.0 stack with every check passing.
+
+**Verified**
+- The acceptance tier passed, 14 of 14, from a clean copy. Against the upgraded stack, every question that stands alone was still answered as it is alone, 15 of 15 under each pipeline name, which the release required; follow-ups came out 12 and 13 of 15 right, as before, and every restatement held.
+
 ## v7_0 (7.0.0) -- 2026-10-12
 
 arch7, the ensemble -- the question asked several ways, the pipeline run once per wording, the answers voted on -- and the grain check, in the pipeline itself, so what one run answers changes too. Published as `v7_0`, which `setup.sh` pins; `./start.sh` upgrades a 6.3 stack in place.
@@ -70,6 +119,7 @@ arch7, the ensemble -- the question asked several ways, the pipeline run once pe
 **After publishing** (not in the images)
 - `launch.sh` says how many ways each question will be asked and how many calls the model host is asked at a time, beside the routing it reports.
 - The coverage and relevance audit: every compose variable new since 6.3 documented and tested, one coverage exclusion, every fake switch set, no test of a removed part, the tests' own unexecuted lines all skip and failure paths; every tier run and green, shell coverage 1,742 of 1,742.
+- The next architecture designed, not yet built: `multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md` and its diagram -- the conversation remembered (the last `CONVERSATION_MEMORY` answered turns, five by default, fifteen at most, none at zero; the Supervisor restates a follow-up so that it stands alone, checked in code against the words typed, and the generator sees the earlier SQL as turns; the conversation kept in the serving process, bounded and forgotten, never on disk) and the pipeline chosen by release name at start (`PIPELINE_VERSION`: `v7_0_0` the ensemble, `v6_3_1` one run a question), said in every record; its implementation specification and risks by phase beside it.
 
 ## v6_3 (6.3.0) -- 2026-10-05
 

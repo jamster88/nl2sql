@@ -138,6 +138,12 @@ class ApiSettings:
     # A comment line on the stream this often, so proxies and load balancers
     # that drop idle connections see traffic.
     keepalive_seconds: float = 15.0
+    # Conversations kept at once, and how long an idle one is kept, when the
+    # agent remembers any (CONVERSATION_MEMORY above zero, arch8): the
+    # conversation store's bounds (`conversations.py`), each at least 1, and
+    # reported in /v1/meta.
+    max_conversations: int = 200
+    conversation_ttl_seconds: float = 3600.0
 
     # --- Feedback --------------------------------------------------------
     # The staging database a verdict is written to, as the INSERT-only
@@ -189,6 +195,8 @@ class ApiSettings:
             max_wait_seconds=_env_float("API_MAX_WAIT_SECONDS", 900.0),
             event_stream_timeout_seconds=_env_float("API_EVENT_STREAM_TIMEOUT_SECONDS", 300.0),
             keepalive_seconds=_env_float("API_KEEPALIVE_SECONDS", 15.0),
+            max_conversations=_env_int("API_MAX_CONVERSATIONS", 200),
+            conversation_ttl_seconds=_env_float("API_CONVERSATION_TTL_SECONDS", 3600.0),
             feedback_db_url=_env_url("API_FEEDBACK_DB_URL"),
             docs_enabled=_env_bool("API_DOCS_ENABLED", True),
             log_level=_env_str("API_LOG_LEVEL", "info"),

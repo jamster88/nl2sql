@@ -21,6 +21,7 @@ for _path in (REPO_ROOT, REPO_ROOT / "agent"):
         sys.path.insert(0, str(_path))
 
 from benchmarks import run_benchmark  # noqa: E402
+from benchmarks.followups import FOLLOWUPS  # noqa: E402
 from benchmarks.paraphrases import PARAPHRASES, wordings  # noqa: E402
 from benchmarks.questions import QUESTIONS, by_id  # noqa: E402
 from benchmarks.runner import CORRECT, ERROR, FAILED, WRONG, BenchmarkReport, StageTimer  # noqa: E402
@@ -145,6 +146,18 @@ def test_the_default_configuration_is_every_retrieval_stage_asked_once():
     assert run_benchmark.CONFIGURATIONS["snippets"] == {**dict.fromkeys(SWITCHES, True), "ensemble_enabled": False}
 
 
+def test_a_configuration_the_pipelines_name_forbids_is_refused_with_the_sentence(monkeypatch, tmp_path):
+    """arch8, S3: one run's name, and a configuration that turns the
+    ensemble on, would otherwise run the ensemble and label it v6_3_1."""
+    monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
+    monkeypatch.setenv("PIPELINE_VERSION", "v6_3_1")
+    monkeypatch.delenv("ENSEMBLE_ENABLED", raising=False)
+    settings = run_benchmark.build_settings(run_benchmark.parse_args([]), "snippets")
+    assert (settings.pipeline_version, settings.ensemble_enabled) == ("v6_3_1", False)
+    with pytest.raises(ValueError, match="PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true"):
+        run_benchmark.build_settings(run_benchmark.parse_args([]), "ensemble")
+
+
 def test_the_snippet_store_is_found_on_its_published_port(monkeypatch, tmp_path):
     """The runtime stores' port since 6.3, where all four databases are."""
     monkeypatch.setattr(run_benchmark, "SECRETS", tmp_path)
@@ -166,9 +179,11 @@ class FakeAgent:
         self._state = state or {}
         self._raises = raises
         self.asked: list[str] = []
+        self.turns: list[tuple] = []
 
-    def run(self, question: str):
+    def run(self, question: str, *, turns=()):
         self.asked.append(question)
+        self.turns.append(tuple(turns))
         if self._raises is not None:
             raise self._raises
         return self._state
@@ -540,6 +555,8 @@ def _settings():
         max_rows=50,
         ensemble_enabled=False,
         grain_check_enabled=True,
+        pipeline_version="v7_0_0",
+        conversation_memory=0,
     )
 
 
@@ -556,6 +573,8 @@ class _StubAgent:
 
         self._state = state
         self.asked: list[str] = []
+        self.turns: list[tuple] = []
+        self.screened: list[str] = []
         self.settings = Settings()
         # Untraced unless a test hands it a tracer: MLFLOW_TRACKING_URI unset.
         self.tracer = tracer or Tracer(self.settings)
@@ -563,12 +582,22 @@ class _StubAgent:
     def grains(self) -> dict:
         return self.measured
 
+    def screen(self, question: str, **kwargs):
+        """The complete question's reading, for the resolution rate: the
+        contract the canned state's run is held to, or an empty one."""
+        from nl2sql_agent.state import AnswerContract
+
+        self.screened.append(question)
+        return {"answer_contract": self._state.get("answer_contract") or AnswerContract()}, {}
+
     def run(self, question: str, **kwargs) -> dict:
         self.asked.append(question)
+        self.turns.append(tuple(kwargs.get("turns") or ()))
         # As the real agent does: a trace per run, when there is a tracer
         # that can open one, and its id on the state.
         with self.tracer.run(question) as trace:
-            state = dict(self._state)
+            # A real run's state names the question it answered.
+            state = {"question": question, "asked": question, **self._state}
             if trace is not None:
                 state["trace_id"] = trace.trace_id
         return state
@@ -665,6 +694,50 @@ def test_comparing_configurations_runs_each_one_and_prints_the_table(monkeypatch
         assert configuration in out
 
 
+def _refusing(configuration_refused: str):
+    """`build_settings` as it behaves under v6_3_1: the ensemble refused."""
+    from types import SimpleNamespace
+
+    def build(args, configuration):
+        if configuration == configuration_refused:
+            raise ValueError("PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it")
+        return SimpleNamespace(**{**vars(_settings()), "pipeline_version": "v6_3_1"})
+
+    return build
+
+
+def test_a_configuration_refused_by_the_name_stops_the_run_before_anything_is_asked(monkeypatch):
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "build_settings", _refusing("ensemble"))
+    with pytest.raises(SystemExit) as stopped:
+        _drive(monkeypatch, {"sql": "SELECT 1"}, argv=["--only", "B01", "--config", "ensemble"], keep_settings=True)
+    assert str(stopped.value) == (
+        "error: --config ensemble is refused: PIPELINE_VERSION v6_3_1 asks each question once; "
+        "ENSEMBLE_ENABLED=true contradicts it"
+    )
+
+
+def test_a_comparison_under_one_runs_name_runs_the_four_and_says_why_not_the_fifth(monkeypatch, capsys):
+    """S6: the comparison is four rows and a footer, not a refusal."""
+    import benchmarks.run_benchmark as rb
+
+    monkeypatch.setattr(rb, "build_settings", _refusing("ensemble"))
+    code, agents = _drive(
+        monkeypatch,
+        {"sql": "SELECT 1", "result": {"rows": [[10]], "columns": ["n"], "truncated": False}, "attempts": 1,
+         "pipeline": "v6_3_1"},
+        argv=["--only", "B01", "--compare"], keep_settings=True,
+    )
+    out = capsys.readouterr().out
+    assert code == 0 and len(agents) == 4
+    assert "\nsnippets  (pipeline v6_3_1)\n" in out
+    comparison = out[out.index("comparison"):]
+    assert comparison.splitlines()[3] == "  pipeline v6_3_1"
+    assert comparison.rstrip().endswith(
+        "ensemble was not run: PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it")
+
+
 def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys, tmp_path):
     out_path = tmp_path / "results.json"
     _drive(
@@ -683,6 +756,9 @@ def test_the_json_file_carries_every_question_and_the_trace(monkeypatch, capsys,
     [result] = payload["configurations"][0]["results"]
     assert result["id"] == "B01"
     assert result["wording"] == 0
+    # The configuration's name, and the run's own as its state said it --
+    # here a state no agent seeded, so none.
+    assert (payload["configurations"][0]["pipeline"], result["pipeline"]) == ("v7_0_0", "")
     assert payload["configurations"][0]["stability"] is None
     assert result["model_calls"] == {"generate_sql": 1}
     assert result["narrative_score"] == 1.0
@@ -739,6 +815,103 @@ def test_one_wrong_rewording_makes_its_question_unstable_and_fails_the_run(monke
     }
     assert [(r["id"], r["wording"]) for r in payload["results"][:4]] == [("B01", w) for w in range(4)]
     assert payload["results"][2]["question"] == missed
+
+
+class _Recording(_Reference):
+    """A reference database that remembers which query it was asked."""
+
+    def __init__(self, rows) -> None:
+        super().__init__(rows)
+        self.asked: list[str] = []
+
+    def run_select(self, sql: str):
+        self.asked.append(sql)
+        return super().run_select(sql)
+
+
+def test_a_follow_up_is_asked_in_the_words_typed_and_scored_against_the_question_it_means():
+    """arch8 Phase 0: nothing remembered, so the fragment is asked alone,
+    as 7.0 asks every question; its answer is the complete question's."""
+    followup = FOLLOWUPS["B07"]
+    database = _Recording([[34.2]])
+    agent = FakeAgent({"sql": "SELECT 34.2 FROM t WHERE d.fiscal_year = 2025", "result": {"rows": [[34.2]]},
+                       "attempts": 1})
+    result = run_benchmark.run_followup(agent, database, followup, StageTimer())
+    assert agent.asked == [followup.fragment]
+    assert database.asked == [followup.reference_sql]
+    assert (result.question, result.label, result.followup_of, result.category, result.outcome) == (
+        followup.fragment, "B07.f", "B07", "grain", CORRECT)
+    assert result.keeps == {"fiscal_month_num = 12": False, "fiscal_year = 2025": True}
+
+
+def test_a_follow_up_that_crashed_kept_no_filter():
+    followup = FOLLOWUPS["B07"]
+    result = run_benchmark.run_followup(
+        FakeAgent(raises=RuntimeError("connection reset")), _Reference([[34.2]]), followup, StageTimer())
+    assert (result.outcome, result.label) == (FAILED, "B07.f")
+    assert result.keeps == {"fiscal_month_num = 12": False, "fiscal_year = 2025": False}
+
+
+def test_the_follow_up_set_asks_each_questions_follow_up_and_reports_the_accuracy(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "followups.json"
+    code, agents = _drive(monkeypatch, RIGHT, argv=["--only", "B04", "B07", "--followups", "--json", str(out_path)])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert agents[0].asked == [FOLLOWUPS["B04"].fragment, FOLLOWUPS["B07"].fragment]
+    assert "  B04.f [calendar] The same for FY2024?..." in out, "each follow-up is named as it is asked"
+    assert "turns remembered     0  (--memory; at 0 each follow-up is asked alone" in out
+    assert "follow-up accuracy   2/2  (100.0%)" in out
+    assert "filters kept         0/2  the first turn's, in the delivered SQL" in out
+    assert "B07.f  grain      ok     And for Frozen Foods?  kept 0/2" in out
+    assert "s for 2 follow-ups" in out
+    assert "STABILITY" not in out
+
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["followups"] == {
+        "memory": 0, "accuracy": 1.0, "correct": 2, "total": 2, "filters_kept": 0, "filters": 2, "consistency": 0.0,
+        # Nothing remembered: nothing read in context, so no resolution.
+        "resolution_rate": None, "not_resolved": {},
+    }
+    assert payload["stability"] is None
+    first, second = payload["results"]
+    assert (first["id"], first["question"], first["followup_of"], first["keeps"]) == (
+        "B04", FOLLOWUPS["B04"].fragment, "B04", {})
+    assert second["keeps"] == {"fiscal_month_num = 12": False, "fiscal_year = 2025": False}
+
+
+def test_a_follow_up_whose_reference_keeps_no_filter_says_nothing_of_filters(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "followups.json"
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--followups", "--json", str(out_path)])
+    out = capsys.readouterr().out
+    assert "follow-up accuracy   1/1" in out and "filters kept" not in out
+    assert json.loads(out_path.read_text())["configurations"][0]["followups"]["consistency"] is None
+
+
+def test_a_run_without_the_follow_up_set_has_none_in_its_json(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "results.json"
+    _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--json", str(out_path)])
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["followups"] is None
+    assert (payload["results"][0]["followup_of"], payload["results"][0]["keeps"]) == ("", {})
+
+
+def test_the_follow_up_set_and_the_paraphrase_set_are_one_or_the_other(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        run_benchmark.parse_args(["--followups", "--paraphrase-set"])
+    assert exit_.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_the_depth_is_the_settings_unless_the_flag_says_and_within_the_bounds(capsys):
+    """Unsaid, the depth is CONVERSATION_MEMORY's, read when the run's
+    settings are; 0 to 15 otherwise, as the agent's own bound."""
+    assert run_benchmark.parse_args([]).memory is None
+    assert run_benchmark.parse_args(["--followups", "--memory", "0"]).memory == 0
+    assert run_benchmark.parse_args(["--followups", "--memory", "15"]).memory == 15
+    with pytest.raises(SystemExit) as exit_:
+        run_benchmark.parse_args(["--followups", "--memory", "16"])
+    assert exit_.value.code == 2
+    assert "--memory 16: it must be 0 to 15" in capsys.readouterr().err
 
 
 def test_verbose_puts_each_agent_step_on_stderr(monkeypatch, capsys):
@@ -1197,3 +1370,117 @@ def test_a_run_reports_the_check_as_on_and_the_references_as_passing_by_default(
     out = capsys.readouterr().out
     assert code == 0
     assert "references refused   none" in out and "runs sent to repair  0: ended right 0, wrong 0, failed 0" in out
+
+
+# ---------------------------------------------------------------------------
+# arch8 Phase 2: follow-ups read in the light of their first turn, and the
+# independence
+# ---------------------------------------------------------------------------
+
+from nl2sql_agent.memory import MemoryNote  # noqa: E402
+from nl2sql_agent.state import AnswerContract  # noqa: E402
+
+READ = {**RIGHT, "answer_contract": AnswerContract(measure="net sales"),
+        "memory": MemoryNote(shown=1, resolved=True, read_as="What were our net sales by banner in FY2025?")}
+
+
+def test_with_memory_each_follow_up_is_asked_after_its_first_turn_and_handed_it(monkeypatch, capsys, tmp_path):
+    out_path = tmp_path / "followups.json"
+    code, agents = _drive(monkeypatch, READ, argv=["--only", "B14", "--followups", "--memory", "5", "--json",
+                                                   str(out_path)])
+    agent = agents[0]
+    assert agent.asked == [by_id("B14").question, FOLLOWUPS["B14"].fragment]
+    assert agent.turns[0] == () and [turn.index for turn in agent.turns[1]] == [1]
+    assert agent.turns[1][0].question == by_id("B14").question
+    assert agent.screened == [FOLLOWUPS["B14"].standalone], "the complete question read, for the resolution rate"
+
+    out = capsys.readouterr().out
+    assert "turns remembered     5  (--memory; each follow-up asked after its first turn, which is remembered)" in out
+    assert "first turns right    1/1" in out
+    assert "resolution rate      1/1  restated, held, and read as the complete question is (1 held)" in out
+    assert "read as: What were our net sales by banner in FY2025?" in out
+
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert (payload["followups"]["memory"], payload["followups"]["resolution_rate"]) == (5, 1.0)
+    assert payload["results"][0]["conversation"] == {
+        "turn": 2, "remembered": 1, "resolved": True, "read_as": "What were our net sales by banner in FY2025?",
+        "reason": "", "first": "correct", "contract": True,
+    }
+
+
+def test_a_follow_up_not_resolved_is_counted_by_why(monkeypatch, capsys):
+    unread = {**RIGHT, "answer_contract": AnswerContract(), "memory": MemoryNote(shown=1, reason="C2 literals: 'q3' missing")}
+    _drive(monkeypatch, unread, argv=["--only", "B06", "B14", "--followups", "--memory", "1"])
+    out = capsys.readouterr().out
+    assert "resolution rate      0/2" in out
+    assert "not resolved         C2 literals 2" in out
+    assert "           C2 literals: 'q3' missing" in out
+
+
+def test_a_first_turn_that_answered_nothing_leaves_its_follow_up_alone(monkeypatch, capsys):
+    refused = {"verdict": "out_of_domain", "answer": "no.", "result": None}
+    code, agents = _drive(monkeypatch, refused, argv=["--only", "B14", "--followups", "--memory", "5"])
+    assert agents[0].turns == [(), ()] and agents[0].screened == []
+    assert "first turns right    0/1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(("mode", "after"), [("previous", ["B02", "B01"]), ("same", ["B01", "B02"])])
+def test_the_independence_asks_each_question_alone_then_after_another(monkeypatch, capsys, tmp_path, mode, after):
+    """arch8 section 11: every question alone, then as a second turn --
+    after the one before it, the first after the last, or after itself --
+    and whether it came out exactly as it did alone."""
+    out_path = tmp_path / "independence.json"
+    code, agents = _drive(monkeypatch, RIGHT, argv=["--only", "B01", "B02", "--independence", mode, "--memory", "5",
+                                                    "--json", str(out_path)])
+    agent = agents[0]
+    assert agent.asked == [by_id("B01").question, by_id("B02").question] * 2
+    assert [[turn.question for turn in turns] for turns in agent.turns[2:]] == [
+        [by_id(first).question] for first in after]
+    out = capsys.readouterr().out
+    assert "  B01.i [schema] " in out and "as alone" in out
+    assert "answered as alone    2/2  (100.0%)" in out
+    assert "model calls          0 as second turns, 0 alone" in out
+    payload = json.loads(out_path.read_text())["configurations"][0]
+    assert payload["independence"] == {"fraction": 1.0, "as_alone": 2, "total": 2, "restated": 0}
+    assert [(r["id"], r["after"], r["independent"]) for r in payload["results"][2:]] == [
+        ("B01", after[0], True), ("B02", after[1], True)]
+
+
+def test_a_question_memory_changed_is_named(monkeypatch, capsys):
+    """A second turn that came out differently, or was restated though it
+    stood alone, is listed with what it was read as."""
+    import benchmarks.run_benchmark as rb
+
+    states = iter([RIGHT, RIGHT, {**READ, "result": {"rows": [[11]], "columns": ["n"], "truncated": False}}, RIGHT])
+
+    class _Changing(_StubAgent):
+        def run(self, question: str, **kwargs) -> dict:
+            self._state = next(states)
+            return super().run(question, **kwargs)
+
+    monkeypatch.setattr(rb, "reference_rows", lambda db, q: [[10]])
+    monkeypatch.setattr(rb, "build_settings", lambda args, configuration: _settings())
+    import nl2sql_agent.database as db_module
+    import nl2sql_agent.graph as graph_module
+
+    monkeypatch.setattr(db_module, "Database", lambda *a, **k: None)
+    monkeypatch.setattr(graph_module, "Nl2SqlAgent", lambda settings, **kwargs: _Changing({}))
+    assert rb.main(["--only", "B01", "B02", "--independence", "--memory", "5"]) == 1
+    out = capsys.readouterr().out
+    assert "answered as alone    1/2  (50.0%)" in out
+    assert "restated             1/2  though each stands alone" in out
+    assert "    B01.i  after B02  NOT as alone What were our net sales by banner in FY2025?" in out
+
+
+def test_with_nothing_remembered_the_second_turn_is_handed_nothing(monkeypatch, capsys):
+    code, agents = _drive(monkeypatch, RIGHT, argv=["--only", "B01", "--independence", "same", "--memory", "0"])
+    assert agents[0].turns == [(), ()]
+    assert "answered as alone    1/1" in capsys.readouterr().out
+
+
+def test_the_rows_compared_are_a_runs_whatever_shape_its_result_crossed_in():
+    from nl2sql_agent.state import QueryResult
+
+    assert run_benchmark.rows_of({"result": QueryResult(columns=["n"], rows=[[1]])}) == [[1]]
+    assert run_benchmark.rows_of({"result": {"columns": ["n"], "rows": [[2]]}}) == [[2]]
+    assert run_benchmark.rows_of({"result": None}) is None and run_benchmark.rows_of(None) is None

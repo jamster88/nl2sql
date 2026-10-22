@@ -59,18 +59,21 @@ COLUMNS = (
     "comment",
     "agent_version",
     "ensemble",
+    "pipeline",
+    "conversation",
 )
 
-#: The one column a store may not have yet. The review service adds it when
-#: it starts (7.0), and the review service is a compose profile: a stack
-#: upgraded and started without it holds the 6.3 table until the day it is.
-#: This process cannot add a column -- it is the INSERT-only writer -- so it
-#: asks the catalog whether the column is there and leaves it out until it is
+#: The columns a store may not have yet: `ensemble` (7.0), `pipeline` and
+#: `conversation` (8.0). The review service adds each when it starts, and
+#: the review service is a compose profile: a stack upgraded and started
+#: without it holds the older table until the day it is. This process cannot
+#: add a column -- it is the INSERT-only writer -- so it asks the catalog
+#: which are there and leaves the others out until they are
 #: (`PostgresSink.columns`).
-OPTIONAL = "ensemble"
+OPTIONAL = ("ensemble", "pipeline", "conversation")
 
 #: The columns Postgres stores as JSON, encoded on the way in.
-JSON_COLUMNS = ("columns", "ensemble")
+JSON_COLUMNS = ("columns", "ensemble", "conversation")
 
 
 class FeedbackUnavailable(Unavailable, RuntimeError):
@@ -96,6 +99,11 @@ class Capture:
     #: The wire `Ensemble` as JSON -- every wording's run, the Judge's
     #: verdicts, the vote -- and `{}` for an answer one run gave.
     ensemble: dict[str, Any] = field(default_factory=dict)
+    #: The pipeline that answered, by name (arch8): `Answer.pipeline`.
+    pipeline: str = ""
+    #: The wire `Conversation` as JSON -- the turn, the words typed and how
+    #: they were read (arch8) -- and `{}` for a question asked alone.
+    conversation: dict[str, Any] = field(default_factory=dict)
 
     def values(self, columns: tuple[str, ...] = COLUMNS) -> list[Any]:
         """Positional values for `columns`, with the JSON columns encoded."""
@@ -152,9 +160,9 @@ class PostgresSink:
     def __init__(self, url: str, *, connect=None) -> None:
         self.url = url
         self._connect = connect or self._psycopg_connect
-        # Whether the table has `OPTIONAL` yet: unknown until a vote asks,
-        # and asked again on every vote until the answer is yes.
-        self._whole = False
+        # Which of `OPTIONAL` the table has: None until a vote asks, and
+        # asked again on every vote until it is all of them.
+        self._present: frozenset[str] | None = None
         self._said = False
 
     @staticmethod
@@ -163,28 +171,38 @@ class PostgresSink:
 
         return psycopg.connect(url, connect_timeout=5)
 
-    def columns(self, conn) -> tuple[str, ...]:
-        """The columns this store's table takes: all of them, or all but `OPTIONAL`.
+    @property
+    def _whole(self) -> bool:
+        return self._present == frozenset(OPTIONAL)
 
-        Asked of the catalog, which shows this role every column of a table
-        it may insert into. A yes is kept for the life of the process; a no
-        is asked again at the next vote, so the first one after the review
-        service has started carries its ensemble, and it is said once in the
-        log, because a snapshot without its runs is otherwise silent.
+    def columns(self, conn) -> tuple[str, ...]:
+        """The columns this store's table takes: all of them, or all but
+        the `OPTIONAL` ones it lacks.
+
+        Asked of the catalog in one query, which shows this role every column
+        of a table it may insert into. A table with all of them is kept for
+        the life of the process; one without is asked again at the next
+        vote, so the first one after the review service has started carries
+        them all, and what it lacks is said once in the log, because a
+        snapshot without its runs, its pipeline or its conversation is
+        otherwise silent.
         """
         if not self._whole:
-            self._whole = conn.execute(
-                "SELECT 1 FROM information_schema.columns WHERE table_name = %s AND column_name = %s",
-                (TABLE, OPTIONAL),
-            ).fetchone() is not None
-            if not self._whole and not self._said:
+            rows = conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s AND column_name = ANY(%s)",
+                (TABLE, list(OPTIONAL)),
+            ).fetchall()
+            self._present = frozenset(row[0] for row in rows)
+            lacking = [column for column in OPTIONAL if column not in self._present]
+            if lacking and not self._said:
                 self._said = True
+                named = [repr(column) for column in lacking]
                 log.warning(
-                    "the staging table has no %r column yet, so verdicts are recorded without "
-                    "the ensemble's record until the review service has started once",
-                    OPTIONAL,
+                    "the staging table has no %s column yet, so verdicts are recorded without "
+                    "them until the review service has started once",
+                    " or ".join([", ".join(named[:-1]), named[-1]]) if len(named) > 1 else named[0],
                 )
-        return COLUMNS if self._whole else tuple(c for c in COLUMNS if c != OPTIONAL)
+        return tuple(c for c in COLUMNS if c not in OPTIONAL or c in self._present)
 
     def record(self, capture: Capture) -> str:
         """Insert the verdict, replacing the pending one for that job.
@@ -221,10 +239,10 @@ class PostgresSink:
         """One delete and insert, into the columns the table has.
 
         `_ASK_AGAIN` comes back when the table turned out to lack a column
-        this process had seen it with -- a store restored from before 7.0
-        under a running API -- and the transaction is rolled back for the
-        caller to try once more, the catalog asked afresh. Once: a second
-        refusal is the store's to explain.
+        this process had seen it with -- a store restored from an older
+        release under a running API -- and the transaction is rolled back
+        for the caller to try once more, the catalog asked afresh. Once: a
+        second refusal is the store's to explain.
         """
         columns = self.columns(conn)
         statement = (
@@ -239,9 +257,9 @@ class PostgresSink:
             if _is_unique_violation(exc):
                 conn.rollback()
                 raise AlreadyReviewed(capture.job_id) from exc
-            if again and self._whole and _sqlstate(exc) == UNDEFINED_COLUMN:
+            if again and self._present and _sqlstate(exc) == UNDEFINED_COLUMN:
                 conn.rollback()
-                self._whole = False
+                self._present = None
                 return _ASK_AGAIN
             raise
 

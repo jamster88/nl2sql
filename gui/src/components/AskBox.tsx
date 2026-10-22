@@ -5,6 +5,11 @@
  * answers are sentences, and a single-line box tells the user to type three
  * words. Enter submits and shift-Enter adds a line, which is what every
  * other message box does.
+ *
+ * Beside it, when the server remembers a conversation (8.0), "New
+ * conversation": the next question is read without the ones before it. The
+ * page only takes a new id; the server forgets the old conversation when it
+ * has been idle long enough.
  */
 
 import { useState, type FormEvent, type KeyboardEvent } from "react";
@@ -29,9 +34,11 @@ export interface AskBoxProps {
   /** Hidden once the user has asked something; examples are for an empty page. */
   showExamples: boolean;
   maxLength?: number;
+  /** Start a new conversation. The button is drawn only when this is given. */
+  onNewConversation?: (() => void) | undefined;
 }
 
-export function AskBox({ onAsk, onCancel, busy, showExamples, maxLength = 2000 }: AskBoxProps) {
+export function AskBox({ onAsk, onCancel, busy, showExamples, maxLength = 2000, onNewConversation }: AskBoxProps) {
   const [question, setQuestion] = useState("");
 
   function submit(event?: FormEvent): void {
@@ -76,6 +83,17 @@ export function AskBox({ onAsk, onCancel, busy, showExamples, maxLength = 2000 }
         ) : (
           <button type="submit" className="button button-primary" disabled={!question.trim()}>
             Ask
+          </button>
+        )}
+        {onNewConversation && (
+          <button
+            type="button"
+            className="button button-quiet ask-new"
+            onClick={onNewConversation}
+            disabled={busy}
+            title="The next question is read without the ones before it"
+          >
+            New conversation
           </button>
         )}
       </div>

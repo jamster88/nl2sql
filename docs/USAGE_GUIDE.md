@@ -527,8 +527,13 @@ docker compose run --rm agent --json "..."                      # the whole run,
 docker compose run --rm agent --json "..." | jq -r .sql         # just the SQL
 ```
 
-Each question is answered on its own -- the agent does not remember the
-previous one -- so ask complete questions rather than follow-ups.
+The interactive session is a conversation (8.0): each question is read
+with the last five answered ones (`--memory N`; 0 asks every question
+alone), so a follow-up such as "and by store?" is answered as the complete
+question it means, and the answer opens with "Read as: ..." when the agent
+restated it. A question given on the command line is asked alone. A wrong
+answer stays among the turns until the session ends, so ask again in full
+or start a new session rather than follow it up.
 
 `--json` carries everything: the Supervisor's verdict and intent, what a
 complete answer had to contain, the retrieved knowledge and examples, the
@@ -576,10 +581,12 @@ the query is one attempt more. `GRAIN_CHECK_ENABLED=false` turns it off.
 | `--max-attempts N` | SQL generations before giving up |
 | `--sample-rows N` | Sample rows per table shown to the model |
 | `--database-url URL`, `--vector-db-url URL`, `--context-db-url URL`, `--snippet-db-url URL` | Point at other databases |
-| `--ensemble`, `--no-ensemble` | Ask through the ensemble, arch7 (on by default) |
+| `--pipeline v7_0_0`, `--pipeline v6_3_1` | The pipeline that answers, by name: the ensemble, or one run a question (`v7_0_0` by default) |
+| `--ensemble`, `--no-ensemble` | Ask through the ensemble, arch7 (by default what `--pipeline` implies: on under `v7_0_0`, off under `v6_3_1`) |
 | `--paraphrases N` | Rewordings in the ensemble's first wave, 3 to 10 |
 | `--parallel-calls N` | Model calls in flight to the Ollama host at once: what the host serves, no more (1 by default) |
 | `--fuse-columns`, `--no-fuse-columns` | Widen the chosen rows with columns other agreeing runs carried (on by default) |
+| `--memory N` | Earlier answered questions of the interactive session each question is read with, 0 to 15 (5 by default); 0 asks every question alone |
 | `--json` | The whole run as JSON |
 | `--quiet` | Only the final answer |
 
@@ -1251,6 +1258,38 @@ and moves nothing in the databases:
   the directory's image installs; an older `nl2sql-ldap` under this
   checkout's compose file is unhealthy.
 
+Upgrading to `v8_0_1` moves nothing: it is 8.0 with seven corrections on
+the memory path ([the changelog](CHANGELOG.md#v8_0_1-801----2026-10-21)),
+pulled by `./start.sh` as any newer tags are; the desktop jar is the one
+to replace on purpose, since 8.0.0's cannot ask a 7.0 server.
+
+Upgrading to `v8_0` adds a conversation and a pipeline's name, and moves
+nothing in the databases but two columns:
+
+- **A follow-up is read with the conversation.** The web interface and the
+  desktop client keep one per window, and the server reads a question with
+  its last `CONVERSATION_MEMORY` answered turns (five by default, fifteen at
+  most, none at 0; `--memory N` on either script for one run). A question
+  in a conversation costs one Supervisor call more; one asked alone costs
+  what it did. The turns live in the API's memory, so a restart forgets
+  every conversation ([Remembering the
+  conversation](../agent/README.md#remembering-the-conversation-arch8)).
+- **Clients and servers of either release work together.** A 7.0 client
+  asks every question alone; an 8.0 client asks a 7.0 server as a 7.0
+  client did.
+- **The pipeline has a name**, `PIPELINE_VERSION`: `v7_0_0` by default,
+  which answers a question asked alone as 7.0.0 did, or `v6_3_1`, one run a
+  question. `ENSEMBLE_ENABLED=false` already in `.env` is one run, as
+  before, and `PIPELINE_VERSION=v6_3_1` is the same answer under a name
+  every record carries; `ENSEMBLE_ENABLED=true` beside `v6_3_1` is refused
+  at start.
+- **A verdict carries its pipeline and its conversation** once the review
+  service has started at 8.0, which adds the two columns; a vote cast
+  before then is recorded without them.
+- **A calibrated catalog of your own from before 8.0** is read as it is:
+  the Supervisor's reading of a conversation goes to `OLLAMA_MODEL` until
+  `python models/calibrate.py --tasks supervisor` measures it.
+
 An agent from before `v6_0` does not check sessions, so pinned with
 `--agent-tag`, its API answers according to its own `API_TOKEN`, signed in
 or not. An agent or a page from before `v6_1` does not know the stack's CA,
@@ -1332,6 +1371,8 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--no-browser` | Print the URLs instead of opening them |
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only |
+| `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` asks every question several ways, `v6_3_1` once (`PIPELINE_VERSION` in `.env` for good) |
+| `--memory N` | Read each question with the last N answered turns of its conversation, this run only: 0 to 15, 0 asks every question alone (`CONVERSATION_MEMORY` in `.env` for good) |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |
@@ -1351,6 +1392,8 @@ names in [Where everything is](#where-everything-is) (`api`, `gui`,
 | `--load-golden` | Load the golden question document into the context store and its vectors before anything is asked |
 | `--no-rag` | The retail database only |
 | `--no-auth` | Without sign-in, this run only: no directory, no auth service, every page open |
+| `--pipeline NAME` | Answer with that release's pipeline, this run only: `v7_0_0` or `v6_3_1`; a name the agent would refuse, or `ENSEMBLE_ENABLED=true` beside `v6_3_1`, stops the script before anything starts |
+| `--memory N` | Read each question with the last N answered turns of its conversation, this run only; anything but 0 to 15 stops the script before anything starts, and the turns remembered are said beside the pipeline and, in the closing lines, beside each interface that keeps a conversation |
 | `--restart` | Recreate the containers |
 | `-q`, `--quiet` | Only print problems |
 | `-h`, `--help` | The usage |

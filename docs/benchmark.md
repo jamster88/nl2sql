@@ -7,6 +7,7 @@ python benchmarks/run_benchmark.py                   # 15 questions, accuracy th
 python benchmarks/run_benchmark.py --config ensemble # the same, through the ensemble (arch7)
 python benchmarks/run_benchmark.py --compare         # schema-only vs ... vs snippets vs ensemble
 python benchmarks/run_benchmark.py --paraphrase-set  # each question four ways: the stability
+python benchmarks/run_benchmark.py --followups       # each question's follow-up: the follow-up accuracy
 ```
 
 Since v5.2 the report also says which model answered each agent at each
@@ -1063,3 +1064,305 @@ turns. A question either way is what rewording a prompt gives or takes,
 whatever the rewording says. So the matcher is measured on what it offers,
 where nothing is on an edge, and the configuration that ships was run on
 sixty wordings both ways.
+
+## The follow-up set
+
+Phase 0 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
+-- the design that remembers the conversation, so that "and by store?" is
+read as the complete question it means -- measures the premise it is
+argued from, before anything is built on it: how often the pipeline, which
+answers every question alone, answers a follow-up written as people write
+them. Each of the fifteen questions has a second turn written by hand
+([`benchmarks/followups.py`](../benchmarks/followups.py)): a fragment that
+borrows a measure, a period, an entity or a filter from the first turn or
+its answer, the complete question it means, and that question's reference
+query. The fragment is asked in the words typed, with nothing remembered
+-- what 7.0 does with every follow-up -- and scored against the complete
+question's reference. The **follow-up accuracy** is the fraction right.
+[`benchmarks/README.md`](../benchmarks/README.md#the-follow-up-set) has how
+the follow-ups were written and what the report and `--json` carry.
+
+**Measured 2026-10-16** with the agent as 7.0 ships, against the running
+stack, `--memory 0`: each fragment asked alone, and the report saying so.
+Beside it, the fifteen asked complete on 2026-10-12
+([What a question names](#what-a-question-names)):
+
+| | `snippets` | `ensemble` |
+|---|---|---|
+| the fifteen, asked complete | 15/15 | 15/15 |
+| **follow-up accuracy**, nothing remembered | **1/15** | **2/15** |
+| runnable SQL | 12/15 | 12/15 |
+| refused before any SQL | 3: B03, B10, B11 | 3: B03, B10, B11 |
+| the first turns' filters kept | 3/14 | 3/14 |
+| model calls | 60 | 284 |
+| total, median | 543.9s, 37.8s | 1925.6s, 88.7s |
+
+**The premise holds.** The risks by phase expected the number to be low,
+and it is: one or two follow-ups of fifteen right, where the same fifteen
+asked complete are all right. Three fragments never reach the generator.
+"What's the average square footage for each?", "What were their product
+names and brands?" and "And how many baskets did each have?" are screened
+as out of domain: a pronoun with nothing for it to stand for reads as a
+question the database cannot answer. The other twelve are answered, and
+each answers a different question. "And by banner?" counts each banner's
+stores, where it meant their net sales in fiscal year 2025. "Break that
+down by department." sums net sales, where it meant products and how many
+are private label. "What were its top 2 categories?" ranks the categories
+of every department, not Meat & Seafood's. "Which vendor paid us the most
+in SCAN_BACK?" ranks every year's allowances, not fiscal 2025's. Through
+`snippets`, "The same for FY2024?" gives FY2024 month by month.
+
+**The right shape is no sign.** B02, B05, B08, B14 and B15 return as many
+rows as their references in both configurations: a breakdown by the
+dimension asked for, over the wrong measure or the wrong period. A person
+reading the answer sees the table they expected.
+
+**What was kept is a year the generator wrote unasked.** The delivered
+SQL kept 3 of the 14 filters the first turns set, the same three in both
+configurations: `fiscal_year = 2025` in B05, B07 and B15, a year the
+generator gave a fragment that named none, as it did not in B06, B09, B12
+or B14. Nothing else was kept: not `'Meat & Seafood'`, not fiscal month
+12, not B08's `fiscal_year = 2024`, not B02's private label, not B10's
+top five.
+
+**The ensemble does not see it.** Where its readings of a fragment
+agree, they agree on a wrong question as readily as on the right one:
+B02's runs are unanimous and wrong, B09's a majority and wrong. Where the
+fragment says too little, they scatter: B06's seven readings of "What
+about Q3?" ask six different questions, from the quarter's dates to its
+market share. Five follow-ups are contested, the Judge accepting none of
+their answers, and an answer is given for each all the same. Of its two
+right, B01 is right in both configurations: after "How many stores are
+there?", "And how many in each state?" has one likely reading and it is
+the one meant. B04 is the Judge's, which overruled the runs' wrong answer
+in the second wave. The ensemble's one gain cost 224 model calls more.
+
+**What it means for arch8.** Retrieval alone guesses a follow-up right
+once or twice in fifteen, so remembering the conversation is bought for
+accuracy, as arch8 argues, and not only for consistency and the record.
+Phase 2 measures five turns remembered against these two numbers, under
+both pipelines.
+
+### The checks in code against the fifteen
+
+The second number Phase 0 owes
+([risks by phase](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_risks_by_phase.md),
+S1): how many of the fifteen standalones, each a complete question a
+person wrote for a fragment, the checks in code would have discarded --
+the checks a model's restatement will be held to before it becomes the
+question the pipeline answers ([`memory.py`](../agent/nl2sql_agent/memory.py),
+`resolve`: C1 numbers, C2 literals, C3 polarity, C4 shape, the fidelity
+gate's extractors in subset form). **None of 15**, with the word lists as
+the paraphrase set grew them; nothing was added.
+[`tests/benchmarks/test_followups.py`](../tests/benchmarks/test_followups.py)
+holds it. Four fragments carry a literal the standalone had to keep
+(`FY2024`, `Q3`, `Frozen Foods`, `SCAN_BACK`), three a number (`2`, and
+the `2024` and the `3` inside `FY2024` and `Q3`) and four a direction
+(`top`, `most`, `highest`, `fewest`). Read the number for what it is: the standalones were written
+with arch8's rules in view, so they are kinder to the checks than a
+model's restatements will be; Phase 2's rejections by check are the number
+for those.
+
+**Grown at 8.0.1**, from probing `resolve` with restatements a model
+plausibly writes rather than from the set: an ordinal that points at a row
+of the last answer ("the second one", "just the first") is no number to C1,
+and the "one" after it none either; "other than", "apart from" and "aside
+from" are a negation to C3 on either side; and "the 2024 fiscal year" is
+FY2024 to C2, as "fiscal year 2024" was. The fidelity gate's F1-F3 are
+untouched, so a question asked alone is screened as it was; none of the
+fifteen fragments or standalones carries any of the three, so the number
+above and the catalog's `remembered` counts are unmoved.
+
+## The pipeline by name
+
+Phase 1 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
+names the pipeline -- `PIPELINE_VERSION`, the release that built it:
+`v7_0_0` the ensemble, `v6_3_1` one run a question and nothing else
+different -- and lays the plumbing memory will use, with nothing yet handed
+a turn: every run's state carries the words typed, its turns (none), how
+they were read and the name, and the Supervisor's and the generator's
+prompts each gain a placeholder that renders empty. Its acceptance is that
+none of it changes an answer: under `v7_0_0` the benchmark is 7.0's
+ensemble to the SQL, and under `v6_3_1` 7.0's `snippets`.
+
+**Measured 2026-10-17**, untraced, on the host against the running 7.0
+stack, routed by the committed catalog: 7.0's own code, run from a `git
+archive` of the commit Phase 1 started from, and then Phase 1's:
+
+| | Right | Same outcome | Same SQL | Same attempts, rung and model calls | Total | Median |
+|---|---|---|---|---|---|---|
+| 7.0, `snippets` | 15/15 | -- | -- | -- | 384.9s | 26.9s |
+| Phase 1, `snippets` under `v6_3_1` | 15/15 | 15 of 15 | 15 of 15 | 15 of 15 | 383.3s | 26.9s |
+| 7.0, `ensemble` | 15/15 | -- | -- | -- | 1964.8s | 127.4s |
+| Phase 1, `ensemble` under `v7_0_0` | 15/15 | 15 of 15 | 15 of 15 | 15 of 15 | 1973.8s | 127.4s |
+
+**No answer moved.** Every question came out the same way under each name
+as under 7.0: the same outcome, SQL, attempts, rung and number of model
+calls. The ensemble's record moved with none of it -- all fifteen
+unanimous both times, the same 45 rewordings discarded by the same checks
+(F3 13, F4 27, F5 5), the Judge setting the same one answer aside, no
+second wave, 338 model calls. The two prompts were held offline as well:
+rendered from 7.0's own module and from Phase 1's with the same inputs,
+the Supervisor's and the generator's are the same byte for byte. Under
+`v6_3_1`, `--config ensemble` is refused before anything is asked, with the
+agent's own sentence, and `--compare` runs the four one-run configurations
+and says why not the fifth
+([`benchmarks/README.md`](../benchmarks/README.md#comparing-configurations)).
+
+## Memory in the agent
+
+Phase 2 of [arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)
+builds the conversation into the agent: the Supervisor reads a question in
+the light of the turns before it and restates a follow-up so that it stands
+alone, the restatement held to the words typed in code; the generator is
+shown the earlier questions with their SQL; and the answer opens with how a
+follow-up was read. It is measured on the follow-up set with five turns
+remembered, against [the follow-up set](#the-follow-up-set)'s numbers with
+none, and on the **independence**: each of the fifteen asked again as the
+second turn of a conversation -- after the question before it in the list,
+and after itself -- which must come out exactly as alone, 15 of 15.
+
+**Measured 2026-10-18**, untraced, on the host against the running 7.0
+stack, routed by the committed catalog, `--memory 5`:
+
+| | `snippets` under `v6_3_1` | `ensemble` under `v7_0_0` |
+|---|---|---|
+| follow-up accuracy, nothing remembered (Phase 0) | 1/15 | 2/15 |
+| **follow-up accuracy, five remembered** | **12/15** | **13/15** |
+| first turns right | 15/15 | 15/15 |
+| resolution rate | 13/15 | 13/15 |
+| not resolved | C2 literals 2 | C2 literals 2 |
+| the first turns' filters kept | 14/14 | 14/14 |
+| **independence**, after the question before | **15/15** | **15/15** |
+| independence, after itself | -- | 15/15 |
+| model calls, as second turns against alone | 68 against 53 | 353 against 338 |
+| the Supervisor's time, median, as a second turn against alone | 5.06s against 1.11s | 5.25s against 1.08s |
+
+**A follow-up is now answered as the complete question it means.**
+Twelve and thirteen of fifteen, where nothing remembered answered one and
+two. Thirteen restatements held, each then read as its complete question
+is (the resolution rate); the other two -- "The same for FY2024?" and "What
+about Q3?" -- were restated with "fiscal year 2024" and "the third quarter"
+for the words typed, which C2 holds verbatim, and were answered right all
+the same, asked as typed with the reading made in context and the generator
+shown the first turn. Every filter the first turns set was kept, where
+nothing remembered kept three of fourteen. The misses were read right and
+answered nearly so: B12 returns the reference's units and lift for each
+quarter, labelled "FY2025 Q1" where the reference has 1, which the
+comparison counts as another answer; and B13, "And which prices highest?",
+names the right competitor, QuickStop Grocery, with its premium as a
+difference -- $0.93 through `snippets`, 16.4 percent through the ensemble --
+where the reference states its price as a percentage of ours, 116.4. (Built
+the reference's way, in an earlier run, 7.0's completeness check refused
+116.5 as an impossible percentage.) Through `snippets` B10 missed as well, after a
+restatement that carried the first answer's values into the question
+("... (SKU100189 Ambervale T-Bone Steak, and the other 4 from the previous
+answer)"): the generator filtered to SKUs of its own. The rule asks for
+nothing the turns do not supply, and the turns supplied that; a
+restatement of the question and not of its answer is the next thing to ask
+of the prompt.
+
+**Two departures the measurement made.** Built as arch8 has it -- one
+Supervisor call reading the question in context, the generator always shown
+the turns -- the independence came out 14 of 15 twice. Under `v6_3_1`, B07
+asked after B06 was written from B06's query, its nearest exemplar, and fell
+into the grain trap B07 tests; so the generator is shown the turns only for
+a question the Supervisor read as a follow-up -- restated, a restatement a
+check discarded, or no reading at all -- and a question read as standing
+alone is written with 7.0's prompt. Then under the ensemble, B08 asked after
+B07 was read differently in context -- the measure "market share percentage"
+where alone it is "overall market share percentage", and no entity -- and
+the Paraphraser, handed those words, wrote other rewordings, three of whose
+four runs returned a fraction where alone all four returned the percentage.
+Read after the turn of the question before it, the anchor's reading of the
+fifteen kept its words for 5 at the standard rung and 6 at the light one,
+and at the light rung B11 was refused in context. So a question is now read
+in context first and then screened as 7.0 screens one -- the words typed
+when nothing was restated, the restatement when one held -- at one
+Supervisor call more for a question asked with turns (the owner's choice,
+2026-10-18). With both, the independence is 15 of 15 under each name, and 15
+of 15 with the first turn the question itself.
+
+**What it costs.** One Supervisor call more a question in a conversation,
+and none for a question asked alone: 15 calls over fifteen questions under
+each name. On this host that is about four seconds a question -- the reading
+in context on the standard rung, then 7.0's on the light -- and the
+question's median time grew from 27.9s to 31.8s through `snippets` and from
+126.3s to 130.3s through the ensemble. The follow-ups' prompts, counted by
+the model host (medians over the fifteen): 486 tokens alone, 724 with the
+one turn shown -- the rule, the block and the restatement's field -- and
+1,217 for the two calls together. A question's state grows by its turns,
+once in the outer state and once in each run's: asked after fifteen turns,
+every benchmark question's, B15's state through the ensemble's four runs
+grew from 160.4 KB to 221.0 KB, the turns themselves 12.1 KB as JSON; it was
+read as standing alone and came out as it does alone.
+
+**A period written out (Phase 5).** Calibrating the Supervisor with turns
+shown prints each restatement a check discarded, and the reference's two
+were C2's, on a period written short: "fiscal year 2024" for "FY2024" and
+"fiscal quarter 3" for "Q3". The reference reads each as the contract of
+the complete question, so C2 now counts a period written short as kept when
+the restatement writes it out in place, with the contract's own spellings
+(`fidelity.spelled_out`). "The third quarter", which the run above wrote for
+"Q3", is still discarded: the reference reads it as another period than a
+fiscal Q3. The paraphrase gate's F2 is unchanged. Measured 2026-10-19 on B04
+and B06 alone, `--memory 5`: both restated, held and read as their complete
+questions, and both answered right, under `v6_3_1` and under `v7_0_0`.
+
+**At the release** (2026-10-20 UTC, 8.0.0): the release's run, against
+the stack upgraded to the published `v8_0` images, untraced, routed by the
+catalog Phase 5 rebuilt, `--memory 5`:
+
+| | `snippets` under `v6_3_1` | `ensemble` under `v7_0_0` |
+|---|---|---|
+| **follow-up accuracy** | **12/15** | **13/15** |
+| first turns right | 15/15 | 15/15 |
+| resolution rate | 15/15 | 15/15 |
+| the first turns' filters kept | 14/14 | 14/14 |
+| **independence**, after the question before | **15/15** | **15/15** |
+| the fifteen, alone and asked again, right | 30/30 | 30/30 |
+| model calls, as second turns against alone | 68 against 53 | 353 against 338 |
+| the Supervisor's time, median, as a second turn against alone | 6.34s against 1.08s | 6.27s against 1.06s |
+
+The accuracy is Phase 2's, and so are the misses: B12 and B13 under both
+names, and B10 through `snippets`, each as described above. Every
+restatement now holds, fifteen of fifteen where Phase 2 held thirteen,
+because Phase 5 keeps a period written out: B04 read as "fiscal year 2024"
+and B06 as "fiscal quarter 3 of fiscal year 2025". The independence, the
+release's blocker, is 15 of 15 under each name: every question asked after
+the one before it was answered as it is alone, and none was restated. The
+reading in context took a second or so longer than Phase 2 measured on the
+same host; the model calls are the same.
+
+**At 8.0.1** (2026-10-21, the correction's run before its publication: a
+snapshot of the 8.0.1 tree on the host against the running `v8_0` stack's
+databases, untraced, routed by the committed catalog, `--memory 5`):
+
+| | `snippets` under `v6_3_1` | `ensemble` under `v7_0_0` |
+|---|---|---|
+| **follow-up accuracy** | **12/15** | **13/15** |
+| first turns right | 15/15 | 15/15 |
+| resolution rate | 15/15 | 15/15 |
+| the first turns' filters kept | 14/14 | 14/14 |
+| **independence**, after the question before | **15/15** | **15/15** |
+| the fifteen, alone and asked again, right | 30/30 | 30/30 |
+| model calls, as second turns against alone | 68 against 53 | 353 against 338 |
+| the Supervisor's time, median, as a second turn against alone | 5.72s against 1.35s | 5.57s against 1.13s |
+
+The release's numbers, as the correction said they would be: none of the
+fifteen fragments or standalones carries an ordinal reference, a negation
+phrase or a year written first, and a question asked alone is screened as
+it was. Every one of the ninety questions -- the fifteen follow-ups and
+the thirty of the independence, under each name -- was read with the same
+words as at the release, the same restatement or none, and came out the
+same way. The misses are the release's, B12 and B13 under both names and
+B10 through `snippets`, each answered as it was answered then; every other
+follow-up was read as its complete question and answered right. The
+independence held under each name with none of the thirty second turns
+restated, and the grain check refused no reference in any of the four
+runs. The reading in context cost what it did at the
+release: one Supervisor call more a second turn, five to six seconds at
+the median. The four runs took 4,325.6 s and 3,484.0 s through the
+ensemble and 949.8 s and 622.7 s through `snippets`, with a second
+instance of the stack running beside the one asked.
+

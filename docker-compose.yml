@@ -563,10 +563,12 @@ services:
       # --- arch7: asking it several ways -----------------------------
       # The question screened once, reworded, run once per wording and the
       # answers voted on (agent/README.md, "Configuration"); false is arch6
-      # to the answer. OLLAMA_PARALLEL_CALLS is how many model calls the
-      # Ollama host serves at once -- one unless its own OLLAMA_NUM_PARALLEL
-      # is higher -- and every call the agent makes takes one of them.
-      ENSEMBLE_ENABLED: ${ENSEMBLE_ENABLED:-true}
+      # to the answer. Forwarded empty since 8.0: unsaid, PIPELINE_VERSION
+      # below decides it, and true beside v6_3_1 is refused at start.
+      # OLLAMA_PARALLEL_CALLS is how many model calls the Ollama host serves
+      # at once -- one unless its own OLLAMA_NUM_PARALLEL is higher -- and
+      # every call the agent makes takes one of them.
+      ENSEMBLE_ENABLED: ${ENSEMBLE_ENABLED:-}
       ENSEMBLE_PARAPHRASES: ${ENSEMBLE_PARAPHRASES:-3}
       ENSEMBLE_MAX_PARAPHRASES: ${ENSEMBLE_MAX_PARAPHRASES:-10}
       ENSEMBLE_WAVES: ${ENSEMBLE_WAVES:-2}
@@ -585,6 +587,13 @@ services:
       # each the date dimension's columns that name one, joined by '+'.
       GRAIN_CHECK_ENABLED: ${GRAIN_CHECK_ENABLED:-true}
       GRAIN_PERIODS: ${GRAIN_PERIODS:-fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num}
+      # --- arch8: the pipeline by name, and the conversation ----------
+      # The pipeline that answers, by the release that built it: v7_0_0
+      # asks each question several ways, v6_3_1 once, and they differ in
+      # that alone. CONVERSATION_MEMORY is the answered turns a question is
+      # read with, 0 to 15; 0 asks every question alone.
+      PIPELINE_VERSION: ${PIPELINE_VERSION:-v7_0_0}
+      CONVERSATION_MEMORY: ${CONVERSATION_MEMORY:-5}
     # Docker Desktop resolves host.docker.internal on its own; this is what
     # makes the same EMBED_BASE_URL work on plain Linux Docker too.
     secrets: &agent-secrets
@@ -682,6 +691,9 @@ services:
       API_MAX_WAIT_SECONDS: ${API_MAX_WAIT_SECONDS:-}
       API_EVENT_STREAM_TIMEOUT_SECONDS: ${API_EVENT_STREAM_TIMEOUT_SECONDS:-}
       API_KEEPALIVE_SECONDS: ${API_KEEPALIVE_SECONDS:-}
+      # Conversations kept at once, and how long an idle one is kept (arch8).
+      API_MAX_CONVERSATIONS: ${API_MAX_CONVERSATIONS:-}
+      API_CONVERSATION_TTL_SECONDS: ${API_CONVERSATION_TTL_SECONDS:-}
       API_DOCS_ENABLED: ${API_DOCS_ENABLED:-}
       API_LOG_LEVEL: ${API_LOG_LEVEL:-}
       # --- feedback --------------------------------------------------

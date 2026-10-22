@@ -54,6 +54,35 @@ ignore:
   ways, how many rewordings it runs, and which of `nodes` are the ensemble's
   own, so a client can draw a lane per run before the first event.
 
+**A follow-up names its conversation.** Since 8.0 a question may continue
+a conversation, and the client names it: `"conversation"` on the request,
+an id it makes up -- a UUID for one, 1 to 64 letters, digits, `.`, `_` or
+`-` -- with no call to create it, since the first question with an id
+starts it. Every later question with the id is read with the answered
+questions before it, the last `CONVERSATION_MEMORY` (five by default), so
+"and by store?" is answered as the complete question it stands for, and
+`Answer.conversation` says which turn it was and how it was read. A
+question asked while the conversation's last is still running is `409
+conversation_busy` with a `Retry-After`; `DELETE
+/v1/conversations/{conversation_id}` forgets one, and so does an hour of
+silence (`API_CONVERSATION_TTL_SECONDS`) or a restart -- nothing is written
+to disk. A `no` on an answer forgets its turn, so the next question is not
+read in the light of a wrong one. A request without the field is asked
+alone, as before 8.0, and with `CONVERSATION_MEMORY=0` every question is.
+[`agent/API.md`](../agent/API.md#in-a-conversation-conversation-80) has
+the rest.
+
+Two fields of `Answer.conversation` are the question twice: `asked` is the
+words typed, and `read_as` the complete question the agent answered when it
+restated a follow-up, with `resolved` true. Show both, as the web interface
+does -- the words typed as the heading, "Read as: ..." under it -- so a
+wrong reading is seen rather than believed, and show `read_as` as text: it
+is a model's sentence. Send the id only while `/v1/meta`'s
+`pipeline.memory.turns` is above zero: a server that remembers nothing
+echoes it and changes nothing, and one older than 8.0 refuses a field it
+does not know. Make a new id for a new conversation; the old one is
+forgotten once it has been idle long enough.
+
 **Watch the job; do not hold the connection for it.** A question asked
 several ways takes several runs' time -- minutes, where one run took about
 one. `?wait=` still works and is still bounded by `API_MAX_WAIT_SECONDS`

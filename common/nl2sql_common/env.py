@@ -46,7 +46,10 @@ def env_float(name: str, default: float) -> float:
     return default if raw is None else float(raw)
 
 
-def env_bool(name: str, default: bool) -> bool:
+def env_bool(name: str, default: bool | None) -> bool | None:
+    """A switch; unset is `default`, and a `None` default reads it as unsaid,
+    for a switch whose default is decided later (`ENSEMBLE_ENABLED`, which
+    the pipeline's name decides)."""
     raw = env(name)
     return default if raw is None else raw.lower() in TRUE
 

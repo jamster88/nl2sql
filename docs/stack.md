@@ -68,7 +68,7 @@ Every page -- the web interface, the review, curation and SQL console
 interfaces, the directory page and MLflow's front door -- is one published
 image, `nl2sql-proxy`, each container told which page it serves. It, the
 agent, the review service, the desktop client's jar, MLflow's server and
-store, the directory and the auth service are published images (`v7_0`);
+store, the directory and the auth service are published images (`v8_0_1`);
 the rest are built or pulled by `setup.sh` as well -- the runtime stores are
 a stock pgvector, pinned by digest like every image this project does not
 build. Two one-shot containers run before the rest and exit: `pki`, which
@@ -110,6 +110,8 @@ agent tag, no knowledge base.
 ./start.sh --no-browser    # everything up, prints the URLs instead
 ./start.sh --no-rag        # schema-only, like v1
 ./start.sh --no-auth       # no sign-in, this once: every page open to whoever reaches it
+./start.sh --pipeline v6_3_1   # one run a question, this once (PIPELINE_VERSION in .env for good)
+./start.sh --memory 0      # each question asked alone, this once; 0 to 15 (CONVERSATION_MEMORY in .env for good)
 ./start.sh --restart       # recreate the containers
 ./start.sh --quiet         # only print problems
 BROWSER=firefox ./start.sh # open it with something in particular
@@ -219,12 +221,20 @@ $ ./launch.sh
 
 ==> Checking model routing
     model routing: 3 models -- qwen3.8-256k:latest (OLLAMA_MODEL), ...
-    every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)
+    the pipeline is v7_0_0: every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)
     the model host is asked 1 call(s) at a time (OLLAMA_PARALLEL_CALLS)
+    the agent remembers the last 5 turns of a conversation (CONVERSATION_MEMORY)
 
 ==> Ready. Ask a question:
 
     docker compose run --rm agent "How many stores are there?"
+    ...
+
+    Leave the question off for a session that keeps a conversation. Each
+    question is read with the last 5 answered questions, so a follow-up --
+    "and by store?" -- is answered as the complete question it means:
+
+    docker compose run --rm agent
 ```
 
 Then ask. That is the whole contract: one script, then one command per
@@ -245,7 +255,16 @@ says how many ways each question will be asked and how many calls the model
 host is asked at a time -- read as compose reads them, the shell and then
 `.env` -- so that an answer taking several times as long as 6.3's reads as
 the setting it is (`ENSEMBLE_ENABLED=false` is one run;
-`OLLAMA_PARALLEL_CALLS` widens the gate for a host that serves more). The snippet store
+`OLLAMA_PARALLEL_CALLS` widens the gate for a host that serves more). Since
+8.0 the first of those lines names the pipeline (`PIPELINE_VERSION`, `v6_3_1`
+for one run a question), and the last says how many answered turns of its
+conversation a question is read with (`CONVERSATION_MEMORY`, `--memory N` for
+one run). The closing lines then say where each interface keeps a
+conversation -- the terminal's session, the API's conversation id and its
+`DELETE`, New conversation in the page and the window -- how far back a
+follow-up reaches, and that the review page stages a follow-up as the
+complete question it was read as. That last is said whatever the setting,
+since a verdict outlives it; with memory off the rest is not. The snippet store
 is the one thing it fills rather than checks: the store is built from a
 tracked document, and whenever the document's hash differs from the one the
 last complete load recorded, the loader runs before anything is asked.

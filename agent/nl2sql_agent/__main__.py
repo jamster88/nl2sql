@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import deque
 from typing import Any
 
-from . import tracing
-from .config import Settings
+from nl2sql_common.env import env_bool
+
+from . import memory, tracing
+from .config import MAX_CONVERSATION_MEMORY, PIPELINES, V6_3_1, V7_0_0, Settings
 from .ensemble import build_agent, step_label
 from .ensemble_state import is_ensemble, run_state
 from .llm import LlmUnavailableError
@@ -73,10 +76,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--snippet-db-url", default=settings.snippet_db_url, help="snippet store URL")
     p.add_argument("--snippets-top-k", type=int, default=settings.snippets_top_k, help="snippets shown to the model, at most")
     p.add_argument(
+        "--pipeline",
+        choices=PIPELINES,
+        default=settings.pipeline_version,
+        help=f"the pipeline that answers, by the release that built it: {V7_0_0} asks each question several "
+        f"ways, {V6_3_1} once (default: {settings.pipeline_version})",
+    )
+    # Unsaid unless a flag or ENSEMBLE_ENABLED says: then the pipeline's
+    # name decides (arch8), so the help says so rather than a word.
+    said = env_bool("ENSEMBLE_ENABLED", None)
+    p.add_argument(
         "--ensemble",
         action=argparse.BooleanOptionalAction,
-        default=settings.ensemble_enabled,
-        help=f"ask the question through the ensemble, arch7 {_default(settings.ensemble_enabled)}",
+        default=None,
+        help="ask the question through the ensemble, arch7 "
+        + (_default(said) if said is not None else
+           f"(default: what --pipeline implies: on under {V7_0_0}, off under {V6_3_1})"),
     )
     p.add_argument(
         "--paraphrases",
@@ -95,6 +110,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=settings.ensemble_fuse_columns,
         help=f"widen the chosen rows with columns other agreeing runs carried {_default(settings.ensemble_fuse_columns)}",
+    )
+    p.add_argument(
+        "--memory",
+        type=int,
+        default=settings.conversation_memory,
+        help=f"earlier answered questions of the interactive session each question is read with, 0 to "
+        f"{MAX_CONVERSATION_MEMORY}; 0 asks every question alone (default: {settings.conversation_memory})",
     )
     p.add_argument("--json", action="store_true", help="emit the full result as JSON")
     p.add_argument("--quiet", action="store_true", help="only print the final answer")
@@ -122,7 +144,12 @@ def settings_from_args(args: argparse.Namespace) -> Settings:
     settings.snippets_enabled = args.snippets
     settings.snippet_db_url = args.snippet_db_url
     settings.snippets_top_k = args.snippets_top_k
-    settings.ensemble_enabled = args.ensemble
+    settings.pipeline_version = args.pipeline
+    # The switch as a flag said it, else as the environment did, else
+    # unsaid -- for `validate` to resolve from the name the flag may just
+    # have changed. Never the value the old name resolved to.
+    settings.ensemble_enabled = args.ensemble if args.ensemble is not None else env_bool("ENSEMBLE_ENABLED", None)
+    settings.conversation_memory = args.memory
     settings.ensemble_paraphrases = args.paraphrases
     settings.ollama_parallel_calls = args.parallel_calls
     settings.ensemble_fuse_columns = args.fuse_columns
@@ -157,11 +184,38 @@ def format_rows(result: Any) -> str:
     return "\n".join(lines)
 
 
-def answer(agent: Any, question: str, *, as_json: bool, quiet: bool) -> int:
+class Session:
+    """The interactive session as one conversation (arch8 section 23.5): the
+    last `depth` answered questions, kept in this process and nowhere else,
+    handed to the next. `answered` counts every answered question, so a
+    turn's number stays right after the window has slid."""
+
+    def __init__(self, depth: int) -> None:
+        self.depth = depth
+        self.turns: deque[memory.Turn] = deque(maxlen=depth)
+        self.answered = 0
+
+    def remember(self, state: dict[str, Any]) -> None:
+        """A turn made of a finished run, when it answered something."""
+        turn = memory.turn_from_state(state, index=self.answered + 1)
+        if turn is not None:
+            self.answered += 1
+            if self.depth:
+                self.turns.append(turn)
+
+
+def answer(agent: Any, question: str, *, as_json: bool, quiet: bool, session: Session | None = None) -> int:
+    """Ask one question and print the answer. In the interactive session it
+    is read with the session's turns and, when it answers, becomes one; a
+    question given on the command line is asked alone."""
+    turns = tuple(session.turns) if session is not None else ()
     with tracing.tagged({"nl2sql.entrypoint": "cli"}):
-        state = agent.run(question)
+        state = agent.run(question, turns=turns)
+    conversation = _conversation(state, session)
+    if session is not None:
+        session.remember(state)
     if as_json:
-        print(json.dumps(to_jsonable(as_document(question, state)), indent=2, default=str))
+        print(json.dumps(to_jsonable(as_document(question, state, conversation)), indent=2, default=str))
         return 1 if state.get("error") else 0
 
     if state.get("error"):
@@ -174,6 +228,12 @@ def answer(agent: Any, question: str, *, as_json: bool, quiet: bool) -> int:
     if state.get("result") is None:
         print(state.get("answer") or "(no answer)")
         return 0
+    # A follow-up answered as its restatement says so first (arch8): a wrong
+    # reading is seen rather than believed.
+    note = state.get("memory")
+    if getattr(note, "resolved", False):
+        print(f"Read as: {note.read_as}")
+        print()
     # Under the ensemble (arch7) the answer opens with how its runs agreed.
     line = getattr(state.get("decision"), "line", "")
     if line:
@@ -187,7 +247,24 @@ def answer(agent: Any, question: str, *, as_json: bool, quiet: bool) -> int:
     return 0
 
 
-def as_document(question: str, state: dict[str, Any]) -> dict[str, Any]:
+def _conversation(state: dict[str, Any], session: Session | None) -> dict[str, Any] | None:
+    """`--json`'s conversation block, as the REST answer's (arch8 section
+    23.7): None for a question asked on the command line, alone."""
+    if session is None:
+        return None
+    note = state.get("memory") or memory.MemoryNote()
+    return {
+        "id": "session",
+        "turn": session.answered + 1,
+        "remembered": note.shown,
+        "asked": state.get("asked") or "",
+        "read_as": note.read_as,
+        "resolved": note.resolved,
+        "reason": note.reason,
+    }
+
+
+def as_document(question: str, state: dict[str, Any], conversation: dict[str, Any] | None = None) -> dict[str, Any]:
     """What `--json` prints: the run, and under the ensemble the record of it.
 
     The run's own fields -- what retrieval found, the attempts -- are the
@@ -199,6 +276,10 @@ def as_document(question: str, state: dict[str, Any]) -> dict[str, Any]:
     run = run_state(state)
     document = {
         "question": question,
+        "asked": state.get("asked"),
+        "pipeline": state.get("pipeline"),
+        "memory": state.get("memory"),
+        "conversation": conversation,
         "verdict": state.get("verdict"),
         "intent": state.get("intent"),
         "answer_contract": state.get("answer_contract"),
@@ -291,7 +372,13 @@ def main(argv: list[str] | None = None) -> int:
             f"SQL snippets: by keyword phrase and by meaning over {settings.snippet_db_url}, "
             f"up to {settings.snippets_top_k} shown when their tables are in scope"
         )
+    if settings.conversation_memory:
+        print(f"Remembers the last {settings.conversation_memory} answered questions of this session")
+    else:
+        print("Each question asked alone (--memory 0)")
     print("Ask a question, or Ctrl-D to exit.")
+    # One conversation, in the order the questions arrive -- typed or piped.
+    session = Session(settings.conversation_memory)
     while True:
         try:
             question = input("\n> ").strip()
@@ -299,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
             print()
             return 0
         if question:
-            answer(agent, question, as_json=args.json, quiet=args.quiet)
+            answer(agent, question, as_json=args.json, quiet=args.quiet, session=session)
 
 
 if __name__ == "__main__":

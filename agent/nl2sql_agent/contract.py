@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from . import fidelity
 from .state import AnswerContract, EntityRef
 from nl2sql_common.errors import DATABASE_ERRORS
 
@@ -527,14 +528,8 @@ def render_contract(contract: AnswerContract | None) -> str:
     return "; ".join(parts) + "." if parts else ""
 
 
-#: How a period is written, made one spelling: what the Supervisor copies
-#: out of a question is the question's own words, and a faithful rewording
-#: may say "FY2025" where the question said "fiscal year 2025".
-_PERIOD_SPELLINGS = (
-    (re.compile(r"\bfy\s*-?\s*(\d{2,4})\b"), r"fiscal year \1"),
-    (re.compile(r"\bq\s*([1-4])\b"), r"quarter \1"),
-    (re.compile(r"\b(\d+)(?:st|nd|rd|th)\b"), r"\1"),
-)
+#: The ordinals a period may be written with; its abbreviations are
+#: `fidelity.spell_period`'s.
 _PERIOD_ORDINALS = {
     "first": "1", "second": "2", "third": "3", "fourth": "4", "fifth": "5", "sixth": "6", "seventh": "7",
     "eighth": "8", "ninth": "9", "tenth": "10", "eleventh": "11", "twelfth": "12",
@@ -557,9 +552,7 @@ def _period(contract: AnswerContract) -> tuple[str, ...]:
     text = " ".join((contract.period or "").casefold().split())
     if text in NO_PERIOD:
         return ()
-    for pattern, spelled in _PERIOD_SPELLINGS:
-        text = pattern.sub(spelled, text)
-    words = [_PERIOD_ORDINALS.get(word, word) for word in re.findall(r"[a-z0-9]+", text)]
+    words = [_PERIOD_ORDINALS.get(word, word) for word in re.findall(r"[a-z0-9]+", fidelity.spell_period(text))]
     return tuple(sorted(word for word in words if word not in _PERIOD_FILLER))
 
 

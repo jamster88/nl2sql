@@ -91,6 +91,15 @@ def test_every_setting_can_be_set_from_the_environment(clean_env):
     )
 
 
+def test_the_conversations_two_bounds_are_read_from_the_environment(clean_env):
+    """arch8: how many conversations, and how long an idle one is kept."""
+    assert (ApiSettings.from_env().max_conversations, ApiSettings.from_env().conversation_ttl_seconds) == (200, 3600.0)
+    clean_env.setenv("API_MAX_CONVERSATIONS", "50")
+    clean_env.setenv("API_CONVERSATION_TTL_SECONDS", "90.5")
+    settings = ApiSettings.from_env()
+    assert (settings.max_conversations, settings.conversation_ttl_seconds) == (50, 90.5)
+
+
 def test_an_empty_value_leaves_the_default_standing(clean_env):
     """Exactly the defect that was found in config.py: compose forwards an
     unset variable as "", and "" must not mean "no model" or "port zero".

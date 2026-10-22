@@ -148,6 +148,7 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("ENSEMBLE_WAVES", settings.ensemble_waves),
         ("ENSEMBLE_MAX_CLAIMS", settings.ensemble_max_claims),
         ("OLLAMA_PARALLEL_CALLS", settings.ollama_parallel_calls),
+        ("CONVERSATION_MEMORY", settings.conversation_memory),
     ):
         row = _table_row(agent_readme, name)
         assert str(value) in row, f"README says {name} defaults to something other than {value}: {row!r}"
@@ -158,6 +159,7 @@ def test_the_documented_defaults_are_the_real_defaults(agent_readme: str):
         ("OLLAMA_BASE_URL", settings.ollama_base_url),
         ("EMBED_BASE_URL", settings.embed_base_url),
         ("OLLAMA_KEEP_ALIVE", settings.ollama_keep_alive),
+        ("PIPELINE_VERSION", settings.pipeline_version),
     ):
         row = _table_row(agent_readme, name)
         assert value in row, f"README says {name} defaults to something other than {value!r}: {row!r}"
@@ -200,6 +202,8 @@ def test_the_documented_api_defaults_are_the_real_defaults(agent_api_doc: str):
         ("API_JOB_TTL_SECONDS", settings.job_ttl_seconds),
         ("API_MAX_JOBS", settings.max_jobs),
         ("API_KEEPALIVE_SECONDS", settings.keepalive_seconds),
+        ("API_MAX_CONVERSATIONS", settings.max_conversations),
+        ("API_CONVERSATION_TTL_SECONDS", settings.conversation_ttl_seconds),
         ("API_TLS_CERT_FILE", settings.tls_cert_file),
         ("API_TLS_KEY_FILE", settings.tls_key_file),
     ):
@@ -262,6 +266,20 @@ def test_the_switch_that_refuses_the_development_certificate_is_documented(agent
     """
     assert "API_TLS_ALLOW_SELF_SIGNED=false" in agent_api_doc
     assert "API_TLS_ALLOW_SELF_SIGNED=false" in _doc("rest_api.md")
+
+
+def test_the_model_catalog_document_names_no_model():
+    """The owner's rule: what is written about the calibrated models stays
+    generic, since every deployment has models of its own (arch8 Phase 5's
+    acceptance). No family of a model the committed catalog lists -- the
+    name up to its tag, size or build -- is named in docs/model_catalog.md."""
+    import json
+
+    catalog = json.loads((REPO_ROOT / "models" / "catalog.json").read_text())
+    families = {re.split(r"[-_:]", model["name"])[0].lower() for model in catalog["models"]}
+    text = _doc("model_catalog.md").lower()
+    named = sorted(f for f in families if re.search(r"(?<![a-z0-9])" + re.escape(f) + r"(?![a-z])", text))
+    assert len(families) > 5 and named == [], f"docs/model_catalog.md names {named}"
 
 
 def test_the_documented_version_is_the_packaged_one(agent_readme: str, root_readme: str):
@@ -1137,6 +1155,7 @@ FORBIDDEN_PHRASES = (
     "fourteen pipeline nodes",           # the pipeline has not had fourteen since v5
     "connects as `nl2sql`, the owner",   # everything reads as nl2sql_reader since v4
     "one person on one machine",         # the deployment tiers in SECURITY.md replaced it
+    "does not remember the previous",    # a conversation is remembered since 8.0
 )
 
 #: Where the phrases are history rather than claims: the reviews that found

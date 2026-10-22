@@ -47,7 +47,7 @@ against.
 
 | | |
 |---|---|
-| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment, and since 7.0 the record of every run behind the answer: each wording, its outcome and its SQL, the Judge's verdicts and the vote. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
+| **Captured** | With a snapshot of the job -- question, SQL, answer, result shape, comment, since 7.0 the record of every run behind the answer: each wording, its outcome and its SQL, the Judge's verdicts and the vote, and since 8.0 the pipeline that answered, `v7_0_0` or `v6_3_1`, and where the answer stood in its conversation: its turn, the words typed and how they were read. Taken at vote time, because a job is forgotten after an hour and a verdict pointing at a forgotten job is not reviewable |
 | **Staged** | In the feedback store, a database of its own in `nl2sql-stores`. Not the retail database, which is the subject under test, and not the RAG stores, which ship their data inside published images |
 | **Reviewed** | In a second web interface, one pane per verdict: what was asked, what the agent answered and the SQL it wrote, what the user thought, and the other runs -- the queries that agreed, the ones that lost and how they differ -- and beside it a form for building a golden pair, or an editor for the query that should have been generated |
 | **Promoted** *(correct)* | Appended to the question document *in this checkout*, then loaded into the context store and embedded into the vector store |
@@ -61,12 +61,31 @@ is often already among them, written by a run that lost the vote. A
 submission from before 7.0 has no such record and says so: "a single run;
 no ensemble record".
 
+Inside a conversation (8.0) the question a person asked may be a follow-up
+-- "and by store?" -- which means nothing on its own. The agent answered it
+as the complete question it stood for, and that is the snapshot's
+`question`: a golden pair is built from it and must stand alone. The words
+typed are kept beside it, in the snapshot's `conversation` as `asked`, with
+the turn it was and how many turns it was read with. Outside a conversation
+the two are the same words. The review page shows the words typed under
+the question, as "Asked as", whenever they differ. A follow-up the agent
+ran as typed -- its restatement discarded by a check, or no reading made --
+is staged as the words typed; the review page says so under the question,
+with the check, and the review service refuses to promote the pair (`422
+not_standalone`) until the draft's question is rewritten to stand alone
+(8.0.1). A *wrong* verdict on an answer in a conversation
+also forgets its turn, so the person's next question is not read in the
+light of a wrong answer; *correct but incomplete* keeps it, since its SQL
+was right as far as it went.
+
 The record is a column the review service adds to the staging table when it
 starts, and the review service is optional. A stack upgraded to 7.0 and
 started without it keeps the table it had, so the API -- which may insert a
 verdict and nothing more -- stages each one without the record and says so
 once in its log, until the first vote after the review service has started.
-No vote is lost either way.
+No vote is lost either way. The pipeline's name and the conversation (8.0)
+are two more such columns, added the same way; a table may lack any of the
+three, and the API asks which it has in one query.
 
 ## The three fields nobody can guess
 

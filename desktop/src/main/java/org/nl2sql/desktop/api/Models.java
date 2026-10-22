@@ -1,6 +1,7 @@
 package org.nl2sql.desktop.api;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 import java.util.ArrayList;
@@ -309,13 +310,28 @@ public final class Models {
         }
     }
 
+    /**
+     * Where an answer stands in its conversation, and how its question was
+     * read (8.0): the turn, the turns it was read with, the words typed and,
+     * when a follow-up was restated, the complete question answered.
+     */
+    public record Conversation(String id, int turn, int remembered, String asked, String read_as,
+                               boolean resolved, String reason) {
+        public Conversation {
+            id = text(id);
+            asked = text(asked);
+            read_as = text(read_as);
+            reason = text(reason);
+        }
+    }
+
     /** Everything the pipeline produced for one question. */
     public record Answer(String answer, String narrative, String sql, String verdict, String intent,
                          String clarification, List<String> tables, List<LiteralMatch> literals,
                          ResultTable result, ChartSpec chart, List<Claim> claims, AuditReport audit,
                          Double plan_cost, int attempts, List<TraceEntry> trace,
                          Map<String, String> retrieval_errors, Map<String, String> node_errors,
-                         Ensemble ensemble) {
+                         Ensemble ensemble, String pipeline, Conversation conversation) {
         public Answer {
             answer = text(answer);
             narrative = text(narrative);
@@ -329,6 +345,7 @@ public final class Models {
             trace = list(trace);
             retrieval_errors = map(retrieval_errors);
             node_errors = map(node_errors);
+            pipeline = text(pipeline);
         }
     }
 
@@ -342,7 +359,8 @@ public final class Models {
     /** A question in flight, or one that has finished. One shape throughout. */
     public record Job(String id, JobStatus status, String question, Map<String, String> metadata,
                       String created_at, String started_at, String finished_at, Double duration_ms,
-                      List<ProgressEvent> progress, Answer answer, String error, JobLinks links) {
+                      List<ProgressEvent> progress, Answer answer, String error, JobLinks links,
+                      String conversation) {
         public Job {
             id = text(id);
             question = text(question);
@@ -380,7 +398,8 @@ public final class Models {
      */
     public record Limits(int max_rows, int max_attempts, double max_plan_cost,
                          int statement_timeout_ms, int max_concurrency, double max_wait_seconds,
-                         int max_question_length, int max_metadata_entries) {
+                         int max_question_length, int max_metadata_entries,
+                         int max_conversation_id_length) {
     }
 
     /**
@@ -399,12 +418,18 @@ public final class Models {
         }
     }
 
-    /** Which optional stages this server is running with. */
+    /** How much of a conversation this server reads a question with (8.0). */
+    public record MemorySettings(int turns, int rows, int max_conversations, double ttl_seconds) {
+    }
+
+    /** Which optional stages this server is running with, and by which name (8.0). */
     public record Pipeline(boolean supervisor, boolean literals, boolean narrate, boolean audit,
-                           String schema_retrieval, List<String> nodes, EnsembleSettings ensemble) {
+                           String schema_retrieval, List<String> nodes, EnsembleSettings ensemble,
+                           String version, MemorySettings memory) {
         public Pipeline {
             schema_retrieval = text(schema_retrieval);
             nodes = list(nodes);
+            version = text(version);
         }
     }
 
@@ -447,8 +472,18 @@ public final class Models {
         }
     }
 
-    /** What a client may send. */
-    public record AskRequest(String question, String principal, Map<String, String> metadata) {
+    /**
+     * What a client may send.
+     *
+     * <p>{@code conversation} is left out of the JSON when there is none
+     * (8.0.1) rather than sent as {@code null}: a 7.0 server refuses a
+     * request with a field it does not know, so a window that asks alone
+     * -- because the server remembers nothing, or is older than the
+     * conversation -- must ask as a 7.0 client did. {@code principal} was
+     * in 7.0's request already, and goes as it always has.
+     */
+    public record AskRequest(String question, String principal, Map<String, String> metadata,
+                             @JsonInclude(JsonInclude.Include.NON_NULL) String conversation) {
     }
 
     /**

@@ -442,6 +442,18 @@ def test_every_v4_pipeline_stage_is_toggleable_from_the_environment(agent_profil
     assert env["REVIEW_REFLECTION_ENABLED"] == "true"
 
 
+def test_the_pipeline_is_7_0_0s_and_remembers_five_turns_unless_the_host_says(tmp_path_factory, agent_profile_config):
+    """arch8: both listed with their defaults, as MAX_ATTEMPTS is."""
+    env = agent_profile_config["services"]["agent"]["environment"]
+    assert (env["PIPELINE_VERSION"], env["CONVERSATION_MEMORY"]) == ("v7_0_0", "5")
+    config = _compose_config(
+        tmp_path_factory.mktemp("compose"), profile="agent",
+        env={"PIPELINE_VERSION": "v6_3_1", "CONVERSATION_MEMORY": "0"},
+    )
+    env = config["services"]["agent"]["environment"]
+    assert (env["PIPELINE_VERSION"], env["CONVERSATION_MEMORY"], env["ENSEMBLE_ENABLED"]) == ("v6_3_1", "0", "")
+
+
 def test_the_retry_budget_and_plan_ceiling_are_overridable(tmp_path_factory):
     config = _compose_config(
         tmp_path_factory.mktemp("compose"),
@@ -492,6 +504,9 @@ def test_a_forwarded_setting_the_host_has_not_set_arrives_empty(agent_profile_co
     env = agent_profile_config["services"]["agent"]["environment"]
     assert env["MAX_TABLES"] == ""
     assert env["SCHEMA_TOP_K"] == ""
+    # Since 8.0: an .env that says nothing of the ensemble leaves it to the
+    # pipeline's name, rather than compose's word overriding v6_3_1's.
+    assert env["ENSEMBLE_ENABLED"] == ""
 
 
 def test_a_forwarded_setting_the_host_did_set_reaches_the_container(tmp_path_factory):
@@ -521,6 +536,7 @@ def test_forwarding_never_overrides_a_default(tmp_path_factory):
         ("LITERAL_MIN_SCORE", "literal_min_score"),
         ("MAX_ROWS", "max_rows"),
         ("DB_SCHEMA", "db_schema"),
+        ("ENSEMBLE_ENABLED", "ensemble_enabled"),
     ):
         assert env[name] == "", f"{name} should be forwarded empty, not pinned in compose"
         assert getattr(defaults, attribute) is not None

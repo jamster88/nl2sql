@@ -124,6 +124,52 @@ def test_the_price_of_that_is_a_name_that_opens_a_sentence():
     assert f.literals("Dairy & Eggs margin in FY2025?") == {"fy2025"}
 
 
+def test_f2_still_wants_a_period_written_as_the_original_wrote_it():
+    """C2's allowance is C2's: the gate a 7.0 rewording passes is unchanged."""
+    assert f.check("Net sales in FY2024?", "What were net sales over fiscal year 2024?") == (
+        "F2 literals: 'fy2024' not found"
+    )
+
+
+@pytest.mark.parametrize(
+    "text,spelled",
+    [
+        ("FY2025", "fiscal year 2025"),
+        ("fy 2025", "fiscal year 2025"),
+        ("FY-24", "fiscal year 24"),
+        ("Q4 of  FY2025", "quarter 4 of fiscal year 2025"),
+        ("the 4th quarter", "the 4 quarter"),
+        ("Frozen Foods", "frozen foods"),
+    ],
+)
+def test_a_period_written_short_is_spelled_out(text, spelled):
+    assert f.spell_period(text) == spelled
+
+
+@pytest.mark.parametrize(
+    "literal,text,carried",
+    [
+        ("fy2024", "What were our total net sales in fiscal year 2024?", True),
+        ("fy2024", "What were our total net sales in FY 2024?", True),
+        ("q3", "What was the total markdown discount given in fiscal quarter 3 of fiscal year 2025?", True),
+        ("fy2024", "What were our total net sales in fiscal 2024?", False),
+        ("fy2024", "What were our total net sales in fiscal year 2025?", False),
+        ("q3", "What was the total markdown discount in the third quarter of fiscal year 2025?", False),
+        ("q3", "What were the top 3 stores by quarter?", False),
+        # 8.0.1: a fiscal year written year first is the year; a quarter so written is not the quarter.
+        ("fy2024", "What were our total net sales in the 2024 fiscal year?", True),
+        ("fy2024", "What were our total net sales in the 2025 fiscal year?", False),
+        ("q3", "What was the total markdown discount in the 3rd quarter of fiscal year 2025?", False),
+        ("frozen foods", "What was the margin for frozen products?", False),
+        ("scan_back", "Which vendor paid the most in scan back allowances?", False),
+    ],
+)
+def test_a_period_written_short_is_carried_only_written_out_in_place(literal, text, carried):
+    """C2's allowance (arch8): the restatements the reference reads as the
+    complete question's contract, and nothing that is not a period."""
+    assert f.spelled_out(literal, text) is carried
+
+
 # ---------------------------------------------------------------------------
 # F3 polarity
 # ---------------------------------------------------------------------------

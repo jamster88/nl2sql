@@ -1,4 +1,4 @@
-# NL2SQL Agent (v7, multi-agent)
+# NL2SQL Agent (v8, multi-agent)
 
 A natural-language-to-SQL agent built with LangChain and LangGraph. It talks to
 any model served by Ollama and queries the Postgres container from
@@ -102,6 +102,16 @@ below -- with the catalog made by
 [`models/build_catalog.py`](../models/build_catalog.py) and measured by
 [`models/calibrate.py`](../models/calibrate.py).
 
+Since 8.0 a question asked in a conversation is read with the conversation's
+last answered turns, at two nodes of this pipeline and no others, and no
+node is added: `supervise` reads the words typed in the light of the turns
+and restates a follow-up so that it stands alone, held in code to the words
+typed, and `generate_sql` is shown the earlier questions with their SQL.
+[Remembering the conversation](#remembering-the-conversation-arch8) has the
+rest, and [`arch_diagrams/arch_v8.svg`](../arch_diagrams/arch_v8.svg) draws
+it, beside [`arch_v7.svg`](../arch_diagrams/arch_v7.svg) for the ensemble
+around this pipeline.
+
 ```
 supervise --+-- retrieve_schema ----+
             |-- retrieve_literals --|
@@ -121,7 +131,7 @@ supervise --+-- retrieve_schema ----+
 
 | Stage | Node | What it does | LLM |
 |---|---|---|---|
-| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period) | screens |
+| 1. Intake | `supervise` | Screens for prompt injection and out-of-scope questions; classifies intent; reads the answer contract (what the rows are about, the measure, the period). In a conversation (8.0), first reads the question in the light of its turns and restates a follow-up | screens |
 | 1. Intake | `refuse` | Answers a refused or ambiguous question without touching the database | -- |
 | 1. Context | `retrieve_schema` | Tables from the DDL-chunk vectors | -- |
 | 1. Context | `retrieve_literals` | Phrases in the question resolved to the real values they name -- the whole value, or a close spelling of it (7.0) | -- |
@@ -129,7 +139,7 @@ supervise --+-- retrieve_schema ----+
 | 1. Context | `retrieve_examples` | The three-retriever golden-pair ensemble | -- |
 | 1. Context | `retrieve_snippets` | SQL snippets -- joins, filters, measures, dimensions -- found by keyword phrase and by meaning (v5.6) | -- |
 | 1. Join | `aggregate` | One table set -- the contract's tables first -- deduplicated, foreign-key closed, capped, described; the snippets over those tables | -- |
-| 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair | writes SQL |
+| 2. Synthesis | `generate_sql` | The only place SQL is written, on the draft and every repair; shown a follow-up's earlier turns and their SQL (8.0) | writes SQL |
 | 3. Gate | `validate_static` | `pglast` AST: one statement, SELECT only, no writing CTE, tables in scope; and the grain check (7.0): no two tables of different grains joined without being brought to one | -- |
 | 3. Gate | `planner_gate` | `EXPLAIN (FORMAT JSON)` in a READ ONLY transaction; cost ceiling | -- |
 | 3. Execute | `execute_query` | Reader role, READ ONLY, statement timeout, row cap | -- |
@@ -307,6 +317,17 @@ Re-measure with `python benchmarks/run_benchmark.py`, which now reports
 per-agent timing, model calls per node, and the fraction of the narrative the
 audit could trace back to the result.
 
+**Follow-ups (8.0).** The follow-up set gives each benchmark question a
+second turn written as people write them -- "And how many in each state?"
+-- scored against the complete question it means
+([benchmark](../docs/benchmark.md#memory-in-the-agent)). Asked with nothing
+remembered, as 7.0 asks every question, 1 of 15 was right under `v6_3_1`
+and 2 under `v7_0_0`. With five turns remembered, 12 and 13; every filter
+the first turns set was kept; and each of the fifteen asked as the second
+turn of a conversation came out exactly as it does alone, 15 of 15 under
+both names. A question in a conversation costs one Supervisor call more,
+about four seconds on the measuring host.
+
 ## Asking it several ways (arch7)
 
 Temperature is zero everywhere, so the only independent second opinion the
@@ -438,6 +459,81 @@ connection pool holds (15, SQLAlchemy's defaults) or more than half the
 reader role's connection limit (60, set in
 [`common/nl2sql_common/roles.py`](../common/nl2sql_common/roles.py)).
 
+### The pipeline by name
+
+Which pipeline answers is a setting with a name: `PIPELINE_VERSION`, the
+release that built it. `v7_0_0`, the default, is the ensemble above;
+`v6_3_1` asks each question once, and differs from it in that alone -- the
+grain check and the rest of 7.0's refinements of one run apply under both
+names, each under its own switch. One image answers as either. The name
+decides `ENSEMBLE_ENABLED` when nothing else says it: unset, the ensemble is
+on under `v7_0_0` and off under `v6_3_1`. A `.env` from 7.0 that sets
+`ENSEMBLE_ENABLED=false` still means one run, and `ENSEMBLE_ENABLED=true`
+beside `v6_3_1` is refused at start, with the reason, rather than run under
+the wrong name. The name is said wherever a run is recorded: the routing
+table's first line, the trace's `nl2sql.pipeline` tag, `Answer.pipeline`,
+`/v1/meta`'s `pipeline.version`, the verdict's snapshot and the benchmark's
+report ([arch8](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md)).
+
+## Remembering the conversation (arch8)
+
+A follow-up names nothing of its own: "and in each state?", asked alone, is
+refused or answered as some other question. arch8
+([`Multi-Agent_NL2SQL_arch8.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8.md),
+built in phases by
+[`..._implementation.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_implementation.md)
+with [`..._risks_by_phase.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch8_risks_by_phase.md))
+reads a question with the last answered turns of its conversation --
+`CONVERSATION_MEMORY` of them, 5 by default, 0 to 15, and 0 for none -- at
+two places and no others:
+
+- **The Supervisor** reads the words typed in the light of the turns and
+  restates a follow-up so that it stands alone. The restatement is model
+  output about to become every later stage's question, so
+  [`memory.py`](nl2sql_agent/memory.py) holds it to the words typed in
+  code, with no model call: C1 every number typed, C2 every quoted value,
+  C3 every direction (*highest*, *fewest*, *excluding*), C4 not blank and
+  no longer than a question may be. An ordinal that points at a row of the
+  last answer ("the second one") is no number to C1, "other than" is a
+  negation to C3, and "the 2024 fiscal year" is FY2024 to C2 (8.0.1). One
+  that fails is discarded, and so is one that is the words typed again;
+  either way the question runs as typed. A verdict other than proceed from
+  the reading in context ends the run on the words typed, restated or not
+  (8.0.1). Then the question settled on
+  is screened as 7.0 screens one, so a question asked with turns costs one
+  Supervisor call more, on the standard rung, and a question asked alone
+  costs none.
+- **The SQL Generator** is shown the earlier turns' questions with their
+  SQL after its worked examples, for a question read as a follow-up: a
+  follow-up usually keeps their joins, filters and calendar.
+
+A turn is an answered question: the question as answered, the first
+sentence and three rows of its answer -- each cell one line of at most 80
+characters, and the Supervisor shown eight cells of the first row -- and
+its SQL, whole (`MEMORY_ROWS`, `MEMORY_ANSWER_CHARS`, `MEMORY_CELL_CHARS`,
+`MEMORY_COLUMNS`). A refusal, a question asked back and a give-up are
+not turns. Nothing else reads one, and with none every prompt is 7.0's,
+byte for byte. Under the ensemble the anchor screening reads the turns and
+every run's generator is shown them; the Paraphraser rewords the complete
+question, and the Judge reads it. A follow-up that could not be restated
+runs as typed, one way: a rewording of a fragment would be read with no
+turns (8.0.1). The answer opens with "Read as: ..." when
+a restatement held, so a wrong reading is seen rather than believed, and
+the words typed are kept beside it everywhere as `asked`.
+
+The agent is stateless -- `run(question, principal, turns=())` -- and the
+conversation is kept by whoever asks:
+
+| Asked from | The conversation | After a wrong answer |
+|---|---|---|
+| The terminal | The interactive session, or the questions piped in, in the order they arrive; a question given on the command line is asked alone ([USAGE](USAGE.md#interactive-session)) | The turn stays for the session: ask the next question in full, or start a new session |
+| The REST API | Named by the client, `AskRequest.conversation`, and kept per person in the serving process's memory ([`conversations.py`](nl2sql_agent/api/conversations.py)): one question at a time, forgotten after `API_CONVERSATION_TTL_SECONDS` idle or on `DELETE /v1/conversations/{id}`, never written down ([API](API.md#in-a-conversation-conversation-80)) | A `no` verdict forgets its turn at once; `incomplete` keeps it |
+| The web interface and the desktop client | An id per page or window, made when it opens and again by **New conversation** | As the REST API |
+| The benchmark | None: every question asked alone, except `--followups` | -- |
+
+Measured on the follow-up set ([above](#measured)), and drawn in
+[`arch_diagrams/arch_v8.svg`](../arch_diagrams/arch_v8.svg).
+
 ## Serving it over HTTP
 
 [`nl2sql_agent/api/`](nl2sql_agent/api) is the REST interface. It is a
@@ -452,6 +548,7 @@ together and why.
 | [`tls.py`](nl2sql_agent/api/tls.py) | Generates the development certificate, reads one off disk, and enforces `API_TLS_ALLOW_SELF_SIGNED` |
 | [`models.py`](nl2sql_agent/api/models.py) | The published request and response shapes -- what becomes `/openapi.json` |
 | [`jobs.py`](nl2sql_agent/api/jobs.py) | Questions in flight: a bounded thread pool, numbered progress events, and the resumable stream over them |
+| [`conversations.py`](nl2sql_agent/api/conversations.py) | The conversations a question may continue (8.0): each person's, by the id their client named, its last turns, one question at a time, forgotten on request, on silence or on a wrong answer, never written down |
 | [`translate.py`](nl2sql_agent/api/translate.py) | The seam between `state.py` and `models.py`, so a field renamed inside the graph breaks one file |
 | [`app.py`](nl2sql_agent/api/app.py) | The routes, the authentication, the error shape, CORS |
 | [`server.py`](nl2sql_agent/api/server.py) | Flags, the certificate decision, the startup banner, uvicorn |
@@ -537,7 +634,7 @@ from state the pipeline already holds; nothing in routing calls a model.
 
 | Agent | Rung | Climbs when |
 |---|---|---|
-| Supervisor | light; standard when a free pre-screen flags the question -- over 60 words, system vocabulary such as *ignore* or *reveal*, or SQL in it | never: one call |
+| Supervisor | light; standard when a free pre-screen flags the question -- over 60 words, system vocabulary such as *ignore* or *reveal*, or SQL in it. With a conversation's turns shown (8.0) it first reads the question in their light on the standard rung -- a model calibration measured reading follow-ups as the reference does, else `OLLAMA_MODEL` -- then screens the question it asks as above | never: one call, and with turns shown a second when the question stands alone or its restatement held |
 | SQL Generator | scored by the Context Aggregator: the tables the answer needs, estimated from its contract (3-4 +1, 5+ +2), the intent, a ranked measure, a trap rule among the three nearest chunks, a value named exactly and found in two columns, a question over 40 words, and a near worked example (-2); 1 or less light, 2-3 standard, 4+ heavy | every repair; a gap the completeness *rules* found holds the rung once, since its fix is mechanical |
 | Completeness reflection | the generation's, capped at standard | with the generation |
 | Insight Narrator | light for at most 5 rows of at most 3 numbers, else standard | an audit send-back |
@@ -1216,7 +1313,7 @@ all but the pins are published in `/v1/meta`:
 
 | Variable | Flag | Default |
 |---|---|---|
-| `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | on. Off is the pipeline alone, to the answer |
+| `ENSEMBLE_ENABLED` | `--ensemble` / `--no-ensemble` | what `PIPELINE_VERSION` says: on under `v7_0_0`, off under `v6_3_1`, beside which on is refused. Off is the pipeline alone, to the answer |
 | `ENSEMBLE_PARAPHRASES` | `--paraphrases` | 3 rewordings in the first wave; 3 to 10 |
 | `ENSEMBLE_MAX_PARAPHRASES` | -- | 10, the most the Paraphraser writes; at least `ENSEMBLE_PARAPHRASES` |
 | `ENSEMBLE_WAVES` | -- | 2; a second wave only when the vote does not settle the question. It runs every faithful rewording left, so more than 2 is 2 |
@@ -1236,6 +1333,15 @@ period or a column twice -- stops the agent at start:
 |---|---|---|
 | `GRAIN_CHECK_ENABLED` | -- | on: the Static Validator refuses two tables of different grains joined on the date, or on no date. Off, it is the validator of 6.3, and no grain is read |
 | `GRAIN_PERIODS` | -- | `fiscal_year+fiscal_week_num,fiscal_year+fiscal_month_num`: the periods a table may be stamped by, finest first, each the date dimension's columns that name one, joined by `+`. A column the date dimension does not have stands the check down |
+
+The pipeline by name ([above](#the-pipeline-by-name)) and the conversation
+add these. A name that is not one of the two, or a depth out of range,
+stops the agent at start, naming the bounds:
+
+| Variable | Flag | Default |
+|---|---|---|
+| `PIPELINE_VERSION` | `--pipeline` | `v7_0_0`, the ensemble; `v6_3_1` asks each question once and differs in that alone |
+| `CONVERSATION_MEMORY` | `--memory` | 5 answered turns of a conversation a question is read with; 0 to 15, 0 asks every question alone. The CLI's interactive session is a conversation, and so is every REST question that names one (`AskRequest.conversation`); at 0 the API keeps none |
 
 Tracing ([above](#tracing-mlflow)) adds these:
 

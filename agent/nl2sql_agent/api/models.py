@@ -29,6 +29,10 @@ from typing import Any, Literal
 from pydantic import ConfigDict, Field, field_validator
 from nl2sql_common.envelope import Wire
 
+from nl2sql_agent.memory import MAX_QUESTION_LENGTH
+
+from .conversations import CONVERSATION_ID_PATTERN, MAX_CONVERSATION_ID_LENGTH
+
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 
 #: A person's verdict on an answer. `yes` is "correct" and `no` is "wrong",
@@ -39,13 +43,14 @@ JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
 #: fleshed out.
 Verdict = Literal["yes", "no", "incomplete"]
 
-#: The longest question this API will accept, in characters.
-#:
-#: Named rather than written into the validator because it is published in
-#: `/v1/meta` as well, and the two must be the same number. A client that
-#: learns the rule from `Limits` and then hits a 422 has been lied to, which
-#: is worse than not publishing it at all.
-MAX_QUESTION_LENGTH = 2000
+# The longest question this API will accept, in characters, is
+# `MAX_QUESTION_LENGTH`, imported above from `memory.py`, where a
+# follow-up's restatement is held to the same bound (arch8).
+#
+# Named rather than written into the validator because it is published in
+# `/v1/meta` as well, and the two must be the same number. A client that
+# learns the rule from `Limits` and then hits a 422 has been lied to, which
+# is worse than not publishing it at all.
 
 #: How many `metadata` entries a caller may attach to a question.
 MAX_METADATA_ENTRIES = 20
@@ -86,6 +91,16 @@ class AskRequest(Wire):
             "Opaque key/value pairs echoed back on the job. For a GUI to "
             "correlate a job with whatever it calls a conversation turn. "
             f"At most {MAX_METADATA_ENTRIES} entries, and nothing the server reads."
+        ),
+    )
+    conversation: str | None = Field(
+        default=None,
+        pattern=CONVERSATION_ID_PATTERN,
+        description=(
+            "The conversation this question continues, named by the client: 1 to "
+            f"{MAX_CONVERSATION_ID_LENGTH} letters, digits, '.', '_' or '-', a UUID for one. The first "
+            "question with an id starts it; the server reads each later one with the answered turns "
+            "before it. Omit to ask alone."
         ),
     )
 
@@ -337,6 +352,33 @@ class Ensemble(Wire):
     parallel_calls: int = Field(default=1, description="OLLAMA_PARALLEL_CALLS: runs this server makes at once.")
 
 
+class Conversation(Wire):
+    """Where an answer stands in its conversation, and how its question was
+    read (arch8)."""
+
+    id: str = Field(description="The conversation, as the request named it.")
+    turn: int = Field(
+        description=(
+            "This question's turn: the answered turns before it, and one. 1 for a conversation "
+            "begun afresh -- a new id, or one forgotten after API_CONVERSATION_TTL_SECONDS."
+        )
+    )
+    remembered: int = Field(description="The turns the question was read with: at most CONVERSATION_MEMORY.")
+    asked: str = Field(description="The words typed, as the job's question has them.")
+    read_as: str = Field(
+        default="",
+        description=(
+            "The complete question the pipeline answered, when the words typed followed up an "
+            "earlier turn and their restatement held; empty when the question was not restated."
+        ),
+    )
+    resolved: bool = Field(default=False, description="Whether a restatement held and was answered.")
+    reason: str = Field(
+        default="",
+        description="When none was: 'not restated', 'supervisor off', or the check that discarded it and why.",
+    )
+
+
 class Answer(Wire):
     """Everything the pipeline produced for one question.
 
@@ -377,6 +419,21 @@ class Answer(Wire):
             "The question asked several ways (arch7): the agreement, the delivered run and every "
             "run's record. None when the ensemble is off, so a client written for 6.3 reads the "
             "same answer it always did."
+        ),
+    )
+    pipeline: str = Field(
+        default="",
+        description=(
+            "The pipeline that answered, by the release that built it (PIPELINE_VERSION): "
+            "v7_0_0 or v6_3_1. Empty only for a state no agent made."
+        ),
+    )
+    conversation: Conversation | None = Field(
+        default=None,
+        description=(
+            "The conversation the question continued (arch8). None for a question asked alone, "
+            "and on a server that keeps no conversation (CONVERSATION_MEMORY=0), so a client "
+            "written for 7.0 reads the same answer it always did."
         ),
     )
 
@@ -422,6 +479,10 @@ class Job(Wire):
         default=None, description="Present once status is 'failed'."
     )
     links: JobLinks
+    conversation: str | None = Field(
+        default=None,
+        description="The conversation the request named, echoed whether or not the server keeps it.",
+    )
 
 
 class JobList(Wire):
@@ -492,6 +553,7 @@ class Limits(Wire):
     max_wait_seconds: float
     max_question_length: int = MAX_QUESTION_LENGTH
     max_metadata_entries: int = MAX_METADATA_ENTRIES
+    max_conversation_id_length: int = MAX_CONVERSATION_ID_LENGTH
 
 
 class EnsembleSettings(Wire):
@@ -511,6 +573,15 @@ class EnsembleSettings(Wire):
     )
 
 
+class MemorySettings(Wire):
+    """How much of a conversation this server reads a question with (arch8)."""
+
+    turns: int = Field(description="CONVERSATION_MEMORY: answered turns a question is read with; 0 is none.")
+    rows: int = Field(description="Rows of a remembered answer shown with it.")
+    max_conversations: int = Field(description="API_MAX_CONVERSATIONS: conversations kept at once.")
+    ttl_seconds: float = Field(description="API_CONVERSATION_TTL_SECONDS: how long an idle one is kept.")
+
+
 class Pipeline(Wire):
     """Which optional stages this server is running with.
 
@@ -526,6 +597,12 @@ class Pipeline(Wire):
     nodes: list[str] = Field(default_factory=list)
     ensemble: EnsembleSettings | None = Field(
         default=None, description="The ensemble's settings; absent from a server older than 7.0."
+    )
+    version: str = Field(
+        default="", description="PIPELINE_VERSION: v7_0_0 or v6_3_1; empty from a server older than 8.0."
+    )
+    memory: MemorySettings | None = Field(
+        default=None, description="The conversation's settings; absent from a server older than 8.0."
     )
 
 

@@ -165,6 +165,46 @@ class ModelsTest {
     }
 
     @Test
+    void the_pipelines_name_and_how_much_of_a_conversation_it_reads_parse() {
+        // 8.0: the name on the answer and in the metadata, and the
+        // conversation's four numbers beside it.
+        Models.Pipeline pipeline = Json.read("""
+                {"supervisor": true, "literals": true, "narrate": true, "audit": true,
+                 "schema_retrieval": "vector", "nodes": ["screen"], "version": "v6_3_1",
+                 "memory": {"turns": 5, "rows": 3, "max_conversations": 200, "ttl_seconds": 3600.0}}
+                """, Models.Pipeline.class);
+        assertEquals("v6_3_1", pipeline.version());
+        assertEquals(new Models.MemorySettings(5, 3, 200, 3600.0), pipeline.memory());
+        assertEquals("v7_0_0", Json.read("{\"pipeline\": \"v7_0_0\"}", Models.Answer.class).pipeline());
+        // A server older than 8.0 sends neither: no name, and no memory.
+        Models.Pipeline older = Json.read("{}", Models.Pipeline.class);
+        assertEquals("", older.version());
+        assertNull(older.memory());
+        assertEquals("", Json.read("{}", Models.Answer.class).pipeline());
+    }
+
+    @Test
+    void where_an_answer_stands_in_its_conversation_parses() {
+        // 8.0: the block beside the answer, the id echoed on the job, and
+        // the id's bound among the limits.
+        Models.Answer answer = Json.read("""
+                {"conversation": {"id": "c-1", "turn": 2, "remembered": 1, "asked": "and by store?",
+                 "read_as": "What were net sales by store in FY2025?", "resolved": true, "reason": ""}}
+                """, Models.Answer.class);
+        assertEquals(new Models.Conversation("c-1", 2, 1, "and by store?",
+                "What were net sales by store in FY2025?", true, ""), answer.conversation());
+        assertEquals("c-1", Json.read("{\"conversation\": \"c-1\"}", Models.Job.class).conversation());
+        assertEquals(64, Json.read("{\"max_conversation_id_length\": 64}", Models.Limits.class)
+                .max_conversation_id_length());
+        // Asked alone, or of a server older than 8.0: no block, nothing
+        // echoed, and a block's missing words are empty rather than null.
+        assertNull(Json.read("{}", Models.Answer.class).conversation());
+        assertNull(Json.read("{}", Models.Job.class).conversation());
+        Models.Conversation bare = Json.read("{}", Models.Conversation.class);
+        assertEquals(List.of("", "", "", ""), List.of(bare.id(), bare.asked(), bare.read_as(), bare.reason()));
+    }
+
+    @Test
     void a_reload_says_what_was_read_again_and_nothing_is_a_null() {
         // Mirrored for completeness: this client does not reload.
         Models.Reloaded reloaded = Json.read(
@@ -265,8 +305,13 @@ class ModelsTest {
 
     @Test
     void an_ask_carries_the_question_and_whatever_the_caller_wanted_echoed_back() {
+        // Asked alone, the request is 7.0's: no `conversation` at all, not a
+        // null one, which a 7.0 server refuses as a field it does not know.
         assertEquals("{\"question\":\"how many stores\",\"principal\":null,\"metadata\":{}}",
-                Json.write(new Models.AskRequest("how many stores", null, Map.of())));
+                Json.write(new Models.AskRequest("how many stores", null, Map.of(), null)));
+        assertEquals("{\"question\":\"and by state?\",\"principal\":null,\"metadata\":{},"
+                        + "\"conversation\":\"c-1\"}",
+                Json.write(new Models.AskRequest("and by state?", null, Map.of(), "c-1")));
     }
 
     @Test

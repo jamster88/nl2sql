@@ -11,11 +11,21 @@
  * Since 7.0 the evidence includes the other runs: the agent asks a question
  * several ways, and the SQL above is the one it delivered. What the others
  * wrote, and which of them agreed, is in the candidates pane beneath it.
+ *
+ * Since 8.0 a question asked in a conversation is staged as the question
+ * answered: a follow-up such as "and by state?" is recorded as the complete
+ * question it was read as, because that is what a golden pair is built from
+ * and a pair must stand alone. What the person typed is shown under it,
+ * "Asked as", with the turn it was and how many turns it was read with.
+ * A follow-up the agent ran as typed -- its restatement discarded by a
+ * check, or no reading made -- is staged as the words typed, and the line
+ * under it says so and why, since the service refuses to promote the pair
+ * until the draft's question is rewritten to stand alone (8.0.1).
  */
 
 import { Candidates } from "./Candidates";
 import { plainText } from "../api/text";
-import type { SubmissionModel, Verdict } from "../api/types";
+import type { ConversationRecord, SubmissionModel, Verdict } from "../api/types";
 
 export interface OriginalProps {
   submission: SubmissionModel;
@@ -45,6 +55,7 @@ export function Original({ submission }: OriginalProps) {
       </header>
 
       <h3 className="original-question">{submission.question}</h3>
+      <AskedAs conversation={submission.conversation} question={submission.question} />
 
       {submission.comment && (
         <blockquote className="original-comment">
@@ -100,5 +111,57 @@ export function Original({ submission }: OriginalProps) {
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * Why the staged question may not stand alone, in the agent's words, or ""
+ * (8.0.1): the follow-up was read with turns and not restated -- a check
+ * discarded the restatement ("C1 numbers: 3 missing"), the Supervisor was
+ * off or its call failed -- so the question above is the words typed. A
+ * question read as standing alone ("not restated") is a complete question,
+ * as is a restated one and one asked alone.
+ */
+export function followUpReason(conversation: ConversationRecord): string {
+  if (!conversation.remembered || conversation.resolved) return "";
+  const reason = conversation.reason;
+  return !reason || reason === "not restated" ? "" : reason;
+}
+
+/**
+ * The words typed, when they are not the question above: a follow-up the
+ * agent restated. Nothing for a question asked alone, whose record is `{}`,
+ * or for one asked in a conversation that stood alone already. A follow-up
+ * run as typed is the question above already, and the line says why it
+ * must be rewritten before it is promoted.
+ */
+function AskedAs({ conversation, question }: { conversation: ConversationRecord; question: string }) {
+  const unresolved = followUpReason(conversation);
+  if (unresolved) {
+    return (
+      <p className="original-asked original-unresolved" role="note">
+        <span className="muted">Run as typed:</span> this follow-up was not restated ({unresolved})
+        {conversation.turn ? (
+          <span className="muted">
+            {" "}
+            · turn {conversation.turn}, {conversation.remembered} remembered
+          </span>
+        ) : null}
+        . Rewrite the question in the draft so that it stands alone before promoting it.
+      </p>
+    );
+  }
+  const asked = conversation.asked ?? "";
+  if (!asked || asked === question) return null;
+  return (
+    <p className="original-asked">
+      <span className="muted">Asked as:</span> <q>{asked}</q>
+      {conversation.turn ? (
+        <span className="muted">
+          {" "}
+          · turn {conversation.turn}, {conversation.remembered ?? 0} remembered
+        </span>
+      ) : null}
+    </p>
   );
 }

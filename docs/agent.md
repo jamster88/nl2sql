@@ -105,6 +105,27 @@ the answer. [`agent/README.md`](../agent/README.md#asking-it-several-ways-arch7)
 has the whole of it, and [the benchmark](benchmark.md#the-ensemble-configuration)
 what it measured.
 
+**v8 (arch8) reads a question in its conversation.** A follow-up names
+nothing of its own -- "and in each state?" -- so asked alone it is refused
+or answered as some other question: one or two of the benchmark's fifteen
+follow-ups right. v8 reads it with the conversation's last answered turns
+(`CONVERSATION_MEMORY`, five by default, 0 for none), at two places only.
+The Supervisor restates a follow-up so that it stands alone, and code holds
+the restatement to every number, quoted value and direction typed before it
+becomes the question every later stage answers; the SQL Generator is shown
+the earlier questions with their SQL. With five turns, twelve and thirteen
+of the fifteen are right, and a question that stands alone is answered
+exactly as it is alone. The answer opens with "Read as: ..." when a
+follow-up was restated. The terminal's interactive session is a
+conversation; a REST client names its own, and the web interface and the
+desktop client make one per page or window, with a **New conversation**
+button. No node is added to either graph. `PIPELINE_VERSION` names the
+pipeline a deployment answers with -- `v7_0_0`, the ensemble, or `v6_3_1`,
+one run a question and nothing else different -- so two releases can be
+compared by name. [`agent/README.md`](../agent/README.md#remembering-the-conversation-arch8)
+has the whole of it, and [the benchmark](benchmark.md#memory-in-the-agent)
+what it measured.
+
 The design, and every place it departs from the source documents, is in
 [`multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md`](../multi-agent_arch_specs/Multi-Agent_NL2SQL_arch6.md):
 arch5.2 as built in 6.1.0 -- the answer contract, the Completeness Reviewer,

@@ -46,3 +46,14 @@ carries its measurements over, and the two tasks then wait for the
 calibrator. A catalog of a schema the agent does not know is refused, as
 before -- and a 6.3 agent knows only schema 2, so a stack still running 6.3
 images needs a schema-2 catalog of its own.
+
+**The Supervisor reads follow-ups since 8.0.** With a conversation's turns
+shown, the Supervisor's first call reads a follow-up against the earlier
+answers and restates it, on the standard rung. The calibrator measures that
+too (`calibrate.py --tasks supervisor`): each follow-up of the follow-up
+set read after its first turn, and each benchmark question read after one
+it does not follow up, counted at the standard rung, so the rung goes to a
+model only if it reads them as the reference model does. The catalog keeps
+the counts beside the rungs as `remembered`. A catalog calibrated before 8.0
+is read as it is, with the reading with turns unmeasured, so `OLLAMA_MODEL`
+answers it until the Supervisor is calibrated again.

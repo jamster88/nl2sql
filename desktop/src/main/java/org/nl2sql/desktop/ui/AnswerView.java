@@ -59,6 +59,12 @@ import java.util.Set;
  * ({@link EnsembleView}). The markdown {@code answer} opens with that same
  * line, so the prose this falls back to is the block after it.
  *
+ * <p>A follow-up the agent restated (8.0) says how it was read, under the
+ * words typed: "Read as: ..." and where it stands in its conversation. Only
+ * when the restatement held -- one the checks discarded was not what ran --
+ * and as text, since it is a model's sentence. The markdown {@code answer}
+ * opens with the same line, so the prose this falls back to is after it too.
+ *
  * <p>Three cases are not an answer at all and are handled before any of it. A
  * <b>refusal is a success</b> -- the agent decided the question was out of
  * scope or unsafe and said so, and there is no table because no query ran. An
@@ -91,6 +97,10 @@ public final class AnswerView {
         node.getChildren().add(head());
 
         Models.Answer answer = job.answer();
+        Region reading = readingOf(answer);
+        if (reading != null) {
+            node.getChildren().add(reading);
+        }
         if (job.status() == Models.JobStatus.FAILED || answer == null) {
             node.getChildren().add(failure());
         } else if (!answer.verdict().equals("proceed")) {
@@ -163,6 +173,32 @@ public final class AnswerView {
         return row;
     }
 
+    /** The reading a follow-up was answered as, when its restatement held; "" otherwise. */
+    static String readAs(Models.Answer answer) {
+        Models.Conversation conversation = answer == null ? null : answer.conversation();
+        return conversation != null && conversation.resolved() ? conversation.read_as() : "";
+    }
+
+    /** "Read as: ..." and the turn, or null when the question was not restated. */
+    private Region readingOf(Models.Answer answer) {
+        String reading = readAs(answer);
+        if (reading.isEmpty()) {
+            return null;
+        }
+        Models.Conversation conversation = answer.conversation();
+        javafx.scene.text.Text said = new javafx.scene.text.Text("Read as: ");
+        javafx.scene.text.Text read = new javafx.scene.text.Text(reading);
+        read.getStyleClass().add("read-as-reading");
+        javafx.scene.text.Text where = new javafx.scene.text.Text(
+                " · turn " + conversation.turn() + ", " + conversation.remembered() + " remembered");
+        where.getStyleClass().add("read-as-turn");
+        TextFlow line = new TextFlow(said, read, where);
+        line.getStyleClass().add("answer-read-as");
+        line.setMinWidth(0);
+        line.maxWidthProperty().bind(node.widthProperty().subtract(32));
+        return line;
+    }
+
     private Region failure() {
         VBox box = new VBox(6);
         box.getStyleClass().addAll("notice", "notice-error");
@@ -204,10 +240,12 @@ public final class AnswerView {
     private Region narrative(Models.Answer answer) {
         if (answer.claims().isEmpty()) {
             String said = Markup.plain(answer.narrative());
-            // Under the ensemble the document opens with the agreement line,
-            // which the badge above already says.
-            boolean opened = answer.ensemble() != null && !answer.ensemble().line().isEmpty();
-            String document = opened ? Markup.afterLead(answer.answer()) : answer.answer();
+            // The document opens with what the window shows elsewhere: the
+            // reading of a follow-up, under the question, and under the
+            // ensemble the agreement line, which the badge above says.
+            boolean agreed = answer.ensemble() != null && !answer.ensemble().line().isEmpty();
+            int lead = (readAs(answer).isEmpty() ? 0 : 1) + (agreed ? 1 : 0);
+            String document = Markup.afterLead(answer.answer(), lead);
             Label headline = new Label(said.isEmpty() ? Markup.lead(document) : said);
             headline.getStyleClass().add("answer-headline");
             wrapTo(headline, node, 32);

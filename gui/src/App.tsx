@@ -6,6 +6,12 @@
  * at once would only be four spinners. What it does keep is everything
  * already answered this session, so comparing two answers is a click.
  *
+ * Since 8.0 the questions asked are a conversation, when the server
+ * remembers one: the page makes the conversation's id when it opens, sends it
+ * with every question, and makes a new one on "New conversation". The session
+ * list is not the conversation. It is the jobs answered, and a new
+ * conversation leaves it as it was.
+ *
  * Every collaborator is a prop with a default. That is not ceremony either:
  * it is what lets the whole interface be tested against a fake client with
  * no server, no container and no network, which is the only way these paths
@@ -20,6 +26,7 @@ import { History } from "./components/History";
 import { Progress } from "./components/Progress";
 import { StatusBar } from "./components/StatusBar";
 import { createClient, type Client } from "./api/client";
+import { newConversationId, remembers } from "./api/conversation";
 import { useAsk } from "./api/useAsk";
 import type { JobWatchOptions } from "./api/events";
 import { createApiFeedbackStore } from "./feedback/apiStore";
@@ -61,6 +68,10 @@ export function App({ client: given, store: givenStore, watch }: AppProps) {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [history, setHistory] = useState<Job[]>([]);
   const [selected, setSelected] = useState<Job | null>(null);
+  const [conversation, setConversation] = useState(newConversationId);
+  // Said once, after "New conversation", until the next question is asked.
+  const [fresh, setFresh] = useState(false);
+  const conversing = remembers(meta) > 0;
 
   const remember = useCallback((job: Job) => {
     setHistory((previous) => [job, ...previous.filter((old) => old.id !== job.id)].slice(0, HISTORY_LIMIT));
@@ -107,10 +118,19 @@ export function App({ client: given, store: givenStore, watch }: AppProps) {
   const onAsk = useCallback(
     (question: string) => {
       setSelected(null);
-      ask.ask(question);
+      setFresh(false);
+      // Only while the server says it remembers: one that keeps nothing
+      // would echo the id and change nothing, and one older than 8.0 would
+      // refuse a field it does not know.
+      ask.ask(question, conversing ? conversation : undefined);
     },
-    [ask],
+    [ask, conversing, conversation],
   );
+
+  const onNewConversation = useCallback(() => {
+    setConversation(newConversationId());
+    setFresh(true);
+  }, []);
 
   return (
     <div className="app">
@@ -126,7 +146,15 @@ export function App({ client: given, store: givenStore, watch }: AppProps) {
           onCancel={ask.cancel}
           busy={ask.busy}
           showExamples={history.length === 0 && !ask.busy}
+          onNewConversation={conversing ? onNewConversation : undefined}
         />
+
+        {fresh && (
+          <p className="notice notice-quiet" role="status">
+            A new conversation: the next question is read without the ones before it. They stay in the
+            list of earlier questions.
+          </p>
+        )}
 
         {ask.error && (
           <div className="notice notice-error" role="alert">

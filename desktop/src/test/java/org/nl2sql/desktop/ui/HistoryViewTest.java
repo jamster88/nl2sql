@@ -20,7 +20,7 @@ class HistoryViewTest {
         Models.Job base = Fakes.answered();
         return new Models.Job(id, base.status(), question, base.metadata(), base.created_at(),
                 base.started_at(), base.finished_at(), base.duration_ms(), base.progress(),
-                base.answer(), null, base.links());
+                base.answer(), null, base.links(), null);
     }
 
     @Test

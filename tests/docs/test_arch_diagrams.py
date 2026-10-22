@@ -45,9 +45,9 @@ ENSEMBLE_PY = REPO_ROOT / "agent" / "nl2sql_agent" / "ensemble.py"
 V1, V2, V3 = DIAGRAMS / "arch_v1.svg", DIAGRAMS / "arch_v2.svg", DIAGRAMS / "arch_v3.svg"
 V4, V5, V5_1 = DIAGRAMS / "arch_v4.svg", DIAGRAMS / "arch_v5.svg", DIAGRAMS / "arch_v5_1.svg"
 V5_2, V5_6 = DIAGRAMS / "arch_v5_2.svg", DIAGRAMS / "arch_v5_6.svg"
-V7 = DIAGRAMS / "arch_v7.svg"
-ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2, V5_6, V7]
-IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2", "v5_6", "v7"]
+V7, V8 = DIAGRAMS / "arch_v7.svg", DIAGRAMS / "arch_v8.svg"
+ALL_DIAGRAMS = [V1, V2, V3, V4, V5, V5_1, V5_2, V5_6, V7, V8]
+IDS = ["v1", "v2", "v3", "v4", "v5", "v5_1", "v5_2", "v5_6", "v7", "v8"]
 
 # The one node each version adds over the one before it. The versions live on
 # different branches, so only one is ever checked out; these are what let the
@@ -246,6 +246,34 @@ def test_v7_says_what_it_changes_inside_the_pipeline():
         assert phrase in words, phrase
 
 
+def test_v8_adds_no_node_to_either_graph():
+    """arch8 is memory at two places and a name, with no node of its own:
+    its diagram draws the ensemble's eleven exactly as v7's does, held to
+    ensemble.py, and graph.py's picture is still v5.6's."""
+    assert diagram_nodes(V8) == diagram_nodes(V7) == ensemble_nodes()
+    assert diagram_for_this_tree() == V5_6
+    assert diagram_nodes(V5_6) == graph_nodes()
+
+
+def test_v8_draws_the_conversation_the_two_readers_and_the_name():
+    text = V8.read_text()
+    words = " ".join(re.sub(r"<[^>]+>", " ", text).split())
+    assert ">conversations — in memory</text>" in text
+    for heading in ("What v8 adds: the conversation", "The pipeline by name", "What it costs"):
+        assert heading in words, heading
+    for phrase in ("CONVERSATION_MEMORY (5)", "C1 every number", "C2 every quoted value",
+                   "C3 every direction", "generate_sql (shown the earlier turns",
+                   "PIPELINE_VERSION", "v6_3_1 is the ensemble off and nothing else",
+                   "byte for byte", "\"Read as: ...\""):
+        assert phrase in words, phrase
+    # The two nodes that read the turns, and the one that says so.
+    for tag in ("reads the turns", "+1 call with turns", "C1-C4 · code", "generate_sql shown the turns",
+                "Answer.conversation", "new in v8"):
+        assert tag in text, tag
+    # v7's green is not news in v8's legend, so none of its pills keep it.
+    assert "new in v7" not in text
+
+
 def test_v7_draws_the_gate_the_judge_and_the_second_wave():
     text = V7.read_text()
     for name in ("Ollama — chat models, gated", "models/catalog.json"):
@@ -338,7 +366,7 @@ def generator():
     [("arch_v1.svg", "build_v1"), ("arch_v2.svg", "build_v2"), ("arch_v3.svg", "build_v3"),
      ("arch_v4.svg", "build_v4"), ("arch_v5.svg", "build_v5"), ("arch_v5_1.svg", "build_v5_1"),
      ("arch_v5_2.svg", "build_v5_2"), ("arch_v5_6.svg", "build_v5_6"),
-     ("arch_v7.svg", "build_v7")],
+     ("arch_v7.svg", "build_v7"), ("arch_v8.svg", "build_v8")],
     ids=IDS,
 )
 def test_the_committed_svg_is_what_the_generator_produces(generator, name: str, builder: str):
@@ -362,6 +390,7 @@ def test_the_generator_is_deterministic(generator):
     assert generator.build_v5_2() == generator.build_v5_2()
     assert generator.build_v5_6() == generator.build_v5_6()
     assert generator.build_v7() == generator.build_v7()
+    assert generator.build_v8() == generator.build_v8()
 
 
 @pytest.mark.parametrize("svg", ALL_DIAGRAMS, ids=IDS)

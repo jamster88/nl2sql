@@ -226,3 +226,23 @@ def test_a_reload_makes_the_guard_ask_about_every_session_again(make_client):
     assert answer.json()["sessions_forgotten"] == 1 and asked == ["ada"]
     client.post("/v1/admin/reload", headers=admin)
     assert asked == ["ada", "ada"], "asked again after the reload forgot the answer"
+
+
+def test_two_peoples_conversations_of_one_id_are_two_and_a_stranger_cannot_forget_one(make_client):
+    """arch8 R11: a conversation is keyed by the person and the id. Bob's
+    "c-1" is not Alice's, and Carol's DELETE of it is a 404 -- not a 403,
+    for the reason a job is: whether one exists is its owner's to learn."""
+    from nl2sql_agent.api.conversations import ConversationStore
+
+    guard = Guard(GuardSettings(enabled=True), public_key=KEY.public_key())
+    runner = make_runner()
+    client = make_client(runner, guard=guard, conversations=ConversationStore(depth=5))
+    ask_as(client, bearer("alice"), "a1", conversation="c-1")
+    bob = ask_as(client, bearer("bob"), "b1", conversation="c-1")
+    assert bob["answer"]["conversation"]["turn"] == 1 and runner.turns[1] == ()
+
+    assert client.delete("/v1/conversations/c-1", headers=bearer("carol")).status_code == 404
+    assert client.delete("/v1/conversations/c-1", headers=bearer("bob")).status_code == 204
+    alice = ask_as(client, bearer("alice"), "a2", conversation="c-1")
+    assert alice["answer"]["conversation"]["turn"] == 2, "Alice's survives both deletes"
+    assert [turn.question for turn in runner.turns[2]] == ["a1"]

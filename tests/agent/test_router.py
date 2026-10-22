@@ -22,6 +22,7 @@ from nl2sql_agent.router import (
     CATALOG_SCHEMA,
     ENSEMBLE_TASKS,
     RoutingError,
+    RoutingTable,
     Router,
     build_table,
     candidates,
@@ -179,7 +180,15 @@ def test_off_is_v51_every_call_to_ollama_model():
     assert not table.enabled
     assert {cell.model for cell in table.cells.values()} == {ANCHOR}
     assert table.windows == {ANCHOR: Settings().num_ctx}
-    assert table.lines()[0] == f"model routing off: 1 model(s), anchor {ANCHOR}"
+    assert table.lines()[0] == f"model routing off, pipeline v7_0_0: 1 model(s), anchor {ANCHOR}"
+
+
+def test_the_first_line_names_the_pipeline_the_table_routes_for():
+    """arch8: where the terminal already says the models, it says the name."""
+    table = build_table(settings(pipeline_version="v6_3_1", ensemble_enabled=None), None)
+    assert (table.pipeline, table.lines()[0]) == ("v6_3_1", f"model routing on, pipeline v6_3_1: 1 model(s), anchor {ANCHOR}")
+    unnamed = RoutingTable(True, ANCHOR, table.cells, table.windows, 1)
+    assert unnamed.lines()[0] == f"model routing on: 1 model(s), anchor {ANCHOR}"
 
 
 def test_without_a_catalog_every_rung_is_the_anchor():
@@ -354,7 +363,7 @@ def test_the_table_describes_itself():
                                                         "why": "catalog: fastest suited"}
     assert described["keep_alive"] == "30m"
     lines = table.lines()
-    assert lines[0] == f"model routing on: 2 model(s), anchor {ANCHOR}"
+    assert lines[0] == f"model routing on, pipeline v7_0_0: 2 model(s), anchor {ANCHOR}"
     assert lines[1].split() == ["supervisor", "light", "fast:7b,", "standard", "fast:7b,", "heavy", "fast:7b"]
 
 

@@ -105,6 +105,33 @@ the API is the INSERT-only writer. So until this service has started once
 since the upgrade the API finds no such column, stages each verdict
 without it, and says so once in its log; the first vote after carries it.
 
+Since 8.0 it also carries **`pipeline`**: the name of the pipeline that
+answered -- `v7_0_0`, the ensemble, or `v6_3_1`, one run a question -- the
+API's `Answer.pipeline`. A submission from before 8.0 holds `''`. The
+column is added on start the same way, `TEXT NOT NULL DEFAULT ''`.
+
+And **`conversation`** (JSONB, 8.0): where the answer stood in its
+conversation -- the API's `Answer.conversation`: the turn, the turns it was
+read with, `asked`, the words typed, and `read_as`, the complete question a
+follow-up was read as. Inside a conversation `question` is the question
+answered, which a golden pair is built from and promotion reads as it
+always has: a pair must stand alone, and "and by store?" does not. The
+words typed are in `conversation.asked`. A question asked alone, and a
+submission from before 8.0, holds `{}`. Added on start the same way,
+`JSONB NOT NULL DEFAULT '{}'::jsonb`; the API asks which of the three a
+table has in one query and leaves out what it lacks, saying so once.
+
+The review page shows it under the question: when the words typed differ
+from the question answered, an "Asked as" line quotes them, with the turn
+and how many turns it was read with, drawn as text. A question asked alone
+shows no such line. A follow-up the agent ran as typed -- `resolved` false
+and `reason` a check, "supervisor off" or "supervisor failed", with turns
+remembered -- is staged as the words typed, and the page says so under the
+question, with the reason, because promotion then refuses it (`422
+not_standalone`) until the draft's question is rewritten to stand alone; a
+question read as standing alone ("not restated") is a complete question
+and promotes as it always has (8.0.1). The curation page shows nothing of it.
+
 The verdict itself is one of three: `yes` (correct), `no` (wrong), or
 `incomplete` (correct but incomplete -- the SQL was right and the answer
 left out something a reader needed). Each has its own pane in the review
@@ -589,6 +616,7 @@ The error envelope is the agent API's, so one client parses both:
 | `rejected` | 409 | Accept it before promoting or fixing it |
 | `wrong_workflow` | 409 | Promoting a wrong or incomplete answer, or validating or fixing a correct one |
 | `not_promotable` | 422 | The draft cannot become a pair. Every reason, not the first |
+| `not_standalone` | 422 | The question was typed as a follow-up and run as typed, and the draft still asks it in those words; rewrite it to stand alone (8.0.1) |
 | `not_valid` | 422 | The query -- a corrected query, a golden pair's, or a snippet -- did not pass validation. Every reason, not the first |
 | `not_withdrawable` | 422 | Taking the pair out would leave a document the loader cannot read, or change another pair. Nothing was changed |
 | `not_writable` | 422 | A snippet change would leave a document the loader cannot read, or change another snippet. Nothing was changed |
@@ -814,7 +842,7 @@ whether the stores caught up.
 cd review/gui
 npm install
 npm run dev      # proxies https://localhost:8444
-npm run test     # review GUI: 197 tests, 100% coverage
+npm run test     # review GUI: 204 tests, 100% coverage
 ```
 
 ## Tests

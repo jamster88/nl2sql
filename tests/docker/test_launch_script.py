@@ -67,6 +67,33 @@ def test_restart_recreates_rather_than_reusing(run_launch):
     assert run_launch("--restart").called("compose up -d --force-recreate")
 
 
+#: Every long-running service launch.sh starts, each by an `up` of its own.
+EVERY_SERVICE = ("postgres stores", "ldap auth", "api", "directorygui", "gui", "review", "reviewgui", "curategui",
+                 "console", "consolegui", "mlflowdb", "mlflow", "mlflowproxy")
+
+
+def test_restart_recreates_every_service_it_starts_not_only_the_databases(run_launch):
+    """`--restart` dates from 3.0, when the databases were the whole stack,
+    and every service added since was started without it: a proxy still
+    trusting an old certificate -- what docs/USAGE_GUIDE.md sends people to
+    `./start.sh --restart` for -- was never recreated. Each `up` is handed
+    the flag; compose recreates only the services an `up` names, so a page
+    recreated does not take the databases down again behind it."""
+    result = run_launch("--restart", "--gui", "--review", "--curate", "--console", "--mlflow")
+    assert result.returncode == 0
+    for services in EVERY_SERVICE:
+        assert result.called(f"up -d --force-recreate {services}"), services
+    assert not result.calls_matching("up -d --force-recreate --")
+
+
+def test_without_restart_every_service_is_reused(run_launch):
+    result = run_launch("--gui", "--review", "--curate", "--console", "--mlflow")
+    assert result.returncode == 0
+    assert not result.calls_matching("--force-recreate")
+    for services in EVERY_SERVICE:
+        assert result.called(f"up -d {services}"), services
+
+
 # ---------------------------------------------------------------------------
 # Handing off to setup.sh
 # ---------------------------------------------------------------------------
@@ -624,6 +651,18 @@ def test_the_closing_lines_say_a_judgement_can_be_taken_back(run_launch):
     assert "its pair out of the golden set, or its fix out of its store, first" in output
 
 
+def test_the_closing_lines_say_a_follow_up_is_staged_as_the_question_it_was_read_as(run_launch):
+    """8.0 stages a follow-up as its restatement, the words typed beside it,
+    and 8.0.1 refuses to promote one the agent ran as typed: the reviewer is
+    the one who has to rewrite it, so it is said here. Said whatever
+    CONVERSATION_MEMORY is now, since verdicts outlive the setting."""
+    for said in ("", "0"):
+        output = run_launch("--review", env={"CONVERSATION_MEMORY": said}).output
+        assert "A follow-up asked in a conversation is staged as the complete question" in output
+        assert "it was read as, with the words typed under it." in output
+        assert "is promoted only once the draft's question stands" in output
+
+
 # ---------------------------------------------------------------------------
 # A proxy still trusting a certificate that has been reissued
 # ---------------------------------------------------------------------------
@@ -1004,10 +1043,10 @@ def test_it_says_how_many_ways_a_question_is_asked_and_how_wide_the_host_gate_is
     time unless OLLAMA_PARALLEL_CALLS says it serves more. Said beside the
     routing, as compose reads the settings -- the shell, then .env -- so a
     slow answer reads as the setting it is."""
-    result = run_launch()
+    result = run_launch(env=UNSAID)
     assert "every question is asked 4 ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)" in result.output
     assert "the model host is asked 1 call(s) at a time (OLLAMA_PARALLEL_CALLS)" in result.output
-    wider = run_launch(env={"ENSEMBLE_PARAPHRASES": "5", "OLLAMA_PARALLEL_CALLS": "2"})
+    wider = run_launch(env={**UNSAID, "ENSEMBLE_PARAPHRASES": "5", "OLLAMA_PARALLEL_CALLS": "2"})
     assert "every question is asked 6 ways" in wider.output
     assert "the model host is asked 2 call(s) at a time" in wider.output
 
@@ -1017,12 +1056,219 @@ def test_with_the_ensemble_off_it_says_one_run_answers_and_the_grain_check_stays
     `off`, in any case), from .env as from the shell; and a count that is not
     one is read as the default rather than breaking the arithmetic."""
     for spelling in ("false", "OFF", "0"):
-        result = run_launch(env={"ENSEMBLE_ENABLED": spelling})
+        result = run_launch(env={**UNSAID, "ENSEMBLE_ENABLED": spelling})
         assert "every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies" in result.output
         assert "asked 4 ways" not in result.output
-    assert "answered by one run" in run_launch(env_file="ENSEMBLE_ENABLED=no\n").output
-    odd = run_launch(env={"ENSEMBLE_PARAPHRASES": "many"})
+    assert "answered by one run" in run_launch(env=UNSAID, env_file="ENSEMBLE_ENABLED=no\n").output
+    odd = run_launch(env={**UNSAID, "ENSEMBLE_PARAPHRASES": "many"})
     assert "every question is asked 4 ways" in odd.output
+
+
+# ---------------------------------------------------------------------------
+# The pipeline by name (arch8): said as the agent resolves it, the name
+# first and the switch second, and a name it would refuse refused here first
+# ---------------------------------------------------------------------------
+
+#: Neither said: whatever the developer's shell holds, empty is unset.
+UNSAID = {"PIPELINE_VERSION": "", "ENSEMBLE_ENABLED": ""}
+
+
+def _named(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if "the pipeline is" in line]
+
+
+@pytest.mark.parametrize(
+    ("said", "line"),
+    [
+        ({}, "the pipeline is v7_0_0: every question is asked 4 ways, judged and voted on "
+             "(ENSEMBLE_ENABLED=false for one run)"),
+        ({"ENSEMBLE_ENABLED": "false"}, "the pipeline is v7_0_0, the ensemble off: every question is answered by one "
+                                        "run (ENSEMBLE_ENABLED=false); the grain check still applies"),
+        ({"PIPELINE_VERSION": "v6_3_1"}, "the pipeline is v6_3_1: every question is answered by one run "
+                                         "(PIPELINE_VERSION); the grain check still applies"),
+        ({"PIPELINE_VERSION": "v6_3_1", "ENSEMBLE_ENABLED": "no"},
+         "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION); "
+         "the grain check still applies"),
+    ],
+    ids=["v7_0_0", "v7_0_0 one run", "v6_3_1", "v6_3_1 and off"],
+)
+def test_it_names_the_pipeline_as_the_agent_resolves_it(run_launch, said, line):
+    result = run_launch(env={**UNSAID, **said})
+    assert result.returncode == 0
+    assert _named(result.output) == [line]
+
+
+@pytest.mark.parametrize("spelling", ["true", "ON", "1"])
+def test_the_ensemble_under_the_name_of_one_run_is_refused_before_anything_starts(run_launch, spelling):
+    """The fourth combination: the agent would refuse it at start, and the
+    API would never become healthy. Said here, with the agent's sentence."""
+    result = run_launch(env={"PIPELINE_VERSION": "v6_3_1", "ENSEMBLE_ENABLED": spelling})
+    assert result.returncode != 0
+    assert "ERROR: PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it" in result.output
+    assert not result.calls_matching("compose up")
+    from_env = run_launch(env=UNSAID, env_file="IMAGE_NAME=x\nPIPELINE_VERSION=v6_3_1\nENSEMBLE_ENABLED=true\n")
+    assert from_env.returncode != 0 and "ENSEMBLE_ENABLED=true contradicts it" in from_env.output
+
+
+def test_a_pipeline_the_agent_does_not_know_is_refused_naming_the_two(run_launch):
+    result = run_launch("--pipeline", "v8_0_0")
+    assert result.returncode != 0
+    assert "ERROR: PIPELINE_VERSION is 'v8_0_0': it must be v7_0_0 or v6_3_1" in result.output
+    assert not result.calls_matching("compose up")
+    from_env = run_launch(env=UNSAID, env_file="IMAGE_NAME=x\nPIPELINE_VERSION=7.0.0\n")
+    assert "ERROR: PIPELINE_VERSION is '7.0.0': it must be v7_0_0 or v6_3_1" in from_env.output
+
+
+def test_the_pipeline_flag_needs_a_name(run_launch):
+    result = run_launch("--pipeline")
+    assert result.returncode != 0
+    assert "ERROR: --pipeline needs a name: v7_0_0 or v6_3_1" in result.output
+
+
+def test_the_pipeline_flag_reaches_every_service_compose_starts_this_run_only(run_launch):
+    """Exported, as --no-auth is: compose reads the shell before .env, and
+    .env is not written."""
+    result = run_launch("--api", "--pipeline", "v6_3_1", env=UNSAID)
+    assert result.returncode == 0
+    told = (result.workdir.parent / "pipeline-version").read_text().split()
+    assert told and set(told) == {"v6_3_1"}
+    assert _named(result.output) == [
+        "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION); "
+        "the grain check still applies"]
+    assert "PIPELINE_VERSION" not in (result.workdir / ".env").read_text()
+
+
+# ---------------------------------------------------------------------------
+# Remembering the conversation (arch8): said beside the pipeline, and a
+# number the agent would refuse refused here first
+# ---------------------------------------------------------------------------
+
+
+def _remembered(output: str) -> list[str]:
+    return [line.strip() for line in output.splitlines() if "(CONVERSATION_MEMORY" in line]
+
+
+@pytest.mark.parametrize(
+    ("said", "line"),
+    [
+        ("", "the agent remembers the last 5 turns of a conversation (CONVERSATION_MEMORY)"),
+        ("0", "each question is asked alone (CONVERSATION_MEMORY=0)"),
+        ("1", "the agent remembers the last turn of a conversation (CONVERSATION_MEMORY)"),
+        ("015", "the agent remembers the last 15 turns of a conversation (CONVERSATION_MEMORY)"),
+    ],
+    ids=["default", "none", "one", "fifteen"],
+)
+def test_it_says_how_much_of_a_conversation_a_question_is_read_with(run_launch, said, line):
+    result = run_launch(env={"CONVERSATION_MEMORY": said})
+    assert result.returncode == 0
+    assert _remembered(result.output) == [line]
+
+
+@pytest.mark.parametrize("value", ["16", "five", "-1"])
+def test_a_memory_the_agent_would_refuse_is_refused_naming_the_bounds(run_launch, value):
+    result = run_launch("--memory", value)
+    assert result.returncode != 0
+    assert f"ERROR: CONVERSATION_MEMORY is '{value}': it must be 0 to 15" in result.output
+    assert not result.calls_matching("compose up")
+    from_env = run_launch(env={"CONVERSATION_MEMORY": ""}, env_file=f"IMAGE_NAME=x\nCONVERSATION_MEMORY={value}\n")
+    assert f"ERROR: CONVERSATION_MEMORY is '{value}': it must be 0 to 15" in from_env.output
+
+
+def test_the_memory_flag_needs_a_number(run_launch):
+    result = run_launch("--memory")
+    assert result.returncode != 0
+    assert "ERROR: --memory needs a number: 0 to 15" in result.output
+
+
+def test_the_memory_flag_reaches_every_service_compose_starts_this_run_only(run_launch):
+    """Exported, as --pipeline is: compose reads the shell before .env, and
+    .env is not written."""
+    result = run_launch("--api", "--memory", "0", env={"CONVERSATION_MEMORY": ""})
+    assert result.returncode == 0
+    told = (result.workdir.parent / "conversation-memory").read_text().split()
+    assert told and set(told) == {"0"}
+    assert _remembered(result.output) == ["each question is asked alone (CONVERSATION_MEMORY=0)"]
+    assert "CONVERSATION_MEMORY" not in (result.workdir / ".env").read_text()
+
+
+@pytest.mark.parametrize(
+    ("said", "reach"),
+    [
+        ("", "the last 5 answered questions"),
+        ("1", "the last answered question"),
+        ("15", "the last 15 answered questions"),
+    ],
+    ids=["default", "one", "fifteen"],
+)
+def test_the_terminal_session_is_said_to_keep_a_conversation(run_launch, said, reach):
+    """The interactive session is one conversation (8.0): the closing lines
+    say so beside the questions they suggest, with how far back it reaches."""
+    output = run_launch(env={"CONVERSATION_MEMORY": said}).output
+    assert "Leave the question off for a session that keeps a conversation. Each" in output
+    assert f"question is read with {reach}, so a follow-up --\n" in output
+    assert '"and by store?" -- is answered as the complete question it means:' in output
+    assert "\n    docker compose run --rm agent\n" in output
+    # The lines after it are still there, once.
+    assert output.count("./launch.sh --help     other options") == 1
+
+
+def test_with_memory_off_no_interface_is_said_to_keep_a_conversation(run_launch):
+    """CONVERSATION_MEMORY=0 asks every question alone: no follow-up to
+    describe in the terminal, the API, the page or the window."""
+    for flags in ((), ("--api",), ("--gui",), ("--desktop",)):
+        output = run_launch(*flags, env={"CONVERSATION_MEMORY": "0"}).output
+        assert "follow-up" not in output.split("==> Ready.", 1)[1].split("==> The review", 1)[0], flags
+        assert "New conversation" not in output
+        assert "/v1/conversations" not in output
+        assert "Leave the question off for a session" not in output
+        assert output.count("./launch.sh --help     other options") == 1
+
+
+def test_the_api_lines_say_how_to_name_a_conversation_and_forget_it(run_launch):
+    output = run_launch("--api", env={"CONVERSATION_MEMORY": "3"}).output
+    assert 'Send "conversation": "<an id of your own>" with each question of a' in output
+    assert "conversation, and a follow-up is read with the last 3 answered questions\n" in output
+    assert "before it; DELETE /v1/conversations/<id> forgets it." in output
+    # Still after the contract's line, inside the API's block.
+    assert output.index("agent/API.md is the contract") < output.index('Send "conversation"')
+
+
+def test_the_web_interface_lines_say_a_follow_up_is_read_with_the_answers_before_it(run_launch):
+    output = run_launch("--gui").output
+    assert "A follow-up is read with the last 5 answered questions before it, and\n" in output
+    assert "opens with the question it was read as; New conversation, beside the" in output
+    assert "ask box, starts again." in output
+    block = output.split("==> The web interface is up:", 1)[1]
+    assert block.index("New conversation") < block.index("logs -f gui") < block.index("gui/README.md")
+
+
+def test_the_desktop_lines_say_the_window_keeps_a_conversation_too(run_launch):
+    output = run_launch("--desktop", env={"CONVERSATION_MEMORY": "1"}).output
+    assert "The window keeps a conversation, as the web interface does: a" in output
+    assert "follow-up is read with the last answered question before it.\n" in output
+    assert "New conversation starts again." in output
+    block = output.split("==> The desktop client is built:", 1)[1]
+    assert block.index("whichever was used") < block.index("New conversation") < block.index("desktop/README.md")
+
+
+def test_the_probe_says_a_setting_the_agent_refuses_rather_than_a_traceback():
+    """S9 of arch8's risks: `Settings.from_env` raises ValueError on a
+    contradiction, which the probe once let out as a traceback the script
+    reported as an agent image it could not ask. Run here, as Python,
+    against this checkout's agent."""
+    import os
+    import subprocess
+    import sys
+
+    probe = (REPO_ROOT / "launch.sh").read_text().split("routing_probe='", 1)[1].split("\n'\n", 1)[0]
+    env = {
+        **os.environ, "PYTHONPATH": f"{REPO_ROOT / 'agent'}:{REPO_ROOT / 'common'}", "MLFLOW_DISABLE_AGENT_HINT": "1",
+        "PIPELINE_VERSION": "v6_3_1", "ENSEMBLE_ENABLED": "true",
+    }
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=env, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        "ROUTE error PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it")
 
 
 def test_the_routing_table_is_asked_of_the_agent_image_itself(run_launch):
@@ -1411,7 +1657,7 @@ def test_with_the_api_the_directory_and_auth_service_start_after_it(run_launch):
     # The database's half -- the group roles, the sync's login, the pg_hba
     # lines -- is the dbprep service's, which the auth service waits for.
     assert result.index_of("compose run --rm --no-deps -T dbprep") < result.index_of("--profile api up -d api")
-    assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d auth")
+    assert result.index_of("--profile api up -d api") < result.index_of("--profile api --profile auth up -d ldap auth")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-ldap")
     assert result.called("inspect --format {{.State.Health.Status}} nl2sql-auth")
     assert result.called("--profile api --profile auth --profile directorygui up -d directorygui")

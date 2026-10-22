@@ -241,10 +241,37 @@ class QuestionResult:
     #: how many of its attempts the check refused, and how that run ended,
     #: scored against the reference as the answer is.
     grain_repairs: list[dict[str, Any]] = field(default_factory=list)
+    #: The follow-up set's (arch8): the benchmark question this one follows,
+    #: whose id and category it keeps -- its words a follow-up's, in
+    #: `question`, and its reference the complete question's -- and each of
+    #: that question's filters the follow-up's reference keeps, with whether
+    #: the delivered SQL kept it too. Empty for a question asked as the
+    #: benchmark asks it.
+    followup_of: str = ""
+    keeps: dict[str, bool] = field(default_factory=dict)
+    #: The pipeline that answered, as its state names it (arch8).
+    pipeline: str = ""
+    #: How it was read against the conversation's turns, when it was asked
+    #: with any (arch8): `turn` (this question's number in it), `remembered`,
+    #: `resolved`, `read_as` and `reason` as the run's note has them; for a
+    #: follow-up also `first`, how its first turn scored, and `contract`,
+    #: whether the reading built the contract the complete question's does.
+    conversation: dict[str, Any] = field(default_factory=dict)
+    #: The independence (arch8 section 11): the question asked as the second
+    #: turn after `after`, and whether it was answered exactly as when asked
+    #: alone. None for a question asked alone.
+    after: str = ""
+    independent: bool | None = None
 
     @property
     def label(self) -> str:
-        """B07 for the benchmark's own wording, B07.2 for the second rewording."""
+        """B07 for the benchmark's own wording, B07.2 for the second
+        rewording, B07.f for the question that follows it, B07.i for it
+        asked as a second turn."""
+        if self.followup_of:
+            return f"{self.question_id}.f"
+        if self.after:
+            return f"{self.question_id}.i"
         return f"{self.question_id}.{self.wording}" if self.wording else self.question_id
 
     @property
@@ -268,6 +295,11 @@ class BenchmarkReport:
     #: rejects a right query blocks the release that ships it.
     grain_checked: bool = False
     rejected_references: list[str] = field(default_factory=list)
+    #: How many earlier turns each follow-up was asked with (arch8): 0,
+    #: nothing remembered, until the agent takes turns.
+    memory: int = 0
+    #: The pipeline the configuration ran under, `PIPELINE_VERSION` (arch8).
+    pipeline: str = ""
 
     @property
     def total(self) -> int:
@@ -378,6 +410,80 @@ class BenchmarkReport:
             if result.rung:
                 counts[result.rung] = counts.get(result.rung, 0) + 1
         return counts
+
+    # --- the follow-up set (arch8 section 11) ------------------------------
+
+    def followups(self) -> list[QuestionResult]:
+        """The results that were follow-ups, in the order they were asked."""
+        return [result for result in self.results if result.followup_of]
+
+    @property
+    def followed_up(self) -> bool:
+        """Whether the follow-up set was asked."""
+        return bool(self.followups())
+
+    @property
+    def followup_correct(self) -> int:
+        return sum(1 for result in self.followups() if result.correct)
+
+    @property
+    def followup_accuracy(self) -> float:
+        """The fraction of follow-ups answered right -- arch8 section 11's
+        first measure: with nothing remembered, the premise memory is argued
+        from."""
+        followups = self.followups()
+        return self.followup_correct / len(followups) if followups else 0.0
+
+    def filters_kept(self) -> tuple[int, int]:
+        """(kept, kept by the references): the first turns' filters the
+        follow-ups' references keep, and how many of them the delivered SQL
+        kept too."""
+        keeps = [kept for result in self.followups() for kept in result.keeps.values()]
+        return sum(keeps), len(keeps)
+
+    @property
+    def consistency(self) -> float | None:
+        """The fraction of those filters kept -- arch8 section 11's
+        consistency. None when no reference keeps one, so it is never
+        confused with none kept."""
+        kept, total = self.filters_kept()
+        return kept / total if total else None
+
+    def read_in_context(self) -> list[QuestionResult]:
+        """The follow-ups asked after their first turn, with it remembered."""
+        return [result for result in self.followups() if result.conversation]
+
+    @property
+    def resolution_rate(self) -> float | None:
+        """arch8 section 11's second measure: the fraction of follow-ups
+        whose restatement held and builds the contract the complete
+        question's reading does. None when nothing was remembered."""
+        asked = self.read_in_context()
+        held = [r for r in asked if r.conversation.get("resolved") and r.conversation.get("contract")]
+        return len(held) / len(asked) if asked else None
+
+    def rejections_by_check(self) -> dict[str, int]:
+        """Why the follow-ups that were not read as a restatement were not:
+        the check that discarded it (`C1 numbers` ...), or `not restated`,
+        or the run's own reason, each counted."""
+        counts: dict[str, int] = {}
+        for result in self.read_in_context():
+            if not result.conversation.get("resolved"):
+                reason = (result.conversation.get("reason") or "").split(":")[0] or "none"
+                counts[reason] = counts.get(reason, 0) + 1
+        return dict(sorted(counts.items()))
+
+    def second_turns(self) -> list[QuestionResult]:
+        """The questions asked as a second turn, for the independence."""
+        return [result for result in self.results if result.after]
+
+    @property
+    def independence(self) -> float | None:
+        """The fraction of questions answered exactly as when asked alone,
+        asked as a second turn (arch8 section 11): which must be 1.0. None
+        when the independence was not measured."""
+        seconds = self.second_turns()
+        return sum(1 for r in seconds if r.independent) / len(seconds) if seconds else None
 
     # --- the ensemble (arch7 section 11) ----------------------------------
 

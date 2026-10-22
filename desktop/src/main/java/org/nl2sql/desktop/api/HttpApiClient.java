@@ -62,12 +62,12 @@ public final class HttpApiClient implements ApiClient {
     }
 
     @Override
-    public Models.Job ask(String question, int waitSeconds) {
+    public Models.Job ask(String question, int waitSeconds, String conversation) {
         Map<String, String> query = new LinkedHashMap<>();
         if (waitSeconds > 0) {
             query.put("wait", String.valueOf(waitSeconds));
         }
-        String body = Json.write(new Models.AskRequest(question, null, Map.of()));
+        String body = Json.write(new Models.AskRequest(question, null, Map.of(), conversation));
         return Json.read(send(request("/v1/questions", query)
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))

@@ -510,4 +510,11 @@ describe("afterLead", () => {
     expect(afterLead("*line*")).toBe("");
     expect(afterLead("")).toBe("");
   });
+
+  it("drops as many blocks as it is told: a follow-up's reading as well as the agreement (8.0)", () => {
+    const document = "Read as: *q*\n\n*line*\n\nProse.\n\n| t |";
+    expect(afterLead(document, 2)).toBe("Prose.\n\n| t |");
+    expect(afterLead(document, 0)).toBe(document);
+    expect(afterLead("Read as: *q*\n\n*line*", 2)).toBe("");
+  });
 });

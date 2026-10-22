@@ -1178,3 +1178,45 @@ def test_a_finished_submission_says_how_to_change_it(judged, state, said):
     assert response.status_code == 409
     message = response.json()["error"]["message"]
     assert "/v1/submissions/{id}/reopen" in message and said in message
+
+
+# ---------------------------------------------------------------------------
+# 8.0.1: a follow-up run as typed is no golden pair until it is rewritten
+# ---------------------------------------------------------------------------
+
+FOLLOW_UP = {"id": "c-1", "turn": 2, "remembered": 1, "asked": "And the top 3?", "read_as": "", "resolved": False,
+             "reason": "C1 numbers: 3 missing"}
+
+
+def test_a_follow_up_run_as_typed_is_not_promoted_until_its_question_is_rewritten(
+    make_client, submission, draft, document
+):
+    """The staged question is the words typed, which mean something only
+    with the turns before them; a pair built from them would be retrieved
+    for every later fragment. The evidence is not touched: the draft is."""
+    submission.question = "And the top 3?"
+    submission.conversation = dict(FOLLOW_UP)
+    client = make_client()
+    before = document.read_text()
+
+    response = client.post("/v1/submissions/sub-1/promote", json={"draft": {**complete(draft), "question": "and the top 3?"}})
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "not_standalone"
+    assert "C1 numbers: 3 missing" in response.json()["error"]["message"]
+    assert document.read_text() == before and client.app.state.repository.submissions["sub-1"].state == "pending"
+
+    rewritten = {**complete(draft), "question": "What were the top 3 banners by net sales in FY2025?"}
+    assert client.post("/v1/submissions/sub-1/promote", json={"draft": rewritten}).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "conversation",
+    [{}, dict(FOLLOW_UP, reason="not restated"),
+     dict(FOLLOW_UP, resolved=True, read_as="What were the top 3 banners by net sales in FY2025?", reason=""),
+     dict(FOLLOW_UP, remembered=0, reason="")],
+    ids=["asked alone", "stood alone", "restated", "first turn"],
+)
+def test_a_complete_question_is_promoted_as_it_always_was(make_client, submission, draft, document, conversation):
+    submission.conversation = conversation
+    response = make_client().post("/v1/submissions/sub-1/promote", json={"draft": complete(draft)})
+    assert response.status_code == 200, response.text

@@ -9,8 +9,13 @@
  * The failure case earns more room than the success case: a GUI that cannot
  * reach its API should say so in words, since every other part of the page
  * will simply look empty.
+ *
+ * Since 8.0 it also names the pipeline answering and how much of a
+ * conversation it remembers, because "why did it read my question that way"
+ * is the next question asked of an answer, and the answer starts here.
  */
 
+import { memorySentence } from "../api/conversation";
 import type { Meta } from "../api/types";
 
 export interface StatusBarProps {
@@ -52,6 +57,8 @@ export function StatusBar({ meta, error, warnings }: StatusBarProps) {
       <span className="muted">
         {meta.authentication === "bearer" ? "token required" : "no token"}
       </span>
+      {meta.pipeline.version && <span className="muted">pipeline {meta.pipeline.version}</span>}
+      <span className="muted">{memorySentence(meta)}</span>
       {meta.scope && <span className="status-scope muted">{meta.scope}</span>}
       {warnings.map((warning) => (
         <span key={warning} className="status-warning">

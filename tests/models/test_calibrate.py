@@ -25,7 +25,7 @@ from nl2sql_agent.judge import Ruling, Rulings
 from nl2sql_agent.paraphrase import Rewording, Rewordings
 from nl2sql_agent.present import CellRef, NarratedClaim, Narrative
 from nl2sql_agent.state import AnswerContract, Complexity, QueryResult, TraceEntry
-from nl2sql_agent.supervisor import Screening
+from nl2sql_agent.supervisor import ConversationScreening, Screening
 
 from ..agent.test_contract import CATALOG
 from .conftest import REPO_ROOT
@@ -44,10 +44,13 @@ class Model:
     """A chat model that answers by what the prompt says."""
 
     def __init__(self, *, injections=True, narrate=True, reflect=(), diagnosis="Use HAVING, not WHERE.",
-                 fail=False, rewordings=(), judging="right"):
+                 fail=False, rewordings=(), judging="right", restate=None):
         self.injections, self.narrate, self.reflect, self.diagnosis, self.fail = (
             injections, narrate, reflect, diagnosis, fail)
         self.rewordings, self.judging, self.judged = rewordings, judging, []
+        # With a conversation's turns shown (arch8): the restatement it
+        # writes for each question, and every prompt it was shown so.
+        self.restate, self.read = restate or {}, []
 
     def invoke(self, messages):
         if self.fail:
@@ -62,12 +65,16 @@ class Model:
                 text = str(messages[-1].content)
                 if model.fail:
                     raise ConnectionError("down")
-                if schema is Screening:
+                if schema in (Screening, ConversationScreening):
+                    extra = {}
+                    if schema is ConversationScreening:
+                        model.read.append(text)
+                        extra["standalone"] = model.restate.get(text.rsplit("Question: ", 1)[-1].strip(), "")
                     if model.injections and "Ignore" in text:
-                        return Screening(verdict="injection", intent="lookup")
+                        return schema(verdict="injection", intent="lookup", **extra)
                     if "weather" in text:
-                        return Screening(verdict="out_of_domain", intent="lookup")
-                    return Screening(verdict="proceed", intent="aggregate")
+                        return schema(verdict="out_of_domain", intent="lookup", **extra)
+                    return schema(verdict="proceed", intent="aggregate", **extra)
                 if schema is Reflection:
                     return Reflection(complete=not model.reflect,
                                       missing=[ReflectedColumn(column=c) for c in model.reflect])
@@ -138,12 +145,14 @@ class Agent:
         self.settings, self.behaviour = settings, behaviour
 
     def screen(self, text, *, shaped_by=None):
-        """The reference's reading of a rewording, for F4: anything about the
-        weather is out of domain, the rest proceeds with the question's
-        contract."""
+        """The reference's reading of a question asked alone -- a rewording,
+        for F4, or a restatement: anything about the weather is out of
+        domain, the rest proceeds, and a question about states is read as
+        asking for a row a state, of which there are eight."""
         Agent.screened.append(text)
         verdict = "out_of_domain" if "weather" in text else "proceed"
-        return {"verdict": verdict, "answer_contract": AnswerContract()}, {}
+        contract = AnswerContract(limit=8 if "state" in text.lower() else None)
+        return {"verdict": verdict, "answer_contract": contract}, {}
 
     def run(self, question_text):
         from benchmarks.questions import QUESTIONS
@@ -165,7 +174,8 @@ def ticking():
 
 
 def calibrator(calibrate, catalog, *, models=None, behaviour=None, host=None, questions=("B01", "B03"),
-               say=None):
+               say=None, followups=None):
+    from benchmarks.followups import FOLLOWUPS
     from benchmarks.questions import QUESTIONS
 
     models = models or {}
@@ -179,6 +189,7 @@ def calibrator(calibrate, catalog, *, models=None, behaviour=None, host=None, qu
         judge=[{"id": "B01", "traps": [{"sql": "SELECT count(*) FROM dim_store WHERE banner_name = 'X'"},
                                        {"sql": "SELECT broken"}]},
                {"id": "B03", "traps": [{"sql": "SELECT store_id, store_name FROM dim_store ORDER BY 1"}]}],
+        followups=[FOLLOWUPS[q] for q in questions] if followups is None else list(followups),
     )
     said = []
     engine = calibrate.Calibrator(
@@ -281,12 +292,14 @@ def test_a_run_with_no_score_is_counted_at_the_light_rung(calibrate):
 
 
 def test_the_supervisor_is_probed_on_the_benchmark_and_the_triage_cases_at_their_rungs(calibrate):
-    engine = calibrator(calibrate, a_catalog())
+    engine = calibrator(calibrate, a_catalog(), followups=[])
     samples = engine.supervisor(REFERENCE, Model())
-    assert [(s.rungs, s.correct) for s in samples] == [
+    assert [(s.rungs, s.correct) for s in samples[:4]] == [
         (("light",), True), (("light",), True), (("standard",), True), (("light",), True)]
+    # Then the same questions read with a turn shown (8.0), below.
+    assert [s.reading for s in samples[4:]] == ["independent", "independent"]
     missed = engine.supervisor(REFERENCE, Model(injections=False))
-    assert [s.correct for s in missed] == [True, True, False, True]
+    assert [s.correct for s in missed[:4]] == [True, True, False, True]
 
 
 def test_a_supervisor_that_failed_is_not_right_about_a_question_that_should_proceed(calibrate):
@@ -447,7 +460,7 @@ def test_a_calibration_run_writes_each_model_as_it_goes_and_prints_the_table(
     def factory(catalog, questions, *, measure_load):
         assert [q.id for q in questions] == ["B01"] and measure_load is False
         engine = calibrator(calibrate, catalog, questions=("B01",), say=print,
-                            models={"mistral:7b": Model()}, host=Host())
+                            models={"mistral:7b": Model(restate=RESTATED)}, host=Host())
         engine.settings = replace(engine.settings, ollama_base_url=host.url)
         return engine
 
@@ -457,15 +470,24 @@ def test_a_calibration_run_writes_each_model_as_it_goes_and_prints_the_table(
     assert code == 0
     written = json.loads(path.read_text())
     mistral = next(m for m in written["models"] if m["name"] == "mistral:7b")
-    assert mistral["measured"]["supervisor"] == {"light": {"correct": 2, "of": 2, "p50_s": 0.5},
-                                                 "standard": {"correct": 1, "of": 1, "p50_s": 0.5}}
-    # Three probes are not a measurement (build_catalog.MIN_PROBES): recorded,
-    # and the prior still decides.
+    assert mistral["measured"]["supervisor"] == {
+        "light": {"correct": 2, "of": 2, "p50_s": 0.5},
+        "standard": {"correct": 3, "of": 3, "p50_s": 0.5},
+        "remembered": {"followups": {"correct": 1, "of": 1}, "independent": {"correct": 1, "of": 1}, "missed": {}},
+    }
+    # Two and three probes are not a measurement (build_catalog.MIN_PROBES):
+    # recorded, and the prior still decides.
     assert mistral["suited_from"]["supervisor"] == "prior"
     assert written["calibrated"]
     out = capsys.readouterr()
     assert f"[1/2] {REFERENCE}" in out.out and "[2/2] mistral:7b" in out.out
-    assert "model routing on:" in out.out and "  supervisor light " in out.out
+    assert "model routing on, pipeline v7_0_0:" in out.out and "  supervisor light " in out.out
+    # Phase 5's report: what the model at each rung read with turns shown.
+    assert "The Supervisor with a conversation's turns shown:" in out.out
+    assert (f"  standard ({REFERENCE}): follow-ups 0/1 read as the reference reads them, "
+            "1/1 questions left as they stand; missed: not restated 1") in out.out
+    assert ("  supervisor with turns: follow-ups 1/1 read as the reference reads them, "
+            "1/1 questions left as they stand") in out.out
     assert "need 9.0 GB resident together, more than --host-memory 1.0 GB" in out.err
 
 
@@ -767,3 +789,173 @@ def test_the_judges_probe_file_holds_a_wrong_answer_for_every_question(calibrate
     assert [case["id"] for case in probes.judge] == [q.id for q in QUESTIONS]
     assert all(case["traps"] and all(trap["sql"] and trap["mistake"] for trap in case["traps"])
                for case in probes.judge)
+
+
+# ---------------------------------------------------------------------------
+# The Supervisor with a conversation's turns shown (arch8, Phase 5)
+# ---------------------------------------------------------------------------
+
+#: What a model that reads follow-ups as a person would writes for the two
+#: follow-ups the tests ask: the follow-up set's own standalones.
+RESTATED = {
+    "And how many in each state?": "How many stores are there in each state?",
+    "What's the average square footage for each?":
+        "What is the average square footage of the stores each banner operates?",
+}
+COUNT = "SELECT count(*) AS store_count FROM dim_store"
+
+
+def test_each_follow_up_is_read_after_its_first_turn_at_the_rung_the_rule_routes_it_to(calibrate):
+    engine = calibrator(calibrate, a_catalog())
+    model = Model(restate=RESTATED)
+    read = [s for s in engine.supervisor(REFERENCE, model) if s.reading == calibrate.FOLLOWUPS_READ]
+
+    assert [(s.rungs, s.correct, s.missed) for s in read] == [(("standard",), True, "")] * 2
+    # The first turn is the benchmark question answered by its reference SQL
+    # and rows, so every model reads the same right answer; the follow-up is
+    # the prompt's last line.
+    first = model.read[0]
+    assert "1. Asked: How many stores are there?\n   (1 row, e.g. store_count=10)" in first
+    assert first.rstrip().endswith("Question: And how many in each state?")
+    assert engine._turn(engine.probes.questions[0]) is engine._turn(engine.probes.questions[0])
+
+
+def _followup(fragment, standalone="How many stores are there in each state?"):
+    from benchmarks.followups import Followup
+
+    return Followup(first="B01", fragment=fragment, standalone=standalone, reference_sql=COUNT)
+
+
+@pytest.mark.parametrize("fragment,restatement,model,missed", [
+    ("And how many in each state?", "", {}, "not restated"),
+    ("And how many in each state?", "How many stores are there?", {}, "another reading"),
+    ("And the top 5 states?", "Which are the top 3 states by number of stores?", {}, "C1 numbers"),
+    ("And the weather in each state?", "What is the weather in each state?", {}, "refused"),
+    ("And how many in each state?", "How many stores are there in each state?", {"fail": True}, "failed"),
+])
+def test_a_follow_up_misses_for_one_reason_and_says_which(calibrate, fragment, restatement, model, missed):
+    engine = calibrator(calibrate, a_catalog(), questions=("B01",), followups=[_followup(fragment)])
+    samples = engine.supervisor(REFERENCE, Model(restate={fragment: restatement}, **model))
+    [read] = [s for s in samples if s.reading == calibrate.FOLLOWUPS_READ]
+    assert (read.correct, read.missed) == (False, missed)
+    # Said as it happens, with what the model wrote when it wrote anything.
+    said = f"    B01.f: {missed}" + (f" -- {restatement!r}" if restatement and not model else "")
+    assert said in engine.said
+
+
+@pytest.mark.parametrize("restatement,correct,missed", [
+    ("", True, ""),                                                  # left as it stands
+    ("How many stores do we have?", True, ""),                       # restated, the same reading
+    ("How many stores are there in each state?", False, "another reading"),
+])
+def test_a_question_that_stands_alone_is_left_as_it_stands(calibrate, restatement, correct, missed):
+    engine = calibrator(calibrate, a_catalog(), followups=[])
+    model = Model(restate={"How many stores are there?": restatement})
+    alone = [s for s in engine.supervisor(REFERENCE, model) if s.reading == calibrate.LEFT_ALONE]
+
+    assert (alone[0].rungs, alone[0].correct, alone[0].missed) == (("standard",), correct, missed)
+    assert (f"    B01 after B03: another reading -- {restatement!r}" in engine.said) is not correct
+    # Each after the question before it in the list, the first after the last.
+    assert model.read[0].rstrip().endswith("Question: How many stores are there?")
+    assert f"1. Asked: {engine.probes.questions[1].question}" in model.read[0]
+    assert "1. Asked: How many stores are there?" in model.read[1]
+
+
+def test_the_references_readings_are_made_once_a_question(calibrate):
+    engine = calibrator(calibrate, a_catalog())
+    Agent.screened.clear()
+    engine.supervisor(REFERENCE, Model(restate=RESTATED))
+    engine.supervisor("small:7b", Model(restate=RESTATED))
+    assert sorted(Agent.screened) == sorted(set(RESTATED.values()))
+
+
+def test_the_catalog_says_how_a_model_read_with_turns_and_why_it_missed(calibrate):
+    sample = calibrate.Sample
+    samples = [
+        sample(("light",), True, 1.0),
+        sample(("standard",), True, 1.0, reading="followups"),
+        sample(("standard",), False, 1.0, reading="followups", missed="C2 literals"),
+        sample(("standard",), False, 1.0, reading="independent", missed="another reading"),
+        sample(("standard",), True, 1.0, reading="independent"),
+    ]
+    read = calibrate.readings(samples)
+    assert read == {"followups": {"correct": 1, "of": 2}, "independent": {"correct": 1, "of": 2},
+                    "missed": {"C2 literals": 1, "another reading": 1}}
+    assert calibrate.said_read(read) == ("follow-ups 1/2 read as the reference reads them, 1/2 questions "
+                                         "left as they stand; missed: C2 literals 1, another reading 1")
+    assert calibrate.readings(samples[:1]) is None
+    assert calibrate.said_read(None) == "not measured with turns"
+
+
+def test_measuring_the_supervisor_records_its_reading_with_turns_beside_the_rungs(calibrate):
+    engine = calibrator(calibrate, a_catalog(entry("small:7b")), models={"small:7b": Model(restate=RESTATED)})
+    measured = engine.measure("small:7b", ["supervisor", "narrator"])
+
+    assert measured["supervisor"]["remembered"] == {
+        "followups": {"correct": 2, "of": 2}, "independent": {"correct": 2, "of": 2}, "missed": {}}
+    # The Ignore case, and the four read with turns, at the rung the rule
+    # routes a reading with turns to.
+    assert measured["supervisor"]["standard"]["of"] == 5
+    assert "remembered" not in measured["narrator"]
+    assert ("  supervisor with turns: follow-ups 2/2 read as the reference reads them, "
+            "2/2 questions left as they stand") in engine.said
+
+
+def test_resuming_measures_a_supervisor_from_before_8_0_again(calibrate):
+    rungs = {"light": {"correct": 21, "of": 21, "p50_s": 1.0}}
+    assert not calibrate.measured_already({"supervisor": rungs}, "supervisor")
+    assert calibrate.measured_already({"supervisor": {**rungs, "remembered": {}}}, "supervisor")
+    assert calibrate.measured_already({"narrator": rungs}, "narrator")
+    assert not calibrate.measured_already({}, "narrator")
+
+
+def test_the_follow_up_set_is_loaded_for_the_questions_asked(calibrate):
+    from benchmarks.followups import FOLLOWUPS
+    from benchmarks.questions import QUESTIONS
+
+    assert calibrate.Probes.load([q for q in QUESTIONS if q.id in ("B01", "B07")]).followups == [
+        FOLLOWUPS["B01"], FOLLOWUPS["B07"]]
+    assert len(calibrate.Probes.load(list(QUESTIONS)).followups) == len(QUESTIONS) == 15
+
+
+def _with_turns(calibrate, reference, small):
+    """Which models a catalog routes the Supervisor to: at the light rung,
+    and at the rung the rule routes a reading with turns to."""
+    from nl2sql_agent import complexity
+    from nl2sql_agent.router import build_table
+
+    catalog = {**a_catalog(entry("small:7b")), "schema": 3}
+    engine = calibrator(calibrate, catalog)
+    engine.record(REFERENCE, {"supervisor": reference})
+    engine.record("small:7b", {"supervisor": small})
+    settings = replace(Settings(), ollama_base_url=catalog["host"], ollama_model=REFERENCE,
+                       model_routing_enabled=True)
+    table = build_table(settings, catalog)
+    rung = complexity.supervisor_rung("And how many in each state?", remembered=1)[0]
+    return table.cells[("supervisor", "light")].model, table.cells[("supervisor", rung)].model
+
+
+def _measured(p50, standard=None):
+    """A Supervisor's measurement: 7.0's, four probes at standard; or 8.0's,
+    thirty-four there with the readings with turns, `standard` right."""
+    light = {"light": {"correct": 21, "of": 21, "p50_s": p50}}
+    if standard is None:
+        return {**light, "standard": {"correct": 4, "of": 4, "p50_s": p50}}
+    return {**light, "standard": {"correct": standard, "of": 34, "p50_s": p50},
+            "remembered": {"followups": {"correct": standard - 19, "of": 15},
+                           "independent": {"correct": 15, "of": 15}, "missed": {}}}
+
+
+@pytest.mark.parametrize("reference,small,routed", [
+    # A catalog calibrated before 8.0 has no reading with turns: four probes
+    # are no measurement, so that rung stays on OLLAMA_MODEL, as the rule says.
+    (_measured(4.0), _measured(1.0), ("small:7b", REFERENCE)),
+    # Measured since: a model that reads follow-ups as the reference does
+    # takes the rung; one a follow-up behind does not.
+    (_measured(4.0, 32), _measured(1.0, 32), ("small:7b", "small:7b")),
+    (_measured(4.0, 32), _measured(1.0, 31), ("small:7b", REFERENCE)),
+    # And a model measured before 8.0 is not compared with a reference since.
+    (_measured(4.0, 32), _measured(1.0), ("small:7b", REFERENCE)),
+])
+def test_a_reading_with_turns_is_routed_to_a_model_measured_reading_them(calibrate, reference, small, routed):
+    assert _with_turns(calibrate, reference, small) == routed

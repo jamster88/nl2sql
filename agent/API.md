@@ -272,9 +272,10 @@ rather than run for a caller who has very likely gone.
 | `GET` | `/v1/questions` | yes | Recent questions, newest first |
 | `GET` | `/v1/questions/{job_id}` | yes | One question. `?wait=<seconds>` to block |
 | `GET` | `/v1/questions/{job_id}/events` | yes | Progress, as Server-Sent Events |
-| `DELETE` | `/v1/questions/{job_id}` | yes | Cancel a queued question, forget a finished one |
+| `DELETE` | `/v1/questions/{job_id}` | yes | Cancel a queued question, forget a finished one. A running one goes on, but its conversation is freed (8.0.1) |
 | `POST` | `/v1/questions/{job_id}/feedback` | yes | Say whether the answer was right |
 | `DELETE` | `/v1/questions/{job_id}/feedback` | yes | Withdraw a verdict |
+| `DELETE` | `/v1/conversations/{conversation_id}` | yes | Forget the caller's conversation of that id: the next question with it begins it afresh (8.0) |
 | `POST` | `/v1/admin/reload` | `nl2sql_admins` | Read again what the agent read once -- the literal catalog, the label map and calendar, the foreign keys, the knowledge collections -- and ask Postgres about every session again. For an operator who changed the retail data or loaded a knowledge document; a promotion needs none |
 
 `/healthz` and `/readyz` are separate because the failures want different
@@ -307,12 +308,23 @@ is what to draw before the first event; fewer run when fewer rewordings
 were faithful, and more when a second wave is taken. With the ensemble off
 `nodes` there is empty, and a server older than 7.0 sends no `ensemble`.
 
+Since 8.0 `pipeline.version` names the pipeline that answers,
+`PIPELINE_VERSION`: `v7_0_0`, the ensemble, or `v6_3_1`, one run a question
+and nothing else different. `pipeline.ensemble.enabled` is what the name
+decided, or what `ENSEMBLE_ENABLED` said. `pipeline.memory` is how much of a
+conversation a question is read with: `{"turns": 5, "rows": 3,
+"max_conversations": 200, "ttl_seconds": 3600}` -- `CONVERSATION_MEMORY`,
+the rows of a remembered answer shown with it, and the two settings below.
+A server older than 8.0 sends neither. How a question continues a
+conversation is [below](#in-a-conversation-conversation-80).
+
 Two of those limits describe the request rather than the answer:
 
 | Field | Default | What |
 | --- | --- | --- |
 | `limits.max_question_length` | `2000` | Characters. A longer question is `422`, not a truncated one |
 | `limits.max_metadata_entries` | `20` | Pairs. Keys are capped at 64 characters and values at 256 |
+| `limits.max_conversation_id_length` | `64` | Characters of a conversation's id (8.0): letters, digits, `.`, `_` and `-`. Anything else is `422` |
 
 They are published because of who needs them. A browser that sends an
 over-long question sees the `422` in its network tab; a desktop client shows
@@ -342,6 +354,7 @@ list is a list, so nothing needs a null check before it is rendered.
 {
   "id": "3f2c...", "status": "succeeded",
   "question": "What was total net sales for Produce in FY2025?",
+  "conversation": null,              // 8.0: the conversation the request named, echoed
   "created_at": "...", "finished_at": "...", "duration_ms": 61432.5,
   "progress": [ /* every step, see below */ ],
   "answer": {
@@ -368,7 +381,9 @@ list is a list, so nothing needs a null check before it is rendered.
     "retrieval_errors": {},          // a retriever that could not reach its store: "unavailable",
                                      // or the driver's words to an administrator
     "node_errors": {},               // the supervisor or narrator, failed and survived: "failed"
-    "ensemble":  { /* 7.0: the record of every run; null with the ensemble off, see below */ }
+    "ensemble":  { /* 7.0: the record of every run; null with the ensemble off, see below */ },
+    "pipeline":  "v7_0_0",           // 8.0: the pipeline that answered, PIPELINE_VERSION
+    "conversation": null             // 8.0: where it stands in its conversation; null asked alone, see below
   },
   "error": null,
   "links": {"self": "/v1/questions/3f2c...", "events": "/v1/questions/3f2c.../events"}
@@ -512,6 +527,78 @@ Everything in the record that a model wrote -- a candidate's `wording` and
 where it quotes one -- is plain text that was never escaped for markdown.
 Render it as text.
 
+### In a conversation: `conversation` (8.0)
+
+A question may continue a conversation. The request names it --
+`conversation`, an id the client makes up, 1 to 64 letters, digits, `.`,
+`_` or `-`, a UUID for one -- and every question with that id is read with
+the answered questions before it, the last `CONVERSATION_MEMORY` of them
+(`pipeline.memory.turns`). There is no call that creates one: the first
+question with a new id starts it.
+
+```http
+POST /v1/questions?wait=240
+{"question": "What were net sales by banner in FY2025?", "conversation": "5b0e6a1c-..."}
+
+POST /v1/questions?wait=240
+{"question": "And by store?", "conversation": "5b0e6a1c-..."}
+```
+
+The second is read as a follow-up and answered as the complete question it
+stands for, and the answer says so:
+
+```jsonc
+"conversation": {
+  "id": "5b0e6a1c-...",
+  "turn": 2,                    // the answered turns before it, and one
+  "remembered": 1,              // the turns it was read with
+  "asked": "And by store?",     // the words typed, as the job's question has them
+  "read_as": "What were net sales by store in FY2025?",
+  "resolved": true,
+  "reason": ""                  // when nothing was restated: why
+}
+```
+
+`answer` then opens with "Read as: *What were net sales by store in
+FY2025?*". A question that stands alone is not restated -- `read_as` empty,
+`reason` `not restated` -- and is answered as it would be outside the
+conversation. A restatement is held in code to every number, name, code and
+direction the words typed have, and one that drops any of them is
+discarded: the question is answered as typed and `reason` names the check
+(`C2 literals: 'FY2024' missing`).
+
+What a client needs to know:
+
+* **One question at a time.** A follow-up depends on the answer before it,
+  so a question asked while the conversation's last is still queued or
+  running is refused, `409 conversation_busy`, with `Retry-After`. Ask the
+  next once the last has finished; other conversations are not held up.
+* **A conversation is the caller's.** It is kept by the signed-in person
+  and the id together, so two people's ids of one spelling are two
+  conversations. With sign-in off every caller is the same caller, as for
+  the jobs, and the client's random id keeps conversations apart.
+* **A wrong answer is forgotten.** A `no` on an answer ([Feedback](#feedback))
+  takes its turn out of the conversation, so the next question is not read
+  in the light of it. `incomplete` and `yes` keep it, and withdrawing the
+  verdict does not bring it back. The turn numbers go on counting.
+* **Bounded, and in memory only.** At most `API_MAX_CONVERSATIONS` are kept,
+  the least recently used forgotten first, and one untouched for
+  `API_CONVERSATION_TTL_SECONDS` is forgotten: a question with its id
+  begins it afresh, at `turn` 1. Nothing is written anywhere, and a restart
+  forgets every conversation.
+* **`DELETE /v1/conversations/{conversation_id}` forgets one** -- `204`, or
+  `404 conversation_not_found` for one the caller does not have, someone
+  else's included. A client's "new conversation" can simply take a new id;
+  the old one ages out.
+* **With memory off** (`CONVERSATION_MEMORY=0`, `pipeline.memory.turns` 0)
+  the id is accepted and echoed on the job, every question is asked alone,
+  `answer.conversation` is `null`, and the `DELETE` is a `404`.
+
+`job.conversation` echoes the id the request named. `answer.conversation`
+is `null` for a question asked alone, so a client written for 7.0 reads the
+same answer it always did. `read_as` was written by a model and never
+escaped for markdown: render it as text.
+
 ---
 
 ## Progress events
@@ -606,9 +693,17 @@ is the review service's to add, when it starts; against a staging table
 that does not have it yet -- a stack upgraded and started without the
 review service -- the verdict is staged without it, which the server says
 once in its log, and the first verdict after the review service has started
-carries it.
+carries it. Since 8.0 the snapshot names the `pipeline` that answered, and
+carries the answer's `conversation` -- its turn, the words typed and how
+they were read -- each in a column added the same way; a staging table may
+lack any of the three, and the server asks which it has in one query and
+leaves out the ones it lacks. Inside a conversation the snapshot's
+`question` is the question answered -- the complete question a follow-up
+was read as -- because a golden pair is built from it and must stand alone;
+the words typed are beside it, in `conversation.asked`. Outside one the two
+are the same words.
 
-Four rules are worth knowing:
+Five rules are worth knowing:
 
 * **The job has to be finished.** `409 job_running` otherwise. There is
   nothing to have an opinion about yet, and a snapshot of a half-finished run
@@ -620,6 +715,10 @@ Four rules are worth knowing:
 * **`DELETE` withdraws it**, on the same terms and for the same reason: a
   verdict that cannot be taken back is a verdict people stop giving. It needs
   no job to still exist, because the verdict outlives the job.
+* **A `no` forgets the answer's turn** in its conversation (8.0), once the
+  staging database has the verdict -- one it refused forgets nothing.
+  `incomplete` and `yes` keep it, and withdrawing a `no` does not bring it
+  back.
 * **`503 feedback_unavailable` when the server has no staging database.** The
   routes still exist and still appear in the OpenAPI document, so a generated
   client does not change shape depending on the server it met. `/v1/meta`
@@ -672,7 +771,9 @@ Branch on `code`; the message is for a person.
 | `sign_in_unavailable` | 503 | The auth service has not written its key yet |
 | `roles_unavailable` | 503 | Postgres could not be asked which groups the caller is in |
 | `not_found` | 404 | No such job. Finished jobs are kept `API_JOB_TTL_SECONDS` |
-| `job_running` | 409 | A question in flight cannot be interrupted |
+| `job_running` | 409 | A question in flight cannot be interrupted. Its conversation, if it is in one, is free for the next question from then on, and its answer is not remembered (8.0.1) |
+| `conversation_busy` | 409 | The conversation's last question is still queued or running (8.0). `Retry-After` says when to ask again |
+| `conversation_not_found` | 404 | The caller has no conversation of that id: never begun, forgotten, someone else's, or a server that keeps none (8.0) |
 | `queue_full` | 429 | Too many questions are waiting, or the caller has `API_MAX_PER_PERSON` in the air. `Retry-After` says when to ask again |
 | `principal_not_allowed` | 400 | `principal` was sent to a server started without `API_ALLOW_PRINCIPAL`, or named someone other than the person signed in |
 | `already_reviewed` | 409 | A verdict has been acted on and no longer belongs to the voter |
@@ -743,6 +844,21 @@ client = httpx.Client(
 job = client.post("/v1/questions", json={"question": question},
                   params={"wait": 240}).json()
 rows = job["answer"]["result"]["rows"]
+```
+
+Continuing a conversation (8.0): one id for as long as the person goes on,
+a new one when they start again.
+
+```python
+import uuid
+
+conversation = str(uuid.uuid4())
+for question in ("What were net sales by banner in FY2025?", "And by store?"):
+    job = client.post("/v1/questions", json={"question": question, "conversation": conversation},
+                      params={"wait": 240}).json()
+    read = (job.get("answer") or {}).get("conversation") or {}
+    if read.get("resolved"):
+        print("Read as:", read["read_as"])
 ```
 
 Streaming progress, for a Django channel or a websocket relay:
@@ -855,6 +971,8 @@ role and resets its grants on every start.
 | `API_MAX_WAIT_SECONDS` | `900` | Ceiling on `?wait=` |
 | `API_EVENT_STREAM_TIMEOUT_SECONDS` | `300` | How long an idle stream is held open |
 | `API_KEEPALIVE_SECONDS` | `15` | Comment line interval on a stream |
+| `API_MAX_CONVERSATIONS` | `200` | Conversations kept at once, when `CONVERSATION_MEMORY` is above zero (`/v1/meta`'s `pipeline.memory`) |
+| `API_CONVERSATION_TTL_SECONDS` | `3600` | How long an idle conversation is kept |
 | `API_DOCS_ENABLED` | `true` | Serve `/docs` and `/redoc` |
 | `API_LOG_LEVEL` | `info` | uvicorn log level |
 

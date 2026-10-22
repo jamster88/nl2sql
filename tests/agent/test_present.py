@@ -1273,3 +1273,21 @@ def test_the_ensembles_notes_name_each_joined_column_each_declined_one_and_each_
         "*Runs 4 and 5 answered differently (1 rows; first: &lt;b&gt;).*\n\n"
         "*Runs 6, 7 and 8 answered differently (0).*"
     )
+
+
+# ---------------------------------------------------------------------------
+# arch8: the answer says how a follow-up was read
+# ---------------------------------------------------------------------------
+
+
+def test_a_follow_up_answered_as_its_restatement_opens_with_the_reading_escaped():
+    from nl2sql_agent.ensemble_state import Decision
+    from nl2sql_agent.state import QueryResult as Rows
+
+    rows = Rows(columns=["n"], rows=[[1]])
+    answer = render_answer("and by store?", rows, [], read_as="Net sales by store <FY2025>?",
+                           ensemble=Decision(line="Agreed by 4 of 4 runs."))
+    first, second = answer.split("\n\n")[:2]
+    assert first == "Read as: *Net sales by store &lt;FY2025&gt;?*"
+    assert second == "*Agreed by 4 of 4 runs.*", "before the agreement line"
+    assert "Read as" not in render_answer("q", rows, [])

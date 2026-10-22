@@ -115,6 +115,14 @@ Usage: ./launch.sh [options]
       --no-auth    Start without sign-in, for this run: no directory, no auth
                    service, and every page and port open to whoever can
                    reach it. AUTH_ENABLED=false in .env makes it the default
+      --pipeline NAME
+                   Answer with that release's pipeline, for this run: v7_0_0
+                   asks every question several ways, v6_3_1 once.
+                   PIPELINE_VERSION in .env makes it the default
+      --memory N   Read each question with the last N answered turns of its
+                   conversation, for this run: 0 to 15, and 0 asks every
+                   question alone. CONVERSATION_MEMORY in .env makes it the
+                   default
       --restart    Recreate the containers instead of reusing what is running
   -q, --quiet      Only print problems
   -h, --help       Show this message
@@ -153,6 +161,14 @@ while [[ $# -gt 0 ]]; do
         # of their own, against the stores started below.
         --load-golden) WITH_LOAD_GOLDEN=1; shift ;;
         --no-auth) NO_AUTH=1; shift ;;
+        # Exported, as --no-auth is, so compose hands it to the agent and the
+        # API; checked below, once .env can be read beside it.
+        --pipeline)
+            [[ $# -ge 2 ]] || die "--pipeline needs a name: v7_0_0 or v6_3_1"
+            export PIPELINE_VERSION="$2"; shift 2 ;;
+        --memory)
+            [[ $# -ge 2 ]] || die "--memory needs a number: 0 to 15"
+            export CONVERSATION_MEMORY="$2"; shift 2 ;;
         --restart) RESTART=1; shift ;;
         -q|--quiet) QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -198,6 +214,26 @@ compose_env() {  # compose_env KEY DEFAULT -- what compose hands the agent: shel
 in_instance() {  # in_instance nl2sql-NAME -- that container's name in this stack
     printf '%s-%s' "$(compose_env NL2SQL_INSTANCE nl2sql)" "${1#nl2sql-}"
 }
+
+# --- The pipeline by name (arch8) ---------------------------------------------
+# Read as the agent reads it -- the name, then the switch -- from what compose
+# will hand it, and checked now: a name the agent does not know, or the
+# ensemble asked for under the name of one run, would otherwise stop the API
+# a minute from now as a service that never became healthy.
+pipeline=$(compose_env PIPELINE_VERSION v7_0_0)
+if [[ "$pipeline" != v7_0_0 && "$pipeline" != v6_3_1 ]]; then
+    die "PIPELINE_VERSION is '$pipeline': it must be v7_0_0 or v6_3_1"
+fi
+ensemble_enabled=$(compose_env ENSEMBLE_ENABLED "" | tr '[:upper:]' '[:lower:]')
+if [[ "$pipeline" == v6_3_1 && "$ensemble_enabled" =~ ^(1|true|yes|on)$ ]]; then
+    die "PIPELINE_VERSION v6_3_1 asks each question once; ENSEMBLE_ENABLED=true contradicts it"
+fi
+# And the turns of a conversation a question is read with, which the agent
+# refuses outside 0 to 15 when it starts.
+memory=$(compose_env CONVERSATION_MEMORY 5)
+if [[ ! "$memory" =~ ^[0-9]+$ ]] || (( 10#$memory > 15 )); then
+    die "CONVERSATION_MEMORY is '$memory': it must be 0 to 15"
+fi
 
 # --- Passwords and tokens --------------------------------------------------------
 # Every one a file in secrets/ (6.3, V6-38), mounted by compose into the
@@ -283,12 +319,18 @@ retire_legacy_stores() {
 retire_legacy_stores
 
 # --- Start -----------------------------------------------------------------
-step "Starting ${#SERVICES[@]} service(s): ${SERVICES[*]}"
+# --restart recreates every service this run starts, each `up` below handed
+# the flag: the databases here, and the API, the sign-in services and every
+# page and service after them. Compose recreates only the services an `up`
+# names, so a page recreated does not take the databases down again behind
+# it. (The flag dates from when the databases were the whole stack, and for
+# a long time recreated only them.)
+RECREATE=()
 if [[ $RESTART -eq 1 ]]; then
-    docker compose up -d --force-recreate "${SERVICES[@]}"
-else
-    docker compose up -d "${SERVICES[@]}"
+    RECREATE=(--force-recreate)
 fi
+step "Starting ${#SERVICES[@]} service(s): ${SERVICES[*]}"
+docker compose up -d ${RECREATE[@]+"${RECREATE[@]}"} "${SERVICES[@]}"
 
 wait_healthy() {
     local container status=""
@@ -590,10 +632,10 @@ fi
 routing_probe='
 from nl2sql_agent.config import Settings
 from nl2sql_agent.router import RoutingError, build_table, listed_models, load_catalog
-s = Settings.from_env()
 try:
+    s = Settings.from_env()
     catalog = load_catalog(s.model_catalog) if s.model_routing_enabled and s.model_catalog else None
-except RoutingError as exc:
+except (RoutingError, ValueError) as exc:
     print("ROUTE error " + " ".join(str(exc).split()))
     raise SystemExit(0)
 table = build_table(s, catalog, catalog_path=s.model_catalog,
@@ -633,22 +675,41 @@ else
     while IFS= read -r said; do warn "  $said"; done < <(printf '%s\n' "$routing_raw" | tail -3)
 fi
 
-# --- Asking it several ways (arch7) -----------------------------------------
+# --- Asking it several ways (arch7), by name (arch8) --------------------------
 # Since 7.0 every question is reworded and the pipeline run once per wording,
 # the answers judged and voted on -- which is most of what a question costs.
-# Said here, beside the routing, so that one run per question
-# (ENSEMBLE_ENABLED=false) or a host allowed several calls at once
-# (OLLAMA_PARALLEL_CALLS) is seen as the setting it is rather than wondered
-# about as slowness. Read as compose reads them: the shell, then .env.
-ensemble_enabled=$(compose_env ENSEMBLE_ENABLED true | tr '[:upper:]' '[:lower:]')
-if [[ "$ensemble_enabled" =~ ^(false|0|no|off)$ ]]; then
-    info "every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies"
+# Said here, beside the routing, so that one run per question (the v6_3_1
+# pipeline, or ENSEMBLE_ENABLED=false) or a host allowed several calls at
+# once (OLLAMA_PARALLEL_CALLS) is seen as the setting it is rather than
+# wondered about as slowness. Read as compose reads them, the shell then
+# .env, and as the agent resolves them: the name first, the switch second.
+if [[ "$pipeline" == v6_3_1 ]]; then
+    info "the pipeline is v6_3_1: every question is answered by one run (PIPELINE_VERSION); the grain check still applies"
+elif [[ "$ensemble_enabled" =~ ^(false|0|no|off)$ ]]; then
+    info "the pipeline is v7_0_0, the ensemble off: every question is answered by one run (ENSEMBLE_ENABLED=false); the grain check still applies"
 else
     paraphrases=$(compose_env ENSEMBLE_PARAPHRASES 3)
     [[ "$paraphrases" =~ ^[0-9]+$ ]] || paraphrases=3
     slots=$(compose_env OLLAMA_PARALLEL_CALLS 1)
-    info "every question is asked $((paraphrases + 1)) ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)"
+    info "the pipeline is v7_0_0: every question is asked $((paraphrases + 1)) ways, judged and voted on (ENSEMBLE_ENABLED=false for one run)"
     info "the model host is asked $slots call(s) at a time (OLLAMA_PARALLEL_CALLS)"
+fi
+# --- Remembering the conversation (arch8) ---------------------------------------
+# Said beside the pipeline, as the other setting a person chooses at spin-up:
+# a follow-up is read with this many answered turns of its conversation.
+case $((10#$memory)) in
+    0) info "each question is asked alone (CONVERSATION_MEMORY=0)" ;;
+    1) info "the agent remembers the last turn of a conversation (CONVERSATION_MEMORY)" ;;
+    *) info "the agent remembers the last $((10#$memory)) turns of a conversation (CONVERSATION_MEMORY)" ;;
+esac
+# And how far back a follow-up reaches, in the words the closing lines use
+# where they describe each interface: a follow-up is the one thing about the
+# setting a person has to know to use it.
+remembered=$((10#$memory))
+if [[ $remembered -eq 1 ]]; then
+    reach="the last answered question"
+else
+    reach="the last $remembered answered questions"
 fi
 
 # --- The REST API ----------------------------------------------------------
@@ -663,7 +724,7 @@ case "$(compose_env API_TLS_ENABLED true)" in
 esac
 
 start_api() {
-    docker compose --profile api up -d api >/dev/null 2>&1 || return 1
+    docker compose --profile api up -d ${RECREATE[@]+"${RECREATE[@]}"} api >/dev/null 2>&1 || return 1
     local status=""
     for _ in $(seq 1 60); do
         status=$(docker inspect --format '{{.State.Health.Status}}' "$(in_instance nl2sql-api)" 2>/dev/null || echo starting)
@@ -784,14 +845,16 @@ directory_gui_port=$(compose_env DIRECTORY_GUI_PORT 8084)
 WITH_DIRECTORY_GUI=0
 
 start_signin() {
-    docker compose --profile api --profile auth up -d auth >/dev/null 2>&1 || return 1
+    # The directory named too, though compose would start it for the auth
+    # service anyway: --restart recreates only what an `up` names.
+    docker compose --profile api --profile auth up -d ${RECREATE[@]+"${RECREATE[@]}"} ldap auth >/dev/null 2>&1 || return 1
     await_health nl2sql-ldap || return 1
     await_health nl2sql-auth
 }
 
 start_directorygui() {
     docker compose --profile api --profile auth --profile directorygui \
-        up -d directorygui >/dev/null 2>&1 || return 1
+        up -d ${RECREATE[@]+"${RECREATE[@]}"} directorygui >/dev/null 2>&1 || return 1
     await_health nl2sql-directory-gui
 }
 
@@ -911,7 +974,7 @@ fi
 gui_port=$(compose_env GUI_PORT 8080)
 
 start_gui() {
-    docker compose --profile api --profile gui up -d gui >/dev/null 2>&1 || return 1
+    docker compose --profile api --profile gui up -d ${RECREATE[@]+"${RECREATE[@]}"} gui >/dev/null 2>&1 || return 1
     local status=""
     for _ in $(seq 1 60); do
         status=$(docker inspect --format '{{.State.Health.Status}}' "$(in_instance nl2sql-gui)" 2>/dev/null || echo starting)
@@ -947,12 +1010,12 @@ review_port=$(compose_env REVIEW_PORT 8444)
 review_gui_port=$(compose_env REVIEW_GUI_PORT 8081)
 
 start_review() {
-    docker compose --profile review up -d review >/dev/null 2>&1 || return 1
+    docker compose --profile review up -d ${RECREATE[@]+"${RECREATE[@]}"} review >/dev/null 2>&1 || return 1
     await_health nl2sql-review
 }
 
 start_reviewgui() {
-    docker compose --profile review --profile reviewgui up -d reviewgui >/dev/null 2>&1 || return 1
+    docker compose --profile review --profile reviewgui up -d ${RECREATE[@]+"${RECREATE[@]}"} reviewgui >/dev/null 2>&1 || return 1
     await_health nl2sql-review-gui
 }
 
@@ -996,7 +1059,7 @@ fi
 curate_gui_port=$(compose_env CURATE_GUI_PORT 8083)
 
 start_curategui() {
-    docker compose --profile review --profile curategui up -d curategui >/dev/null 2>&1 || return 1
+    docker compose --profile review --profile curategui up -d ${RECREATE[@]+"${RECREATE[@]}"} curategui >/dev/null 2>&1 || return 1
     await_health nl2sql-curate-gui
 }
 
@@ -1024,12 +1087,12 @@ console_gui_port=$(compose_env CONSOLE_GUI_PORT 8082)
 console_bind=$(compose_env CONSOLE_BIND_ADDRESS 127.0.0.1)
 
 start_console() {
-    docker compose --profile console up -d console >/dev/null 2>&1 || return 1
+    docker compose --profile console up -d ${RECREATE[@]+"${RECREATE[@]}"} console >/dev/null 2>&1 || return 1
     await_health nl2sql-console
 }
 
 start_consolegui() {
-    docker compose --profile console --profile consolegui up -d consolegui >/dev/null 2>&1 || return 1
+    docker compose --profile console --profile consolegui up -d ${RECREATE[@]+"${RECREATE[@]}"} consolegui >/dev/null 2>&1 || return 1
     await_health nl2sql-console-gui
 }
 
@@ -1089,16 +1152,16 @@ mlflow_bind=$(compose_env MLFLOW_BIND_ADDRESS 127.0.0.1)
 # give the store the password in secrets/: a volume made before 6.1 still
 # has the old one.
 start_mlflow() {
-    docker compose --profile mlflow up -d mlflowdb >/dev/null 2>&1 || return 1
+    docker compose --profile mlflow up -d ${RECREATE[@]+"${RECREATE[@]}"} mlflowdb >/dev/null 2>&1 || return 1
     await_health nl2sql-mlflowdb || return 1
-    docker compose --profile mlflow up -d mlflow >/dev/null 2>&1 || return 1
+    docker compose --profile mlflow up -d ${RECREATE[@]+"${RECREATE[@]}"} mlflow >/dev/null 2>&1 || return 1
     await_health nl2sql-mlflow
 }
 
 # MLflow itself publishes nothing: a browser and the benchmark reach it
 # through this, which is HTTPS and asks the auth service about every request.
 start_mlflowproxy() {
-    docker compose --profile mlflow up -d mlflowproxy >/dev/null 2>&1 || return 1
+    docker compose --profile mlflow up -d ${RECREATE[@]+"${RECREATE[@]}"} mlflowproxy >/dev/null 2>&1 || return 1
     await_health nl2sql-mlflow-proxy
 }
 
@@ -1150,6 +1213,18 @@ if [[ $QUIET -eq 0 ]]; then
     database does, and the answer's numbers are checked against the rows:
 
     docker compose run --rm agent "total net sales for dairy and eggs in FY2025"
+EOF
+    if [[ $remembered -gt 0 ]]; then
+        cat <<EOF
+
+    Leave the question off for a session that keeps a conversation. Each
+    question is read with $reach, so a follow-up --
+    "and by store?" -- is answered as the complete question it means:
+
+    docker compose run --rm agent
+EOF
+    fi
+    cat <<'EOF'
 
     ./launch.sh --help     other options
     docker compose down    stop the databases
@@ -1220,6 +1295,14 @@ EOF
     Browse it at $api_scheme://localhost:$api_port/docs
     agent/API.md is the contract a GUI is written against.
 EOF
+        if [[ $remembered -gt 0 ]]; then
+            cat <<EOF
+
+    Send "conversation": "<an id of your own>" with each question of a
+    conversation, and a follow-up is read with $reach
+    before it; DELETE /v1/conversations/<id> forgets it.
+EOF
+        fi
     fi
     if [[ $WITH_REVIEW -eq 1 ]]; then
         cat <<EOF
@@ -1248,6 +1331,11 @@ EOF
     A judgement can be taken back. Under a reviewed submission, Back to
     pending returns it to the queue and Delete removes it -- each taking
     its pair out of the golden set, or its fix out of its store, first.
+
+    A follow-up asked in a conversation is staged as the complete question
+    it was read as, with the words typed under it. One the agent ran as
+    typed says so, and is promoted only once the draft's question stands
+    alone.
 
     docker compose --profile review --profile reviewgui logs -f review
     review/README.md explains how it is put together.
@@ -1329,6 +1417,16 @@ EOF
     Verdicts given in it take the same route as verdicts given in the web
     interface -- the same endpoint, the same staging table, the same review
     queue -- so a reviewer sees one queue whichever was used.
+EOF
+        if [[ $remembered -gt 0 ]]; then
+            cat <<EOF
+
+    The window keeps a conversation, as the web interface does: a
+    follow-up is read with $reach before it.
+    New conversation starts again.
+EOF
+        fi
+        cat <<'EOF'
 
     desktop/README.md explains how it is put together.
 EOF
@@ -1344,6 +1442,16 @@ EOF
     the answer was right. nginx in that container verifies the API's
     certificate; with sign-in on, the session you sign in with is what
     reaches the API, and your questions run as your own database role.
+EOF
+        if [[ $remembered -gt 0 ]]; then
+            cat <<EOF
+
+    A follow-up is read with $reach before it, and
+    opens with the question it was read as; New conversation, beside the
+    ask box, starts again.
+EOF
+        fi
+        cat <<'EOF'
 
     docker compose --profile api --profile gui logs -f gui
     gui/README.md explains how it is put together.

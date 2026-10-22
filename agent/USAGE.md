@@ -107,14 +107,30 @@ docker compose run --rm agent
 
 ```
 Connected to qwen3.8-256k at http://192.168.10.82:11434.
+Remembers the last 5 answered questions of this session
 Ask a question, or Ctrl-D to exit.
 
 > How many vendors are there?
 ```
 
-Each question is answered independently -- the agent does not remember the
-previous one, so ask complete questions rather than follow-ups like "and by
-store?".
+The session is one conversation (8.0): each answered question is
+remembered, and the next is read in the light of the last five
+(`--memory N`, `CONVERSATION_MEMORY`), so a follow-up -- "and by store?",
+"the same for FY2024" -- is answered as the complete question it means.
+When the agent restated one, the answer opens with how it read it:
+
+```
+> And by store?
+
+Read as: What were our net sales by store in fiscal year 2025?
+```
+
+A refused question, one asked back and one the agent gave up on are not
+remembered, and the session is forgotten when it ends. A wrong answer is
+remembered like a right one -- the session has no verdict to forget it by,
+as the REST API does -- so after one, ask the next question in full, or
+start a new session. `--memory 0` asks every question alone, as before
+8.0; a question given on the command line is always asked alone.
 
 Ctrl-D exits.
 
@@ -226,6 +242,22 @@ filter on it -- and the CLI says where its traces go before it answers:
 [tracing] tracing to http://nl2sql-mlflow:5000, experiment nl2sql-agent
 ```
 
+In the interactive session, or with questions piped in, each document
+carries `conversation` (8.0): the same block the REST API's answer carries,
+saying which turn the question was, how many it was read with and, for a
+follow-up the agent restated, what it was read as. `asked` is the words
+typed. A question given on the command line is asked alone, and its
+`conversation` is `null`.
+
+```bash
+printf 'How many stores are there?\nAnd in each state?\n' | docker compose run --rm -T agent --json | jq -c .conversation
+```
+
+```
+{"id":"session","turn":1,"remembered":0,"asked":"How many stores are there?","read_as":"","resolved":false,"reason":""}
+{"id":"session","turn":2,"remembered":1,"asked":"And in each state?","read_as":"How many stores are there in each state?","resolved":true,"reason":""}
+```
+
 The exit code is 0 on success and 1 when the agent could not answer, so it
 works in a shell pipeline. Pull out just the SQL with
 `... --json | jq -r .sql`, or see which knowledge shaped an answer with
@@ -300,8 +332,19 @@ docker compose run --rm agent --parallel-calls 2 "..." # model calls in flight t
 docker compose run --rm agent --no-fuse-columns "..."  # keep the chosen run's own columns
 ```
 
-A value out of range is refused before anything runs, by name:
-`error: ENSEMBLE_PARAPHRASES is 2; it must be 3 to 10`, exit code 2. Set
+The pipeline by name (8.0) and the conversation's depth have a flag each:
+
+```bash
+docker compose run --rm agent --pipeline v6_3_1 "..."  # one run a question: the ensemble off, nothing else
+docker compose run --rm agent --memory 0              # the session's questions asked alone; 0 to 15
+```
+
+Unsaid, `--ensemble` follows the name -- on under `v7_0_0`, off under
+`v6_3_1` -- unless `ENSEMBLE_ENABLED` says otherwise, and `--pipeline v6_3_1
+--ensemble` is a contradiction. A value out of range is refused before
+anything runs, by name: `error: ENSEMBLE_PARAPHRASES is 2; it must be 3 to
+10`, or `error: PIPELINE_VERSION v6_3_1 asks each question once;
+ENSEMBLE_ENABLED=true contradicts it`, exit code 2. Set
 `--parallel-calls` to what the Ollama host serves at once (its own
 `OLLAMA_NUM_PARALLEL`), and no higher.
 
